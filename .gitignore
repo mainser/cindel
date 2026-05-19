@@ -1,0 +1,23 @@
+# Dart and Flutter
+.dart_tool/
+.packages
+build/
+
+# Rust
+target/
+**/target/
+**/target*/
+
+# Native build outputs
+*.dll
+*.dylib
+*.so
+*.a
+*.lib
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

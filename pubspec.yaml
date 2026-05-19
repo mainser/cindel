@@ -1,0 +1,10 @@
+name: cindel_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+workspace:
+  - packages/cindel
+  - packages/cindel_annotations
+  - packages/cindel_generator

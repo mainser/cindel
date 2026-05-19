@@ -1,0 +1,3 @@
+class CindelGenerator {
+  const CindelGenerator();
+}

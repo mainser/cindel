@@ -1,0 +1,14 @@
+targets:
+  $default:
+    builders:
+      cindel_generator:
+        enabled: true
+
+builders:
+  cindel_generator:
+    import: "package:cindel_generator/cindel_generator.dart"
+    builder_factories: []
+    build_extensions: {".dart": [".cindel.g.part"]}
+    auto_apply: dependents
+    build_to: cache
+    applies_builders: ["source_gen|combining_builder"]
