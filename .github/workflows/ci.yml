@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Dart and Rust
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --target x86_64-pc-windows-msvc
+          rustup default 1.90.0-x86_64-pc-windows-msvc
+          rustup component add rustfmt --toolchain 1.90.0-x86_64-pc-windows-msvc
+
+      - name: Install Dart dependencies
+        run: dart pub get
+
+      - name: Check Dart formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze Dart packages
+        run: dart analyze
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
+
+      - name: Build Rust native core
+        run: cargo build --manifest-path packages/cindel/native/Cargo.toml
+
+      - name: Run Dart tests
+        run: dart test packages/cindel/test -r expanded
