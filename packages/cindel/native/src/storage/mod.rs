@@ -1,3 +1,7 @@
+mod sqlite;
+
+pub use sqlite::SqliteStorage;
+
 #[allow(dead_code)]
 pub trait StorageEngine {
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;

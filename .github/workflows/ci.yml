@@ -37,6 +37,9 @@ jobs:
           rustup default 1.90.0-x86_64-pc-windows-msvc
           rustup component add rustfmt --toolchain 1.90.0-x86_64-pc-windows-msvc
 
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install Dart dependencies
         run: dart pub get
 
@@ -51,6 +54,9 @@ jobs:
 
       - name: Build Rust native core
         run: cargo build --manifest-path packages/cindel/native/Cargo.toml
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Dart tests
         run: dart test packages/cindel/test -r expanded

@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:ffi';
+import 'dart:typed_data';
 
 import 'native/bindings.dart';
 
@@ -16,7 +18,7 @@ class CindelDatabase {
 
   static Future<CindelDatabase> open({required String directory}) async {
     const bindings = CindelNativeBindings();
-    final handle = bindings.open();
+    final handle = bindings.open(directory);
     if (handle == nullptr) {
       throw StateError('Failed to open Cindel native engine.');
     }
@@ -41,24 +43,35 @@ class CindelDatabase {
     int id,
     Map<String, Object?> value,
   ) async {
-    _checkOpen();
-    // TODO: serialize and send a write command through FFI.
+    final handle = _checkOpen();
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(value)));
+    _bindings.put(handle, collection, id, bytes);
   }
 
   Future<Map<String, Object?>?> get(String collection, int id) async {
-    _checkOpen();
-    // TODO: query through FFI.
-    return null;
+    final handle = _checkOpen();
+    final bytes = _bindings.get(handle, collection, id);
+    if (bytes == null) {
+      return null;
+    }
+
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map) {
+      throw StateError('Native Cindel returned a non-object document.');
+    }
+    return decoded.cast<String, Object?>();
   }
 
   Future<void> delete(String collection, int id) async {
-    _checkOpen();
-    // TODO: send a delete command through FFI.
+    final handle = _checkOpen();
+    _bindings.delete(handle, collection, id);
   }
 
-  void _checkOpen() {
-    if (_handle == null) {
+  Pointer<Void> _checkOpen() {
+    final handle = _handle;
+    if (handle == null) {
       throw StateError('CindelDatabase is closed.');
     }
+    return handle;
   }
 }
