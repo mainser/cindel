@@ -15,6 +15,9 @@ target/
 *.a
 *.lib
 
+# Local planning scratchpad
+cindel_steps.txt
+
 # IDE and OS files
 .idea/
 .vscode/

@@ -4,7 +4,9 @@ Cindel is an experimental Flutter-first local database library with a Dart API,
 generated schemas, a Rust native core, and a narrow FFI bridge.
 
 This roadmap tracks what has been validated so far and the next areas to build
-or explore.
+or explore. It is inspired by Isar's developer experience, but Cindel should
+grow deliberately in small, testable slices instead of trying to clone every
+feature at once.
 
 ## Validated
 
@@ -35,42 +37,193 @@ or explore.
 - [x] Compatible additive schema migrations.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
+- [x] Flutter Todo example application:
+  - CRUD UI,
+  - watcher-driven live list,
+  - indexed exact-title search,
+  - indexed prefix-title search,
+  - schema version display.
+- [x] Android release APK build and physical-device install.
+- [x] Rust native targets declared for:
+  - Windows,
+  - Android `armeabi-v7a`,
+  - Android `arm64-v8a`,
+  - Android `x86_64`,
+  - iOS physical devices,
+  - iOS simulators.
 - [x] Apache-2.0 license, contribution guide, and package-style README.
 
-## Next Features
+## API Ergonomics
 
 - [ ] Typed collection APIs generated from schemas.
   - Example target: `db.users.put(user)`, `db.users.get(id)`.
-- [ ] Generated query builders.
-  - Equality helpers for indexed fields.
-  - Range helpers for sortable indexed fields.
-  - Typed query result mapping.
-- [ ] Transaction API.
-  - Explicit write transactions.
-  - Atomic multi-document writes.
-  - Clear rollback semantics.
 - [ ] Auto-increment id support.
   - Native id allocation.
   - Typed generator support for `autoIncrement`.
+- [ ] Bulk collection operations.
+  - `putAll`
+  - `getAll`
+  - `deleteAll`
+  - query-based deletes.
+- [ ] Query result operations.
+  - `findAll`
+  - `findFirst`
+  - `count`
+  - `exists`
+  - typed result mapping.
+- [ ] Property projections.
+  - Query a single property without hydrating full objects.
+  - Support primitive and list property projections.
+
+## Query System
+
+- [ ] Generated query builders.
+  - Equality helpers for indexed fields.
+  - Range helpers for sortable indexed fields.
+  - Prefix helpers for indexed strings.
+  - Typed query result mapping.
+- [ ] Filter builder for non-indexed predicates.
+  - Boolean fields.
+  - Numeric comparisons.
+  - String equality, contains, starts-with, ends-with.
+  - Null checks when nullable fields are supported.
+- [ ] Boolean query composition.
+  - `and`
+  - `or`
+  - `not`
+  - grouped predicates.
+- [ ] Dynamic query modifiers.
+  - `optional`
+  - `anyOf`
+  - `allOf`
+- [ ] Sorting and pagination.
+  - `sortBy`
+  - `thenBy`
+  - ascending and descending order.
+  - `offset`
+  - `limit`
+- [ ] Distinct queries.
+  - Distinct by one field.
+  - Distinct by multiple fields.
+  - Index-assisted distinct where possible.
+- [ ] Query builder execution planning.
+  - Prefer indexed where clauses before filters.
+  - Document execution order clearly.
+  - Add tests for index-assisted sorting and filtering.
+
+## Indexes
+
+- [ ] Composite indexes.
+- [ ] Unique indexes.
+- [ ] Multi-entry indexes for list values.
+- [ ] Case-insensitive string indexes.
+- [ ] Index type options.
+  - Value indexes for range and prefix scans.
+  - Hash indexes for compact equality lookups.
+- [ ] Full-text search primitives.
+  - Word splitting helper.
+  - Multi-entry word indexes.
+  - Case-insensitive prefix search over token indexes.
+- [ ] Index lifecycle operations.
+  - Rebuild indexes after migrations.
+  - Validate index definitions during open.
+  - Detect stale or incompatible index metadata.
+
+## Schema and Serialization
+
+- [ ] Expand supported field types.
+  - `bool`
+  - `int`
+  - `double`
+  - `String`
+  - `DateTime`
+  - `Duration`
+  - primitive lists.
+- [ ] Nullable field support.
+- [ ] Enum persistence strategies.
+  - by name,
+  - by ordinal,
+  - by custom value.
+- [ ] Ignored or transient fields.
+  - Annotation-level ignore.
+  - Collection-level ignore list.
+- [ ] Embedded objects.
+  - Single embedded value.
+  - Lists of embedded values.
+  - Nested serialization and deserialization.
+- [ ] Schema diagnostics.
+  - Better generator errors for unsupported types.
+  - Clear errors for missing ids, duplicate ids, and invalid indexes.
+
+## Transactions and Consistency
+
+- [ ] Transaction API.
+  - Explicit read transactions.
+  - Explicit write transactions.
+  - Atomic multi-document writes.
+  - Clear rollback semantics.
+- [ ] Enforce write operations inside write transactions for typed APIs.
+- [ ] Consistent read snapshots inside read transactions.
+- [ ] Transaction-aware watcher notifications.
+  - Notify after commit only.
+  - Avoid emissions for rolled-back writes.
+- [ ] Concurrency model.
+  - Define allowed parallel reads.
+  - Define write serialization rules.
+  - Document isolate/thread expectations.
+
+## Watchers and Reactivity
+
 - [ ] Query watchers.
   - Watch an indexed query result.
   - Emit only when the query result changes.
+- [ ] Lazy watchers.
+  - Object lazy watcher.
+  - Collection lazy watcher.
+  - Query lazy watcher.
+- [ ] `fireImmediately` option for all watcher types.
+- [ ] Typed object watchers.
+  - Watch one generated object by id.
+  - Emit `null` when deleted.
+- [ ] Watcher efficiency.
+  - Revision-based collection invalidation.
+  - Query result comparison.
+  - Tests for unchanged query results.
+
+## Migrations and Schema Evolution
+
 - [ ] Migration callbacks.
   - Explicit user-defined migrations.
   - Data backfills for newly added fields.
   - Index rebuild migrations.
-- [ ] Better native error reporting.
-  - Error codes across FFI.
-  - Human-readable native messages in Dart exceptions.
-- [ ] Example Flutter application.
-  - CRUD UI.
-  - Watchers driving UI updates.
-  - Indexed search.
-- [ ] Documentation for generated schemas and current MVP limits.
-- [ ] Package publishing preparation.
-  - Per-package pub.dev metadata.
-  - Changelogs.
-  - Pub score polish.
+- [ ] Field rename support.
+- [ ] Collection rename support.
+- [ ] Enum migration safeguards.
+- [ ] Migration dry-run diagnostics.
+- [ ] Versioned migration test fixtures.
+
+## Relationships
+
+- [ ] Embedded objects first, as the preferred relationship model.
+- [ ] Link prototype after embedded objects are stable.
+  - One-to-one links.
+  - One-to-many links.
+  - Many-to-many links.
+- [ ] Backlink metadata.
+- [ ] Lazy link loading.
+- [ ] Link persistence inside transactions.
+
+## Platforms and Native Assets
+
+- [ ] Validate iOS build on macOS with Xcode.
+- [ ] Validate iOS install on a physical device.
+- [ ] Validate Android release build on CI or a repeatable local script.
+- [ ] Validate Windows desktop example build.
+- [ ] Add macOS desktop target once native linking is understood.
+- [ ] Add Linux desktop target once native linking is understood.
+- [ ] Define native binary packaging strategy per platform.
+- [ ] Document Rust, NDK, Xcode, and signing requirements.
+- [ ] Keep web out of scope until the native MVP is stable.
 
 ## Backend Exploration
 
@@ -85,32 +238,54 @@ or explore.
   - collection revision counters.
 - [ ] Keep the public Dart API independent of backend details.
 
+## Errors, Diagnostics, and Tooling
+
+- [ ] Better native error reporting.
+  - Error codes across FFI.
+  - Human-readable native messages in Dart exceptions.
+- [ ] Public exception taxonomy.
+  - validation errors,
+  - schema errors,
+  - transaction errors,
+  - native storage errors.
+- [ ] Debug logging hooks.
+- [ ] Inspector or developer tooling prototype.
+- [ ] Documentation for generated schemas and current MVP limits.
+- [ ] Package publishing preparation.
+  - Per-package pub.dev metadata.
+  - Changelogs.
+  - Pub score polish.
+
 ## Quality Goals
 
 - [ ] Keep Dart analyzer clean.
 - [ ] Keep Rust formatting clean with `cargo fmt --check`.
 - [ ] Expand Rust tests for storage semantics and migrations.
 - [ ] Expand Dart tests for public API behavior and generated code.
+- [ ] Add widget tests for the example app's real user flows.
+- [ ] Add Android build smoke test documentation.
 - [ ] Keep tests documented with Scenario, Covers, Expected, and
   Arrange/Act/Assert sections.
 - [ ] Add benchmark snapshots before major backend changes.
 - [ ] Re-enable CI on push when the workflow is stable and useful again.
+- [ ] Add CI matrix gradually:
+  - Dart analyzer and tests,
+  - Rust tests,
+  - Android build smoke test,
+  - macOS/iOS build smoke test when runner access exists.
 
 ## Longer-Term Ideas
 
-- [ ] Composite indexes.
-- [ ] Unique indexes.
-- [ ] Multi-entry indexes.
-- [ ] Sorting and pagination.
-- [ ] Full-text search.
-- [ ] Embedded objects.
-- [ ] Links or relationships between collections.
 - [ ] Isolate-friendly APIs.
-- [ ] Inspector or developer tooling.
-- [ ] Web strategy after the native MVP is stable.
+- [ ] Encryption at rest.
+- [ ] Database compaction.
+- [ ] Import and export utilities.
+- [ ] Optional web strategy after the native MVP is stable.
+- [ ] Backend plugin API if multiple native engines prove useful.
 
 ## Current Focus
 
-The next practical milestone is typed generated collection APIs and query
-builders. That would move Cindel from a working manual document database toward
-the ergonomic API expected from an Isar-inspired local-first database.
+The next practical milestone is generated typed collection APIs plus a small
+query-builder slice. That moves Cindel from a working manual document database
+toward the ergonomic API expected from an Isar-inspired local-first database,
+without trying to build every advanced query and index feature at once.
