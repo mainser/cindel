@@ -199,7 +199,8 @@ See `CONTRIBUTING.md` for contribution guidelines.
 
 ## Roadmap
 
-The detailed roadmap lives in `ROADMAP.md`.
+The public roadmap lives in `ROADMAP.md`. The detailed original planning notes
+live in `ROADMAP.md`.
 
 Completed MVP phases:
 
