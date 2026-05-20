@@ -1,3 +1,5 @@
+#[doc(hidden)]
+pub mod benchmark;
 mod engine;
 mod ffi;
 mod storage;

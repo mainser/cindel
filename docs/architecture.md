@@ -22,3 +22,6 @@ Rust Core
    v
 Storage backend: SQLite first, libmdbx later
 ```
+
+Phase 8 benchmark and backend adoption notes live in
+`docs/backend_evaluation.md`.
