@@ -43,6 +43,11 @@ impl SqliteStorage {
                     document_id INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS collection_revisions (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    revision INTEGER NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
                 ON index_entries (
                     collection,
@@ -73,6 +78,19 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())
     }
 
+    fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
+        query_ids(
+            &self.connection,
+            r#"
+            SELECT id
+            FROM documents
+            WHERE collection = ?1
+            ORDER BY id
+            "#,
+            params![collection],
+        )
+    }
+
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.put_indexed(collection, id, bytes, &[])
     }
@@ -93,6 +111,7 @@ impl StorageEngine for SqliteStorage {
         put_document(&transaction, collection, id, bytes)?;
         delete_index_entries(&transaction, collection, id)?;
         insert_index_entries(&transaction, collection, id, indexes)?;
+        bump_collection_revision(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())
     }
@@ -104,13 +123,16 @@ impl StorageEngine for SqliteStorage {
             .transaction()
             .map_err(|error| error.to_string())?;
 
-        transaction
+        let deleted = transaction
             .execute(
                 "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
                 params![collection, id],
             )
             .map_err(|error| error.to_string())?;
         delete_index_entries(&transaction, collection, id)?;
+        if deleted > 0 {
+            bump_collection_revision(&transaction, collection)?;
+        }
 
         transaction.commit().map_err(|error| error.to_string())
     }
@@ -138,6 +160,21 @@ impl StorageEngine for SqliteStorage {
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String> {
         query_index(&self.connection, collection, index, lower, upper)
+    }
+
+    fn collection_revision(&self, collection: &str) -> Result<u64, String> {
+        self.connection
+            .query_row(
+                "SELECT revision FROM collection_revisions WHERE collection = ?1",
+                params![collection],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|error| error.to_string())
+            .map(Option::unwrap_or_default)
     }
 }
 
@@ -213,6 +250,21 @@ fn insert_index_entries(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn bump_collection_revision(transaction: &Transaction<'_>, collection: &str) -> Result<(), String> {
+    transaction
+        .execute(
+            r#"
+            INSERT INTO collection_revisions (collection, revision)
+            VALUES (?1, 1)
+            ON CONFLICT(collection) DO UPDATE SET
+                revision = collection_revisions.revision + 1
+            "#,
+            params![collection],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn query_index(
@@ -474,6 +526,59 @@ mod tests {
         // Assert.
         assert_eq!(user, Some(br#"{"name":"Noel"}"#.to_vec()));
         assert_eq!(settings, Some(br#"{"theme":"dark"}"#.to_vec()));
+    }
+
+    #[test]
+    fn lists_document_ids_by_collection() {
+        // Scenario: A collection contains multiple documents out of insert order.
+        // Covers:
+        // - [StorageEngine::document_ids] scanning ids by collection.
+        // - Stable id ordering for Dart collection snapshots.
+        // Expected: Only ids from the requested collection are returned sorted.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("document_ids");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.put("users", 3, br#"{"name":"Cid"}"#).unwrap();
+        storage.put("settings", 1, br#"{"theme":"dark"}"#).unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        let ids = storage.document_ids("users").unwrap();
+
+        // Assert.
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn advances_collection_revision_after_committed_changes() {
+        // Scenario: Documents are inserted, updated, deleted, and deleted again.
+        // Covers:
+        // - Revision increments after committed writes.
+        // - No-op deletes leaving the revision unchanged.
+        // Expected: Watchers can detect real collection changes monotonically.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("revision");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        let initial = storage.collection_revision("users").unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        let after_insert = storage.collection_revision("users").unwrap();
+        storage.put("users", 1, br#"{"name":"Ada"}"#).unwrap();
+        let after_update = storage.collection_revision("users").unwrap();
+        storage.delete("users", 1).unwrap();
+        let after_delete = storage.collection_revision("users").unwrap();
+        storage.delete("users", 1).unwrap();
+        let after_missing_delete = storage.collection_revision("users").unwrap();
+
+        // Assert.
+        assert_eq!(initial, 0);
+        assert_eq!(after_insert, 1);
+        assert_eq!(after_update, 2);
+        assert_eq!(after_delete, 3);
+        assert_eq!(after_missing_delete, 3);
     }
 
     #[test]

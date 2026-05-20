@@ -102,6 +102,23 @@ final class CindelNativeBindings {
     });
   }
 
+  List<int> documentIds(Pointer<Void> handle, String collection) {
+    return _queryIds((outPointer, outLength) {
+      return _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _cindelDocumentIds(
+          handle,
+          collectionPointer,
+          collectionLength,
+          outPointer,
+          outLength,
+        );
+      });
+    }, 'document ids');
+  }
+
   void delete(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
@@ -113,13 +130,34 @@ final class CindelNativeBindings {
     _checkStatus(status, 'delete');
   }
 
+  int collectionRevision(Pointer<Void> handle, String collection) {
+    final outRevision = calloc<Uint64>();
+    try {
+      final status = _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _cindelCollectionRevision(
+          handle,
+          collectionPointer,
+          collectionLength,
+          outRevision,
+        );
+      });
+      _checkStatus(status, 'collection revision');
+      return outRevision.value;
+    } finally {
+      calloc.free(outRevision);
+    }
+  }
+
   List<int> queryIndexEqual(
     Pointer<Void> handle,
     String collection,
     String index,
     Uint8List value,
   ) {
-    return _queryIndexIds((outPointer, outLength) {
+    return _queryIds((outPointer, outLength) {
       return _withNativeUtf8Bytes(collection, (
         collectionPointer,
         collectionLength,
@@ -150,7 +188,7 @@ final class CindelNativeBindings {
     Uint8List? lower,
     Uint8List? upper,
   ) {
-    return _queryIndexIds((outPointer, outLength) {
+    return _queryIds((outPointer, outLength) {
       return _withNativeUtf8Bytes(collection, (
         collectionPointer,
         collectionLength,
@@ -260,6 +298,23 @@ external int _cindelGet(
   Pointer<Size> outLength,
 );
 
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_document_ids', assetId: _assetId)
+external int _cindelDocumentIds(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint64)>(
   symbol: 'cindel_delete',
   assetId: _assetId,
@@ -269,6 +324,17 @@ external int _cindelDelete(
   Pointer<Uint8> collection,
   int collectionLen,
   int id,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(
+  symbol: 'cindel_collection_revision',
+  assetId: _assetId,
+)
+external int _cindelCollectionRevision(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint64> outRevision,
 );
 
 @Native<
@@ -361,7 +427,7 @@ T _withNullableNativeBytes<T>(
   return _withNativeBytes(bytes, action);
 }
 
-List<int> _queryIndexIds(
+List<int> _queryIds(
   int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
   action,
   String operation,

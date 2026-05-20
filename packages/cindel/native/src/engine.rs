@@ -15,6 +15,10 @@ impl CindelEngine {
         self.storage.get(collection, id)
     }
 
+    pub fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
+        self.storage.document_ids(collection)
+    }
+
     pub fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.storage.put(collection, id, bytes)
     }
@@ -51,5 +55,9 @@ impl CindelEngine {
     ) -> Result<Vec<u64>, String> {
         self.storage
             .query_index_range(collection, index, lower, upper)
+    }
+
+    pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
+        self.storage.collection_revision(collection)
     }
 }

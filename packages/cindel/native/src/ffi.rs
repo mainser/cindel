@@ -121,6 +121,34 @@ pub unsafe extern "C" fn cindel_get(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_document_ids(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+
+    match engine.document_ids(collection) {
+        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_delete(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
@@ -136,6 +164,35 @@ pub unsafe extern "C" fn cindel_delete(
 
     match engine.delete(collection, id) {
         Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_collection_revision(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    out_revision: *mut u64,
+) -> i32 {
+    if out_revision.is_null() {
+        return -1;
+    }
+
+    *out_revision = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+
+    match engine.collection_revision(collection) {
+        Ok(revision) => {
+            *out_revision = revision;
+            0
+        }
         Err(_) => -1,
     }
 }

@@ -18,6 +18,7 @@ pub enum IndexValue {
 
 pub trait StorageEngine {
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
+    fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
     fn put_indexed(
         &mut self,
@@ -40,4 +41,5 @@ pub trait StorageEngine {
         lower: Option<&IndexValue>,
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String>;
+    fn collection_revision(&self, collection: &str) -> Result<u64, String>;
 }

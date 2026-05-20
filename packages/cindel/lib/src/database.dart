@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
@@ -9,6 +10,7 @@ import 'schema.dart';
 typedef CindelDocument = Map<String, Object?>;
 
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
+const _defaultWatchPollInterval = Duration(milliseconds: 50);
 
 /// An open handle to a local Cindel database.
 class CindelDatabase {
@@ -25,6 +27,7 @@ class CindelDatabase {
   final String directory;
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
+  final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   Pointer<Void>? _handle;
 
   /// Opens a database stored under [directory].
@@ -59,6 +62,7 @@ class CindelDatabase {
     if (handle == null) {
       return;
     }
+    await _closeWatchers();
     _bindings.close(handle);
     _handle = null;
   }
@@ -78,6 +82,7 @@ class CindelDatabase {
     final indexEntries = _indexEntriesFor(collection, value);
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
+      _notifyWatchers(collection);
       return;
     }
 
@@ -88,6 +93,7 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
+    _notifyWatchers(collection);
   }
 
   /// Returns the document stored in [collection] under [id], or `null`.
@@ -123,6 +129,53 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
+    _notifyWatchers(collection);
+  }
+
+  /// Watches the current value of a document and emits after committed changes.
+  ///
+  /// The stream emits the current snapshot first, then emits again whenever the
+  /// native collection revision changes. Local writes notify watchers as soon as
+  /// the native call returns, and [pollInterval] catches changes made by other
+  /// database handles.
+  Stream<CindelDocument?> watchDocument(
+    String collection,
+    int id, {
+    Duration pollInterval = _defaultWatchPollInterval,
+  }) {
+    _checkOpen();
+    _checkCollection(collection);
+    _checkId(id);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      readSnapshot: () => get(collection, id),
+    );
+  }
+
+  /// Watches all documents in [collection] and emits after committed changes.
+  ///
+  /// Documents are emitted in id order. The stream emits a snapshot immediately
+  /// and then reacts to native collection revision changes.
+  Stream<List<CindelDocument>> watchCollection(
+    String collection, {
+    Duration pollInterval = _defaultWatchPollInterval,
+  }) {
+    _checkOpen();
+    _checkCollection(collection);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      readSnapshot: () async {
+        final handle = _checkOpen();
+        final ids = _bindings.documentIds(handle, collection);
+        return _documentsByIds(collection, ids);
+      },
+    );
   }
 
   /// Returns documents whose indexed [field] equals [value].
@@ -248,6 +301,64 @@ class CindelDatabase {
     }
     return documents;
   }
+
+  Stream<T> _watch<T>(
+    String collection, {
+    required Duration pollInterval,
+    required Future<T> Function() readSnapshot,
+  }) {
+    late final _CindelWatcher<T> watcher;
+    watcher = _CindelWatcher<T>(
+      pollInterval: pollInterval,
+      readRevision: () {
+        final handle = _handle;
+        if (handle == null) {
+          throw StateError('CindelDatabase is closed.');
+        }
+        return _bindings.collectionRevision(handle, collection);
+      },
+      readSnapshot: readSnapshot,
+      onListen: () => _registerWatcher(collection, watcher),
+      onCancel: () => _unregisterWatcher(collection, watcher),
+    );
+    return watcher.stream;
+  }
+
+  void _registerWatcher(String collection, _RegisteredWatcher watcher) {
+    _watchersByCollection
+        .putIfAbsent(collection, () => <_RegisteredWatcher>{})
+        .add(watcher);
+  }
+
+  void _notifyWatchers(String collection) {
+    final watchers = _watchersByCollection[collection];
+    if (watchers == null) {
+      return;
+    }
+    for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
+      unawaited(watcher.poll());
+    }
+  }
+
+  void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
+    final watchers = _watchersByCollection[collection];
+    if (watchers == null) {
+      return;
+    }
+    watchers.remove(watcher);
+    if (watchers.isEmpty) {
+      _watchersByCollection.remove(collection);
+    }
+  }
+
+  Future<void> _closeWatchers() async {
+    final watchers = [
+      for (final collectionWatchers in _watchersByCollection.values)
+        ...collectionWatchers,
+    ];
+    _watchersByCollection.clear();
+    await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
+  }
 }
 
 Uint8List _encodeDocument(CindelDocument value) {
@@ -269,6 +380,16 @@ void _checkCollection(String collection) {
 void _checkIndexName(String field) {
   if (field.trim().isEmpty) {
     throw ArgumentError.value(field, 'field', 'Must not be empty.');
+  }
+}
+
+void _checkPollInterval(Duration pollInterval) {
+  if (pollInterval <= Duration.zero) {
+    throw ArgumentError.value(
+      pollInterval,
+      'pollInterval',
+      'Must be greater than zero.',
+    );
   }
 }
 
@@ -446,4 +567,78 @@ final class _EncodedIndexValue {
 
   final String kind;
   final Uint8List bytes;
+}
+
+abstract interface class _RegisteredWatcher {
+  Future<void> poll({bool force});
+
+  Future<void> close();
+}
+
+final class _CindelWatcher<T> implements _RegisteredWatcher {
+  _CindelWatcher({
+    required Duration pollInterval,
+    required int Function() readRevision,
+    required Future<T> Function() readSnapshot,
+    required void Function() onListen,
+    required void Function() onCancel,
+  }) : _pollInterval = pollInterval,
+       _readRevision = readRevision,
+       _readSnapshot = readSnapshot,
+       _onListen = onListen,
+       _onCancel = onCancel {
+    _controller = StreamController<T>(
+      onListen: () {
+        _onListen();
+        unawaited(poll(force: true));
+        _timer = Timer.periodic(_pollInterval, (_) => unawaited(poll()));
+      },
+      onCancel: () {
+        _timer?.cancel();
+        _onCancel();
+      },
+    );
+  }
+
+  final Duration _pollInterval;
+  final int Function() _readRevision;
+  final Future<T> Function() _readSnapshot;
+  final void Function() _onListen;
+  final void Function() _onCancel;
+
+  late final StreamController<T> _controller;
+  Timer? _timer;
+  int? _lastRevision;
+  bool _isPolling = false;
+
+  Stream<T> get stream => _controller.stream;
+
+  Future<void> poll({bool force = false}) async {
+    if (_isPolling || _controller.isClosed) {
+      return;
+    }
+    _isPolling = true;
+    try {
+      final revision = _readRevision();
+      if (!force && revision == _lastRevision) {
+        return;
+      }
+      _lastRevision = revision;
+      final snapshot = await _readSnapshot();
+      if (!_controller.isClosed) {
+        _controller.add(snapshot);
+      }
+    } catch (error, stackTrace) {
+      if (!_controller.isClosed) {
+        _controller.addError(error, stackTrace);
+      }
+    } finally {
+      _isPolling = false;
+    }
+  }
+
+  Future<void> close() async {
+    _timer?.cancel();
+    await _controller.close();
+  }
 }
