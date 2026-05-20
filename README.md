@@ -17,6 +17,12 @@ Dart API -> FFI -> Rust core -> SQLite storage -> Rust -> FFI -> Dart
 
 The API is still experimental and can change before a public release.
 
+## Supported Platforms
+
+| Platform | Android | iOS | Web | Linux | Windows | macOS |
+| --- | --- | --- | --- | --- | --- | --- |
+| Status | Yes | Yes | No | No | Yes | No |
+
 ## Features
 
 - Flutter-first Dart API.

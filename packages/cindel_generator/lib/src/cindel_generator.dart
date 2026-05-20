@@ -42,7 +42,7 @@ final class CindelGenerator extends GeneratorForAnnotation<Collection> {
 
 String _emitCollection(_CollectionInfo collection) {
   final buffer = StringBuffer()
-    ..writeln('// ignore_for_file: constant_identifier_names')
+    ..writeln('// ignore_for_file: non_constant_identifier_names')
     ..writeln()
     ..writeln(
       'final ${collection.schemaName} = '
@@ -121,7 +121,7 @@ final class _CollectionInfo {
   ) {
     final dartName = element.name ?? element.displayName;
     final fields = element.fields
-        .where((field) => field.isOriginDeclaration && !field.isStatic)
+        .where((field) => !field.isSynthetic && !field.isStatic)
         .map(_FieldInfo.from)
         .toList(growable: false);
 

@@ -1,3 +1,92 @@
 # Cindel Todo Example
 
-Placeholder example app. The first implementation target is the package vertical slice before building UI.
+Flutter example app that uses Cindel like a normal application dependency.
+
+The example demonstrates:
+
+- Opening a local Cindel database.
+- Registering schema metadata.
+- Persisting documents.
+- Reading live collection updates through watchers.
+- Updating and deleting documents.
+- Querying an indexed field by equality.
+- Querying an indexed field by range for prefix search.
+- Reading the stored schema version.
+- Wiring the feature with Riverpod providers.
+- Building Cindel's Rust native core for mobile targets.
+
+## Architecture
+
+The app uses one feature, `todos`, with this structure:
+
+```text
+lib/features/todos/
+  di/
+  domain/
+    entities/
+    failures/
+    repositories/
+    usecases/
+  data/
+    datasources/
+    models/
+    repositories/
+  presentation/
+    pages/
+    providers/
+    widgets/
+    utils/
+```
+
+The UI depends on providers only. Cindel calls are isolated in the data source.
+
+## Run Locally
+
+```powershell
+flutter pub get
+flutter pub run build_runner build
+flutter run -d windows
+```
+
+The generated files are committed so the example can be opened and run without
+an extra generation step, but `build_runner` can regenerate them at any time.
+
+## Android
+
+The app has been validated on a physical Android device using a release APK:
+
+```powershell
+flutter pub get
+flutter build apk --release
+flutter install -d <device-id> --release
+```
+
+The Cindel native Rust toolchain includes these Android targets:
+
+```text
+armv7-linux-androideabi  -> armeabi-v7a / 32-bit ARM
+aarch64-linux-android    -> arm64-v8a / ARMv8 64-bit
+x86_64-linux-android     -> x86_64 emulator
+```
+
+## iOS
+
+iOS builds must be done on macOS with Xcode installed. This repository includes
+the Flutter iOS project under `ios/`, and the Cindel native Rust toolchain is
+configured with the usual iOS targets:
+
+```text
+aarch64-apple-ios      -> physical iPhone/iPad
+aarch64-apple-ios-sim  -> Apple Silicon simulator
+x86_64-apple-ios       -> Intel simulator
+```
+
+On a Mac, run:
+
+```zsh
+flutter pub get
+flutter build ios
+```
+
+To install on a physical iPhone, open `ios/Runner.xcworkspace` in Xcode and set
+the signing team and bundle identifier as needed before building or running.

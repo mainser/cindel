@@ -1,3 +1,11 @@
 [toolchain]
 channel = "1.90.0"
-targets = ["x86_64-pc-windows-msvc"]
+targets = [
+  "armv7-linux-androideabi",
+  "aarch64-linux-android",
+  "x86_64-linux-android",
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-ios",
+  "x86_64-pc-windows-msvc",
+]
