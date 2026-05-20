@@ -75,6 +75,50 @@ void main() {
       expect(deletedUser, isNull);
     });
 
+    // Scenario: A document contains nested JSON-compatible values.
+    // Covers:
+    // - [CindelDatabase.put] accepting nested maps and lists.
+    // - [CindelDatabase.get] decoding nested JSON values from native bytes.
+    // Expected: The nested document round-trips without losing structure.
+    test('persists nested JSON-compatible documents.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(directory: directory.path);
+      addTearDown(database.close);
+      final document = <String, Object?>{
+        'name': 'Noel',
+        'tags': ['admin', 'local'],
+        'profile': {'score': 42, 'active': true, 'metadata': null},
+      };
+
+      // Act.
+      await database.put('users', 3, document);
+      final storedDocument = await database.get('users', 3);
+
+      // Assert.
+      expect(storedDocument, document);
+    });
+
+    // Scenario: A document is requested but does not exist.
+    // Covers:
+    // - Native `not found` status conversion.
+    // - [CindelDatabase.get] returning nullable documents.
+    // Expected: Missing documents are represented as `null`.
+    test('returns null when a document does not exist.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(directory: directory.path);
+      addTearDown(database.close);
+
+      // Act.
+      final missingDocument = await database.get('users', 404);
+
+      // Assert.
+      expect(missingDocument, isNull);
+    });
+
     // Scenario: A database directory is closed and opened again.
     // Covers:
     // - SQLite-backed storage writing bytes to disk.
@@ -97,6 +141,25 @@ void main() {
       expect(storedSettings, {'theme': 'dark'});
     });
 
+    // Scenario: The database is closed more than once.
+    // Covers:
+    // - [CindelDatabase.close] idempotent closed-state handling.
+    // - Native close not being called again after the handle is cleared.
+    // Expected: Closing twice completes without throwing.
+    test('allows closing a database more than once.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(directory: directory.path);
+
+      // Act.
+      await database.close();
+      final secondClose = database.close();
+
+      // Assert.
+      await expectLater(secondClose, completes);
+    });
+
     // Scenario: Write operations are requested after closing a database.
     // Covers:
     // - [CindelDatabase.put] checking handle state before FFI.
@@ -116,6 +179,60 @@ void main() {
       // Assert.
       await expectLater(putAfterClose, throwsA(isA<StateError>()));
       await expectLater(deleteAfterClose, throwsA(isA<StateError>()));
+    });
+
+    // Scenario: Invalid database, collection, and id inputs are provided.
+    // Covers:
+    // - [Cindel.open] directory validation before FFI.
+    // - [CindelDatabase.put], [CindelDatabase.get], and [CindelDatabase.delete]
+    //   validating public arguments before FFI.
+    // Expected: Invalid public inputs fail with [ArgumentError].
+    test('rejects invalid public API inputs before FFI.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(directory: directory.path);
+      addTearDown(database.close);
+
+      // Act.
+      final openWithEmptyDirectory = Cindel.open(directory: ' ');
+      final putWithEmptyCollection = database.put(' ', 1, {'name': 'Noel'});
+      final getWithNegativeId = database.get('users', -1);
+      final deleteWithTooLargeId = database.delete('users', 0x8000000000000000);
+
+      // Assert.
+      await expectLater(openWithEmptyDirectory, throwsA(isA<ArgumentError>()));
+      await expectLater(putWithEmptyCollection, throwsA(isA<ArgumentError>()));
+      await expectLater(getWithNegativeId, throwsA(isA<ArgumentError>()));
+      await expectLater(deleteWithTooLargeId, throwsA(isA<ArgumentError>()));
+    });
+
+    // Scenario: A document includes values outside Cindel's JSON contract.
+    // Covers:
+    // - [CindelDatabase.put] recursive JSON compatibility validation.
+    // - Rejection of non-finite numbers and unsupported Dart objects.
+    // Expected: Invalid documents fail with [ArgumentError] before FFI.
+    test('rejects non JSON-compatible documents before FFI.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(directory: directory.path);
+      addTearDown(database.close);
+
+      // Act.
+      final putWithNonFiniteNumber = database.put('users', 1, {
+        'score': double.nan,
+      });
+      final putWithUnsupportedObject = database.put('users', 2, {
+        'createdAt': DateTime(2026),
+      });
+
+      // Assert.
+      await expectLater(putWithNonFiniteNumber, throwsA(isA<ArgumentError>()));
+      await expectLater(
+        putWithUnsupportedObject,
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 }
