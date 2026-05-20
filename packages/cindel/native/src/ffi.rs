@@ -1,5 +1,5 @@
 use crate::engine::CindelEngine;
-use crate::storage::{IndexEntry, IndexValue};
+use crate::storage::{IndexEntry, IndexValue, SchemaManifest};
 
 use serde::Deserialize;
 
@@ -50,6 +50,28 @@ pub unsafe extern "C" fn cindel_put(
     };
 
     match engine.put(collection, id, bytes) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_register_schemas(
+    handle: *mut CindelEngine,
+    schemas_ptr: *const u8,
+    schemas_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
+        return -1;
+    };
+    let Ok(manifest) = serde_json::from_slice::<SchemaManifest>(schemas) else {
+        return -1;
+    };
+
+    match engine.register_schemas(&manifest) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -193,6 +215,36 @@ pub unsafe extern "C" fn cindel_collection_revision(
             *out_revision = revision;
             0
         }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_schema_version(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    out_version: *mut u64,
+) -> i32 {
+    if out_version.is_null() {
+        return -1;
+    }
+
+    *out_version = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+
+    match engine.schema_version(collection) {
+        Ok(Some(version)) => {
+            *out_version = version;
+            0
+        }
+        Ok(None) => 1,
         Err(_) => -1,
     }
 }

@@ -1,4 +1,4 @@
-use crate::storage::{IndexEntry, IndexValue, SqliteStorage, StorageEngine};
+use crate::storage::{IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine};
 
 pub struct CindelEngine {
     storage: SqliteStorage,
@@ -59,5 +59,13 @@ impl CindelEngine {
 
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
+    }
+
+    pub fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        self.storage.register_schemas(manifest)
+    }
+
+    pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
+        self.storage.schema_version(collection)
     }
 }

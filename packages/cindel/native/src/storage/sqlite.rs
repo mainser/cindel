@@ -3,7 +3,10 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-use super::{IndexEntry, IndexValue, StorageEngine};
+use super::{
+    CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest,
+    StorageEngine,
+};
 
 pub struct SqliteStorage {
     connection: Connection,
@@ -46,6 +49,22 @@ impl SqliteStorage {
                 CREATE TABLE IF NOT EXISTS collection_revisions (
                     collection TEXT PRIMARY KEY NOT NULL,
                     revision INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS schema_collections (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    version INTEGER NOT NULL,
+                    schema_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection TEXT NOT NULL,
+                    from_version INTEGER NOT NULL,
+                    to_version INTEGER NOT NULL,
+                    from_schema_json TEXT NOT NULL,
+                    to_schema_json TEXT NOT NULL,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
@@ -176,6 +195,34 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())
             .map(Option::unwrap_or_default)
     }
+
+    fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        validate_schema_manifest(manifest)?;
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        for collection in &manifest.collections {
+            register_collection_schema(&transaction, collection)?;
+        }
+
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
+    fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
+        self.connection
+            .query_row(
+                "SELECT version FROM schema_collections WHERE collection = ?1",
+                params![collection],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn sqlite_id(id: u64) -> Result<i64, String> {
@@ -265,6 +312,207 @@ fn bump_collection_revision(transaction: &Transaction<'_>, collection: &str) -> 
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
+    let mut names = std::collections::HashSet::new();
+    for collection in &manifest.collections {
+        if collection.name.trim().is_empty() {
+            return Err("schema collection name must not be empty".into());
+        }
+        if !names.insert(collection.name.as_str()) {
+            return Err(format!(
+                "schema collection `{}` is duplicated",
+                collection.name
+            ));
+        }
+        validate_collection_schema(collection)?;
+    }
+    Ok(())
+}
+
+fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(), String> {
+    if collection.id_field.trim().is_empty() {
+        return Err(format!(
+            "schema collection `{}` must declare an id field",
+            collection.name
+        ));
+    }
+
+    let mut names = std::collections::HashSet::new();
+    let mut id_fields = 0;
+    for field in &collection.fields {
+        if field.name.trim().is_empty() {
+            return Err(format!(
+                "schema collection `{}` contains an empty field name",
+                collection.name
+            ));
+        }
+        if field.dart_type.trim().is_empty() {
+            return Err(format!(
+                "schema field `{}.{}` must declare a Dart type",
+                collection.name, field.name
+            ));
+        }
+        if !names.insert(field.name.as_str()) {
+            return Err(format!(
+                "schema field `{}.{}` is duplicated",
+                collection.name, field.name
+            ));
+        }
+        if field.is_id {
+            id_fields += 1;
+            if field.name != collection.id_field {
+                return Err(format!(
+                    "schema field `{}.{}` is marked as id but id_field is `{}`",
+                    collection.name, field.name, collection.id_field
+                ));
+            }
+        }
+    }
+
+    if id_fields != 1 {
+        return Err(format!(
+            "schema collection `{}` must declare exactly one id field",
+            collection.name
+        ));
+    }
+
+    Ok(())
+}
+
+fn register_collection_schema(
+    transaction: &Transaction<'_>,
+    collection: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    let next_schema_json = canonical_schema_json(collection)?;
+    let existing = transaction
+        .query_row(
+            "SELECT version, schema_json FROM schema_collections WHERE collection = ?1",
+            params![collection.name],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+
+    let Some((version, schema_json)) = existing else {
+        transaction
+            .execute(
+                r#"
+                INSERT INTO schema_collections (collection, version, schema_json)
+                VALUES (?1, 1, ?2)
+                "#,
+                params![collection.name, next_schema_json],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    };
+
+    if schema_json == next_schema_json {
+        return Ok(());
+    }
+
+    let existing_schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
+        .map_err(|error| error.to_string())?;
+    validate_compatible_schema_change(&existing_schema, collection)?;
+
+    let next_version = version + 1;
+    transaction
+        .execute(
+            r#"
+            UPDATE schema_collections
+            SET version = ?2, schema_json = ?3
+            WHERE collection = ?1
+            "#,
+            params![collection.name, next_version, next_schema_json],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute(
+            r#"
+            INSERT INTO schema_migrations (
+                collection,
+                from_version,
+                to_version,
+                from_schema_json,
+                to_schema_json
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                collection.name,
+                version,
+                next_version,
+                schema_json,
+                next_schema_json,
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn canonical_schema_json(collection: &CollectionSchemaManifest) -> Result<String, String> {
+    serde_json::to_string(collection).map_err(|error| error.to_string())
+}
+
+fn validate_compatible_schema_change(
+    existing: &CollectionSchemaManifest,
+    next: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    if existing.name != next.name {
+        return Err("schema collection names cannot change".into());
+    }
+    if existing.id_field != next.id_field {
+        return Err(format!(
+            "schema collection `{}` cannot change id field",
+            existing.name
+        ));
+    }
+
+    let next_fields = next
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for existing_field in &existing.fields {
+        let Some(next_field) = next_fields.get(existing_field.name.as_str()) else {
+            return Err(format!(
+                "schema field `{}.{}` cannot be removed",
+                existing.name, existing_field.name
+            ));
+        };
+        validate_compatible_field(existing, existing_field, next_field)?;
+    }
+
+    Ok(())
+}
+
+fn validate_compatible_field(
+    collection: &CollectionSchemaManifest,
+    existing: &FieldSchemaManifest,
+    next: &FieldSchemaManifest,
+) -> Result<(), String> {
+    if existing.dart_type != next.dart_type {
+        return Err(format!(
+            "schema field `{}.{}` cannot change type from `{}` to `{}`",
+            collection.name, existing.name, existing.dart_type, next.dart_type
+        ));
+    }
+    if existing.is_id != next.is_id {
+        return Err(format!(
+            "schema field `{}.{}` cannot change id status",
+            collection.name, existing.name
+        ));
+    }
+    if existing.is_indexed != next.is_indexed {
+        return Err(format!(
+            "schema field `{}.{}` cannot change index status without an explicit migration",
+            collection.name, existing.name
+        ));
+    }
+    Ok(())
 }
 
 fn query_index(
@@ -582,6 +830,84 @@ mod tests {
     }
 
     #[test]
+    fn registers_initial_schema_version() {
+        // Scenario: A generated schema is registered for a new collection.
+        // Covers:
+        // - [StorageEngine::register_schemas] storing schema metadata.
+        // - [StorageEngine::schema_version] reading persisted versions.
+        // Expected: The collection starts at schema version 1.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_initial");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let manifest = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+
+        // Act.
+        storage.register_schemas(&manifest).unwrap();
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn advances_schema_version_for_additive_changes() {
+        // Scenario: A schema adds a new persisted field.
+        // Covers:
+        // - Additive schema compatibility validation.
+        // - Schema version increments after a compatible migration.
+        // Expected: Re-registering the expanded schema advances to version 2.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_additive");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let original = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+        let expanded = schema_manifest(vec![user_schema(vec![
+            field("email", "String", false, true),
+            field("active", "bool?", false, false),
+        ])]);
+
+        // Act.
+        storage.register_schemas(&original).unwrap();
+        storage.register_schemas(&expanded).unwrap();
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(version, Some(2));
+    }
+
+    #[test]
+    fn rejects_incompatible_schema_changes() {
+        // Scenario: A registered field changes its Dart type.
+        // Covers:
+        // - Incompatible schema validation before metadata is updated.
+        // - Existing schema version preservation after rejection.
+        // Expected: The schema update fails and remains at the previous version.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_incompatible");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let original = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+        let incompatible =
+            schema_manifest(vec![user_schema(vec![field("email", "int", false, true)])]);
+
+        // Act.
+        storage.register_schemas(&original).unwrap();
+        let result = storage.register_schemas(&incompatible);
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert!(result.unwrap_err().contains("cannot change type"));
+        assert_eq!(version, Some(1));
+    }
+
+    #[test]
     fn rejects_ids_outside_sqlite_integer_range() {
         // Scenario: A document id exceeds SQLite's signed INTEGER range.
         // Covers:
@@ -766,6 +1092,29 @@ mod tests {
         IndexEntry {
             name: name.to_string(),
             value,
+        }
+    }
+
+    fn schema_manifest(collections: Vec<CollectionSchemaManifest>) -> SchemaManifest {
+        SchemaManifest { collections }
+    }
+
+    fn user_schema(mut fields: Vec<FieldSchemaManifest>) -> CollectionSchemaManifest {
+        fields.push(field("id", "int", true, false));
+        fields.sort_by(|left, right| left.name.cmp(&right.name));
+        CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields,
+        }
+    }
+
+    fn field(name: &str, dart_type: &str, is_id: bool, is_indexed: bool) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.to_string(),
+            dart_type: dart_type.to_string(),
+            is_id,
+            is_indexed,
         }
     }
 

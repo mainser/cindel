@@ -46,6 +46,17 @@ class CindelDatabase {
     if (handle == nullptr) {
       throw StateError('Failed to open Cindel native engine.');
     }
+    try {
+      if (schemasByCollection.isNotEmpty) {
+        bindings.registerSchemas(
+          handle,
+          _encodeSchemaManifest(schemasByCollection.values),
+        );
+      }
+    } catch (_) {
+      bindings.close(handle);
+      rethrow;
+    }
     return CindelDatabase._(
       directory: directory,
       bindings: bindings,
@@ -236,6 +247,16 @@ class CindelDatabase {
       encodedUpper?.bytes,
     );
     return _documentsByIds(collection, ids);
+  }
+
+  /// Returns the persisted schema version for [collection], or `null`.
+  ///
+  /// A schema starts at version `1` when first registered. Compatible additive
+  /// schema changes advance the version during [Cindel.open].
+  Future<int?> schemaVersion(String collection) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    return _bindings.schemaVersion(handle, collection);
   }
 
   Pointer<Void> _checkOpen() {
@@ -464,6 +485,38 @@ Uint8List _encodeIndexEntries(List<_IndexEntry> entries) {
       ]),
     ),
   );
+}
+
+Uint8List _encodeSchemaManifest(
+  Iterable<CindelCollectionSchema<dynamic>> schemas,
+) {
+  final collections = schemas.toList(growable: false)
+    ..sort((left, right) => left.name.compareTo(right.name));
+  return Uint8List.fromList(
+    utf8.encode(
+      jsonEncode({
+        'collections': [for (final schema in collections) _schemaJson(schema)],
+      }),
+    ),
+  );
+}
+
+Map<String, Object> _schemaJson(CindelCollectionSchema<dynamic> schema) {
+  final fields = schema.fields.toList(growable: false)
+    ..sort((left, right) => left.name.compareTo(right.name));
+  return {
+    'name': schema.name,
+    'id_field': schema.idField,
+    'fields': [
+      for (final field in fields)
+        {
+          'name': field.name,
+          'dart_type': field.dartType,
+          'is_id': field.isId,
+          'is_indexed': field.isIndexed,
+        },
+    ],
+  };
 }
 
 Uint8List _encodeIndexValue(Object value, String dartType) {

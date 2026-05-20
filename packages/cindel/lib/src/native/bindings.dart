@@ -39,6 +39,13 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put');
   }
 
+  void registerSchemas(Pointer<Void> handle, Uint8List schemas) {
+    final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
+      return _cindelRegisterSchemas(handle, schemasPointer, schemasLength);
+    });
+    _checkStatus(status, 'register schemas');
+  }
+
   void putIndexed(
     Pointer<Void> handle,
     String collection,
@@ -151,6 +158,30 @@ final class CindelNativeBindings {
     }
   }
 
+  int? schemaVersion(Pointer<Void> handle, String collection) {
+    final outVersion = calloc<Uint64>();
+    try {
+      final status = _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _cindelSchemaVersion(
+          handle,
+          collectionPointer,
+          collectionLength,
+          outVersion,
+        );
+      });
+      if (status == 1) {
+        return null;
+      }
+      _checkStatus(status, 'schema version');
+      return outVersion.value;
+    } finally {
+      calloc.free(outVersion);
+    }
+  }
+
   List<int> queryIndexEqual(
     Pointer<Void> handle,
     String collection,
@@ -256,6 +287,16 @@ external int _cindelPut(
   int bytesLen,
 );
 
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_register_schemas',
+  assetId: _assetId,
+)
+external int _cindelRegisterSchemas(
+  Pointer<Void> handle,
+  Pointer<Uint8> schemas,
+  int schemasLen,
+);
+
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -335,6 +376,17 @@ external int _cindelCollectionRevision(
   Pointer<Uint8> collection,
   int collectionLen,
   Pointer<Uint64> outRevision,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(
+  symbol: 'cindel_schema_version',
+  assetId: _assetId,
+)
+external int _cindelSchemaVersion(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint64> outVersion,
 );
 
 @Native<

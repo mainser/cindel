@@ -1,5 +1,7 @@
 mod sqlite;
 
+use serde::{Deserialize, Serialize};
+
 pub use sqlite::SqliteStorage;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +16,26 @@ pub enum IndexValue {
     Int(i64),
     Double(f64),
     String(String),
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SchemaManifest {
+    pub collections: Vec<CollectionSchemaManifest>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CollectionSchemaManifest {
+    pub name: String,
+    pub id_field: String,
+    pub fields: Vec<FieldSchemaManifest>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FieldSchemaManifest {
+    pub name: String,
+    pub dart_type: String,
+    pub is_id: bool,
+    pub is_indexed: bool,
 }
 
 pub trait StorageEngine {
@@ -42,4 +64,6 @@ pub trait StorageEngine {
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String>;
     fn collection_revision(&self, collection: &str) -> Result<u64, String>;
+    fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
+    fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
 }
