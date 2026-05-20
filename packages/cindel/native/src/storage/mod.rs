@@ -2,9 +2,42 @@ mod sqlite;
 
 pub use sqlite::SqliteStorage;
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexEntry {
+    pub name: String,
+    pub value: IndexValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexValue {
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    String(String),
+}
+
 pub trait StorageEngine {
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
-    fn put(&self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
-    fn delete(&self, collection: &str, id: u64) -> Result<(), String>;
+    fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
+    fn put_indexed(
+        &mut self,
+        collection: &str,
+        id: u64,
+        bytes: &[u8],
+        indexes: &[IndexEntry],
+    ) -> Result<(), String>;
+    fn delete(&mut self, collection: &str, id: u64) -> Result<(), String>;
+    fn query_index_equal(
+        &self,
+        collection: &str,
+        index: &str,
+        value: &IndexValue,
+    ) -> Result<Vec<u64>, String>;
+    fn query_index_range(
+        &self,
+        collection: &str,
+        index: &str,
+        lower: Option<&IndexValue>,
+        upper: Option<&IndexValue>,
+    ) -> Result<Vec<u64>, String>;
 }

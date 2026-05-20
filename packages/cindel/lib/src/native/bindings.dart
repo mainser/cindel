@@ -39,6 +39,36 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put');
   }
 
+  void putIndexed(
+    Pointer<Void> handle,
+    String collection,
+    int id,
+    Uint8List bytes,
+    Uint8List indexes,
+  ) {
+    _checkId(id);
+    final status = _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(bytes, (bytesPointer, bytesLength) {
+        return _withNativeBytes(indexes, (indexesPointer, indexesLength) {
+          return _cindelPutIndexed(
+            handle,
+            collectionPointer,
+            collectionLength,
+            id,
+            bytesPointer,
+            bytesLength,
+            indexesPointer,
+            indexesLength,
+          );
+        });
+      });
+    });
+    _checkStatus(status, 'put indexed');
+  }
+
   Uint8List? get(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
@@ -81,6 +111,71 @@ final class CindelNativeBindings {
       return _cindelDelete(handle, collectionPointer, collectionLength, id);
     });
     _checkStatus(status, 'delete');
+  }
+
+  List<int> queryIndexEqual(
+    Pointer<Void> handle,
+    String collection,
+    String index,
+    Uint8List value,
+  ) {
+    return _queryIndexIds((outPointer, outLength) {
+      return _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
+          return _withNativeBytes(value, (valuePointer, valueLength) {
+            return _cindelQueryIndexEqual(
+              handle,
+              collectionPointer,
+              collectionLength,
+              indexPointer,
+              indexLength,
+              valuePointer,
+              valueLength,
+              outPointer,
+              outLength,
+            );
+          });
+        });
+      });
+    }, 'query index equal');
+  }
+
+  List<int> queryIndexRange(
+    Pointer<Void> handle,
+    String collection,
+    String index,
+    Uint8List? lower,
+    Uint8List? upper,
+  ) {
+    return _queryIndexIds((outPointer, outLength) {
+      return _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
+          return _withNullableNativeBytes(lower, (lowerPointer, lowerLength) {
+            return _withNullableNativeBytes(upper, (upperPointer, upperLength) {
+              return _cindelQueryIndexRange(
+                handle,
+                collectionPointer,
+                collectionLength,
+                indexPointer,
+                indexLength,
+                lowerPointer,
+                lowerLength,
+                upperPointer,
+                upperLength,
+                outPointer,
+                outLength,
+              );
+            });
+          });
+        });
+      });
+    }, 'query index range');
   }
 }
 
@@ -129,6 +224,29 @@ external int _cindelPut(
     Pointer<Uint8>,
     Size,
     Uint64,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+  )
+>(symbol: 'cindel_put_indexed', assetId: _assetId)
+external int _cindelPutIndexed(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  int id,
+  Pointer<Uint8> bytes,
+  int bytesLen,
+  Pointer<Uint8> indexes,
+  int indexesLen,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Uint64,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
@@ -151,6 +269,60 @@ external int _cindelDelete(
   Pointer<Uint8> collection,
   int collectionLen,
   int id,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_index_equal', assetId: _assetId)
+external int _cindelQueryIndexEqual(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> index,
+  int indexLen,
+  Pointer<Uint8> value,
+  int valueLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_index_range', assetId: _assetId)
+external int _cindelQueryIndexRange(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> index,
+  int indexLen,
+  Pointer<Uint8> lower,
+  int lowerLen,
+  Pointer<Uint8> upper,
+  int upperLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
 );
 
 @Native<Void Function(Pointer<Uint8>, Size)>(
@@ -176,6 +348,43 @@ T _withNativeBytes<T>(
     return action(pointer, bytes.length);
   } finally {
     calloc.free(pointer);
+  }
+}
+
+T _withNullableNativeBytes<T>(
+  Uint8List? bytes,
+  T Function(Pointer<Uint8> pointer, int length) action,
+) {
+  if (bytes == null) {
+    return action(nullptr, 0);
+  }
+  return _withNativeBytes(bytes, action);
+}
+
+List<int> _queryIndexIds(
+  int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
+  action,
+  String operation,
+) {
+  final outPointer = calloc<Pointer<Uint8>>();
+  final outLength = calloc<Size>();
+  try {
+    final status = action(outPointer, outLength);
+    _checkStatus(status, operation);
+
+    final pointer = outPointer.value;
+    final length = outLength.value;
+    final bytes = Uint8List.fromList(pointer.asTypedList(length));
+    _cindelFreeBuffer(pointer, length);
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! List) {
+      throw StateError('Native Cindel returned invalid index query ids.');
+    }
+    return decoded.cast<int>();
+  } finally {
+    calloc
+      ..free(outPointer)
+      ..free(outLength);
   }
 }
 

@@ -1,4 +1,4 @@
-use crate::storage::{SqliteStorage, StorageEngine};
+use crate::storage::{IndexEntry, IndexValue, SqliteStorage, StorageEngine};
 
 pub struct CindelEngine {
     storage: SqliteStorage,
@@ -15,11 +15,41 @@ impl CindelEngine {
         self.storage.get(collection, id)
     }
 
-    pub fn put(&self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
+    pub fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.storage.put(collection, id, bytes)
     }
 
-    pub fn delete(&self, collection: &str, id: u64) -> Result<(), String> {
+    pub fn put_indexed(
+        &mut self,
+        collection: &str,
+        id: u64,
+        bytes: &[u8],
+        indexes: &[IndexEntry],
+    ) -> Result<(), String> {
+        self.storage.put_indexed(collection, id, bytes, indexes)
+    }
+
+    pub fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
         self.storage.delete(collection, id)
+    }
+
+    pub fn query_index_equal(
+        &self,
+        collection: &str,
+        index: &str,
+        value: &IndexValue,
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_index_equal(collection, index, value)
+    }
+
+    pub fn query_index_range(
+        &self,
+        collection: &str,
+        index: &str,
+        lower: Option<&IndexValue>,
+        upper: Option<&IndexValue>,
+    ) -> Result<Vec<u64>, String> {
+        self.storage
+            .query_index_range(collection, index, lower, upper)
     }
 }
