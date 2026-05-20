@@ -199,27 +199,39 @@ See `CONTRIBUTING.md` for contribution guidelines.
 
 ## Roadmap
 
-The public roadmap lives in `ROADMAP.md`. The detailed original planning notes
-live in `ROADMAP.md`.
+The full public roadmap lives in `ROADMAP.md`.
 
-Completed MVP phases:
+Validated so far:
 
-- Dart to Rust FFI bootstrap.
-- SQLite storage.
-- Manual Dart database API.
-- Schema generation.
-- Simple indexes and queries.
-- Watchers and streams.
-- Schema versioning and compatibility validation.
-- Backend benchmark baseline.
+- [x] Monorepo scaffold with Dart workspace packages.
+- [x] Dart to Rust FFI bootstrap.
+- [x] Rust native core compilation on Windows.
+- [x] SQLite storage backend through `rusqlite`.
+- [x] Document persistence by collection and id.
+- [x] Manual Dart API with `put`, `get`, and `delete`.
+- [x] Generated collection schemas and serializers.
+- [x] Simple indexes generated from schema metadata.
+- [x] Equality queries over indexed fields.
+- [x] Inclusive range queries over indexed fields.
+- [x] Document and collection watchers with Dart streams.
+- [x] Native collection revision counters after committed writes.
+- [x] Schema metadata registration and version persistence.
+- [x] Compatible additive schema migrations.
+- [x] Rejection of incompatible schema changes.
+- [x] Internal Rust benchmark baseline for SQLite.
+- [x] Apache-2.0 license, contribution guide, and package-style README.
 
 Next areas:
 
-- Typed collection APIs and query builders.
-- Explicit migration callbacks.
-- `libmdbx` prototype behind the existing storage trait.
-- Example Flutter application.
-- Public package publishing polish.
+- [ ] Typed collection APIs and query builders.
+- [ ] Transaction API.
+- [ ] Auto-increment id support.
+- [ ] Query watchers.
+- [ ] Explicit migration callbacks.
+- [ ] Better native error reporting.
+- [ ] `libmdbx` prototype behind the existing storage trait.
+- [ ] Example Flutter application.
+- [ ] Public package publishing polish.
 
 ## License
 

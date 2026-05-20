@@ -4,7 +4,7 @@ Thank you for taking the time to improve Cindel.
 
 Cindel is an experimental Flutter-first local database library. The project is
 in early MVP development, so the best contributions are small, well-tested, and
-aligned with the roadmap in `ROADMAP.md`.
+aligned with `ROADMAP.md`.
 
 ## Project Status
 

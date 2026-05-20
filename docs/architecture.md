@@ -1,6 +1,6 @@
 # Cindel Architecture Notes
 
-See `ROADMAP.md` for the detailed starting guide.
+See `ROADMAP.md` for the current project direction.
 
 Short version:
 

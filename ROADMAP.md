@@ -4,7 +4,7 @@ Cindel is an experimental Flutter-first local database library with a Dart API,
 generated schemas, a Rust native core, and a narrow FFI bridge.
 
 This roadmap tracks what has been validated so far and the next areas to build
-or explore. The detailed original planning notes live in `ROADMAP.md`.
+or explore.
 
 ## Validated
 
