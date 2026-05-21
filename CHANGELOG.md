@@ -5,6 +5,16 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.12 - 2026-05-21
+
+- Added `fireImmediately` to document, collection, object, and query watchers.
+- Added document, collection, object, and query lazy watchers.
+- Added typed `CindelQuery.watch` and `CindelQuery.watchLazy`.
+- Suppressed watcher emissions when the visible document, collection, or query
+  result has not changed.
+- Added Dart watcher tests for lazy streams, delayed initial emission, and
+  query watchers that ignore writes outside the visible query result.
+
 ## 0.1.11 - 2026-05-21
 
 - Added `@Embedded` for generated nested value-object persistence.

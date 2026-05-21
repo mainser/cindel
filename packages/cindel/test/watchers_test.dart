@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'schema_generation_fixture.dart';
+
 void main() {
   group('Cindel watchers', () {
     // Scenario: A document watcher observes a missing document, an insert, and a delete.
@@ -108,7 +110,142 @@ void main() {
       // Assert.
       expect(createWatcher, throwsArgumentError);
     });
+
+    // Scenario: A watcher is configured not to emit its initial snapshot.
+    // Covers:
+    // - fireImmediately: false on document watchers.
+    // - Later local changes still notifying the watcher.
+    // Expected: The stream stays quiet until the document changes.
+    test('supports fireImmediately false.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory();
+      addTearDown(database.close);
+      final events = <CindelDocument?>[];
+      final subscription = database
+          .watchDocument(
+            'users',
+            1,
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen(events.add);
+      addTearDown(subscription.cancel);
+
+      // Act.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await database.put('users', 1, {'name': 'Ana'});
+      await _waitUntil(() => events.length == 1);
+
+      // Assert.
+      expect(events, [
+        {'name': 'Ana'},
+      ]);
+    });
+
+    // Scenario: Lazy watchers notify without returning document or collection data.
+    // Covers:
+    // - [CindelDatabase.watchDocumentLazy].
+    // - [CindelDatabase.watchCollectionLazy].
+    // - [CindelTypedCollection.watchObjectLazy].
+    // Expected: Lazy streams emit void events after matching changes.
+    test('supports object and collection lazy watchers.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      var documentEvents = 0;
+      var collectionEvents = 0;
+      var typedObjectEvents = 0;
+      final documentSubscription = database
+          .watchDocumentLazy(
+            'users',
+            1,
+            pollInterval: const Duration(milliseconds: 5),
+          )
+          .listen((_) => documentEvents += 1);
+      final collectionSubscription = database
+          .watchCollectionLazy(
+            'users',
+            pollInterval: const Duration(milliseconds: 5),
+          )
+          .listen((_) => collectionEvents += 1);
+      final typedObjectSubscription = database.users
+          .watchObjectLazy(1, pollInterval: const Duration(milliseconds: 5))
+          .listen((_) => typedObjectEvents += 1);
+      addTearDown(documentSubscription.cancel);
+      addTearDown(collectionSubscription.cancel);
+      addTearDown(typedObjectSubscription.cancel);
+
+      // Act.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await database.put('users', 1, {'name': 'Ana'});
+      await _waitUntil(
+        () =>
+            documentEvents == 1 &&
+            collectionEvents == 1 &&
+            typedObjectEvents == 1,
+      );
+
+      // Assert.
+      expect(documentEvents, 1);
+      expect(collectionEvents, 1);
+      expect(typedObjectEvents, 1);
+    });
+
+    // Scenario: A typed query watcher observes only its visible result.
+    // Covers:
+    // - [CindelQuery.watch] initial query snapshot.
+    // - Query result comparison after unrelated collection changes.
+    // - [CindelQuery.watchLazy] emitting only when the visible query changes.
+    // Expected: Writes outside the query do not emit; matching writes do emit.
+    test(
+      'emits query watcher events only when visible results change.',
+      () async {
+        // Arrange.
+        final database = await Cindel.openInMemory(schemas: [UserSchema]);
+        addTearDown(database.close);
+        await database.users.put(_user(1, 'Ana', true));
+
+        final queryEvents = <List<String>>[];
+        var lazyEvents = 0;
+        final query = database.users.filter().activeEqualTo(true).sortByName();
+        final subscription = query
+            .watch(pollInterval: const Duration(milliseconds: 5))
+            .listen((users) {
+              final names = users.map((user) => user.name).toList();
+              queryEvents.add(names);
+            });
+        final lazySubscription = query
+            .watchLazy(pollInterval: const Duration(milliseconds: 5))
+            .listen((_) {
+              lazyEvents += 1;
+            });
+        addTearDown(subscription.cancel);
+        addTearDown(lazySubscription.cancel);
+
+        // Act.
+        await _waitUntil(() => queryEvents.length == 1);
+        await database.users.put(_user(2, 'Ben', false));
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        await database.users.put(_user(3, 'Cid', true));
+        await _waitUntil(() => queryEvents.length == 2 && lazyEvents == 1);
+
+        // Assert.
+        expect(queryEvents, [
+          ['Ana'],
+          ['Ana', 'Cid'],
+        ]);
+        expect(lazyEvents, 1);
+      },
+    );
   });
+}
+
+User _user(int id, String name, bool active) {
+  return User()
+    ..id = id
+    ..name = name
+    ..email = '$name@example.com'.toLowerCase()
+    ..active = active;
 }
 
 Future<void> _waitUntil(

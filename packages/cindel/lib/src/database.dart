@@ -299,6 +299,7 @@ class CindelDatabase {
     String collection,
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
   }) {
     _checkOpen();
     _checkCollection(collection);
@@ -308,8 +309,28 @@ class CindelDatabase {
     return _watch(
       collection,
       pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
       readSnapshot: () => get(collection, id),
+      areSnapshotsEqual: _jsonLikeEquals,
     );
+  }
+
+  /// Watches a document and emits without loading it for consumers.
+  ///
+  /// The stream emits after the visible document value changes. Set
+  /// [fireImmediately] to `true` to emit once when the listener starts.
+  Stream<void> watchDocumentLazy(
+    String collection,
+    int id, {
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = false,
+  }) {
+    return watchDocument(
+      collection,
+      id,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
   }
 
   /// Watches all documents in [collection] and emits after committed changes.
@@ -319,6 +340,7 @@ class CindelDatabase {
   Stream<List<CindelDocument>> watchCollection(
     String collection, {
     Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
   }) {
     _checkOpen();
     _checkCollection(collection);
@@ -327,12 +349,30 @@ class CindelDatabase {
     return _watch(
       collection,
       pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
       readSnapshot: () async {
         final handle = _checkOpen();
         final ids = _bindings.documentIds(handle, collection);
         return _documentsByIds(collection, ids);
       },
+      areSnapshotsEqual: _jsonLikeEquals,
     );
+  }
+
+  /// Watches a collection and emits without returning collection snapshots.
+  ///
+  /// The stream emits after the visible collection snapshot changes. Set
+  /// [fireImmediately] to `true` to emit once when the listener starts.
+  Stream<void> watchCollectionLazy(
+    String collection, {
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = false,
+  }) {
+    return watchCollection(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
   }
 
   /// Returns documents whose indexed [field] equals [value].
@@ -657,11 +697,14 @@ class CindelDatabase {
   Stream<T> _watch<T>(
     String collection, {
     required Duration pollInterval,
+    required bool fireImmediately,
     required Future<T> Function() readSnapshot,
+    bool Function(T left, T right)? areSnapshotsEqual,
   }) {
     late final _CindelWatcher<T> watcher;
     watcher = _CindelWatcher<T>(
       pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
       shouldPoll: () => _activeTransaction == null,
       readRevision: () {
         final handle = _handle;
@@ -671,6 +714,7 @@ class CindelDatabase {
         return _bindings.collectionRevision(handle, collection);
       },
       readSnapshot: readSnapshot,
+      areSnapshotsEqual: areSnapshotsEqual,
       onListen: () => _registerWatcher(collection, watcher),
       onCancel: () => _unregisterWatcher(collection, watcher),
     );
@@ -1051,6 +1095,10 @@ int? _durationMicros(Object? value) {
 
 String _stableJson(Object value) => jsonEncode(value);
 
+bool _jsonLikeEquals(Object? left, Object? right) {
+  return jsonEncode(left) == jsonEncode(right);
+}
+
 int _stableHash(String value) {
   const offsetBasis = 0xcbf29ce484222325;
   const prime = 0x100000001b3;
@@ -1136,21 +1184,29 @@ abstract interface class _RegisteredWatcher {
 final class _CindelWatcher<T> implements _RegisteredWatcher {
   _CindelWatcher({
     required Duration pollInterval,
+    required bool fireImmediately,
     required bool Function() shouldPoll,
     required int Function() readRevision,
     required Future<T> Function() readSnapshot,
+    required bool Function(T left, T right)? areSnapshotsEqual,
     required void Function() onListen,
     required void Function() onCancel,
   }) : _pollInterval = pollInterval,
+       _fireImmediately = fireImmediately,
        _shouldPoll = shouldPoll,
        _readRevision = readRevision,
        _readSnapshot = readSnapshot,
+       _areSnapshotsEqual = areSnapshotsEqual,
        _onListen = onListen,
        _onCancel = onCancel {
     _controller = StreamController<T>(
       onListen: () {
         _onListen();
-        unawaited(poll(force: true));
+        if (_fireImmediately) {
+          unawaited(poll(force: true));
+        } else {
+          unawaited(_prime());
+        }
         _timer = Timer.periodic(_pollInterval, (_) => unawaited(poll()));
       },
       onCancel: () {
@@ -1161,18 +1217,40 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   }
 
   final Duration _pollInterval;
+  final bool _fireImmediately;
   final bool Function() _shouldPoll;
   final int Function() _readRevision;
   final Future<T> Function() _readSnapshot;
+  final bool Function(T left, T right)? _areSnapshotsEqual;
   final void Function() _onListen;
   final void Function() _onCancel;
 
   late final StreamController<T> _controller;
   Timer? _timer;
   int? _lastRevision;
+  bool _hasLastSnapshot = false;
+  T? _lastSnapshot;
   bool _isPolling = false;
 
   Stream<T> get stream => _controller.stream;
+
+  Future<void> _prime() async {
+    if (_isPolling || _controller.isClosed) {
+      return;
+    }
+    _isPolling = true;
+    try {
+      _lastRevision = _readRevision();
+      _lastSnapshot = await _readSnapshot();
+      _hasLastSnapshot = true;
+    } catch (error, stackTrace) {
+      if (!_controller.isClosed) {
+        _controller.addError(error, stackTrace);
+      }
+    } finally {
+      _isPolling = false;
+    }
+  }
 
   Future<void> poll({bool force = false}) async {
     if (_isPolling || _controller.isClosed) {
@@ -1189,6 +1267,16 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
       }
       _lastRevision = revision;
       final snapshot = await _readSnapshot();
+      final areSnapshotsEqual = _areSnapshotsEqual;
+      if (!force && _hasLastSnapshot && areSnapshotsEqual != null) {
+        final lastSnapshot = _lastSnapshot as T;
+        if (areSnapshotsEqual(lastSnapshot, snapshot)) {
+          _lastSnapshot = snapshot;
+          return;
+        }
+      }
+      _lastSnapshot = snapshot;
+      _hasLastSnapshot = true;
       if (!_controller.isClosed) {
         _controller.add(snapshot);
       }

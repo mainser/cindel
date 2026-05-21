@@ -107,21 +107,58 @@ final class CindelTypedCollection<T> {
   Stream<T?> watchObject(
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
   }) {
     return database
-        .watchDocument(schema.name, id, pollInterval: pollInterval)
+        .watchDocument(
+          schema.name,
+          id,
+          pollInterval: pollInterval,
+          fireImmediately: fireImmediately,
+        )
         .map(
           (document) => document == null ? null : schema.fromDocument(document),
         );
   }
 
+  /// Watches one object and emits without returning the object value.
+  Stream<void> watchObjectLazy(
+    int id, {
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = false,
+  }) {
+    return database.watchDocumentLazy(
+      schema.name,
+      id,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    );
+  }
+
   /// Watches the entire typed collection.
   Stream<List<T>> watchCollection({
     Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
   }) {
     return database
-        .watchCollection(schema.name, pollInterval: pollInterval)
+        .watchCollection(
+          schema.name,
+          pollInterval: pollInterval,
+          fireImmediately: fireImmediately,
+        )
         .map(_objectsFromDocuments);
+  }
+
+  /// Watches the entire typed collection and emits without returning objects.
+  Stream<void> watchCollectionLazy({
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = false,
+  }) {
+    return database.watchCollectionLazy(
+      schema.name,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    );
   }
 
   List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {

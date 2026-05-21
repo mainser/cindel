@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'database.dart';
@@ -412,6 +415,31 @@ final class CindelQuery<T> {
     return documents.map(_schema.fromDocument).toList(growable: false);
   }
 
+  /// Watches this query and emits typed results when the visible result changes.
+  Stream<List<T>> watch({
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
+  }) {
+    return _watchMatchingDocuments(
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map(
+      (documents) =>
+          documents.map(_schema.fromDocument).toList(growable: false),
+    );
+  }
+
+  /// Watches this query and emits without returning the matching objects.
+  Stream<void> watchLazy({
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = false,
+  }) {
+    return _watchMatchingDocuments(
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
+  }
+
   /// Returns the first object matching this query, or `null`.
   Future<T?> findFirst() async {
     final objects = await findAll();
@@ -479,6 +507,78 @@ final class CindelQuery<T> {
       matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
     }
     return matchingDocuments;
+  }
+
+  Stream<List<CindelDocument>> _watchMatchingDocuments({
+    required Duration pollInterval,
+    required bool fireImmediately,
+  }) {
+    late final StreamController<List<CindelDocument>> controller;
+    StreamSubscription<void>? subscription;
+    var hasSnapshot = false;
+    String? previousKey;
+    var isReading = false;
+    var needsRead = false;
+
+    Future<void> readAndMaybeEmit() async {
+      if (isReading) {
+        needsRead = true;
+        return;
+      }
+      isReading = true;
+      try {
+        do {
+          needsRead = false;
+          final documents = await _matchingDocuments();
+          if (controller.isClosed) {
+            return;
+          }
+          final nextKey = _snapshotKey(documents);
+
+          if (!hasSnapshot) {
+            hasSnapshot = true;
+            previousKey = nextKey;
+            if (fireImmediately) {
+              controller.add(documents);
+            }
+            continue;
+          }
+
+          if (nextKey == previousKey) {
+            continue;
+          }
+          previousKey = nextKey;
+          controller.add(documents);
+        } while (needsRead && !controller.isClosed);
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        isReading = false;
+      }
+    }
+
+    controller = StreamController<List<CindelDocument>>(
+      onListen: () {
+        subscription = _database
+            .watchCollectionLazy(
+              _schema.name,
+              pollInterval: pollInterval,
+              fireImmediately: true,
+            )
+            .listen(
+              (_) => unawaited(readAndMaybeEmit()),
+              onError: controller.addError,
+              onDone: controller.close,
+            );
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   CindelQuery<T> _copyWith({
@@ -670,6 +770,10 @@ String _distinctKey(CindelDocument document, List<String> fields) {
   return fields
       .map((field) => '${document[field].runtimeType}:${document[field]}')
       .join('\u0001');
+}
+
+String _snapshotKey(List<CindelDocument> documents) {
+  return jsonEncode(documents);
 }
 
 List<CindelDocument> _windowDocuments(

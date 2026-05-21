@@ -216,18 +216,18 @@ feature at once.
 
 ## Watchers and Reactivity
 
-- [ ] Query watchers.
+- [x] Query watchers.
   - Watch an indexed query result.
   - Emit only when the query result changes.
-- [ ] Lazy watchers.
+- [x] Lazy watchers.
   - Object lazy watcher.
   - Collection lazy watcher.
   - Query lazy watcher.
-- [ ] `fireImmediately` option for all watcher types.
-- [ ] Typed object watchers.
+- [x] `fireImmediately` option for all watcher types.
+- [x] Typed object watchers.
   - Watch one generated object by id.
   - Emit `null` when deleted.
-- [ ] Watcher efficiency.
+- [x] Watcher efficiency.
   - Revision-based collection invalidation.
   - Query result comparison.
   - Tests for unchanged query results.
@@ -338,9 +338,10 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is query watchers. Cindel now has the first
-complete typed query pipeline plus index variants, word-token indexes, expanded
-generated serialization, and embedded value-object persistence.
+The next implementation milestone is explicit migration callbacks. Cindel now
+has the first complete typed query pipeline plus index variants, word-token
+indexes, expanded generated serialization, embedded value-object persistence,
+and query/lazy watchers.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

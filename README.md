@@ -42,7 +42,8 @@ The API is still experimental and can change before a public release.
 - Generated filter builders for non-indexed predicates.
 - Sorting, pagination, distinct, and primitive property projections.
 - Explicit read and write transactions.
-- Document and collection watchers with Dart streams.
+- Document, collection, object, and query watchers with Dart streams.
+- Lazy watchers and `fireImmediately` control for reactive UI flows.
 - In-memory databases for tests and short-lived work.
 - Schema version registration and compatible additive migrations.
 - Prebuilt native library package for Flutter consumers.
@@ -435,7 +436,9 @@ final documents = await db.queryEqual('users', 'email', 'noel@example.com');
 Cindel can watch a single document:
 
 ```dart
-final subscription = db.watchDocument('users', 1).listen((document) {
+final subscription = db
+    .watchDocument('users', 1, fireImmediately: true)
+    .listen((document) {
   // Update UI state.
 });
 ```
@@ -448,7 +451,51 @@ final subscription = db.watchCollection('users').listen((documents) {
 });
 ```
 
-Watchers emit an initial snapshot and then emit again after committed changes.
+Generated typed collections can also watch one object, whole collections, or
+queries:
+
+```dart
+final objectSub = db.users.watchObject(user.id).listen((user) {
+  // user is null when the object has been deleted.
+});
+
+final querySub = db.users
+    .filter()
+    .activeEqualTo(true)
+    .sortByName()
+    .watch()
+    .listen((activeUsers) {
+      // Emits only when the visible query result changes.
+    });
+```
+
+All watcher families support `fireImmediately`. Set it to `false` when the UI
+only needs future changes:
+
+```dart
+final subscription = db.users.watchCollection(
+  fireImmediately: false,
+).listen((users) {
+  // Runs after the next visible collection change.
+});
+```
+
+Lazy watchers emit `void` when something visible changes without returning the
+full snapshot:
+
+```dart
+final subscription = db.users
+    .filter()
+    .activeEqualTo(true)
+    .watchLazy()
+    .listen((_) {
+      // Refresh or invalidate cached state.
+    });
+```
+
+Watchers emit an initial snapshot by default and then emit again after
+committed changes. Document, collection, and query watchers compare visible
+snapshots, so unchanged visible data is suppressed.
 
 ## Schema Versions and Migrations
 
@@ -556,7 +603,8 @@ Validated so far:
 - [x] Schema type expansion for dates, durations, primitive lists, enums,
   nullable fields, and ignored fields.
 - [x] Embedded objects and embedded object lists.
-- [x] Document and collection watchers with Dart streams.
+- [x] Document, collection, object, and query watchers with Dart streams.
+- [x] Lazy watchers and `fireImmediately` control.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
 - [x] In-memory database support for tests and short-lived work.
@@ -578,7 +626,7 @@ Next areas:
 - [x] Index variants.
 - [x] Full-text search primitives.
 - [x] Embedded objects.
-- [ ] Query watchers.
+- [x] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.
 - [ ] `libmdbx` prototype behind the existing storage trait.
