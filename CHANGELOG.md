@@ -5,6 +5,19 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.2 - 2026-05-21
+
+- Added native per-collection auto-increment id allocation.
+- Persisted native id counters across reopened databases.
+- Advanced native id counters after manual `put` calls to avoid collisions.
+- Exposed id allocation through Dart FFI and `CindelDatabase.allocateId`.
+- Updated generated typed collection writes to replace `autoIncrement` with a
+  native id before persistence.
+- Updated `cindel_todo` so new todos use native auto-increment ids instead of
+  timestamp-manufactured ids.
+- Expanded Rust, Dart, and Todo tests for monotonic allocated ids, reopened
+  databases, generated id setters, and in-memory typed writes.
+
 ## 0.1.1 - 2026-05-21
 
 - Added `Cindel.openInMemory` for tests and short-lived databases.

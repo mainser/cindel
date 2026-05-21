@@ -119,7 +119,7 @@ packages:
       path: "../../packages/cindel"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.1.2"
   cindel_annotations:
     dependency: transitive
     description:
@@ -133,14 +133,14 @@ packages:
       path: "../../packages/cindel_flutter_libs"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.1.2"
   cindel_generator:
     dependency: "direct dev"
     description:
       path: "../../packages/cindel_generator"
       relative: true
     source: path
-    version: "0.1.0"
+    version: "0.1.1"
   cli_config:
     dependency: transitive
     description:

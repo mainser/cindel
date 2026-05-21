@@ -141,6 +141,52 @@ void main() {
       expect(storedSettings, {'theme': 'dark'});
     });
 
+    // Scenario: Native ids are allocated and the database is reopened.
+    // Covers:
+    // - [CindelDatabase.allocateId] FFI path.
+    // - Persisted per-collection id counters.
+    // Expected: The reopened database continues from the previous next id.
+    test('allocates persistent native ids by collection.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final firstDatabase = await Cindel.open(directory: directory.path);
+
+      // Act.
+      final firstUserId = await firstDatabase.allocateId('users');
+      final secondUserId = await firstDatabase.allocateId('users');
+      final firstSettingsId = await firstDatabase.allocateId('settings');
+      await firstDatabase.close();
+
+      final secondDatabase = await Cindel.open(directory: directory.path);
+      addTearDown(secondDatabase.close);
+      final reopenedUserId = await secondDatabase.allocateId('users');
+
+      // Assert.
+      expect(firstUserId, 1);
+      expect(secondUserId, 2);
+      expect(firstSettingsId, 1);
+      expect(reopenedUserId, 3);
+    });
+
+    // Scenario: A manual id is stored before native allocation.
+    // Covers:
+    // - [CindelDatabase.put] advancing native id counters.
+    // - Collision avoidance for later auto-increment writes.
+    // Expected: The allocated id is greater than the manual id.
+    test('advances allocated ids after manual put.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory();
+      addTearDown(database.close);
+
+      // Act.
+      await database.put('users', 10, {'name': 'Ana'});
+      final allocatedId = await database.allocateId('users');
+
+      // Assert.
+      expect(allocatedId, 11);
+    });
+
     // Scenario: A database is opened in memory for a short-lived test.
     // Covers:
     // - [Cindel.openInMemory] routing to SQLite in-memory storage.
@@ -199,10 +245,12 @@ void main() {
       // Act.
       final putAfterClose = database.put('users', 1, {'name': 'Noel'});
       final deleteAfterClose = database.delete('users', 1);
+      final allocateIdAfterClose = database.allocateId('users');
 
       // Assert.
       await expectLater(putAfterClose, throwsA(isA<StateError>()));
       await expectLater(deleteAfterClose, throwsA(isA<StateError>()));
+      await expectLater(allocateIdAfterClose, throwsA(isA<StateError>()));
     });
 
     // Scenario: Invalid database, collection, and id inputs are provided.
@@ -221,12 +269,17 @@ void main() {
       // Act.
       final openWithEmptyDirectory = Cindel.open(directory: ' ');
       final putWithEmptyCollection = database.put(' ', 1, {'name': 'Noel'});
+      final allocateIdWithEmptyCollection = database.allocateId(' ');
       final getWithNegativeId = database.get('users', -1);
       final deleteWithTooLargeId = database.delete('users', 0x8000000000000000);
 
       // Assert.
       await expectLater(openWithEmptyDirectory, throwsA(isA<ArgumentError>()));
       await expectLater(putWithEmptyCollection, throwsA(isA<ArgumentError>()));
+      await expectLater(
+        allocateIdWithEmptyCollection,
+        throwsA(isA<ArgumentError>()),
+      );
       await expectLater(getWithNegativeId, throwsA(isA<ArgumentError>()));
       await expectLater(deleteWithTooLargeId, throwsA(isA<ArgumentError>()));
     });

@@ -19,6 +19,10 @@ impl CindelEngine {
         self.storage.document_ids(collection)
     }
 
+    pub fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        self.storage.allocate_id(collection)
+    }
+
     pub fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.storage.put(collection, id, bytes)
     }

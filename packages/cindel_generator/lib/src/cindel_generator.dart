@@ -67,6 +67,7 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  ],')
     ..writeln('  toDocument: _\$${collection.dartName}ToCindelDocument,')
     ..writeln('  fromDocument: _\$${collection.dartName}FromCindelDocument,')
+    ..writeln('  setId: _\$${collection.dartName}SetCindelId,')
     ..writeln(');')
     ..writeln()
     ..writeln(
@@ -110,6 +111,13 @@ String _emitCollection(_CollectionInfo collection) {
 
   buffer
     ..writeln('  return object;')
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      'void _\$${collection.dartName}SetCindelId('
+      '${collection.dartName} object, int id) {',
+    )
+    ..writeln('  object.${collection.idField.name} = id;')
     ..writeln('}');
 
   return buffer.toString();

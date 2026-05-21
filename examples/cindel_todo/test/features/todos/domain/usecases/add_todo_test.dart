@@ -1,3 +1,4 @@
+import 'package:cindel/cindel.dart';
 import 'package:cindel_todo/features/todos/domain/entities/todo.dart';
 import 'package:cindel_todo/features/todos/domain/failures/todo_failure.dart';
 import 'package:cindel_todo/features/todos/domain/repositories/todo_repository.dart';
@@ -21,6 +22,7 @@ void main() {
 
       // Assert.
       expect(repository.savedTodos, hasLength(1));
+      expect(repository.savedTodos.single.id, autoIncrement);
       expect(repository.savedTodos.single.title, 'Ship the example');
       expect(repository.savedTodos.single.completed, isFalse);
     });

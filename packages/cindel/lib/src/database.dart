@@ -126,6 +126,16 @@ class CindelDatabase {
     _notifyWatchers(collection);
   }
 
+  /// Allocates the next native auto-increment id for [collection].
+  ///
+  /// The returned id is persisted by the native engine before this method
+  /// completes, so reopened databases continue from the next value.
+  Future<int> allocateId(String collection) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    return _bindings.allocateId(handle, collection);
+  }
+
   /// Returns the document stored in [collection] under [id], or `null`.
   ///
   /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a

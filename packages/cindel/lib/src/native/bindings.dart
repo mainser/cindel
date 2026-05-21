@@ -42,6 +42,27 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put');
   }
 
+  int allocateId(Pointer<Void> handle, String collection) {
+    final outId = calloc<Uint64>();
+    try {
+      final status = _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _functions.allocateId(
+          handle,
+          collectionPointer,
+          collectionLength,
+          outId,
+        );
+      });
+      _checkStatus(status, 'allocate id');
+      return outId.value;
+    } finally {
+      calloc.free(outId);
+    }
+  }
+
   void registerSchemas(Pointer<Void> handle, Uint8List schemas) {
     final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
       return _functions.registerSchemas(handle, schemasPointer, schemasLength);
@@ -284,6 +305,9 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
   get put;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get allocateId;
+
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
 
   int Function(
@@ -391,6 +415,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_put'),
+      allocateId = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint64>,
+            ),
+            int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+          >('cindel_allocate_id'),
       registerSchemas = library
           .lookupFunction<
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
@@ -561,6 +595,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   put;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  allocateId;
+
+  @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;
 
   @override
@@ -658,6 +696,10 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
   get put => _cindelPut;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get allocateId => _cindelAllocateId;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas =>
@@ -846,6 +888,17 @@ external int _cindelPut(
   int id,
   Pointer<Uint8> bytes,
   int bytesLen,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(
+  symbol: 'cindel_allocate_id',
+  assetId: _assetId,
+)
+external int _cindelAllocateId(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint64> outId,
 );
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(

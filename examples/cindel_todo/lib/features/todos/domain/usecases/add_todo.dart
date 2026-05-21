@@ -1,3 +1,5 @@
+import 'package:cindel/cindel.dart';
+
 import '../entities/todo.dart';
 import '../failures/todo_failure.dart';
 import '../repositories/todo_repository.dart';
@@ -15,12 +17,7 @@ final class AddTodo {
 
     final now = DateTime.now();
     return _repository.save(
-      Todo(
-        id: now.microsecondsSinceEpoch,
-        title: title,
-        completed: false,
-        createdAt: now,
-      ),
+      Todo(id: autoIncrement, title: title, completed: false, createdAt: now),
     );
   }
 }

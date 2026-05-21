@@ -59,5 +59,23 @@ void main() {
       expect(restored.email, 'demo@example.com');
       expect(restored.active, isTrue);
     });
+
+    // Scenario: A generated schema assigns an auto-increment id.
+    // Covers:
+    // - Generated setId function.
+    // - Schema metadata used by typed auto-increment writes.
+    // Expected: The generated setter mutates the id field on the typed object.
+    test('generates an id setter for auto-increment writes.', () {
+      // Arrange.
+      final user = User()
+        ..name = 'Noel'
+        ..email = 'demo@example.com';
+
+      // Act.
+      UserSchema.setId!(user, 42);
+
+      // Assert.
+      expect(user.id, 42);
+    });
   });
 }

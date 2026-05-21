@@ -4,6 +4,9 @@ typedef CindelToDocument<T> = Map<String, Object?> Function(T object);
 /// Converts a Cindel document into a typed object.
 typedef CindelFromDocument<T> = T Function(Map<String, Object?> document);
 
+/// Assigns a generated id to a typed object before it is persisted.
+typedef CindelSetId<T> = void Function(T object, int id);
+
 /// Generated metadata for a Cindel collection.
 final class CindelCollectionSchema<T> {
   /// Creates generated metadata for a Cindel collection.
@@ -14,6 +17,7 @@ final class CindelCollectionSchema<T> {
     required Iterable<CindelFieldSchema> fields,
     required this.toDocument,
     required this.fromDocument,
+    this.setId,
   }) : fields = List.unmodifiable(fields);
 
   /// The storage collection name.
@@ -33,6 +37,9 @@ final class CindelCollectionSchema<T> {
 
   /// Deserializes Cindel documents into typed objects.
   final CindelFromDocument<T> fromDocument;
+
+  /// Assigns native auto-increment ids to typed objects.
+  final CindelSetId<T>? setId;
 }
 
 /// Generated metadata for a persisted field.

@@ -54,6 +54,11 @@ impl SqliteStorage {
                     revision INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS id_counters (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    next_id INTEGER NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS schema_collections (
                     collection TEXT PRIMARY KEY NOT NULL,
                     version INTEGER NOT NULL,
@@ -89,6 +94,18 @@ impl SqliteStorage {
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 
 impl StorageEngine for SqliteStorage {
+    fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        let id = allocate_id(&transaction, collection)?;
+
+        transaction.commit().map_err(|error| error.to_string())?;
+        u64::try_from(id).map_err(|error| error.to_string())
+    }
+
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
         let id = sqlite_id(id)?;
 
@@ -135,6 +152,7 @@ impl StorageEngine for SqliteStorage {
         put_document(&transaction, collection, id, bytes)?;
         delete_index_entries(&transaction, collection, id)?;
         insert_index_entries(&transaction, collection, id, indexes)?;
+        advance_id_counter(&transaction, collection, id)?;
         bump_collection_revision(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())
@@ -232,6 +250,67 @@ impl StorageEngine for SqliteStorage {
 
 fn sqlite_id(id: u64) -> Result<i64, String> {
     i64::try_from(id).map_err(|_| format!("id {id} exceeds SQLite INTEGER range"))
+}
+
+fn allocate_id(transaction: &Transaction<'_>, collection: &str) -> Result<i64, String> {
+    let existing = transaction
+        .query_row(
+            "SELECT next_id FROM id_counters WHERE collection = ?1",
+            params![collection],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+
+    let Some(next_id) = existing else {
+        transaction
+            .execute(
+                "INSERT INTO id_counters (collection, next_id) VALUES (?1, 2)",
+                params![collection],
+            )
+            .map_err(|error| error.to_string())?;
+        return Ok(1);
+    };
+
+    if next_id < 1 {
+        return Err(format!(
+            "id counter for collection `{collection}` is not positive"
+        ));
+    }
+    let following_id = next_id.checked_add(1).ok_or_else(|| {
+        format!("id counter for collection `{collection}` exceeds SQLite INTEGER range")
+    })?;
+    transaction
+        .execute(
+            "UPDATE id_counters SET next_id = ?2 WHERE collection = ?1",
+            params![collection, following_id],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(next_id)
+}
+
+fn advance_id_counter(
+    transaction: &Transaction<'_>,
+    collection: &str,
+    id: i64,
+) -> Result<(), String> {
+    let next_id = id.checked_add(1).unwrap_or(i64::MAX);
+    transaction
+        .execute(
+            r#"
+            INSERT INTO id_counters (collection, next_id)
+            VALUES (?1, ?2)
+            ON CONFLICT(collection) DO UPDATE SET
+                next_id = CASE
+                    WHEN id_counters.next_id < excluded.next_id
+                    THEN excluded.next_id
+                    ELSE id_counters.next_id
+                END
+            "#,
+            params![collection, next_id],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn put_document(
@@ -957,6 +1036,74 @@ mod tests {
 
         // Assert.
         assert!(result.unwrap_err().contains("exceeds SQLite INTEGER range"));
+    }
+
+    #[test]
+    fn allocates_monotonic_ids_by_collection() {
+        // Scenario: Native ids are allocated for separate collections.
+        // Covers:
+        // - Per-collection id counters.
+        // - Monotonic id allocation without stored documents.
+        // Expected: Each collection starts at 1 and advances independently.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("allocate_monotonic");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        let first_user = storage.allocate_id("users").unwrap();
+        let second_user = storage.allocate_id("users").unwrap();
+        let first_settings = storage.allocate_id("settings").unwrap();
+
+        // Assert.
+        assert_eq!(first_user, 1);
+        assert_eq!(second_user, 2);
+        assert_eq!(first_settings, 1);
+    }
+
+    #[test]
+    fn persists_next_id_after_reopening_the_database_directory() {
+        // Scenario: Ids are allocated, the database closes, and it reopens.
+        // Covers:
+        // - Persisted id_counters state.
+        // - Continuing from the previous next id after a new connection.
+        // Expected: Reopened databases keep allocating monotonically.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("allocate_persist");
+
+        // Act.
+        {
+            let mut storage = SqliteStorage::open(directory.path()).unwrap();
+            assert_eq!(storage.allocate_id("users").unwrap(), 1);
+            assert_eq!(storage.allocate_id("users").unwrap(), 2);
+        }
+
+        let mut reopened = SqliteStorage::open(directory.path()).unwrap();
+        let next_id = reopened.allocate_id("users").unwrap();
+
+        // Assert.
+        assert_eq!(next_id, 3);
+    }
+
+    #[test]
+    fn explicit_put_advances_the_next_allocated_id() {
+        // Scenario: A caller stores a manual id before using auto ids.
+        // Covers:
+        // - Counter advancement from [StorageEngine::put].
+        // - Collision avoidance between manual and allocated ids.
+        // Expected: The next allocated id is greater than the manual id.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("allocate_after_put");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.put("users", 10, br#"{"name":"Ana"}"#).unwrap();
+        let allocated = storage.allocate_id("users").unwrap();
+
+        // Assert.
+        assert_eq!(allocated, 11);
     }
 
     #[test]

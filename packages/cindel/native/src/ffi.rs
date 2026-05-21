@@ -56,6 +56,35 @@ pub unsafe extern "C" fn cindel_put(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_allocate_id(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    out_id: *mut u64,
+) -> i32 {
+    if out_id.is_null() {
+        return -1;
+    }
+
+    *out_id = 0;
+
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+
+    match engine.allocate_id(collection) {
+        Ok(id) => {
+            *out_id = id;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_register_schemas(
     handle: *mut CindelEngine,
     schemas_ptr: *const u8,

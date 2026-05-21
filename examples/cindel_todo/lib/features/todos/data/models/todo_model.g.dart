@@ -40,6 +40,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
   ],
   toDocument: _$TodoModelToCindelDocument,
   fromDocument: _$TodoModelFromCindelDocument,
+  setId: _$TodoModelSetCindelId,
 );
 
 extension TodoModelCindelCollectionAccess on CindelDatabase {
@@ -63,4 +64,8 @@ TodoModel _$TodoModelFromCindelDocument(Map<String, Object?> document) {
   object.completed = document["completed"] as bool;
   object.createdAtMicros = document["createdAtMicros"] as int;
   return object;
+}
+
+void _$TodoModelSetCindelId(TodoModel object, int id) {
+  object.id = id;
 }

@@ -40,6 +40,7 @@ final UserSchema = CindelCollectionSchema<User>(
   ],
   toDocument: _$UserToCindelDocument,
   fromDocument: _$UserFromCindelDocument,
+  setId: _$UserSetCindelId,
 );
 
 extension UserCindelCollectionAccess on CindelDatabase {
@@ -62,4 +63,8 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
   object.email = document["email"] as String;
   object.active = document["active"] as bool?;
   return object;
+}
+
+void _$UserSetCindelId(User object, int id) {
+  object.id = id;
 }

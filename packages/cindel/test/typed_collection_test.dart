@@ -49,6 +49,38 @@ void main() {
       expect(deletedUser, isNull);
     });
 
+    // Scenario: A generated model keeps the autoIncrement sentinel id.
+    // Covers:
+    // - [CindelTypedCollection.put] detecting `autoIncrement`.
+    // - Native id allocation through the typed API.
+    // - Generated id setter mutating the model before persistence.
+    // Expected: The object receives a real id and can be read by that id.
+    test('assigns native auto-increment ids to typed objects.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final firstUser = User()
+        ..name = 'Ana'
+        ..email = 'ana@example.com'
+        ..active = true;
+      final secondUser = User()
+        ..name = 'Ben'
+        ..email = 'ben@example.com'
+        ..active = false;
+
+      // Act.
+      await database.users.put(firstUser);
+      await database.users.put(secondUser);
+      final savedFirstUser = await database.users.get(firstUser.id);
+      final savedSecondUser = await database.users.get(secondUser.id);
+
+      // Assert.
+      expect(firstUser.id, 1);
+      expect(secondUser.id, 2);
+      expect(savedFirstUser!.name, 'Ana');
+      expect(savedSecondUser!.name, 'Ben');
+    });
+
     // Scenario: Generated typed watchers observe collection and object changes.
     // Covers:
     // - [CindelTypedCollection.watchCollection] typed snapshots.
@@ -137,11 +169,50 @@ void main() {
       // Assert.
       expect(putInvalidObject, throwsA(isA<StateError>()));
     });
+
+    // Scenario: A hand-written schema returns the autoIncrement sentinel but
+    // has no generated id setter.
+    // Covers:
+    // - Defensive validation before native id allocation.
+    // - Clear failure for incomplete schema metadata.
+    // Expected: The typed write fails with [StateError].
+    test('rejects auto-increment schemas without id setters.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory();
+      addTearDown(database.close);
+      final schema = CindelCollectionSchema<_ManualAutoUser>(
+        name: 'manualAutoUsers',
+        dartName: 'ManualAutoUser',
+        idField: 'id',
+        fields: const [
+          CindelFieldSchema(
+            name: 'id',
+            dartType: 'int',
+            isId: true,
+            isIndexed: false,
+          ),
+        ],
+        toDocument: (_) => {'id': autoIncrement},
+        fromDocument: (_) => const _ManualAutoUser(),
+      );
+
+      // Act.
+      Future<void> putInvalidObject() {
+        return database.typedCollection(schema).put(const _ManualAutoUser());
+      }
+
+      // Assert.
+      expect(putInvalidObject, throwsA(isA<StateError>()));
+    });
   });
 }
 
 final class _BrokenUser {
   const _BrokenUser();
+}
+
+final class _ManualAutoUser {
+  const _ManualAutoUser();
 }
 
 Future<void> _waitUntil(

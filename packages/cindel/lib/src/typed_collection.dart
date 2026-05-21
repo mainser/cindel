@@ -1,3 +1,5 @@
+import 'package:cindel_annotations/cindel_annotations.dart';
+
 import 'database.dart';
 import 'schema.dart';
 
@@ -26,9 +28,16 @@ final class CindelTypedCollection<T> {
   final CindelCollectionSchema<T> schema;
 
   /// Stores [object] using the id field declared by [schema].
-  Future<void> put(T object) {
-    final document = schema.toDocument(object);
-    return database.put(schema.name, _idFromDocument(document), document);
+  Future<void> put(T object) async {
+    var document = schema.toDocument(object);
+    var id = _idFromDocument(document);
+    if (id == autoIncrement) {
+      final setId = _idSetter();
+      id = await database.allocateId(schema.name);
+      setId(object, id);
+      document = schema.toDocument(object);
+    }
+    return database.put(schema.name, id, document);
   }
 
   /// Returns the typed object stored under [id], or `null`.
@@ -76,5 +85,16 @@ final class CindelTypedCollection<T> {
       'Generated schema `${schema.dartName}` returned a non-int id field '
       '`${schema.idField}`.',
     );
+  }
+
+  CindelSetId<T> _idSetter() {
+    final setId = schema.setId;
+    if (setId == null) {
+      throw StateError(
+        'Generated schema `${schema.dartName}` uses autoIncrement but did not '
+        'provide an id setter.',
+      );
+    }
+    return setId;
   }
 }
