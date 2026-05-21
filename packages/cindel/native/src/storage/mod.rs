@@ -97,5 +97,7 @@ pub trait StorageEngine {
     ) -> Result<Vec<u64>, String>;
     fn collection_revision(&self, collection: &str) -> Result<u64, String>;
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
+    fn register_schemas_after_migration(&mut self, manifest: &SchemaManifest)
+        -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
 }

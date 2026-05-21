@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.13 - 2026-05-21
+
+- Added explicit migration callbacks to `Cindel.open` and
+  `Cindel.openInMemory`.
+- Added `CindelMigration` helpers for field renames, collection renames,
+  document backfills, and index rebuilds.
+- Added dry-run migration diagnostics through `Cindel.dryRunMigration`.
+- Added native schema registration after explicit migrations so renamed fields
+  and changed index metadata can advance schema versions intentionally.
+- Bumped the native ABI to 3 and regenerated Windows and Android prebuilt
+  libraries.
+- Expanded schema migration tests with versioned fixtures for backfills, field
+  renames, collection renames, dry-run diagnostics, and rebuilt indexes.
+
 ## 0.1.12 - 2026-05-21
 
 - Added `fireImmediately` to document, collection, object, and query watchers.

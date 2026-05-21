@@ -360,7 +360,11 @@ impl StorageEngine for SqliteStorage {
         self.ensure_can_write()?;
         if self.active_transaction.is_some() {
             for collection in &manifest.collections {
-                register_collection_schema(&self.connection, collection)?;
+                register_collection_schema(
+                    &self.connection,
+                    collection,
+                    SchemaRegistrationMode::Compatible,
+                )?;
             }
             return Ok(());
         }
@@ -371,7 +375,44 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())?;
 
         for collection in &manifest.collections {
-            register_collection_schema(&transaction, collection)?;
+            register_collection_schema(
+                &transaction,
+                collection,
+                SchemaRegistrationMode::Compatible,
+            )?;
+        }
+
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
+    fn register_schemas_after_migration(
+        &mut self,
+        manifest: &SchemaManifest,
+    ) -> Result<(), String> {
+        validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            for collection in &manifest.collections {
+                register_collection_schema(
+                    &self.connection,
+                    collection,
+                    SchemaRegistrationMode::ExplicitMigration,
+                )?;
+            }
+            return Ok(());
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        for collection in &manifest.collections {
+            register_collection_schema(
+                &transaction,
+                collection,
+                SchemaRegistrationMode::ExplicitMigration,
+            )?;
         }
 
         transaction.commit().map_err(|error| error.to_string())
@@ -677,9 +718,16 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SchemaRegistrationMode {
+    Compatible,
+    ExplicitMigration,
+}
+
 fn register_collection_schema(
     connection: &Connection,
     collection: &CollectionSchemaManifest,
+    mode: SchemaRegistrationMode,
 ) -> Result<(), String> {
     let next_schema_json = canonical_schema_json(collection)?;
     let existing = connection
@@ -725,7 +773,9 @@ fn register_collection_schema(
             .map_err(|error| error.to_string())?;
         return Ok(());
     }
-    validate_compatible_schema_change(&existing_schema, collection)?;
+    if mode == SchemaRegistrationMode::Compatible {
+        validate_compatible_schema_change(&existing_schema, collection)?;
+    }
 
     let next_version = version + 1;
     connection
@@ -1251,6 +1301,34 @@ mod tests {
         // Assert.
         assert!(result.unwrap_err().contains("cannot change type"));
         assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn accepts_incompatible_schema_after_explicit_migration() {
+        // Scenario: A Dart migration has already transformed stored documents.
+        // Covers:
+        // - Explicit migration schema registration bypassing compatibility
+        //   checks.
+        // - Schema version advancement after a field rename.
+        // Expected: The new schema is committed at the next version.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_explicit_migration");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let original = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+        let renamed = schema_manifest(vec![user_schema(vec![field(
+            "address", "String", false, true,
+        )])]);
+
+        // Act.
+        storage.register_schemas(&original).unwrap();
+        storage.register_schemas_after_migration(&renamed).unwrap();
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(version, Some(2));
     }
 
     #[test]

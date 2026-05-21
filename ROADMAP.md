@@ -234,15 +234,15 @@ feature at once.
 
 ## Migrations and Schema Evolution
 
-- [ ] Migration callbacks.
+- [x] Migration callbacks.
   - Explicit user-defined migrations.
   - Data backfills for newly added fields.
   - Index rebuild migrations.
-- [ ] Field rename support.
-- [ ] Collection rename support.
+- [x] Field rename support.
+- [x] Collection rename support.
 - [ ] Enum migration safeguards.
-- [ ] Migration dry-run diagnostics.
-- [ ] Versioned migration test fixtures.
+- [x] Migration dry-run diagnostics.
+- [x] Versioned migration test fixtures.
 
 ## Relationships
 
@@ -338,10 +338,10 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is explicit migration callbacks. Cindel now
+The next implementation milestone is the relationships prototype. Cindel now
 has the first complete typed query pipeline plus index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
-and query/lazy watchers.
+query/lazy watchers, and explicit migration callbacks.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

@@ -46,6 +46,8 @@ The API is still experimental and can change before a public release.
 - Lazy watchers and `fireImmediately` control for reactive UI flows.
 - In-memory databases for tests and short-lived work.
 - Schema version registration and compatible additive migrations.
+- Explicit migration callbacks for backfills, renames, index rebuilds, and
+  dry-run diagnostics.
 - Prebuilt native library package for Flutter consumers.
 - Benchmark baseline for backend evaluation.
 - Future backend candidate: `libmdbx`.
@@ -509,7 +511,45 @@ final version = await db.schemaVersion('users');
 Compatible additive schema changes advance the collection version. Destructive
 changes such as removing fields, changing field types, changing the id field,
 changing index status, or changing index options are rejected until explicit
-migration support is added.
+migration support is used.
+
+Pass `migration` when opening a database to transform data before the new schema
+manifest is committed:
+
+```dart
+final db = await Cindel.open(
+  directory: dir.path,
+  schemas: [UserSchema],
+  migration: (migration) async {
+    if ((migration.oldVersion('users') ?? 0) < 2) {
+      await migration.renameField('users', from: 'email', to: 'address');
+      await migration.backfillCollection('users', (id, document) {
+        return {...document, 'active': true};
+      });
+      await migration.rebuildIndexes('users');
+    }
+  },
+);
+```
+
+Migration callbacks run inside a write transaction. If the callback or schema
+registration fails, Cindel rolls back the helper writes and keeps the previous
+schema version. The callback runs whenever it is supplied, so guard one-time
+work with `oldVersion`.
+
+Use dry-run diagnostics to inspect helper operations without applying their
+writes:
+
+```dart
+final report = await Cindel.dryRunMigration(
+  directory: dir.path,
+  schemas: [UserSchema],
+  migration: (migration) async {
+    await migration.renameCollection('old_users', 'users');
+    await migration.rebuildIndexes('users');
+  },
+);
+```
 
 ## Benchmarks
 
@@ -609,6 +649,8 @@ Validated so far:
 - [x] Schema metadata registration and version persistence.
 - [x] In-memory database support for tests and short-lived work.
 - [x] Compatible additive schema migrations.
+- [x] Explicit migration callbacks with backfills, renames, index rebuilds,
+  and dry-run diagnostics.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
 - [x] Apache-2.0 license, contribution guide, and package-style README.
@@ -627,7 +669,7 @@ Next areas:
 - [x] Full-text search primitives.
 - [x] Embedded objects.
 - [x] Query watchers.
-- [ ] Explicit migration callbacks.
+- [x] Explicit migration callbacks.
 - [ ] Better native error reporting.
 - [ ] `libmdbx` prototype behind the existing storage trait.
 - [x] Example Flutter application.

@@ -99,6 +99,13 @@ impl CindelEngine {
         self.storage.register_schemas(manifest)
     }
 
+    pub fn register_schemas_after_migration(
+        &mut self,
+        manifest: &SchemaManifest,
+    ) -> Result<(), String> {
+        self.storage.register_schemas_after_migration(manifest)
+    }
+
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.storage.schema_version(collection)
     }

@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    2
+    3
 }
 
 #[no_mangle]
@@ -149,6 +149,28 @@ pub unsafe extern "C" fn cindel_register_schemas(
     };
 
     match engine.register_schemas(&manifest) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_register_schemas_after_migration(
+    handle: *mut CindelEngine,
+    schemas_ptr: *const u8,
+    schemas_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
+        return -1;
+    };
+    let Ok(manifest) = serde_json::from_slice::<SchemaManifest>(schemas) else {
+        return -1;
+    };
+
+    match engine.register_schemas_after_migration(&manifest) {
         Ok(()) => 0,
         Err(_) => -1,
     }
