@@ -1,7 +1,7 @@
 name: cindel_todo
 description: Example Flutter app showing Cindel CRUD, schemas, indexes, queries, watchers, and schema versions.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.1+2
 
 environment:
   sdk: ^3.11.5
@@ -9,6 +9,8 @@ environment:
 dependencies:
   cindel:
     path: ../../packages/cindel
+  cindel_flutter_libs:
+    path: ../../packages/cindel_flutter_libs
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.3.1

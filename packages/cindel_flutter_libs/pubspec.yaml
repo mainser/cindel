@@ -1,0 +1,29 @@
+name: cindel_flutter_libs
+description: Prebuilt native libraries for Cindel Flutter applications.
+version: 0.1.1
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.cindel.cindel_flutter_libs
+        pluginClass: CindelFlutterLibsPlugin
+      ios:
+        pluginClass: CindelFlutterLibsPlugin
+      macos:
+        pluginClass: CindelFlutterLibsPlugin
+      linux:
+        pluginClass: CindelFlutterLibsPlugin
+      windows:
+        pluginClass: CindelFlutterLibsPlugin

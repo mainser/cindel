@@ -14,10 +14,13 @@ pub struct SqliteStorage {
 
 impl SqliteStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
-        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-
-        let database_path = Path::new(directory).join("cindel.sqlite");
-        let connection = Connection::open(database_path).map_err(|error| error.to_string())?;
+        let connection = if directory == IN_MEMORY_DIRECTORY {
+            Connection::open_in_memory().map_err(|error| error.to_string())?
+        } else {
+            fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+            let database_path = Path::new(directory).join("cindel.sqlite");
+            Connection::open(database_path).map_err(|error| error.to_string())?
+        };
         let storage = Self { connection };
         storage.initialize()?;
 
@@ -82,6 +85,8 @@ impl SqliteStorage {
             .map_err(|error| error.to_string())
     }
 }
+
+const IN_MEMORY_DIRECTORY: &str = ":memory:";
 
 impl StorageEngine for SqliteStorage {
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
@@ -774,6 +779,33 @@ mod tests {
         // Assert.
         assert_eq!(user, Some(br#"{"name":"Noel"}"#.to_vec()));
         assert_eq!(settings, Some(br#"{"theme":"dark"}"#.to_vec()));
+    }
+
+    #[test]
+    fn opens_isolated_in_memory_databases() {
+        // Scenario: A database is opened in memory and then another memory
+        // database is opened.
+        // Covers:
+        // - SQLite in-memory connection support.
+        // - No file-backed persistence between separate memory handles.
+        // Expected: The second in-memory database starts empty.
+
+        // Arrange.
+        let mut first_storage = SqliteStorage::open(IN_MEMORY_DIRECTORY).unwrap();
+
+        // Act.
+        first_storage
+            .put("settings", 7, br#"{"theme":"dark"}"#)
+            .unwrap();
+        let stored = first_storage.get("settings", 7).unwrap();
+        drop(first_storage);
+
+        let second_storage = SqliteStorage::open(IN_MEMORY_DIRECTORY).unwrap();
+        let missing = second_storage.get("settings", 7).unwrap();
+
+        // Assert.
+        assert_eq!(stored, Some(br#"{"theme":"dark"}"#.to_vec()));
+        assert_eq!(missing, None);
     }
 
     #[test]

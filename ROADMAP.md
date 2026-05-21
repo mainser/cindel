@@ -14,6 +14,7 @@ feature at once.
 - [x] Public package split:
   - `packages/cindel`
   - `packages/cindel_annotations`
+  - `packages/cindel_flutter_libs`
   - `packages/cindel_generator`
 - [x] Dart to Rust FFI bootstrap.
 - [x] Rust native core compilation on Windows.
@@ -21,6 +22,7 @@ feature at once.
 - [x] Document persistence by collection and id.
 - [x] Public manual Dart API:
   - `Cindel.open`
+  - `Cindel.openInMemory`
   - `CindelDatabase.put`
   - `CindelDatabase.get`
   - `CindelDatabase.delete`
@@ -34,6 +36,7 @@ feature at once.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration.
 - [x] Schema version persistence.
+- [x] In-memory SQLite databases for tests and short-lived work.
 - [x] Compatible additive schema migrations.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
@@ -216,21 +219,23 @@ feature at once.
 ## Platforms and Native Assets
 
 - [ ] Prebuilt native binary distribution.
-  - Add a Flutter plugin package such as `cindel_flutter_libs`.
-  - Package Android `.so` files under `jniLibs` for supported ABIs.
-  - Package iOS native output as a vendored `.xcframework`.
-  - Package Windows, macOS, and Linux native libraries through platform plugin
+  - [x] Add the `cindel_flutter_libs` Flutter plugin package.
+  - [x] Package Android `.so` files under `jniLibs` for supported ABIs.
+  - [ ] Package iOS native output as a vendored `.xcframework`.
+  - [x] Package the Windows native library through platform plugin bundling.
+  - [ ] Package macOS and Linux native libraries through platform plugin
     bundling.
-  - Update Dart native loading so Flutter app consumers do not need Rust/Cargo.
-  - Keep the Rust hook path available for Cindel core development.
+  - [x] Update Dart native loading so Flutter app consumers do not need
+    Rust/Cargo when bundled binaries are available.
+  - [x] Keep the Rust hook path available for Cindel core development.
 - [ ] Validate iOS build on macOS with Xcode.
 - [ ] Validate iOS install on a physical device.
-- [ ] Validate Android release build on CI or a repeatable local script.
-- [ ] Validate Windows desktop example build.
+- [x] Validate Android release build on a repeatable local script.
+- [x] Validate Windows desktop example build.
 - [ ] Add macOS desktop target once native linking is understood.
 - [ ] Add Linux desktop target once native linking is understood.
-- [ ] Document Rust, NDK, Xcode, and signing requirements for maintainers.
-- [ ] Document consumer build requirements without Rust/Cargo after prebuilt
+- [x] Document Rust, NDK, Xcode, and signing requirements for maintainers.
+- [x] Document consumer build requirements without Rust/Cargo after prebuilt
   binaries are available.
 - [ ] Keep web out of scope until the native MVP is stable.
 
@@ -294,8 +299,8 @@ feature at once.
 
 ## Current Focus
 
-The next practical milestone is prebuilt native binary distribution for Flutter
-apps. Cindel should keep the Rust hook workflow for maintainers, but app
-consumers should be able to build Android and iOS examples without installing
-Rust/Cargo, following the same broad packaging idea used by
-`isar_flutter_libs`.
+The next practical milestone is completing the remaining Apple and Linux
+prebuilt binaries. The package boundary, Android and Windows binaries, consumer
+loading path, maintainer scripts, and opt-in Rust hook are in place; macOS
+should produce `ios/cindel.xcframework` and `macos/libcindel_native.dylib`, and
+Linux should produce `linux/libcindel_native.so`.

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -7,17 +8,19 @@ import 'package:ffi/ffi.dart';
 const _assetId = 'package:cindel/src/native/bindings.dart';
 
 final class CindelNativeBindings {
-  const CindelNativeBindings();
+  CindelNativeBindings() : _functions = _CindelNativeFunctions.resolve();
 
-  int get abiVersion => _cindelAbiVersion();
+  final _CindelNativeFunctions _functions;
+
+  int get abiVersion => _functions.abiVersion();
 
   Pointer<Void> open(String directory) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
-      return _cindelOpen(directoryPointer, directoryLength);
+      return _functions.open(directoryPointer, directoryLength);
     });
   }
 
-  void close(Pointer<Void> handle) => _cindelClose(handle);
+  void close(Pointer<Void> handle) => _functions.close(handle);
 
   void put(Pointer<Void> handle, String collection, int id, Uint8List bytes) {
     _checkId(id);
@@ -26,7 +29,7 @@ final class CindelNativeBindings {
       collectionLength,
     ) {
       return _withNativeBytes(bytes, (bytesPointer, bytesLength) {
-        return _cindelPut(
+        return _functions.put(
           handle,
           collectionPointer,
           collectionLength,
@@ -41,7 +44,7 @@ final class CindelNativeBindings {
 
   void registerSchemas(Pointer<Void> handle, Uint8List schemas) {
     final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
-      return _cindelRegisterSchemas(handle, schemasPointer, schemasLength);
+      return _functions.registerSchemas(handle, schemasPointer, schemasLength);
     });
     _checkStatus(status, 'register schemas');
   }
@@ -60,7 +63,7 @@ final class CindelNativeBindings {
     ) {
       return _withNativeBytes(bytes, (bytesPointer, bytesLength) {
         return _withNativeBytes(indexes, (indexesPointer, indexesLength) {
-          return _cindelPutIndexed(
+          return _functions.putIndexed(
             handle,
             collectionPointer,
             collectionLength,
@@ -82,7 +85,7 @@ final class CindelNativeBindings {
       final outPointer = calloc<Pointer<Uint8>>();
       final outLength = calloc<Size>();
       try {
-        final status = _cindelGet(
+        final status = _functions.get(
           handle,
           collectionPointer,
           collectionLen,
@@ -99,7 +102,7 @@ final class CindelNativeBindings {
         final pointer = outPointer.value;
         final length = outLength.value;
         final bytes = Uint8List.fromList(pointer.asTypedList(length));
-        _cindelFreeBuffer(pointer, length);
+        _functions.freeBuffer(pointer, length);
         return bytes;
       } finally {
         calloc
@@ -110,20 +113,24 @@ final class CindelNativeBindings {
   }
 
   List<int> documentIds(Pointer<Void> handle, String collection) {
-    return _queryIds((outPointer, outLength) {
-      return _withNativeUtf8Bytes(collection, (
-        collectionPointer,
-        collectionLength,
-      ) {
-        return _cindelDocumentIds(
-          handle,
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
           collectionPointer,
           collectionLength,
-          outPointer,
-          outLength,
-        );
-      });
-    }, 'document ids');
+        ) {
+          return _functions.documentIds(
+            handle,
+            collectionPointer,
+            collectionLength,
+            outPointer,
+            outLength,
+          );
+        });
+      },
+      _functions.freeBuffer,
+      'document ids',
+    );
   }
 
   void delete(Pointer<Void> handle, String collection, int id) {
@@ -132,7 +139,7 @@ final class CindelNativeBindings {
       collectionPointer,
       collectionLength,
     ) {
-      return _cindelDelete(handle, collectionPointer, collectionLength, id);
+      return _functions.delete(handle, collectionPointer, collectionLength, id);
     });
     _checkStatus(status, 'delete');
   }
@@ -144,7 +151,7 @@ final class CindelNativeBindings {
         collectionPointer,
         collectionLength,
       ) {
-        return _cindelCollectionRevision(
+        return _functions.collectionRevision(
           handle,
           collectionPointer,
           collectionLength,
@@ -165,7 +172,7 @@ final class CindelNativeBindings {
         collectionPointer,
         collectionLength,
       ) {
-        return _cindelSchemaVersion(
+        return _functions.schemaVersion(
           handle,
           collectionPointer,
           collectionLength,
@@ -188,28 +195,32 @@ final class CindelNativeBindings {
     String index,
     Uint8List value,
   ) {
-    return _queryIds((outPointer, outLength) {
-      return _withNativeUtf8Bytes(collection, (
-        collectionPointer,
-        collectionLength,
-      ) {
-        return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
-          return _withNativeBytes(value, (valuePointer, valueLength) {
-            return _cindelQueryIndexEqual(
-              handle,
-              collectionPointer,
-              collectionLength,
-              indexPointer,
-              indexLength,
-              valuePointer,
-              valueLength,
-              outPointer,
-              outLength,
-            );
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
+            return _withNativeBytes(value, (valuePointer, valueLength) {
+              return _functions.queryIndexEqual(
+                handle,
+                collectionPointer,
+                collectionLength,
+                indexPointer,
+                indexLength,
+                valuePointer,
+                valueLength,
+                outPointer,
+                outLength,
+              );
+            });
           });
         });
-      });
-    }, 'query index equal');
+      },
+      _functions.freeBuffer,
+      'query index equal',
+    );
   }
 
   List<int> queryIndexRange(
@@ -219,33 +230,583 @@ final class CindelNativeBindings {
     Uint8List? lower,
     Uint8List? upper,
   ) {
-    return _queryIds((outPointer, outLength) {
-      return _withNativeUtf8Bytes(collection, (
-        collectionPointer,
-        collectionLength,
-      ) {
-        return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
-          return _withNullableNativeBytes(lower, (lowerPointer, lowerLength) {
-            return _withNullableNativeBytes(upper, (upperPointer, upperLength) {
-              return _cindelQueryIndexRange(
-                handle,
-                collectionPointer,
-                collectionLength,
-                indexPointer,
-                indexLength,
-                lowerPointer,
-                lowerLength,
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _withNativeUtf8Bytes(index, (indexPointer, indexLength) {
+            return _withNullableNativeBytes(lower, (lowerPointer, lowerLength) {
+              return _withNullableNativeBytes(upper, (
                 upperPointer,
                 upperLength,
-                outPointer,
-                outLength,
-              );
+              ) {
+                return _functions.queryIndexRange(
+                  handle,
+                  collectionPointer,
+                  collectionLength,
+                  indexPointer,
+                  indexLength,
+                  lowerPointer,
+                  lowerLength,
+                  upperPointer,
+                  upperLength,
+                  outPointer,
+                  outLength,
+                );
+              });
             });
           });
         });
-      });
-    }, 'query index range');
+      },
+      _functions.freeBuffer,
+      'query index range',
+    );
   }
+}
+
+abstract interface class _CindelNativeFunctions {
+  factory _CindelNativeFunctions.resolve() {
+    final library = _openBundledLibrary();
+    if (library != null) {
+      return _DynamicCindelNativeFunctions(library);
+    }
+    return const _NativeAssetCindelNativeFunctions();
+  }
+
+  int Function() get abiVersion;
+
+  Pointer<Void> Function(Pointer<Uint8>, int) get open;
+
+  void Function(Pointer<Void>) get close;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
+  get put;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get putIndexed;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get get;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get documentIds;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get collectionRevision;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get schemaVersion;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryIndexEqual;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryIndexRange;
+
+  void Function(Pointer<Uint8>, int) get freeBuffer;
+}
+
+final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
+  _DynamicCindelNativeFunctions(DynamicLibrary library)
+    : abiVersion = library.lookupFunction<Uint32 Function(), int Function()>(
+        'cindel_abi_version',
+        isLeaf: true,
+      ),
+      open = library
+          .lookupFunction<
+            Pointer<Void> Function(Pointer<Uint8>, Size),
+            Pointer<Void> Function(Pointer<Uint8>, int)
+          >('cindel_open'),
+      close = library
+          .lookupFunction<
+            Void Function(Pointer<Void>),
+            void Function(Pointer<Void>)
+          >('cindel_close', isLeaf: true),
+      put = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_put'),
+      registerSchemas = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
+            int Function(Pointer<Void>, Pointer<Uint8>, int)
+          >('cindel_register_schemas'),
+      putIndexed = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_put_indexed'),
+      get = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_get'),
+      documentIds = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_document_ids'),
+      delete = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint64),
+            int Function(Pointer<Void>, Pointer<Uint8>, int, int)
+          >('cindel_delete'),
+      collectionRevision = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint64>,
+            ),
+            int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+          >('cindel_collection_revision'),
+      schemaVersion = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint64>,
+            ),
+            int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+          >('cindel_schema_version'),
+      queryIndexEqual = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_index_equal'),
+      queryIndexRange = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_index_range'),
+      freeBuffer = library
+          .lookupFunction<
+            Void Function(Pointer<Uint8>, Size),
+            void Function(Pointer<Uint8>, int)
+          >('cindel_free_buffer');
+
+  @override
+  final int Function() abiVersion;
+
+  @override
+  final Pointer<Void> Function(Pointer<Uint8>, int) open;
+
+  @override
+  final void Function(Pointer<Void>) close;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  put;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  putIndexed;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  documentIds;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, int) delete;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  collectionRevision;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  schemaVersion;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryIndexEqual;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryIndexRange;
+
+  @override
+  final void Function(Pointer<Uint8>, int) freeBuffer;
+}
+
+final class _NativeAssetCindelNativeFunctions
+    implements _CindelNativeFunctions {
+  const _NativeAssetCindelNativeFunctions();
+
+  @override
+  int Function() get abiVersion => _cindelAbiVersion;
+
+  @override
+  Pointer<Void> Function(Pointer<Uint8>, int) get open => _cindelOpen;
+
+  @override
+  void Function(Pointer<Void>) get close => _cindelClose;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
+  get put => _cindelPut;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas =>
+      _cindelRegisterSchemas;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get putIndexed => _cindelPutIndexed;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get get => _cindelGet;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get documentIds => _cindelDocumentIds;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete =>
+      _cindelDelete;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get collectionRevision => _cindelCollectionRevision;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
+  get schemaVersion => _cindelSchemaVersion;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryIndexEqual => _cindelQueryIndexEqual;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryIndexRange => _cindelQueryIndexRange;
+
+  @override
+  void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
+}
+
+DynamicLibrary? _openBundledLibrary() {
+  final overridePath = Platform.environment['CINDEL_NATIVE_LIBRARY'];
+  if (overridePath != null && overridePath.trim().isNotEmpty) {
+    return DynamicLibrary.open(overridePath);
+  }
+
+  if (Platform.isIOS) {
+    return DynamicLibrary.process();
+  }
+
+  final names = _candidateLibraryNames();
+
+  for (final name in names) {
+    try {
+      return DynamicLibrary.open(name);
+    } on ArgumentError {
+      continue;
+    } on OSError {
+      continue;
+    }
+  }
+  return null;
+}
+
+List<String> _candidateLibraryNames() {
+  final platformName = switch (Abi.current()) {
+    Abi.androidArm ||
+    Abi.androidArm64 ||
+    Abi.androidIA32 ||
+    Abi.androidX64 => 'libcindel_native.so',
+    Abi.linuxX64 || Abi.linuxArm64 => 'libcindel_native.so',
+    Abi.macosX64 || Abi.macosArm64 => 'libcindel_native.dylib',
+    Abi.windowsX64 || Abi.windowsArm64 => 'cindel_native.dll',
+    _ => null,
+  };
+
+  if (platformName == null) {
+    return const <String>[];
+  }
+
+  final packagePath = switch (Abi.current()) {
+    Abi.linuxX64 || Abi.linuxArm64 => 'linux/$platformName',
+    Abi.macosX64 || Abi.macosArm64 => 'macos/$platformName',
+    Abi.windowsX64 || Abi.windowsArm64 => 'windows/$platformName',
+    _ => null,
+  };
+
+  if (packagePath == null) {
+    return [platformName];
+  }
+
+  final current = Directory.current.path;
+  return [
+    _joinPath(current, 'packages/cindel_flutter_libs/$packagePath'),
+    _joinPath(current, '../cindel_flutter_libs/$packagePath'),
+    _joinPath(current, '../../packages/cindel_flutter_libs/$packagePath'),
+    platformName,
+  ];
+}
+
+String _joinPath(String base, String relativePath) {
+  final separator = Platform.pathSeparator;
+  final normalizedRelativePath = relativePath.replaceAll('/', separator);
+  return '$base$separator$normalizedRelativePath';
 }
 
 @Native<Uint32 Function()>(
@@ -482,6 +1043,7 @@ T _withNullableNativeBytes<T>(
 List<int> _queryIds(
   int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
   action,
+  void Function(Pointer<Uint8> pointer, int length) freeBuffer,
   String operation,
 ) {
   final outPointer = calloc<Pointer<Uint8>>();
@@ -493,7 +1055,7 @@ List<int> _queryIds(
     final pointer = outPointer.value;
     final length = outLength.value;
     final bytes = Uint8List.fromList(pointer.asTypedList(length));
-    _cindelFreeBuffer(pointer, length);
+    freeBuffer(pointer, length);
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is! List) {
       throw StateError('Native Cindel returned invalid index query ids.');

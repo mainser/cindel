@@ -30,6 +30,7 @@ Cindel/
   examples/cindel_todo/         Placeholder Flutter example app
   packages/cindel/              Public Dart API, FFI bridge, native Rust core
   packages/cindel_annotations/  Public annotations and shared types
+  packages/cindel_flutter_libs/ Prebuilt native libraries for Flutter apps
   packages/cindel_generator/    Source generator for schemas and serializers
 ```
 
@@ -39,6 +40,8 @@ Cindel/
 - Flutter SDK when working on Flutter examples.
 - Rust toolchain `1.90.0` or newer.
 - Windows MSVC C++ toolchain for native builds on Windows.
+- Android NDK and `cargo-ndk` when regenerating Android prebuilt binaries.
+- Xcode command line tools when regenerating iOS or macOS prebuilt binaries.
 - Git.
 
 ## Setup
@@ -65,7 +68,13 @@ dart analyze
 cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
 cargo test --manifest-path packages/cindel/native/Cargo.toml
 dart test packages/cindel/test -r expanded
+flutter test examples/cindel_todo
 ```
+
+Flutter app builds should use `cindel_flutter_libs` by default. If a maintainer
+needs to validate Dart native-assets instead of prebuilt binaries, temporarily
+set `hooks.user_defines.cindel.build_native_assets` to `true` in the workspace
+`pubspec.yaml` and regenerate the affected prebuilt binaries afterward.
 
 Run the backend benchmark baseline with:
 
@@ -103,6 +112,23 @@ Arrange/Act/Assert comments for readability.
 - Add tests for user-visible behavior, storage semantics, FFI boundaries, and
   migration compatibility.
 - Do not introduce a new dependency without a clear reason.
+
+## Versioning
+
+Cindel is pre-1.0.0 while the API and package boundaries are still settling.
+Use small version steps so every package change stays traceable without rushing
+to a stable release.
+
+- Keep changed packages and examples versioned in the same change that modifies
+  them.
+- Record user-visible package, example, native binary, and migration changes in
+  `CHANGELOG.md`.
+- Use `0.1.0` as the current development baseline.
+- For follow-up changes, bump the patch version: `0.1.1`, `0.1.2`, and so on.
+- For Flutter examples that include a build number, bump both the patch version
+  and build number when the example changes, for example `0.1.1+2`.
+- Do not jump to `1.0.0` until the public API, native binary distribution, and
+  publishing workflow are intentionally declared stable.
 
 ## Pull Request Guidelines
 

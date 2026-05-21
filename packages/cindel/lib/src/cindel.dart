@@ -13,4 +13,14 @@ abstract final class Cindel {
   }) {
     return CindelDatabase.open(directory: directory, schemas: schemas);
   }
+
+  /// Opens an in-memory database.
+  ///
+  /// This is useful for tests and short-lived isolates. Data is discarded when
+  /// the returned database is closed.
+  static Future<CindelDatabase> openInMemory({
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+  }) {
+    return CindelDatabase.openInMemory(schemas: schemas);
+  }
 }

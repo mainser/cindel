@@ -1,0 +1,31 @@
+group 'dev.cindel.cindel_flutter_libs'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.1'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'dev.cindel.cindel_flutter_libs'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 23
+    }
+}

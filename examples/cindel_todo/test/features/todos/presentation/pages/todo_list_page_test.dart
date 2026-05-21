@@ -1,8 +1,9 @@
-import 'dart:async';
-
+import 'package:cindel/cindel.dart';
+import 'package:cindel_todo/features/todos/data/datasources/todos_local_data_source.dart';
+import 'package:cindel_todo/features/todos/data/models/todo_model.dart';
+import 'package:cindel_todo/features/todos/data/repositories/cindel_todo_repository.dart';
 import 'package:cindel_todo/features/todos/di/todos_di.dart';
 import 'package:cindel_todo/features/todos/domain/entities/todo.dart';
-import 'package:cindel_todo/features/todos/domain/repositories/todo_repository.dart';
 import 'package:cindel_todo/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,9 +19,9 @@ void main() {
     // Expected: The list reflects add, toggle, and delete actions.
     testWidgets('adds, toggles, and deletes todos.', (tester) async {
       // Arrange.
-      final repository = _FakeTodoRepository();
-      addTearDown(repository.dispose);
-      await tester.pumpWidget(_buildApp(repository));
+      final database = await _openTodoDatabase();
+      addTearDown(database.close);
+      await tester.pumpWidget(_buildApp(database));
       await tester.pumpAndSettle();
 
       // Act: add a todo.
@@ -64,13 +65,15 @@ void main() {
       'filters the visible list by exact and prefix title searches.',
       (tester) async {
         // Arrange.
-        final repository = _FakeTodoRepository.seeded([
-          _todo(id: 1, title: 'Alpha release'),
-          _todo(id: 2, title: 'Alpine build'),
-          _todo(id: 3, title: 'Beta docs'),
-        ]);
-        addTearDown(repository.dispose);
-        await tester.pumpWidget(_buildApp(repository));
+        final database = await _openTodoDatabase(
+          seed: [
+            _todo(id: 1, title: 'Alpha release'),
+            _todo(id: 2, title: 'Alpine build'),
+            _todo(id: 3, title: 'Beta docs'),
+          ],
+        );
+        addTearDown(database.close);
+        await tester.pumpWidget(_buildApp(database));
         await tester.pumpAndSettle();
 
         // Assert: the live collection initially shows every todo.
@@ -121,7 +124,20 @@ void main() {
   });
 }
 
-Widget _buildApp(_FakeTodoRepository repository) {
+Future<CindelDatabase> _openTodoDatabase({
+  Iterable<Todo> seed = const [],
+}) async {
+  final database = await Cindel.openInMemory(schemas: [TodoModelSchema]);
+  for (final todo in seed) {
+    await database.todos.put(TodoModel.fromDomain(todo));
+  }
+  return database;
+}
+
+Widget _buildApp(CindelDatabase database) {
+  final repository = CindelTodoRepository(
+    TodosLocalDataSource(Future.value(database)),
+  );
   return ProviderScope(
     overrides: [todoRepositoryProvider.overrideWithValue(repository)],
     child: const CindelTodoApp(),
@@ -135,61 +151,4 @@ Todo _todo({required int id, required String title, bool completed = false}) {
     completed: completed,
     createdAt: DateTime.fromMicrosecondsSinceEpoch(id),
   );
-}
-
-final class _FakeTodoRepository implements TodoRepository {
-  _FakeTodoRepository();
-
-  _FakeTodoRepository.seeded(Iterable<Todo> todos) {
-    _todos.addAll(todos);
-  }
-
-  final _todos = <Todo>[];
-  final _changes = StreamController<List<Todo>>.broadcast();
-
-  @override
-  Future<void> delete(int id) async {
-    _todos.removeWhere((todo) => todo.id == id);
-    _emit();
-  }
-
-  @override
-  Future<int> readSchemaVersion() async => 1;
-
-  @override
-  Future<void> save(Todo todo) async {
-    final index = _todos.indexWhere((item) => item.id == todo.id);
-    if (index == -1) {
-      _todos.add(todo);
-    } else {
-      _todos[index] = todo;
-    }
-    _emit();
-  }
-
-  @override
-  Future<List<Todo>> searchByExactTitle(String title) async {
-    return _todos.where((todo) => todo.title == title).toList(growable: false);
-  }
-
-  @override
-  Future<List<Todo>> searchByTitlePrefix(String prefix) async {
-    return _todos
-        .where((todo) => todo.title.startsWith(prefix))
-        .toList(growable: false);
-  }
-
-  @override
-  Stream<List<Todo>> watchTodos() async* {
-    yield List.unmodifiable(_todos);
-    yield* _changes.stream;
-  }
-
-  void _emit() {
-    _changes.add(List.unmodifiable(_todos));
-  }
-
-  Future<void> dispose() async {
-    await _changes.close();
-  }
 }

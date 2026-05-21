@@ -10,6 +10,7 @@ import 'schema.dart';
 typedef CindelDocument = Map<String, Object?>;
 
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
+const _inMemoryDirectory = ':memory:';
 
 /// Default polling interval used by Cindel watchers.
 const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
@@ -41,9 +42,25 @@ class CindelDatabase {
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
   }) async {
     _checkDirectory(directory);
+    return _openUnchecked(directory: directory, schemas: schemas);
+  }
+
+  /// Opens an in-memory database.
+  ///
+  /// Data is discarded when this database is closed.
+  static Future<CindelDatabase> openInMemory({
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+  }) {
+    return _openUnchecked(directory: _inMemoryDirectory, schemas: schemas);
+  }
+
+  static Future<CindelDatabase> _openUnchecked({
+    required String directory,
+    required Iterable<CindelCollectionSchema<dynamic>> schemas,
+  }) async {
     final schemasByCollection = _schemasByCollection(schemas);
 
-    const bindings = CindelNativeBindings();
+    final bindings = CindelNativeBindings();
     final handle = bindings.open(directory);
     if (handle == nullptr) {
       throw StateError('Failed to open Cindel native engine.');

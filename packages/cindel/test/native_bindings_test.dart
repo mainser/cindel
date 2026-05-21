@@ -13,7 +13,7 @@ void main() {
     // Expected: Dart receives the current Rust ABI version.
     test('returns the current Rust ABI version.', () {
       // Arrange.
-      const bindings = CindelNativeBindings();
+      final bindings = CindelNativeBindings();
 
       // Act.
       final abiVersion = bindings.abiVersion;
@@ -139,6 +139,30 @@ void main() {
 
       // Assert.
       expect(storedSettings, {'theme': 'dark'});
+    });
+
+    // Scenario: A database is opened in memory for a short-lived test.
+    // Covers:
+    // - [Cindel.openInMemory] routing to SQLite in-memory storage.
+    // - No persisted state between separate in-memory database handles.
+    // Expected: The second in-memory database starts empty.
+    test('opens isolated in-memory databases.', () async {
+      // Arrange.
+      final firstDatabase = await Cindel.openInMemory();
+
+      // Act.
+      await firstDatabase.put('settings', 7, {'theme': 'dark'});
+      final storedSettings = await firstDatabase.get('settings', 7);
+      await firstDatabase.close();
+
+      final secondDatabase = await Cindel.openInMemory();
+      addTearDown(secondDatabase.close);
+      final missingSettings = await secondDatabase.get('settings', 7);
+
+      // Assert.
+      expect(firstDatabase.directory, ':memory:');
+      expect(storedSettings, {'theme': 'dark'});
+      expect(missingSettings, isNull);
     });
 
     // Scenario: The database is closed more than once.

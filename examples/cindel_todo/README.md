@@ -13,7 +13,8 @@ The example demonstrates:
 - Querying an indexed field by range for prefix search.
 - Reading the stored schema version.
 - Wiring the feature with Riverpod providers.
-- Building Cindel's Rust native core for mobile targets.
+- Loading Cindel's prebuilt native libraries through `cindel_flutter_libs`.
+- Testing the repository and UI against an in-memory Cindel database.
 
 ## Architecture
 
@@ -51,6 +52,10 @@ flutter run -d windows
 The generated files are committed so the example can be opened and run without
 an extra generation step, but `build_runner` can regenerate them at any time.
 
+The app depends on `cindel_flutter_libs`, so normal Flutter builds use bundled
+native libraries instead of requiring Rust or Cargo on the app developer's
+machine.
+
 ## Android
 
 The app has been validated on a physical Android device using a release APK:
@@ -61,12 +66,18 @@ flutter build apk --release
 flutter install -d <device-id> --release
 ```
 
-The Cindel native Rust toolchain includes these Android targets:
+The bundled Cindel Android binaries cover:
 
 ```text
-armv7-linux-androideabi  -> armeabi-v7a / 32-bit ARM
-aarch64-linux-android    -> arm64-v8a / ARMv8 64-bit
-x86_64-linux-android     -> x86_64 emulator
+armeabi-v7a  -> 32-bit ARM
+arm64-v8a    -> ARMv8 64-bit
+x86_64       -> x86_64 emulator
+```
+
+Maintainers can refresh those binaries from the repository root with:
+
+```powershell
+.\tool\prebuilt\build_android.ps1
 ```
 
 ## iOS
@@ -81,7 +92,8 @@ aarch64-apple-ios-sim  -> Apple Silicon simulator
 x86_64-apple-ios       -> Intel simulator
 ```
 
-On a Mac, run:
+Once `packages/cindel_flutter_libs/ios/cindel.xcframework` is generated on a
+Mac and committed, app builds should not require Cargo. On a Mac, run:
 
 ```zsh
 flutter pub get

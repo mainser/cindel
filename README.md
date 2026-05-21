@@ -30,9 +30,12 @@ The API is still experimental and can change before a public release.
 - SQLite storage backend for the MVP.
 - Generated collection schemas and serializers.
 - Manual document API with `put`, `get`, and `delete`.
+- Generated typed collection accessors.
 - Simple indexed queries by equality and inclusive range.
 - Document and collection watchers with Dart streams.
+- In-memory databases for tests and short-lived work.
 - Schema version registration and compatible additive migrations.
+- Prebuilt native library package for Flutter consumers.
 - Benchmark baseline for backend evaluation.
 - Future backend candidate: `libmdbx`.
 
@@ -41,8 +44,10 @@ The API is still experimental and can change before a public release.
 - `packages/cindel`: public Dart API, FFI bridge, and native Rust core.
 - `packages/cindel_annotations`: annotations and shared public types such as
   `@Collection`, `@index`, `Id`, and `autoIncrement`.
+- `packages/cindel_flutter_libs`: prebuilt native libraries for Flutter apps.
 - `packages/cindel_generator`: source generator for schemas and serializers.
-- `examples/cindel_todo`: placeholder Flutter example app.
+- `examples/cindel_todo`: Flutter example app using Cindel like a normal
+  application dependency.
 
 ## Quickstart
 
@@ -52,12 +57,21 @@ Add the packages locally while Cindel is private:
 dependencies:
   cindel:
     path: packages/cindel
+  cindel_flutter_libs:
+    path: packages/cindel_flutter_libs
 
 dev_dependencies:
   build_runner: ^2.15.0
   cindel_generator:
     path: packages/cindel_generator
 ```
+
+`cindel_flutter_libs` is the Flutter-only binary package. App developers should
+depend on it so Android, iOS, and desktop builds can use bundled native
+libraries without compiling Rust locally. Cindel maintainers can still build the
+native asset directly with the `hooks.user_defines.cindel.build_native_assets`
+flag in the workspace `pubspec.yaml` when they need to validate the native
+assets path.
 
 Define a collection:
 
@@ -85,7 +99,9 @@ Generate schema code:
 dart run build_runner build
 ```
 
-Open a database:
+## Opening Databases
+
+Open a persistent database:
 
 ```dart
 final db = await Cindel.open(
@@ -93,6 +109,16 @@ final db = await Cindel.open(
   schemas: [UserSchema],
 );
 ```
+
+Open an in-memory database for tests or short-lived work:
+
+```dart
+final db = await Cindel.openInMemory(
+  schemas: [UserSchema],
+);
+```
+
+In-memory databases are isolated per open handle and are discarded when closed.
 
 ## CRUD
 
@@ -111,7 +137,14 @@ final user = await db.get('users', 1);
 await db.delete('users', 1);
 ```
 
-Typed collection accessors are planned for a later generator phase.
+Generated typed collection accessors are available for models with generated
+schemas:
+
+```dart
+await db.users.put(user);
+final savedUser = await db.users.get(user.id);
+await db.users.delete(user.id);
+```
 
 ## Queries
 
@@ -183,6 +216,34 @@ queries, and range queries.
 See `docs/backend_evaluation.md` for the current `libmdbx` evaluation and
 backend adoption criteria.
 
+## Native Binaries
+
+Cindel can load native libraries from a Flutter plugin bundle before falling
+back to the local native-assets hook. The hook is off by default for consumers
+and can be enabled by maintainers with:
+
+```yaml
+hooks:
+  user_defines:
+    cindel:
+      build_native_assets: true
+```
+
+Maintainers regenerate the bundled libraries with:
+
+```powershell
+.\tool\prebuilt\build_windows.ps1
+.\tool\prebuilt\build_android.ps1
+```
+
+```sh
+./tool/prebuilt/build_apple.sh
+./tool/prebuilt/build_linux.sh
+```
+
+Set `CINDEL_NATIVE_LIBRARY` to an absolute library path when testing a custom
+native build without copying it into `cindel_flutter_libs`.
+
 ## Development
 
 Install dependencies:
@@ -202,6 +263,7 @@ dart test packages/cindel/test -r expanded
 ```
 
 See `CONTRIBUTING.md` for contribution guidelines.
+See `CHANGELOG.md` for version history.
 
 ## Roadmap
 
@@ -216,12 +278,14 @@ Validated so far:
 - [x] Document persistence by collection and id.
 - [x] Manual Dart API with `put`, `get`, and `delete`.
 - [x] Generated collection schemas and serializers.
+- [x] Generated typed collection accessors.
 - [x] Simple indexes generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
+- [x] In-memory database support for tests and short-lived work.
 - [x] Compatible additive schema migrations.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
@@ -229,7 +293,9 @@ Validated so far:
 
 Next areas:
 
-- [ ] Typed collection APIs and query builders.
+- [x] Typed collection APIs.
+- [ ] Prebuilt native binary distribution.
+- [ ] Query builders.
 - [ ] Transaction API.
 - [ ] Auto-increment id support.
 - [ ] Query watchers.
