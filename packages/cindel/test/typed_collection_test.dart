@@ -83,7 +83,7 @@ void main() {
 
     // Scenario: Multiple generated objects are saved, read, and deleted.
     // Covers:
-    // - [CindelTypedCollection.putAll] generated document mapping.
+    // - [CindelTypedCollection.putMany] generated document mapping.
     // - Auto-increment assignment during typed bulk writes.
     // - [CindelTypedCollection.getAll] ordered nullable reads.
     // - [CindelTypedCollection.deleteAll] native batch delete path.
@@ -100,7 +100,7 @@ void main() {
         ..email = 'ben@example.com';
 
       // Act.
-      await database.users.putAll([ana, ben]);
+      await database.users.putMany([ana, ben]);
       final storedUsers = await database.users.getAll([ben.id, ana.id, 404]);
       await database.users.deleteAll([ana.id, ben.id]);
       final deletedUsers = await database.users.getAll([ana.id, ben.id]);

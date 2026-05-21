@@ -250,6 +250,13 @@ class CindelDatabase {
     _markCollectionChanged(collection);
   }
 
+  /// Stores many documents atomically.
+  ///
+  /// Alias for [putAll], provided for APIs that prefer `many` naming.
+  Future<void> putMany(String collection, Map<int, CindelDocument> values) {
+    return putAll(collection, values);
+  }
+
   /// Allocates the next native auto-increment id for [collection].
   ///
   /// The returned id is persisted by the native engine before this method

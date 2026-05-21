@@ -5,6 +5,11 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.16 - 2026-05-21
+
+- Added `CindelDatabase.putMany` and `CindelTypedCollection.putMany` as public
+  aliases for atomic bulk writes.
+
 ## 0.1.15 - 2026-05-21
 
 - Added pub.dev-oriented metadata to the publishable Cindel packages.

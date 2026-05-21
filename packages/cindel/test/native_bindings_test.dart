@@ -77,7 +77,7 @@ void main() {
 
     // Scenario: Multiple documents are written, read, and deleted in batches.
     // Covers:
-    // - [CindelDatabase.putAll] native batch write path.
+    // - [CindelDatabase.putMany] alias over the native batch write path.
     // - [CindelDatabase.getAll] ordered reads with nullable misses.
     // - [CindelDatabase.deleteAll] native batch delete path.
     // Expected: Batch writes and deletes affect every requested document.
@@ -87,7 +87,7 @@ void main() {
       addTearDown(database.close);
 
       // Act.
-      await database.putAll('users', {
+      await database.putMany('users', {
         1: {'name': 'Ana'},
         2: {'name': 'Ben'},
       });

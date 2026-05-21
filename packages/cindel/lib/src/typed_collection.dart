@@ -78,6 +78,13 @@ final class CindelTypedCollection<T> {
     return database.putAll(schema.name, values);
   }
 
+  /// Stores many objects atomically.
+  ///
+  /// Alias for [putAll], provided for APIs that prefer `many` naming.
+  Future<void> putMany(Iterable<T> objects) {
+    return putAll(objects);
+  }
+
   /// Returns the typed object stored under [id], or `null`.
   Future<T?> get(int id) async {
     final document = await database.get(schema.name, id);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.16 - 2026-05-21
+
+- Added `putMany` as a public alias for manual and typed atomic bulk writes.
+
 ## 0.1.15 - 2026-05-21
 
 - Added pub.dev-oriented package metadata and documentation.

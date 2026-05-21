@@ -280,12 +280,13 @@ a later stage.
 Bulk typed operations use native batch writes and deletes:
 
 ```dart
-await db.users.putAll([ana, ben, cid]);
+await db.users.putMany([ana, ben, cid]);
 final users = await db.users.getAll([ana.id, ben.id, 404]);
 await db.users.deleteAll([ana.id, ben.id]);
 ```
 
-`putAll` and `deleteAll` are committed in one native transaction.
+`putMany` and `deleteAll` are committed in one native transaction. `putAll`
+remains available as an alias for codebases that prefer the `all` naming.
 
 ## Transactions
 
