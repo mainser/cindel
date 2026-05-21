@@ -5,6 +5,16 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.14 - 2026-05-21
+
+- Added a native batch document read path so collection reads, indexed queries,
+  watchers, migrations, and `getAll` avoid one FFI call per document.
+- Replaced watcher snapshot stringification with allocation-light deep
+  comparison.
+- Bumped the native ABI to 4 and regenerated Windows and Android prebuilt
+  libraries.
+- Added Rust coverage for ordered batch reads with missing documents.
+
 ## 0.1.13 - 2026-05-21
 
 - Added explicit migration callbacks to `Cindel.open` and

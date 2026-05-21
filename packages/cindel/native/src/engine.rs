@@ -17,6 +17,10 @@ impl CindelEngine {
         self.storage.get(collection, id)
     }
 
+    pub fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        self.storage.get_many(collection, ids)
+    }
+
     pub fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
         self.storage.document_ids(collection)
     }

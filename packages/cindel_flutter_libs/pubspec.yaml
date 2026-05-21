@@ -1,6 +1,6 @@
 name: cindel_flutter_libs
 description: Prebuilt native libraries for Cindel Flutter applications.
-version: 0.1.7
+version: 0.1.8
 publish_to: none
 
 environment:

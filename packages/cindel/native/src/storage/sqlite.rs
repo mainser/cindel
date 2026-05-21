@@ -165,6 +165,23 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())
     }
 
+    fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT bytes FROM documents WHERE collection = ?1 AND id = ?2")
+            .map_err(|error| error.to_string())?;
+        let mut documents = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = sqlite_id(*id)?;
+            let document = statement
+                .query_row(params![collection, id], |row| row.get(0))
+                .optional()
+                .map_err(|error| error.to_string())?;
+            documents.push(document);
+        }
+        Ok(documents)
+    }
+
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
         query_ids(
             &self.connection,
@@ -1120,6 +1137,34 @@ mod tests {
 
         // Assert.
         assert_eq!(stored, Some(br#"{"theme":"dark"}"#.to_vec()));
+    }
+
+    #[test]
+    fn reads_many_documents_with_one_prepared_statement() {
+        // Scenario: Several ids are requested in order, including a missing id.
+        // Covers:
+        // - [StorageEngine::get_many] preserving input order.
+        // - Missing documents represented as None.
+        // Expected: Existing documents and gaps are returned in one batch.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("get_many");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        storage.put("users", 3, br#"{"name":"Cid"}"#).unwrap();
+
+        // Act.
+        let documents = storage.get_many("users", &[3, 2, 1]).unwrap();
+
+        // Assert.
+        assert_eq!(
+            documents,
+            vec![
+                Some(br#"{"name":"Cid"}"#.to_vec()),
+                None,
+                Some(br#"{"name":"Ana"}"#.to_vec()),
+            ]
+        );
     }
 
     #[test]

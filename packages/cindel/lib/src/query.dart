@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
@@ -516,7 +515,7 @@ final class CindelQuery<T> {
     late final StreamController<List<CindelDocument>> controller;
     StreamSubscription<void>? subscription;
     var hasSnapshot = false;
-    String? previousKey;
+    List<CindelDocument>? previousDocuments;
     var isReading = false;
     var needsRead = false;
 
@@ -533,21 +532,20 @@ final class CindelQuery<T> {
           if (controller.isClosed) {
             return;
           }
-          final nextKey = _snapshotKey(documents);
-
           if (!hasSnapshot) {
             hasSnapshot = true;
-            previousKey = nextKey;
+            previousDocuments = documents;
             if (fireImmediately) {
               controller.add(documents);
             }
             continue;
           }
 
-          if (nextKey == previousKey) {
+          final previous = previousDocuments;
+          if (previous != null && _documentListsEqual(previous, documents)) {
             continue;
           }
-          previousKey = nextKey;
+          previousDocuments = documents;
           controller.add(documents);
         } while (needsRead && !controller.isClosed);
       } catch (error, stackTrace) {
@@ -772,8 +770,51 @@ String _distinctKey(CindelDocument document, List<String> fields) {
       .join('\u0001');
 }
 
-String _snapshotKey(List<CindelDocument> documents) {
-  return jsonEncode(documents);
+bool _documentListsEqual(
+  List<CindelDocument> left,
+  List<CindelDocument> right,
+) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index += 1) {
+    if (!_jsonLikeEquals(left[index], right[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _jsonLikeEquals(Object? left, Object? right) {
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key)) {
+        return false;
+      }
+      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (!_jsonLikeEquals(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
 }
 
 List<CindelDocument> _windowDocuments(

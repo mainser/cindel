@@ -290,18 +290,14 @@ class CindelDatabase {
     String collection,
     Iterable<int> ids,
   ) async {
-    _checkOpen();
+    final handle = _checkOpen();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
     for (final id in idList) {
       _checkId(id);
     }
 
-    final documents = <CindelDocument?>[];
-    for (final id in idList) {
-      documents.add(await get(collection, id));
-    }
-    return documents;
+    return _documentsByIdsNullable(handle, collection, idList);
   }
 
   /// Returns every document in [collection], ordered by id.
@@ -748,14 +744,40 @@ class CindelDatabase {
     String collection,
     List<int> ids,
   ) async {
-    final documents = <CindelDocument>[];
-    for (final id in ids) {
-      final document = await get(collection, id);
-      if (document != null) {
-        documents.add(document);
-      }
+    final documents = await _documentsByIdsNullable(
+      _checkOpen(),
+      collection,
+      ids,
+    );
+    return [
+      for (final document in documents)
+        if (document != null) document,
+    ];
+  }
+
+  List<CindelDocument?> _documentsByIdsNullable(
+    Pointer<Void> handle,
+    String collection,
+    List<int> ids,
+  ) {
+    if (ids.isEmpty) {
+      return const <CindelDocument?>[];
     }
-    return documents;
+
+    final bytes = _bindings.getMany(handle, collection, _encodeIds(ids));
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! List) {
+      throw StateError('Native Cindel returned a non-list document batch.');
+    }
+    return [
+      for (final value in decoded)
+        if (value == null)
+          null
+        else if (value is Map)
+          value.cast<String, Object?>()
+        else
+          throw StateError('Native Cindel returned a non-object document.'),
+    ];
   }
 
   Future<CindelMigration> _createMigrationContext(
@@ -1175,7 +1197,35 @@ int? _durationMicros(Object? value) {
 String _stableJson(Object value) => jsonEncode(value);
 
 bool _jsonLikeEquals(Object? left, Object? right) {
-  return jsonEncode(left) == jsonEncode(right);
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key)) {
+        return false;
+      }
+      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (!_jsonLikeEquals(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
 }
 
 int _stableHash(String value) {

@@ -186,6 +186,28 @@ final class CindelNativeBindings {
     });
   }
 
+  Uint8List getMany(Pointer<Void> handle, String collection, Uint8List ids) {
+    return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _queryBytes(
+          (outPointer, outLength) {
+            return _functions.getMany(
+              handle,
+              collectionPointer,
+              collectionLen,
+              idsPointer,
+              idsLength,
+              outPointer,
+              outLength,
+            );
+          },
+          _functions.freeBuffer,
+          'get many',
+        );
+      });
+    });
+  }
+
   List<int> documentIds(Pointer<Void> handle, String collection) {
     return _queryIds(
       (outPointer, outLength) {
@@ -421,6 +443,17 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Void>,
     Pointer<Uint8>,
     int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getMany;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
@@ -602,6 +635,27 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_get'),
+      getMany = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_get_many'),
       documentIds = library
           .lookupFunction<
             Int32 Function(
@@ -797,6 +851,18 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     Pointer<Void>,
     Pointer<Uint8>,
     int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  getMany;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
@@ -922,6 +988,18 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get get => _cindelGet;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getMany => _cindelGetMany;
 
   @override
   int Function(
@@ -1201,6 +1279,27 @@ external int _cindelGet(
     Pointer<Void>,
     Pointer<Uint8>,
     Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_get_many', assetId: _assetId)
+external int _cindelGetMany(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
@@ -1353,6 +1452,20 @@ List<int> _queryIds(
   void Function(Pointer<Uint8> pointer, int length) freeBuffer,
   String operation,
 ) {
+  final bytes = _queryBytes(action, freeBuffer, operation);
+  final decoded = jsonDecode(utf8.decode(bytes));
+  if (decoded is! List) {
+    throw StateError('Native Cindel returned invalid index query ids.');
+  }
+  return decoded.cast<int>();
+}
+
+Uint8List _queryBytes(
+  int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
+  action,
+  void Function(Pointer<Uint8> pointer, int length) freeBuffer,
+  String operation,
+) {
   final outPointer = calloc<Pointer<Uint8>>();
   final outLength = calloc<Size>();
   try {
@@ -1363,11 +1476,7 @@ List<int> _queryIds(
     final length = outLength.value;
     final bytes = Uint8List.fromList(pointer.asTypedList(length));
     freeBuffer(pointer, length);
-    final decoded = jsonDecode(utf8.decode(bytes));
-    if (decoded is! List) {
-      throw StateError('Native Cindel returned invalid index query ids.');
-    }
-    return decoded.cast<int>();
+    return bytes;
   } finally {
     calloc
       ..free(outPointer)

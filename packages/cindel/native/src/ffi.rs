@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    3
+    4
 }
 
 #[no_mangle]
@@ -261,6 +261,39 @@ pub unsafe extern "C" fn cindel_get(
             0
         }
         Ok(None) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_get_many(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+
+    match engine.get_many(collection, &ids) {
+        Ok(documents) => write_json_documents(documents, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -526,6 +559,32 @@ fn write_json_ids(ids: Vec<u64>, out_ptr: *mut *mut u8, out_len: *mut usize) -> 
         }
         Err(_) => -1,
     }
+}
+
+fn write_json_documents(
+    documents: Vec<Option<Vec<u8>>>,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let mut bytes = Vec::new();
+    bytes.push(b'[');
+    for (index, document) in documents.into_iter().enumerate() {
+        if index > 0 {
+            bytes.push(b',');
+        }
+        match document {
+            Some(document) => bytes.extend_from_slice(&document),
+            None => bytes.extend_from_slice(b"null"),
+        }
+    }
+    bytes.push(b']');
+
+    let (ptr, len) = into_raw_bytes(bytes);
+    unsafe {
+        *out_ptr = ptr;
+        *out_len = len;
+    }
+    0
 }
 
 unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntry>, ()> {

@@ -66,6 +66,7 @@ pub trait StorageEngine {
     fn rollback_transaction(&mut self) -> Result<(), String>;
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String>;
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
+    fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String>;
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
     fn put_indexed(
