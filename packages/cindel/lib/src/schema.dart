@@ -1,3 +1,5 @@
+import 'package:cindel_annotations/cindel_annotations.dart';
+
 /// Converts a typed object into a Cindel document.
 typedef CindelToDocument<T> = Map<String, Object?> Function(T object);
 
@@ -50,6 +52,9 @@ final class CindelFieldSchema {
     required this.dartType,
     required this.isId,
     required this.isIndexed,
+    this.isIndexUnique = false,
+    this.indexCaseSensitive = true,
+    this.indexType = CindelIndexType.value,
   });
 
   /// The stored field name.
@@ -63,4 +68,13 @@ final class CindelFieldSchema {
 
   /// Whether this field is marked with `@index`.
   final bool isIndexed;
+
+  /// Whether this indexed field requires unique values.
+  final bool isIndexUnique;
+
+  /// Whether string index lookups are case-sensitive.
+  final bool indexCaseSensitive;
+
+  /// Storage strategy used for this index.
+  final CindelIndexType indexType;
 }

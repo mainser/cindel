@@ -98,6 +98,43 @@ void main() {
       expect(version, 1);
     });
 
+    // Scenario: A registered schema changes an existing index option.
+    // Covers:
+    // - Native compatibility checks for index variant metadata.
+    // - Public open failure before schema version advancement.
+    // Expected: Changing uniqueness, case sensitivity, or index type requires
+    // a future explicit migration.
+    test('rejects incompatible index option changes.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final database = await Cindel.open(
+        directory: directory.path,
+        schemas: [_userSchema()],
+      );
+      await database.close();
+
+      // Act.
+      final incompatibleOpen = Cindel.open(
+        directory: directory.path,
+        schemas: [_userSchema(emailUnique: true)],
+      );
+
+      // Assert.
+      await expectLater(incompatibleOpen, throwsA(isA<StateError>()));
+
+      // Act.
+      final reopenedDatabase = await Cindel.open(
+        directory: directory.path,
+        schemas: [_userSchema()],
+      );
+      addTearDown(reopenedDatabase.close);
+      final version = await reopenedDatabase.schemaVersion('users');
+
+      // Assert.
+      expect(version, 1);
+    });
+
     // Scenario: A schema version is requested for an unregistered collection.
     // Covers:
     // - Nullable version reads for collections without registered metadata.
@@ -121,6 +158,7 @@ void main() {
 
 CindelCollectionSchema<Map<String, Object?>> _userSchema({
   String emailType = 'String',
+  bool emailUnique = false,
   bool includeActive = false,
 }) {
   return CindelCollectionSchema<Map<String, Object?>>(
@@ -139,6 +177,7 @@ CindelCollectionSchema<Map<String, Object?>> _userSchema({
         dartType: emailType,
         isId: false,
         isIndexed: true,
+        isIndexUnique: emailUnique,
       ),
       if (includeActive)
         const CindelFieldSchema(

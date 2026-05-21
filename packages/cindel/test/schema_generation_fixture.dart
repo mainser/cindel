@@ -11,5 +11,14 @@ class User {
   @index
   late String email;
 
+  @Index(unique: true)
+  String? username;
+
+  @Index(caseSensitive: false)
+  String? displayName;
+
+  @Index(type: CindelIndexType.hash)
+  String? accessToken;
+
   bool? active;
 }

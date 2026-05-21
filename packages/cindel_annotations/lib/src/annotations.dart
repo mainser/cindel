@@ -16,11 +16,36 @@ const collection = Collection();
 /// Marks a field as indexed.
 class Index {
   /// Creates an index annotation.
-  const Index({this.unique = false});
+  const Index({
+    this.unique = false,
+    this.caseSensitive = true,
+    this.type = CindelIndexType.value,
+  });
 
   /// Whether the index requires unique values.
   final bool unique;
+
+  /// Whether string values keep case-sensitive lookup semantics.
+  ///
+  /// This option only applies to `String` fields.
+  final bool caseSensitive;
+
+  /// Storage strategy used for this index.
+  final CindelIndexType type;
 }
 
 /// Marks a field as indexed.
 const index = Index();
+
+/// Storage strategy for a Cindel index.
+enum CindelIndexType {
+  /// Stores the original sortable value.
+  ///
+  /// Value indexes support equality and range-style helpers.
+  value,
+
+  /// Stores a compact stable hash of the indexed value.
+  ///
+  /// Hash indexes support equality helpers only.
+  hash,
+}

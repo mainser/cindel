@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
+import 'package:cindel_annotations/cindel_annotations.dart';
+
 import 'native/bindings.dart';
 import 'schema.dart';
 
@@ -142,6 +144,7 @@ class CindelDatabase {
       _markCollectionChanged(collection);
       return;
     }
+    await _checkUniqueIndexes(collection, {id: value}, indexEntries);
 
     _bindings.putIndexed(
       handle,
@@ -180,6 +183,7 @@ class CindelDatabase {
         ),
       );
     }
+    await _checkUniqueBatchIndexes(collection, values, documents);
 
     _bindings.putManyIndexed(
       handle,
@@ -343,7 +347,7 @@ class CindelDatabase {
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
-    final encodedValue = _encodeIndexValue(value, schemaField.dartType);
+    final encodedValue = _encodeIndexValue(value, schemaField);
 
     final ids = _bindings.queryIndexEqual(
       handle,
@@ -351,7 +355,16 @@ class CindelDatabase {
       field,
       encodedValue,
     );
-    return _documentsByIds(collection, ids);
+    final documents = await _documentsByIds(collection, ids);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      return documents
+          .where(
+            (document) =>
+                _indexedValuesEqual(document[field], value, schemaField),
+          )
+          .toList(growable: false);
+    }
+    return documents;
   }
 
   /// Returns documents whose indexed [field] is inside the inclusive range.
@@ -368,16 +381,21 @@ class CindelDatabase {
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError(
+        'Hash index `${schemaField.name}` only supports equality queries.',
+      );
+    }
     if (lower == null && upper == null) {
       throw ArgumentError.value(null, 'lower/upper', 'Must provide a bound.');
     }
 
     final encodedLower = lower == null
         ? null
-        : _encodeRangeIndexValue(lower, schemaField.dartType, 'lower');
+        : _encodeRangeIndexValue(lower, schemaField, 'lower');
     final encodedUpper = upper == null
         ? null
-        : _encodeRangeIndexValue(upper, schemaField.dartType, 'upper');
+        : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
     final ids = _bindings.queryIndexRange(
@@ -482,11 +500,89 @@ class CindelDatabase {
       entries.add(
         _IndexEntry(
           name: field.name,
-          value: _indexValueJson(fieldValue, field.dartType),
+          value: _indexValueJson(fieldValue, field),
         ),
       );
     }
     return entries;
+  }
+
+  Future<void> _checkUniqueBatchIndexes(
+    String collection,
+    Map<int, CindelDocument> values,
+    List<_BatchPutEntry> documents,
+  ) async {
+    final uniqueEntries = <_UniqueIndexEntry>[];
+    for (final document in documents) {
+      for (final index in document.indexes) {
+        final schemaField = _fieldSchema(collection, index.name);
+        if (schemaField?.isIndexUnique ?? false) {
+          uniqueEntries.add(
+            _UniqueIndexEntry(
+              id: document.id,
+              field: schemaField!,
+              originalValue: values[document.id]![schemaField.name],
+              encodedValue: index.value,
+            ),
+          );
+        }
+      }
+    }
+    if (uniqueEntries.isEmpty) {
+      return;
+    }
+
+    final seen = <String, int>{};
+    for (final entry in uniqueEntries) {
+      final key = _uniqueValueKey(entry.field, entry.originalValue);
+      final existingId = seen[key];
+      if (existingId != null && existingId != entry.id) {
+        throw StateError(
+          'Unique index `${entry.field.name}` already contains this value.',
+        );
+      }
+      seen[key] = entry.id;
+    }
+
+    for (final entry in uniqueEntries) {
+      await _checkUniqueIndexes(
+        collection,
+        {entry.id: values[entry.id]!},
+        [_IndexEntry(name: entry.field.name, value: entry.encodedValue)],
+      );
+    }
+  }
+
+  Future<void> _checkUniqueIndexes(
+    String collection,
+    Map<int, CindelDocument> documents,
+    List<_IndexEntry> indexEntries,
+  ) async {
+    for (final documentEntry in documents.entries) {
+      for (final index in indexEntries) {
+        final schemaField = _fieldSchema(collection, index.name);
+        if (!(schemaField?.isIndexUnique ?? false)) {
+          continue;
+        }
+        final fieldValue = documentEntry.value[schemaField!.name];
+        if (fieldValue == null) {
+          continue;
+        }
+        final candidates = await queryEqual(
+          collection,
+          schemaField.name,
+          fieldValue,
+        );
+        for (final candidate in candidates) {
+          final candidateId = candidate[_schemas[collection]!.idField];
+          if (candidateId != documentEntry.key) {
+            throw StateError(
+              'Unique index `${schemaField.name}` already contains this value.',
+            );
+          }
+        }
+      }
+    }
   }
 
   CindelFieldSchema _checkIndexedField(String collection, String field) {
@@ -504,6 +600,19 @@ class CindelDatabase {
     }
 
     throw StateError('Field `$field` is not indexed for `$collection`.');
+  }
+
+  CindelFieldSchema? _fieldSchema(String collection, String field) {
+    final schema = _schemas[collection];
+    if (schema == null) {
+      return null;
+    }
+    for (final schemaField in schema.fields) {
+      if (schemaField.name == field) {
+        return schemaField;
+      }
+    }
+    return null;
   }
 
   Future<List<CindelDocument>> _documentsByIds(
@@ -586,6 +695,15 @@ class CindelDatabase {
     _watchersByCollection.clear();
     await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
   }
+}
+
+String _uniqueValueKey(CindelFieldSchema field, Object? value) {
+  if (_nonNullableDartType(field.dartType) == 'String' &&
+      !field.indexCaseSensitive &&
+      value is String) {
+    return '${field.name}:String:${value.toLowerCase()}';
+  }
+  return '${field.name}:${value.runtimeType}:$value';
 }
 
 Uint8List _encodeDocument(CindelDocument value) {
@@ -742,21 +860,24 @@ Map<String, Object> _schemaJson(CindelCollectionSchema<dynamic> schema) {
           'dart_type': field.dartType,
           'is_id': field.isId,
           'is_indexed': field.isIndexed,
+          'is_index_unique': field.isIndexUnique,
+          'index_case_sensitive': field.indexCaseSensitive,
+          'index_type': field.indexType.name,
         },
     ],
   };
 }
 
-Uint8List _encodeIndexValue(Object value, String dartType) {
-  return _encodedIndexValue(value, dartType, 'value').bytes;
+Uint8List _encodeIndexValue(Object value, CindelFieldSchema field) {
+  return _encodedIndexValue(value, field, 'value').bytes;
 }
 
 _EncodedIndexValue _encodeRangeIndexValue(
   Object value,
-  String dartType,
+  CindelFieldSchema field,
   String argumentName,
 ) {
-  final encoded = _encodedIndexValue(value, dartType, argumentName);
+  final encoded = _encodedIndexValue(value, field, argumentName);
   if (encoded.kind == 'bool') {
     throw ArgumentError.value(
       value,
@@ -769,10 +890,10 @@ _EncodedIndexValue _encodeRangeIndexValue(
 
 _EncodedIndexValue _encodedIndexValue(
   Object value,
-  String dartType,
+  CindelFieldSchema field,
   String argumentName,
 ) {
-  final json = _indexValueJson(value, dartType, argumentName);
+  final json = _indexValueJson(value, field, argumentName);
   return _EncodedIndexValue(
     kind: json['type']! as String,
     bytes: Uint8List.fromList(utf8.encode(jsonEncode(json))),
@@ -781,14 +902,12 @@ _EncodedIndexValue _encodedIndexValue(
 
 Map<String, Object> _indexValueJson(
   Object value,
-  String dartType, [
+  CindelFieldSchema field, [
   String argumentName = 'value',
 ]) {
-  final normalizedType = dartType.endsWith('?')
-      ? dartType.substring(0, dartType.length - 1)
-      : dartType;
+  final normalizedType = _nonNullableDartType(field.dartType);
 
-  return switch ((normalizedType, value)) {
+  final valueJson = switch ((normalizedType, value)) {
     ('bool', final bool value) => {'type': 'bool', 'value': value},
     ('int', final int value) => {
       'type': 'int',
@@ -798,7 +917,7 @@ Map<String, Object> _indexValueJson(
       'type': 'double',
       'value': value,
     },
-    ('String', final String value) => {'type': 'string', 'value': value},
+    ('String', final String value) => _stringIndexValueJson(value, field),
     ('double', final double value) => throw ArgumentError.value(
       value,
       argumentName,
@@ -807,9 +926,55 @@ Map<String, Object> _indexValueJson(
     _ => throw ArgumentError.value(
       value,
       argumentName,
-      'Must match indexed field type `$dartType`.',
+      'Must match indexed field type `${field.dartType}`.',
     ),
   };
+  if (field.indexType == CindelIndexType.hash) {
+    return {'type': 'int', 'value': _stableHash(_stableJson(valueJson))};
+  }
+  return valueJson;
+}
+
+String _nonNullableDartType(String dartType) {
+  return dartType.endsWith('?')
+      ? dartType.substring(0, dartType.length - 1)
+      : dartType;
+}
+
+Map<String, Object> _stringIndexValueJson(
+  String value,
+  CindelFieldSchema field,
+) {
+  final indexedValue = field.indexCaseSensitive ? value : value.toLowerCase();
+  return {'type': 'string', 'value': indexedValue};
+}
+
+bool _indexedValuesEqual(
+  Object? actual,
+  Object expected,
+  CindelFieldSchema field,
+) {
+  if (_nonNullableDartType(field.dartType) == 'String' &&
+      !field.indexCaseSensitive) {
+    return actual is String &&
+        expected is String &&
+        actual.toLowerCase() == expected.toLowerCase();
+  }
+  return actual == expected;
+}
+
+String _stableJson(Object value) => jsonEncode(value);
+
+int _stableHash(String value) {
+  const offsetBasis = 0xcbf29ce484222325;
+  const prime = 0x100000001b3;
+  const mask = 0x7fffffffffffffff;
+  var hash = offsetBasis;
+  for (final codeUnit in value.codeUnits) {
+    hash ^= codeUnit;
+    hash = (hash * prime) & mask;
+  }
+  return hash;
 }
 
 int _checkSqliteInteger(int value, String argumentName) {
@@ -853,6 +1018,20 @@ final class _BatchPutEntry {
   final int id;
   final CindelDocument document;
   final List<_IndexEntry> indexes;
+}
+
+final class _UniqueIndexEntry {
+  const _UniqueIndexEntry({
+    required this.id,
+    required this.field,
+    required this.originalValue,
+    required this.encodedValue,
+  });
+
+  final int id;
+  final CindelFieldSchema field;
+  final Object? originalValue;
+  final Map<String, Object> encodedValue;
 }
 
 final class _EncodedIndexValue {

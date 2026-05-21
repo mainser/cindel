@@ -1,3 +1,5 @@
+import 'package:cindel_annotations/cindel_annotations.dart';
+
 import 'database.dart';
 import 'schema.dart';
 
@@ -214,6 +216,13 @@ final class CindelQuery<T> {
     required String field,
     required String prefix,
   }) {
+    final schemaField = _schemaField(schema, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError('Hash index `$field` only supports equality queries.');
+    }
+    final indexedPrefix = schemaField.indexCaseSensitive
+        ? prefix
+        : prefix.toLowerCase();
     return CindelQuery._(
       database: database,
       schema: schema,
@@ -221,13 +230,21 @@ final class CindelQuery<T> {
         final documents = await database.queryRange(
           schema.name,
           field,
-          lower: prefix,
-          upper: prefix.isEmpty ? null : _inclusivePrefixUpperBound(prefix),
+          lower: indexedPrefix,
+          upper: indexedPrefix.isEmpty
+              ? null
+              : _inclusivePrefixUpperBound(indexedPrefix),
         );
         return documents
             .where((document) {
               final value = document[field];
-              return value is String && value.startsWith(prefix);
+              if (value is! String) {
+                return false;
+              }
+              if (schemaField.indexCaseSensitive) {
+                return value.startsWith(prefix);
+              }
+              return value.toLowerCase().startsWith(indexedPrefix);
             })
             .toList(growable: false);
       },
@@ -416,6 +433,18 @@ final class CindelQuery<T> {
       limit: limit ?? _limit,
     );
   }
+}
+
+CindelFieldSchema _schemaField<T>(
+  CindelCollectionSchema<T> schema,
+  String field,
+) {
+  for (final schemaField in schema.fields) {
+    if (schemaField.name == field) {
+      return schemaField;
+    }
+  }
+  throw StateError('Field `$field` is not part of `${schema.dartName}`.');
 }
 
 /// A projected query over a single field.

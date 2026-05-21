@@ -60,6 +60,9 @@ String _emitCollection(_CollectionInfo collection) {
       ..writeln('      dartType: ${_stringLiteral(field.dartType)},')
       ..writeln('      isId: ${field.isId},')
       ..writeln('      isIndexed: ${field.isIndexed},')
+      ..writeln('      isIndexUnique: ${field.isIndexUnique},')
+      ..writeln('      indexCaseSensitive: ${field.indexCaseSensitive},')
+      ..writeln('      indexType: CindelIndexType.${field.indexType.name},')
       ..writeln('    ),');
   }
 
@@ -384,7 +387,8 @@ void _emitFilterMethods(
       ..writeln('  }');
   }
 
-  if (field.nonNullableDartType == 'String') {
+  if (field.nonNullableDartType == 'String' &&
+      field.indexType == CindelIndexType.value) {
     buffer
       ..writeln()
       ..writeln('  $queryType ${methodPrefix}Contains(String value) {')
@@ -413,6 +417,9 @@ final class _FieldInfo {
     required this.dartType,
     required this.isId,
     required this.isIndexed,
+    required this.isIndexUnique,
+    required this.indexCaseSensitive,
+    required this.indexType,
   });
 
   factory _FieldInfo.from(FieldElement element) {
@@ -426,14 +433,16 @@ final class _FieldInfo {
       );
     }
 
+    final index = _IndexInfo.from(element, name, dartType);
+
     return _FieldInfo(
       name: name,
       dartType: dartType,
       isId: name == 'id',
-      isIndexed: _indexChecker.hasAnnotationOf(
-        element,
-        throwOnUnresolved: false,
-      ),
+      isIndexed: index != null,
+      isIndexUnique: index?.unique ?? false,
+      indexCaseSensitive: index?.caseSensitive ?? true,
+      indexType: index?.type ?? CindelIndexType.value,
     );
   }
 
@@ -441,6 +450,9 @@ final class _FieldInfo {
   final String dartType;
   final bool isId;
   final bool isIndexed;
+  final bool isIndexUnique;
+  final bool indexCaseSensitive;
+  final CindelIndexType indexType;
 
   String get nonNullableDartType {
     return dartType.endsWith('?')
@@ -449,14 +461,67 @@ final class _FieldInfo {
   }
 
   bool get supportsRangeQueries {
-    return nonNullableDartType == 'int' ||
-        nonNullableDartType == 'double' ||
-        nonNullableDartType == 'String';
+    return indexType == CindelIndexType.value &&
+        (nonNullableDartType == 'int' ||
+            nonNullableDartType == 'double' ||
+            nonNullableDartType == 'String');
   }
 
   bool get supportsNumericFilters {
     return nonNullableDartType == 'int' || nonNullableDartType == 'double';
   }
+}
+
+final class _IndexInfo {
+  const _IndexInfo({
+    required this.unique,
+    required this.caseSensitive,
+    required this.type,
+  });
+
+  static _IndexInfo? from(
+    FieldElement element,
+    String fieldName,
+    String dartType,
+  ) {
+    final annotation = _indexChecker.firstAnnotationOf(
+      element,
+      throwOnUnresolved: false,
+    );
+    if (annotation == null) {
+      return null;
+    }
+    final reader = ConstantReader(annotation);
+    final typeIndex = reader
+        .peek('type')
+        ?.objectValue
+        .getField('index')
+        ?.toIntValue();
+    final type = switch (typeIndex) {
+      1 => CindelIndexType.hash,
+      _ => CindelIndexType.value,
+    };
+    final caseSensitive = reader.peek('caseSensitive')?.boolValue ?? true;
+    final normalizedType = dartType.endsWith('?')
+        ? dartType.substring(0, dartType.length - 1)
+        : dartType;
+    if (!caseSensitive && normalizedType != 'String') {
+      throw InvalidGenerationSourceError(
+        'Field `$fieldName` uses caseSensitive: false, but only String '
+        'indexes support case-insensitive lookup.',
+        element: element,
+      );
+    }
+    return _IndexInfo(
+      unique: reader.peek('unique')?.boolValue ?? false,
+      caseSensitive: caseSensitive,
+      type: type,
+    );
+  }
+
+  final bool unique;
+  final bool caseSensitive;
+  final CindelIndexType type;
 }
 
 bool _isSupportedType(DartType type) {
@@ -490,7 +555,8 @@ void _emitIndexedWhereMethods(
     ..writeln('    );')
     ..writeln('  }');
 
-  if (field.nonNullableDartType == 'String') {
+  if (field.nonNullableDartType == 'String' &&
+      field.indexType == CindelIndexType.value) {
     buffer
       ..writeln()
       ..writeln('  $queryType ${field.name}StartsWith(String prefix) {')

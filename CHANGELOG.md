@@ -5,6 +5,21 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.8 - 2026-05-21
+
+- Added index variants through `@Index(unique:)`, `@Index(caseSensitive:)`,
+  and `@Index(type:)`.
+- Added `CindelIndexType.value` and `CindelIndexType.hash`.
+- Added generated schema metadata for index uniqueness, case sensitivity, and
+  storage type.
+- Enforced unique index values for single writes and batch writes.
+- Added case-insensitive string equality and prefix queries.
+- Added hash index equality lookups and rejected range/prefix planning for hash
+  indexes.
+- Persisted index option metadata in native schema manifests and rejected
+  incompatible index option changes until explicit migrations exist.
+- Added Dart and Rust tests for index variants and schema compatibility.
+
 ## 0.1.7 - 2026-05-21
 
 - Added typed query sorting with generated `sortBy*`, `sortBy*Desc`,

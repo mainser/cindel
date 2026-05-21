@@ -103,7 +103,7 @@ class User {
 Generate schema code:
 
 ```powershell
-dart run build_runner build
+dart run build_runner build --delete-conflicting-outputs
 ```
 
 ## Opening Databases
@@ -213,6 +213,29 @@ final users = await db.users
     .emailBetween('a@example.com', 'm@example.com')
     .findAll();
 ```
+
+Indexes can declare uniqueness, case-insensitive string lookup, or compact hash
+storage:
+
+```dart
+class User {
+  Id id = autoIncrement;
+
+  @Index(unique: true)
+  late String username;
+
+  @Index(caseSensitive: false)
+  late String displayName;
+
+  @Index(type: CindelIndexType.hash)
+  late String accessToken;
+}
+```
+
+`unique` indexes reject duplicate non-null values before writes are persisted.
+Case-insensitive string indexes normalize equality and prefix lookups. Hash
+indexes support equality helpers only; range and prefix helpers are not
+generated for them.
 
 Queries can return all results, the first result, or a count:
 
@@ -330,8 +353,9 @@ final version = await db.schemaVersion('users');
 ```
 
 Compatible additive schema changes advance the collection version. Destructive
-changes such as removing fields, changing field types, changing the id field, or
-changing index status are rejected until explicit migration support is added.
+changes such as removing fields, changing field types, changing the id field,
+changing index status, or changing index options are rejected until explicit
+migration support is added.
 
 ## Benchmarks
 
@@ -420,6 +444,7 @@ Validated so far:
 - [x] Explicit read and write transactions.
 - [x] Generated filter builders.
 - [x] Sorting, pagination, distinct, and primitive property projections.
+- [x] Unique, case-insensitive, value, and hash index variants.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -439,6 +464,7 @@ Next areas:
 - [x] Transaction API.
 - [x] Filter builder.
 - [x] Sorting, pagination, distinct, and primitive property projections.
+- [x] Index variants.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

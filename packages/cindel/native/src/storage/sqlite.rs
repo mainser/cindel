@@ -619,6 +619,30 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
                 collection.name, field.name
             ));
         }
+        if field.index_type != "value" && field.index_type != "hash" {
+            return Err(format!(
+                "schema field `{}.{}` uses unsupported index type `{}`",
+                collection.name, field.name, field.index_type
+            ));
+        }
+        if !field.is_indexed
+            && (field.is_index_unique || !field.index_case_sensitive || field.index_type != "value")
+        {
+            return Err(format!(
+                "schema field `{}.{}` declares index options without an index",
+                collection.name, field.name
+            ));
+        }
+        let normalized_dart_type = field
+            .dart_type
+            .strip_suffix('?')
+            .unwrap_or(&field.dart_type);
+        if field.is_indexed && !field.index_case_sensitive && normalized_dart_type != "String" {
+            return Err(format!(
+                "schema field `{}.{}` case-insensitive indexes require String fields",
+                collection.name, field.name
+            ));
+        }
         if !names.insert(field.name.as_str()) {
             return Err(format!(
                 "schema field `{}.{}` is duplicated",
@@ -680,6 +704,20 @@ fn register_collection_schema(
 
     let existing_schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
         .map_err(|error| error.to_string())?;
+    if existing_schema == *collection {
+        connection
+            .execute(
+                r#"
+                UPDATE schema_collections
+                SET schema_json = ?2
+                WHERE collection = ?1
+                "#,
+                params![collection.name, next_schema_json],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     validate_compatible_schema_change(&existing_schema, collection)?;
 
     let next_version = version + 1;
@@ -774,6 +812,15 @@ fn validate_compatible_field(
     if existing.is_indexed != next.is_indexed {
         return Err(format!(
             "schema field `{}.{}` cannot change index status without an explicit migration",
+            collection.name, existing.name
+        ));
+    }
+    if existing.is_index_unique != next.is_index_unique
+        || existing.index_case_sensitive != next.index_case_sensitive
+        || existing.index_type != next.index_type
+    {
+        return Err(format!(
+            "schema field `{}.{}` cannot change index options without an explicit migration",
             collection.name, existing.name
         ));
     }
@@ -1196,6 +1243,64 @@ mod tests {
 
         // Assert.
         assert!(result.unwrap_err().contains("cannot change type"));
+        assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn persists_index_variant_metadata_in_schemas() {
+        // Scenario: A schema declares unique, case-insensitive, and hash index
+        // options.
+        // Covers:
+        // - Native schema manifest validation for index variants.
+        // - Schema version stability when the same variants are registered
+        //   again.
+        // Expected: Valid index variants register once and keep version 1.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_index_variants");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let mut email = field("email", "String", false, true);
+        email.is_index_unique = true;
+        email.index_case_sensitive = false;
+        let mut token = field("token", "String", false, true);
+        token.index_type = "hash".to_string();
+        let manifest = schema_manifest(vec![user_schema(vec![email, token])]);
+
+        // Act.
+        storage.register_schemas(&manifest).unwrap();
+        storage.register_schemas(&manifest).unwrap();
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn rejects_incompatible_index_option_changes() {
+        // Scenario: A registered index changes its uniqueness option.
+        // Covers:
+        // - Index option compatibility validation.
+        // - Existing schema version preservation after rejection.
+        // Expected: Changing index options requires a future explicit
+        // migration.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_index_option_change");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let original = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+        let mut unique_email = field("email", "String", false, true);
+        unique_email.is_index_unique = true;
+        let incompatible = schema_manifest(vec![user_schema(vec![unique_email])]);
+
+        // Act.
+        storage.register_schemas(&original).unwrap();
+        let result = storage.register_schemas(&incompatible);
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert!(result.unwrap_err().contains("cannot change index options"));
         assert_eq!(version, Some(1));
     }
 
@@ -1748,6 +1853,9 @@ mod tests {
             dart_type: dart_type.to_string(),
             is_id,
             is_indexed,
+            is_index_unique: false,
+            index_case_sensitive: true,
+            index_type: "value".to_string(),
         }
     }
 

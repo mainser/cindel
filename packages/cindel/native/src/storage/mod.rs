@@ -43,6 +43,20 @@ pub struct FieldSchemaManifest {
     pub dart_type: String,
     pub is_id: bool,
     pub is_indexed: bool,
+    #[serde(default)]
+    pub is_index_unique: bool,
+    #[serde(default = "default_index_case_sensitive")]
+    pub index_case_sensitive: bool,
+    #[serde(default = "default_index_type")]
+    pub index_type: String,
+}
+
+fn default_index_case_sensitive() -> bool {
+    true
+}
+
+fn default_index_type() -> String {
+    "value".to_string()
 }
 
 pub trait StorageEngine {

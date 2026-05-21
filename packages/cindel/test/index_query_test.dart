@@ -115,6 +115,113 @@ void main() {
       expect(deletedDocuments, isEmpty);
     });
 
+    // Scenario: A generated unique index receives duplicate values.
+    // Covers:
+    // - [Index.unique] metadata generated into [CindelFieldSchema].
+    // - Public write-time validation before native index entries are replaced.
+    // Expected: A second document with the same unique value is rejected.
+    test('rejects duplicate values for unique indexes.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+
+      // Act.
+      await database.put(
+        'users',
+        1,
+        _user(1, 'Ana', 'ana@example.com', username: 'ana'),
+      );
+      final duplicate = database.put(
+        'users',
+        2,
+        _user(2, 'Ann', 'ann@example.com', username: 'ana'),
+      );
+      final replaceSameDocument = database.put(
+        'users',
+        1,
+        _user(1, 'Ana Maria', 'ana@example.com', username: 'ana'),
+      );
+
+      // Assert.
+      await expectLater(duplicate, throwsA(isA<StateError>()));
+      await expectLater(replaceSameDocument, completes);
+      final users = await database.queryEqual('users', 'username', 'ana');
+      expect(users.map((document) => document['id']), [1]);
+    });
+
+    // Scenario: A string index is configured as case-insensitive.
+    // Covers:
+    // - [Index.caseSensitive] generated metadata.
+    // - Normalized equality and prefix lookups over indexed strings.
+    // Expected: Different query casing still matches the stored value.
+    test('supports case-insensitive string indexes.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      await database.put(
+        'users',
+        1,
+        _user(1, 'Noel', 'noel@example.com', displayName: 'Noel Alvarez'),
+      );
+      await database.put(
+        'users',
+        2,
+        _user(2, 'Ben', 'ben@example.com', displayName: 'Ben'),
+      );
+
+      // Act.
+      final exact = await database.queryEqual(
+        'users',
+        'displayName',
+        'noel alvarez',
+      );
+      final prefix = await database.users
+          .where()
+          .displayNameStartsWith('NOE')
+          .findAll();
+
+      // Assert.
+      expect(exact.map((document) => document['id']), [1]);
+      expect(prefix.map((user) => user.name), ['Noel']);
+    });
+
+    // Scenario: A field uses a hash index.
+    // Covers:
+    // - [CindelIndexType.hash] generated metadata.
+    // - Equality lookup over compact stable index values.
+    // - Range rejection for hash indexes.
+    // Expected: Hash indexes support equality and reject range operations.
+    test('supports hash indexes for equality only.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      await database.put(
+        'users',
+        1,
+        _user(1, 'Ana', 'ana@example.com', accessToken: 'secret-a'),
+      );
+      await database.put(
+        'users',
+        2,
+        _user(2, 'Ben', 'ben@example.com', accessToken: 'secret-b'),
+      );
+
+      // Act.
+      final users = await database.users
+          .where()
+          .accessTokenEqualTo('secret-b')
+          .findAll();
+      final range = database.queryRange(
+        'users',
+        'accessToken',
+        lower: 'secret-a',
+      );
+
+      // Assert.
+      expect(users.map((user) => user.name), ['Ben']);
+      await expectLater(range, throwsA(isA<StateError>()));
+    });
+
     // Scenario: A query is requested without a valid registered index.
     // Covers:
     // - Missing schema rejection.
@@ -153,8 +260,23 @@ void main() {
   });
 }
 
-Map<String, Object?> _user(int id, String name, String email) {
-  return {'id': id, 'name': name, 'email': email, 'active': true};
+Map<String, Object?> _user(
+  int id,
+  String name,
+  String email, {
+  String? username,
+  String? displayName,
+  String? accessToken,
+}) {
+  return {
+    'id': id,
+    'name': name,
+    'email': email,
+    if (username != null) 'username': username,
+    if (displayName != null) 'displayName': displayName,
+    if (accessToken != null) 'accessToken': accessToken,
+    'active': true,
+  };
 }
 
 Future<Directory> _createDatabaseDirectory() {

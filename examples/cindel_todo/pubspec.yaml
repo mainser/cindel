@@ -1,7 +1,7 @@
 name: cindel_todo
 description: Example Flutter app showing Cindel CRUD, schemas, indexes, queries, watchers, and schema versions.
 publish_to: 'none'
-version: 0.1.7+9
+version: 0.1.8+10
 
 environment:
   sdk: ^3.11.5

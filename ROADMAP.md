@@ -33,6 +33,8 @@ feature at once.
 - [x] Inclusive range queries over indexed fields.
 - [x] Generated query builders for indexed equality, string prefix, and range
   queries.
+- [x] Index variants for unique, case-insensitive string, value, and hash
+  indexes.
 - [x] Query result helpers:
   - `findAll`
   - `findFirst`
@@ -136,10 +138,10 @@ feature at once.
 ## Indexes
 
 - [ ] Composite indexes.
-- [ ] Unique indexes.
+- [x] Unique indexes.
 - [ ] Multi-entry indexes for list values.
-- [ ] Case-insensitive string indexes.
-- [ ] Index type options.
+- [x] Case-insensitive string indexes.
+- [x] Index type options.
   - Value indexes for range and prefix scans.
   - Hash indexes for compact equality lookups.
 - [ ] Full-text search primitives.
@@ -148,7 +150,7 @@ feature at once.
   - Case-insensitive prefix search over token indexes.
 - [ ] Index lifecycle operations.
   - Rebuild indexes after migrations.
-  - Validate index definitions during open.
+  - [x] Validate index definitions during open.
   - Detect stale or incompatible index metadata.
 
 ## Schema and Serialization
@@ -318,9 +320,9 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is index variants. Cindel now has the first
-complete typed query pipeline: indexed where, filter, sort, distinct, offset,
-limit, and projection.
+The next implementation milestone is full-text search primitives. Cindel now
+has the first complete typed query pipeline plus index variants for uniqueness,
+case-insensitive strings, value indexes, and hash equality indexes.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce
