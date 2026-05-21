@@ -38,6 +38,9 @@ Cindel/
 - Dart SDK compatible with `sdk: ^3.11.0`.
 - Flutter SDK when working on Flutter examples.
 - Rust toolchain `1.90.0` or newer.
+- Cargo available on `PATH`; after a new `rustup` install, restart the shell or
+  run `. "$HOME/.cargo/env"`.
+- CocoaPods when running iOS or macOS Flutter targets.
 - Windows MSVC C++ toolchain for native builds on Windows.
 - Git.
 
@@ -47,6 +50,9 @@ From the repository root:
 
 ```powershell
 dart pub get
+cd examples/cindel_todo
+flutter pub get
+cd ../..
 ```
 
 For the native package:
@@ -55,16 +61,81 @@ For the native package:
 cargo build --manifest-path packages/cindel/native/Cargo.toml
 ```
 
+For iOS and macOS Flutter targets, install pods with a Ruby-clean environment:
+
+```powershell
+cd examples/cindel_todo/ios
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" pod install
+cd ../macos
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" pod install
+cd ../../..
+```
+
+## Running the Example App
+
+Start from `examples/cindel_todo` and list devices:
+
+```powershell
+cd examples/cindel_todo
+flutter devices
+```
+
+Run on Android:
+
+```powershell
+PATH="$HOME/.cargo/bin:$PATH" flutter run -d <android-device-id>
+```
+
+Run on an iOS simulator:
+
+```powershell
+xcrun simctl list devices available
+xcrun simctl boot <simulator-udid>
+xcrun simctl bootstatus <simulator-udid> -b
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d <simulator-udid>
+```
+
+Run on a physical iPhone or iPad:
+
+```powershell
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d <ios-device-id>
+```
+
+Physical iOS devices require a valid Development Team and provisioning profile.
+If Xcode reports missing profiles, open `ios/Runner.xcworkspace`, select the
+`Runner` target, and set Signing & Capabilities before retrying.
+
+Run on macOS:
+
+```powershell
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d macos
+```
+
 ## Development Checks
 
 Run these before opening a pull request:
 
 ```powershell
 dart format --output=none --set-exit-if-changed .
-dart analyze
+dart analyze packages/cindel packages/cindel_annotations packages/cindel_generator
+flutter analyze examples/cindel_todo
 cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
 cargo test --manifest-path packages/cindel/native/Cargo.toml
-dart test packages/cindel/test -r expanded
+cd packages/cindel
+dart test -r expanded
+cd ../..
+cd examples/cindel_todo
+flutter test
+cd ../..
+```
+
+With Melos installed, the same checks can be run from the scripts in the root
+`pubspec.yaml`:
+
+```powershell
+dart run melos run format-check
+dart run melos run analyze
+dart run melos run test
 ```
 
 Run the backend benchmark baseline with:

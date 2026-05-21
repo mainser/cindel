@@ -8,3 +8,24 @@ workspace:
   - packages/cindel
   - packages/cindel_annotations
   - packages/cindel_generator
+
+dev_dependencies:
+  melos: ^7.7.0
+
+melos:
+  scripts:
+    format-check:
+      run: |
+        dart format --output=none --set-exit-if-changed .
+        cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
+
+    analyze:
+      run: |
+        dart analyze packages/cindel packages/cindel_annotations packages/cindel_generator
+        flutter analyze examples/cindel_todo
+
+    test:
+      run: |
+        cargo test --manifest-path packages/cindel/native/Cargo.toml
+        (cd packages/cindel && dart test -r expanded)
+        (cd examples/cindel_todo && flutter test)

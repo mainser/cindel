@@ -189,17 +189,80 @@ Install dependencies:
 
 ```powershell
 dart pub get
+cd examples/cindel_todo
+flutter pub get
+cd ../..
 ```
 
-Validate the workspace:
+The Dart packages and Flutter example use separate resolution contexts. Validate
+both explicitly:
 
 ```powershell
 dart format --output=none --set-exit-if-changed .
-dart analyze
+dart analyze packages/cindel packages/cindel_annotations packages/cindel_generator
+flutter analyze examples/cindel_todo
 cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
 cargo test --manifest-path packages/cindel/native/Cargo.toml
-dart test packages/cindel/test -r expanded
+cd packages/cindel
+dart test -r expanded
+cd ../..
+cd examples/cindel_todo
+flutter test
+cd ../..
 ```
+
+The FFI tests require Rust/Cargo because Cindel builds the native Rust asset
+through `packages/cindel/hook/build.dart`. If Rust was just installed with
+`rustup`, restart the shell or run:
+
+```powershell
+. "$HOME/.cargo/env"
+```
+
+### Run the Example App
+
+List available devices first:
+
+```powershell
+cd examples/cindel_todo
+flutter devices
+```
+
+Android device or emulator:
+
+```powershell
+PATH="$HOME/.cargo/bin:$PATH" flutter run -d <android-device-id>
+```
+
+iOS simulator:
+
+```powershell
+xcrun simctl list devices available
+xcrun simctl boot <simulator-udid>
+xcrun simctl bootstatus <simulator-udid> -b
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d <simulator-udid>
+```
+
+iOS physical device:
+
+```powershell
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d <ios-device-id>
+```
+
+Running on a physical iPhone requires a valid Apple Development Team and
+provisioning profile for the app bundle id. If signing fails, open
+`examples/cindel_todo/ios/Runner.xcworkspace` in Xcode and set
+Signing & Capabilities for the `Runner` target.
+
+macOS desktop:
+
+```powershell
+env -u GEM_HOME -u GEM_PATH PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH" flutter run -d macos
+```
+
+The `env -u GEM_HOME -u GEM_PATH` prefix keeps CocoaPods isolated from local
+Ruby version managers. It is useful when `pod --version` fails because gems from
+different Ruby versions are mixed.
 
 See `CONTRIBUTING.md` for contribution guidelines.
 

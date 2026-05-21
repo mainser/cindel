@@ -1,9 +1,0 @@
-name: cindel_workspace
-
-packages:
-  - packages/**
-  - examples/**
-
-command:
-  bootstrap:
-    usePubspecOverrides: true
