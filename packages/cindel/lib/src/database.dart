@@ -12,6 +12,8 @@ typedef CindelDocument = Map<String, Object?>;
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
 const _inMemoryDirectory = ':memory:';
 
+enum _TransactionMode { read, write }
+
 /// Default polling interval used by Cindel watchers.
 const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 
@@ -31,7 +33,9 @@ class CindelDatabase {
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
+  final Set<String> _changedCollectionsInTransaction = {};
   Pointer<Void>? _handle;
+  _TransactionMode? _activeTransaction;
 
   /// Opens a database stored under [directory].
   ///
@@ -92,9 +96,31 @@ class CindelDatabase {
     if (handle == null) {
       return;
     }
+    if (_activeTransaction != null) {
+      _bindings.rollbackTransaction(handle);
+      _activeTransaction = null;
+      _changedCollectionsInTransaction.clear();
+    }
     await _closeWatchers();
     _bindings.close(handle);
     _handle = null;
+  }
+
+  /// Runs [action] inside a native read transaction.
+  ///
+  /// Read transactions provide a consistent snapshot for the reads performed by
+  /// this database handle. Write operations inside [readTxn] throw [StateError].
+  Future<T> readTxn<T>(Future<T> Function() action) {
+    return _runTransaction(_TransactionMode.read, action);
+  }
+
+  /// Runs [action] inside a native write transaction.
+  ///
+  /// All writes performed by this database handle are committed together. If
+  /// [action] throws, native changes are rolled back and watchers are not
+  /// notified.
+  Future<T> writeTxn<T>(Future<T> Function() action) {
+    return _runTransaction(_TransactionMode.write, action);
   }
 
   /// Stores [value] in [collection] under [id].
@@ -104,6 +130,7 @@ class CindelDatabase {
   /// write fails.
   Future<void> put(String collection, int id, CindelDocument value) async {
     final handle = _checkOpen();
+    _checkCanWrite();
     _checkCollection(collection);
     _checkId(id);
     _checkDocument(value);
@@ -112,7 +139,7 @@ class CindelDatabase {
     final indexEntries = _indexEntriesFor(collection, value);
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
-      _notifyWatchers(collection);
+      _markCollectionChanged(collection);
       return;
     }
 
@@ -123,7 +150,7 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
-    _notifyWatchers(collection);
+    _markCollectionChanged(collection);
   }
 
   /// Stores every document in [values] atomically.
@@ -135,6 +162,7 @@ class CindelDatabase {
     Map<int, CindelDocument> values,
   ) async {
     final handle = _checkOpen();
+    _checkCanWrite();
     _checkCollection(collection);
     if (values.isEmpty) {
       return;
@@ -158,7 +186,7 @@ class CindelDatabase {
       collection,
       _encodeBatchPutEntries(documents),
     );
-    _notifyWatchers(collection);
+    _markCollectionChanged(collection);
   }
 
   /// Allocates the next native auto-increment id for [collection].
@@ -167,6 +195,7 @@ class CindelDatabase {
   /// completes, so reopened databases continue from the next value.
   Future<int> allocateId(String collection) async {
     final handle = _checkOpen();
+    _checkCanWrite();
     _checkCollection(collection);
     return _bindings.allocateId(handle, collection);
   }
@@ -221,16 +250,18 @@ class CindelDatabase {
   /// fails.
   Future<void> delete(String collection, int id) async {
     final handle = _checkOpen();
+    _checkCanWrite();
     _checkCollection(collection);
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
-    _notifyWatchers(collection);
+    _markCollectionChanged(collection);
   }
 
   /// Deletes every document under [ids] atomically.
   Future<void> deleteAll(String collection, Iterable<int> ids) async {
     final handle = _checkOpen();
+    _checkCanWrite();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
     for (final id in idList) {
@@ -241,7 +272,7 @@ class CindelDatabase {
     }
 
     _bindings.deleteMany(handle, collection, _encodeIds(idList));
-    _notifyWatchers(collection);
+    _markCollectionChanged(collection);
   }
 
   /// Watches the current value of a document and emits after committed changes.
@@ -368,6 +399,62 @@ class CindelDatabase {
     return handle;
   }
 
+  void _checkCanWrite() {
+    if (_activeTransaction == _TransactionMode.read) {
+      throw StateError('Cannot write inside a Cindel read transaction.');
+    }
+  }
+
+  Future<T> _runTransaction<T>(
+    _TransactionMode mode,
+    Future<T> Function() action,
+  ) async {
+    final handle = _checkOpen();
+    if (_activeTransaction != null) {
+      throw StateError('Cindel does not support nested transactions yet.');
+    }
+
+    final previousChangedCollections = Set<String>.of(
+      _changedCollectionsInTransaction,
+    );
+    _changedCollectionsInTransaction.clear();
+    if (mode == _TransactionMode.read) {
+      _bindings.beginReadTransaction(handle);
+    } else {
+      _bindings.beginWriteTransaction(handle);
+    }
+    _activeTransaction = mode;
+
+    try {
+      final result = await action();
+      _bindings.commitTransaction(handle);
+      final changedCollections = Set<String>.of(
+        _changedCollectionsInTransaction,
+      );
+      _changedCollectionsInTransaction
+        ..clear()
+        ..addAll(previousChangedCollections);
+      _activeTransaction = null;
+      if (mode == _TransactionMode.write) {
+        for (final collection in changedCollections) {
+          _notifyWatchers(collection);
+        }
+      }
+      return result;
+    } catch (_) {
+      try {
+        _bindings.rollbackTransaction(handle);
+      } catch (_) {
+        // Preserve the original failure from user code or commit.
+      }
+      _changedCollectionsInTransaction
+        ..clear()
+        ..addAll(previousChangedCollections);
+      _activeTransaction = null;
+      rethrow;
+    }
+  }
+
   List<_IndexEntry>? _indexEntriesFor(String collection, CindelDocument value) {
     final schema = _schemas[collection];
     if (schema == null) {
@@ -432,6 +519,7 @@ class CindelDatabase {
     late final _CindelWatcher<T> watcher;
     watcher = _CindelWatcher<T>(
       pollInterval: pollInterval,
+      shouldPoll: () => _activeTransaction == null,
       readRevision: () {
         final handle = _handle;
         if (handle == null) {
@@ -460,6 +548,14 @@ class CindelDatabase {
     for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
       unawaited(watcher.poll());
     }
+  }
+
+  void _markCollectionChanged(String collection) {
+    if (_activeTransaction == _TransactionMode.write) {
+      _changedCollectionsInTransaction.add(collection);
+      return;
+    }
+    _notifyWatchers(collection);
   }
 
   void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
@@ -766,11 +862,13 @@ abstract interface class _RegisteredWatcher {
 final class _CindelWatcher<T> implements _RegisteredWatcher {
   _CindelWatcher({
     required Duration pollInterval,
+    required bool Function() shouldPoll,
     required int Function() readRevision,
     required Future<T> Function() readSnapshot,
     required void Function() onListen,
     required void Function() onCancel,
   }) : _pollInterval = pollInterval,
+       _shouldPoll = shouldPoll,
        _readRevision = readRevision,
        _readSnapshot = readSnapshot,
        _onListen = onListen,
@@ -789,6 +887,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   }
 
   final Duration _pollInterval;
+  final bool Function() _shouldPoll;
   final int Function() _readRevision;
   final Future<T> Function() _readSnapshot;
   final void Function() _onListen;
@@ -803,6 +902,9 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
 
   Future<void> poll({bool force = false}) async {
     if (_isPolling || _controller.isClosed) {
+      return;
+    }
+    if (!force && !_shouldPoll()) {
       return;
     }
     _isPolling = true;

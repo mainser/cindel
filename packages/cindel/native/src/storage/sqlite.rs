@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
@@ -10,6 +10,13 @@ use super::{
 
 pub struct SqliteStorage {
     connection: Connection,
+    active_transaction: Option<TransactionMode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionMode {
+    Read,
+    Write,
 }
 
 impl SqliteStorage {
@@ -21,7 +28,10 @@ impl SqliteStorage {
             let database_path = Path::new(directory).join("cindel.sqlite");
             Connection::open(database_path).map_err(|error| error.to_string())?
         };
-        let storage = Self { connection };
+        let storage = Self {
+            connection,
+            active_transaction: None,
+        };
         storage.initialize()?;
 
         Ok(storage)
@@ -94,7 +104,43 @@ impl SqliteStorage {
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 
 impl StorageEngine for SqliteStorage {
+    fn begin_read_transaction(&mut self) -> Result<(), String> {
+        self.begin_transaction(TransactionMode::Read, "BEGIN DEFERRED TRANSACTION")
+    }
+
+    fn begin_write_transaction(&mut self) -> Result<(), String> {
+        self.begin_transaction(TransactionMode::Write, "BEGIN IMMEDIATE TRANSACTION")
+    }
+
+    fn commit_transaction(&mut self) -> Result<(), String> {
+        if self.active_transaction.is_none() {
+            return Err("no active transaction to commit".into());
+        }
+        self.connection
+            .execute_batch("COMMIT")
+            .map_err(|error| error.to_string())?;
+        self.active_transaction = None;
+        Ok(())
+    }
+
+    fn rollback_transaction(&mut self) -> Result<(), String> {
+        if self.active_transaction.is_none() {
+            return Err("no active transaction to rollback".into());
+        }
+        self.connection
+            .execute_batch("ROLLBACK")
+            .map_err(|error| error.to_string())?;
+        self.active_transaction = None;
+        Ok(())
+    }
+
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            let id = allocate_id(&self.connection, collection)?;
+            return u64::try_from(id).map_err(|error| error.to_string());
+        }
+
         let transaction = self
             .connection
             .transaction()
@@ -143,6 +189,13 @@ impl StorageEngine for SqliteStorage {
         bytes: &[u8],
         indexes: &[IndexEntry],
     ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            put_document_with_indexes(&self.connection, collection, id, bytes, indexes)?;
+            bump_collection_revision(&self.connection, collection)?;
+            return Ok(());
+        }
+
         let transaction = self
             .connection
             .transaction()
@@ -160,6 +213,20 @@ impl StorageEngine for SqliteStorage {
         documents: &[DocumentWrite],
     ) -> Result<(), String> {
         if documents.is_empty() {
+            return Ok(());
+        }
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            for document in documents {
+                put_document_with_indexes(
+                    &self.connection,
+                    collection,
+                    document.id,
+                    &document.bytes,
+                    &document.indexes,
+                )?;
+            }
+            bump_collection_revision(&self.connection, collection)?;
             return Ok(());
         }
 
@@ -183,7 +250,16 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
+        self.ensure_can_write()?;
         let id = sqlite_id(id)?;
+        if self.active_transaction.is_some() {
+            let deleted = delete_document(&self.connection, collection, id)?;
+            if deleted {
+                bump_collection_revision(&self.connection, collection)?;
+            }
+            return Ok(());
+        }
+
         let transaction = self
             .connection
             .transaction()
@@ -205,6 +281,19 @@ impl StorageEngine for SqliteStorage {
 
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
         if ids.is_empty() {
+            return Ok(());
+        }
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            let mut deleted_any = false;
+            for id in ids {
+                let id = sqlite_id(*id)?;
+                let deleted = delete_document(&self.connection, collection, id)?;
+                deleted_any |= deleted;
+            }
+            if deleted_any {
+                bump_collection_revision(&self.connection, collection)?;
+            }
             return Ok(());
         }
 
@@ -268,6 +357,14 @@ impl StorageEngine for SqliteStorage {
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
         validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            for collection in &manifest.collections {
+                register_collection_schema(&self.connection, collection)?;
+            }
+            return Ok(());
+        }
+
         let transaction = self
             .connection
             .transaction()
@@ -295,12 +392,32 @@ impl StorageEngine for SqliteStorage {
     }
 }
 
+impl SqliteStorage {
+    fn begin_transaction(&mut self, mode: TransactionMode, sql: &str) -> Result<(), String> {
+        if self.active_transaction.is_some() {
+            return Err("a transaction is already active".into());
+        }
+        self.connection
+            .execute_batch(sql)
+            .map_err(|error| error.to_string())?;
+        self.active_transaction = Some(mode);
+        Ok(())
+    }
+
+    fn ensure_can_write(&self) -> Result<(), String> {
+        match self.active_transaction {
+            Some(TransactionMode::Read) => Err("write attempted inside read transaction".into()),
+            Some(TransactionMode::Write) | None => Ok(()),
+        }
+    }
+}
+
 fn sqlite_id(id: u64) -> Result<i64, String> {
     i64::try_from(id).map_err(|_| format!("id {id} exceeds SQLite INTEGER range"))
 }
 
-fn allocate_id(transaction: &Transaction<'_>, collection: &str) -> Result<i64, String> {
-    let existing = transaction
+fn allocate_id(connection: &Connection, collection: &str) -> Result<i64, String> {
+    let existing = connection
         .query_row(
             "SELECT next_id FROM id_counters WHERE collection = ?1",
             params![collection],
@@ -310,7 +427,7 @@ fn allocate_id(transaction: &Transaction<'_>, collection: &str) -> Result<i64, S
         .map_err(|error| error.to_string())?;
 
     let Some(next_id) = existing else {
-        transaction
+        connection
             .execute(
                 "INSERT INTO id_counters (collection, next_id) VALUES (?1, 2)",
                 params![collection],
@@ -327,7 +444,7 @@ fn allocate_id(transaction: &Transaction<'_>, collection: &str) -> Result<i64, S
     let following_id = next_id.checked_add(1).ok_or_else(|| {
         format!("id counter for collection `{collection}` exceeds SQLite INTEGER range")
     })?;
-    transaction
+    connection
         .execute(
             "UPDATE id_counters SET next_id = ?2 WHERE collection = ?1",
             params![collection, following_id],
@@ -336,13 +453,9 @@ fn allocate_id(transaction: &Transaction<'_>, collection: &str) -> Result<i64, S
     Ok(next_id)
 }
 
-fn advance_id_counter(
-    transaction: &Transaction<'_>,
-    collection: &str,
-    id: i64,
-) -> Result<(), String> {
+fn advance_id_counter(connection: &Connection, collection: &str, id: i64) -> Result<(), String> {
     let next_id = id.checked_add(1).unwrap_or(i64::MAX);
-    transaction
+    connection
         .execute(
             r#"
             INSERT INTO id_counters (collection, next_id)
@@ -361,26 +474,26 @@ fn advance_id_counter(
 }
 
 fn put_document_with_indexes(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     collection: &str,
     id: u64,
     bytes: &[u8],
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
     let id = sqlite_id(id)?;
-    put_document(transaction, collection, id, bytes)?;
-    delete_index_entries(transaction, collection, id)?;
-    insert_index_entries(transaction, collection, id, indexes)?;
-    advance_id_counter(transaction, collection, id)
+    put_document(connection, collection, id, bytes)?;
+    delete_index_entries(connection, collection, id)?;
+    insert_index_entries(connection, collection, id, indexes)?;
+    advance_id_counter(connection, collection, id)
 }
 
 fn put_document(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     collection: &str,
     id: i64,
     bytes: &[u8],
 ) -> Result<(), String> {
-    transaction
+    connection
         .execute(
             r#"
             INSERT INTO documents (collection, id, bytes)
@@ -393,27 +506,19 @@ fn put_document(
         .map_err(|error| error.to_string())
 }
 
-fn delete_document(
-    transaction: &Transaction<'_>,
-    collection: &str,
-    id: i64,
-) -> Result<bool, String> {
-    let deleted = transaction
+fn delete_document(connection: &Connection, collection: &str, id: i64) -> Result<bool, String> {
+    let deleted = connection
         .execute(
             "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
             params![collection, id],
         )
         .map_err(|error| error.to_string())?;
-    delete_index_entries(transaction, collection, id)?;
+    delete_index_entries(connection, collection, id)?;
     Ok(deleted > 0)
 }
 
-fn delete_index_entries(
-    transaction: &Transaction<'_>,
-    collection: &str,
-    id: i64,
-) -> Result<(), String> {
-    transaction
+fn delete_index_entries(connection: &Connection, collection: &str, id: i64) -> Result<(), String> {
+    connection
         .execute(
             "DELETE FROM index_entries WHERE collection = ?1 AND document_id = ?2",
             params![collection, id],
@@ -423,14 +528,14 @@ fn delete_index_entries(
 }
 
 fn insert_index_entries(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     collection: &str,
     id: i64,
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
     for index in indexes {
         let key = SqliteIndexKey::from(&index.value)?;
-        transaction
+        connection
             .execute(
                 r#"
                 INSERT INTO index_entries (
@@ -459,8 +564,8 @@ fn insert_index_entries(
     Ok(())
 }
 
-fn bump_collection_revision(transaction: &Transaction<'_>, collection: &str) -> Result<(), String> {
-    transaction
+fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<(), String> {
+    connection
         .execute(
             r#"
             INSERT INTO collection_revisions (collection, revision)
@@ -542,11 +647,11 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
 }
 
 fn register_collection_schema(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     collection: &CollectionSchemaManifest,
 ) -> Result<(), String> {
     let next_schema_json = canonical_schema_json(collection)?;
-    let existing = transaction
+    let existing = connection
         .query_row(
             "SELECT version, schema_json FROM schema_collections WHERE collection = ?1",
             params![collection.name],
@@ -556,7 +661,7 @@ fn register_collection_schema(
         .map_err(|error| error.to_string())?;
 
     let Some((version, schema_json)) = existing else {
-        transaction
+        connection
             .execute(
                 r#"
                 INSERT INTO schema_collections (collection, version, schema_json)
@@ -578,7 +683,7 @@ fn register_collection_schema(
     validate_compatible_schema_change(&existing_schema, collection)?;
 
     let next_version = version + 1;
-    transaction
+    connection
         .execute(
             r#"
             UPDATE schema_collections
@@ -588,7 +693,7 @@ fn register_collection_schema(
             params![collection.name, next_version, next_schema_json],
         )
         .map_err(|error| error.to_string())?;
-    transaction
+    connection
         .execute(
             r#"
             INSERT INTO schema_migrations (
@@ -1495,6 +1600,117 @@ mod tests {
         assert!(result.unwrap_err().contains("exceeds SQLite INTEGER range"));
         assert_eq!(stored, Some(br#"{"name":"Ana"}"#.to_vec()));
         assert_eq!(revision, 1);
+    }
+
+    #[test]
+    fn commits_explicit_write_transactions() {
+        // Scenario: Multiple writes are wrapped in one explicit transaction.
+        // Covers:
+        // - [StorageEngine::begin_write_transaction].
+        // - Writes reusing the active transaction instead of creating nested
+        //   SQLite transactions.
+        // - [StorageEngine::commit_transaction].
+        // Expected: All writes become visible after commit.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("txn_commit");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.begin_write_transaction().unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        storage.put("users", 2, br#"{"name":"Ben"}"#).unwrap();
+        storage.commit_transaction().unwrap();
+        let ids = storage.document_ids("users").unwrap();
+
+        // Assert.
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn rolls_back_explicit_write_transactions() {
+        // Scenario: A write transaction is rolled back after partial writes.
+        // Covers:
+        // - [StorageEngine::rollback_transaction].
+        // - Documents, indexes, counters, and revisions being reverted.
+        // Expected: No partial transaction state is persisted.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("txn_rollback");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.begin_write_transaction().unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        storage
+            .put_indexed(
+                "users",
+                2,
+                br#"{"email":"ben@example.com"}"#,
+                &[index("email", IndexValue::String("ben@example.com".into()))],
+            )
+            .unwrap();
+        storage.rollback_transaction().unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let indexed_ids = storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("ben@example.com".into()),
+            )
+            .unwrap();
+        let revision = storage.collection_revision("users").unwrap();
+        let allocated_id = storage.allocate_id("users").unwrap();
+
+        // Assert.
+        assert_eq!(ids, Vec::<u64>::new());
+        assert_eq!(indexed_ids, Vec::<u64>::new());
+        assert_eq!(revision, 0);
+        assert_eq!(allocated_id, 1);
+    }
+
+    #[test]
+    fn rejects_writes_inside_read_transactions() {
+        // Scenario: A caller tries to mutate during an explicit read
+        // transaction.
+        // Covers:
+        // - Native read transaction ownership rules.
+        // - Write rejection before SQLite mutating statements run.
+        // Expected: The write fails and no data is persisted.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("txn_read_write");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.begin_read_transaction().unwrap();
+        let result = storage.put("users", 1, br#"{"name":"Ana"}"#);
+        storage.rollback_transaction().unwrap();
+        let stored = storage.get("users", 1).unwrap();
+
+        // Assert.
+        assert!(result.unwrap_err().contains("read transaction"));
+        assert_eq!(stored, None);
+    }
+
+    #[test]
+    fn rejects_nested_explicit_transactions() {
+        // Scenario: A transaction is opened while another is active.
+        // Covers:
+        // - Native transaction handle ownership rules.
+        // Expected: Cindel rejects nested transactions for now.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("txn_nested");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+
+        // Act.
+        storage.begin_write_transaction().unwrap();
+        let nested = storage.begin_read_transaction();
+        storage.rollback_transaction().unwrap();
+
+        // Assert.
+        assert!(nested.unwrap_err().contains("already active"));
     }
 
     fn index(name: &str, value: IndexValue) -> IndexEntry {

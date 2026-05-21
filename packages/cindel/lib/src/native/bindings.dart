@@ -22,6 +22,26 @@ final class CindelNativeBindings {
 
   void close(Pointer<Void> handle) => _functions.close(handle);
 
+  void beginReadTransaction(Pointer<Void> handle) {
+    final status = _functions.beginReadTransaction(handle);
+    _checkStatus(status, 'begin read transaction');
+  }
+
+  void beginWriteTransaction(Pointer<Void> handle) {
+    final status = _functions.beginWriteTransaction(handle);
+    _checkStatus(status, 'begin write transaction');
+  }
+
+  void commitTransaction(Pointer<Void> handle) {
+    final status = _functions.commitTransaction(handle);
+    _checkStatus(status, 'commit transaction');
+  }
+
+  void rollbackTransaction(Pointer<Void> handle) {
+    final status = _functions.rollbackTransaction(handle);
+    _checkStatus(status, 'rollback transaction');
+  }
+
   void put(Pointer<Void> handle, String collection, int id, Uint8List bytes) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
@@ -342,6 +362,14 @@ abstract interface class _CindelNativeFunctions {
 
   void Function(Pointer<Void>) get close;
 
+  int Function(Pointer<Void>) get beginReadTransaction;
+
+  int Function(Pointer<Void>) get beginWriteTransaction;
+
+  int Function(Pointer<Void>) get commitTransaction;
+
+  int Function(Pointer<Void>) get rollbackTransaction;
+
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
   get put;
 
@@ -442,6 +470,26 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Void Function(Pointer<Void>),
             void Function(Pointer<Void>)
           >('cindel_close', isLeaf: true),
+      beginReadTransaction = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_begin_read_txn'),
+      beginWriteTransaction = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_begin_write_txn'),
+      commitTransaction = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_commit_txn'),
+      rollbackTransaction = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_rollback_txn'),
       put = library
           .lookupFunction<
             Int32 Function(
@@ -664,6 +712,18 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final void Function(Pointer<Void>) close;
 
   @override
+  final int Function(Pointer<Void>) beginReadTransaction;
+
+  @override
+  final int Function(Pointer<Void>) beginWriteTransaction;
+
+  @override
+  final int Function(Pointer<Void>) commitTransaction;
+
+  @override
+  final int Function(Pointer<Void>) rollbackTransaction;
+
+  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -780,6 +840,21 @@ final class _NativeAssetCindelNativeFunctions
 
   @override
   void Function(Pointer<Void>) get close => _cindelClose;
+
+  @override
+  int Function(Pointer<Void>) get beginReadTransaction =>
+      _cindelBeginReadTransaction;
+
+  @override
+  int Function(Pointer<Void>) get beginWriteTransaction =>
+      _cindelBeginWriteTransaction;
+
+  @override
+  int Function(Pointer<Void>) get commitTransaction => _cindelCommitTransaction;
+
+  @override
+  int Function(Pointer<Void>) get rollbackTransaction =>
+      _cindelRollbackTransaction;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
@@ -966,6 +1041,30 @@ external Pointer<Void> _cindelOpen(Pointer<Uint8> directory, int directoryLen);
   isLeaf: true,
 )
 external void _cindelClose(Pointer<Void> handle);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_begin_read_txn',
+  assetId: _assetId,
+)
+external int _cindelBeginReadTransaction(Pointer<Void> handle);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_begin_write_txn',
+  assetId: _assetId,
+)
+external int _cindelBeginWriteTransaction(Pointer<Void> handle);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_commit_txn',
+  assetId: _assetId,
+)
+external int _cindelCommitTransaction(Pointer<Void> handle);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_rollback_txn',
+  assetId: _assetId,
+)
+external int _cindelRollbackTransaction(Pointer<Void> handle);
 
 @Native<
   Int32 Function(

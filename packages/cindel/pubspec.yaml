@@ -1,6 +1,6 @@
 name: cindel
 description: Flutter-first local database API with a native Rust core and Dart FFI bridge.
-version: 0.1.4
+version: 0.1.5
 publish_to: none
 
 environment:

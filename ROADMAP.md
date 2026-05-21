@@ -177,14 +177,14 @@ feature at once.
 
 ## Transactions and Consistency
 
-- [ ] Transaction API.
+- [x] Transaction API.
   - Explicit read transactions.
   - Explicit write transactions.
   - Atomic multi-document writes.
   - Clear rollback semantics.
 - [ ] Enforce write operations inside write transactions for typed APIs.
-- [ ] Consistent read snapshots inside read transactions.
-- [ ] Transaction-aware watcher notifications.
+- [x] Consistent read snapshots inside read transactions.
+- [x] Transaction-aware watcher notifications.
   - Notify after commit only.
   - Avoid emissions for rolled-back writes.
 - [ ] Concurrency model.
@@ -316,9 +316,9 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is explicit transactions. Batch writes and
-query deletes now use native transactions internally; Stage 07 should expose
-read and write transaction boundaries as a public API.
+The next implementation milestone is the level 1 filter builder. Cindel now has
+explicit read and write transactions, so Stage 08 can add non-indexed predicates
+while preserving the execution order of indexed where clauses first.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

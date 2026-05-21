@@ -21,6 +21,22 @@ impl CindelEngine {
         self.storage.document_ids(collection)
     }
 
+    pub fn begin_read_transaction(&mut self) -> Result<(), String> {
+        self.storage.begin_read_transaction()
+    }
+
+    pub fn begin_write_transaction(&mut self) -> Result<(), String> {
+        self.storage.begin_write_transaction()
+    }
+
+    pub fn commit_transaction(&mut self) -> Result<(), String> {
+        self.storage.commit_transaction()
+    }
+
+    pub fn rollback_transaction(&mut self) -> Result<(), String> {
+        self.storage.rollback_transaction()
+    }
+
     pub fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
         self.storage.allocate_id(collection)
     }

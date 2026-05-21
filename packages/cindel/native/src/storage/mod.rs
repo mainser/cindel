@@ -46,6 +46,10 @@ pub struct FieldSchemaManifest {
 }
 
 pub trait StorageEngine {
+    fn begin_read_transaction(&mut self) -> Result<(), String>;
+    fn begin_write_transaction(&mut self) -> Result<(), String>;
+    fn commit_transaction(&mut self) -> Result<(), String>;
+    fn rollback_transaction(&mut self) -> Result<(), String>;
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String>;
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;

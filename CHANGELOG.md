@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.5 - 2026-05-21
+
+- Added native explicit read and write transactions.
+- Added public `CindelDatabase.readTxn` and `writeTxn` wrappers.
+- Routed manual, typed, bulk, and query-delete writes through active native
+  write transactions.
+- Rejected writes inside read transactions and nested transactions.
+- Deferred watcher notifications until successful transaction commit and
+  suppressed rollback emissions.
+- Regenerated Windows and Android prebuilt native binaries for the new
+  transaction FFI symbols.
+- Added Rust and Dart tests for commit, rollback, read transactions, nested
+  transaction rejection, id-counter rollback, and transaction-aware watchers.
+
 ## 0.1.4 - 2026-05-21
 
 - Added atomic native batch writes and deletes.

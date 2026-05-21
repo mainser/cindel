@@ -36,6 +36,7 @@ The API is still experimental and can change before a public release.
 - Simple indexed queries by equality and inclusive range.
 - Generated typed query builders for indexed equality, string prefix, and range
   queries.
+- Explicit read and write transactions.
 - Document and collection watchers with Dart streams.
 - In-memory databases for tests and short-lived work.
 - Schema version registration and compatible additive migrations.
@@ -167,6 +168,25 @@ await db.users.deleteAll([ana.id, ben.id]);
 ```
 
 `putAll` and `deleteAll` are committed in one native transaction.
+
+## Transactions
+
+Use `readTxn` for a consistent read snapshot and `writeTxn` for grouped writes:
+
+```dart
+final users = await db.readTxn(() {
+  return db.users.where().emailStartsWith('team').findAll();
+});
+
+await db.writeTxn(() async {
+  await db.users.put(ana);
+  await db.users.put(ben);
+});
+```
+
+Writes inside `writeTxn` commit together. If the callback throws, Cindel rolls
+back the native transaction and watchers are not notified. Writes inside
+`readTxn` and nested transactions are rejected for now.
 
 ## Queries
 
@@ -330,6 +350,7 @@ Validated so far:
 - [x] Inclusive range queries over indexed fields.
 - [x] Generated typed query builders.
 - [x] Query deletes.
+- [x] Explicit read and write transactions.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -346,7 +367,7 @@ Next areas:
 - [x] Query builders.
 - [x] Auto-increment id support.
 - [x] Bulk collection operations.
-- [ ] Transaction API.
+- [x] Transaction API.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

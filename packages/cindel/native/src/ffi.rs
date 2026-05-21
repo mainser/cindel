@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    1
+    2
 }
 
 #[no_mangle]
@@ -27,6 +27,54 @@ pub unsafe extern "C" fn cindel_open(
 pub unsafe extern "C" fn cindel_close(handle: *mut CindelEngine) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_begin_read_txn(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.begin_read_transaction() {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_begin_write_txn(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.begin_write_transaction() {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_commit_txn(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.commit_transaction() {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_rollback_txn(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.rollback_transaction() {
+        Ok(()) => 0,
+        Err(_) => -1,
     }
 }
 
