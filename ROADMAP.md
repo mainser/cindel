@@ -55,7 +55,7 @@ feature at once.
 
 ## API Ergonomics
 
-- [ ] Typed collection APIs generated from schemas.
+- [x] Typed collection APIs generated from schemas.
   - Example target: `db.users.put(user)`, `db.users.get(id)`.
 - [ ] Auto-increment id support.
   - Native id allocation.
@@ -215,14 +215,23 @@ feature at once.
 
 ## Platforms and Native Assets
 
+- [ ] Prebuilt native binary distribution.
+  - Add a Flutter plugin package such as `cindel_flutter_libs`.
+  - Package Android `.so` files under `jniLibs` for supported ABIs.
+  - Package iOS native output as a vendored `.xcframework`.
+  - Package Windows, macOS, and Linux native libraries through platform plugin
+    bundling.
+  - Update Dart native loading so Flutter app consumers do not need Rust/Cargo.
+  - Keep the Rust hook path available for Cindel core development.
 - [ ] Validate iOS build on macOS with Xcode.
 - [ ] Validate iOS install on a physical device.
 - [ ] Validate Android release build on CI or a repeatable local script.
 - [ ] Validate Windows desktop example build.
 - [ ] Add macOS desktop target once native linking is understood.
 - [ ] Add Linux desktop target once native linking is understood.
-- [ ] Define native binary packaging strategy per platform.
-- [ ] Document Rust, NDK, Xcode, and signing requirements.
+- [ ] Document Rust, NDK, Xcode, and signing requirements for maintainers.
+- [ ] Document consumer build requirements without Rust/Cargo after prebuilt
+  binaries are available.
 - [ ] Keep web out of scope until the native MVP is stable.
 
 ## Backend Exploration
@@ -285,7 +294,8 @@ feature at once.
 
 ## Current Focus
 
-The next practical milestone is generated typed collection APIs plus a small
-query-builder slice. That moves Cindel from a working manual document database
-toward the ergonomic API expected from an Isar-inspired local-first database,
-without trying to build every advanced query and index feature at once.
+The next practical milestone is prebuilt native binary distribution for Flutter
+apps. Cindel should keep the Rust hook workflow for maintainers, but app
+consumers should be able to build Android and iOS examples without installing
+Rust/Cargo, following the same broad packaging idea used by
+`isar_flutter_libs`.

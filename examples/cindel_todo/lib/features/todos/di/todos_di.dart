@@ -20,7 +20,7 @@ part 'todos_di.g.dart';
 
 @riverpod
 Future<CindelDatabase> todoDatabase(Ref ref) async {
-  final supportDirectory = await getApplicationSupportDirectory();
+  final supportDirectory = await _applicationSupportDirectory();
   final databaseDirectory = Directory(
     '${supportDirectory.path}${Platform.pathSeparator}cindel_todo',
   );
@@ -75,4 +75,20 @@ SearchTodosByTitlePrefix searchTodosByTitlePrefixUseCase(Ref ref) {
 @riverpod
 ReadTodoSchemaVersion readTodoSchemaVersionUseCase(Ref ref) {
   return ReadTodoSchemaVersion(ref.watch(todoRepositoryProvider));
+}
+
+Future<Directory> _applicationSupportDirectory() async {
+  if (!Platform.isWindows) {
+    return getApplicationSupportDirectory();
+  }
+
+  final appDataPath =
+      Platform.environment['APPDATA'] ?? Platform.environment['LOCALAPPDATA'];
+  if (appDataPath == null || appDataPath.trim().isEmpty) {
+    throw StateError('Windows application data directory is unavailable.');
+  }
+  return Directory(
+    '$appDataPath${Platform.pathSeparator}Cindel${Platform.pathSeparator}'
+    'cindel_todo',
+  );
 }
