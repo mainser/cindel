@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:build/build.dart';
@@ -8,6 +9,16 @@ import 'package:source_gen/source_gen.dart';
 
 const _indexChecker = TypeChecker.typeNamed(
   Index,
+  inPackage: 'cindel_annotations',
+);
+
+const _ignoreChecker = TypeChecker.typeNamed(
+  Ignore,
+  inPackage: 'cindel_annotations',
+);
+
+const _enumeratedChecker = TypeChecker.typeNamed(
+  Enumerated,
   inPackage: 'cindel_annotations',
 );
 
@@ -158,7 +169,9 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  return <String, Object?>{');
 
   for (final field in collection.fields) {
-    buffer.writeln('    ${_stringLiteral(field.name)}: object.${field.name},');
+    buffer.writeln(
+      '    ${_stringLiteral(field.name)}: ${field.toDocumentExpression},',
+    );
   }
 
   buffer
@@ -176,7 +189,7 @@ String _emitCollection(_CollectionInfo collection) {
   for (final field in collection.fields) {
     buffer.writeln(
       '  object.${field.name} = '
-      'document[${_stringLiteral(field.name)}] as ${field.dartType};',
+      '${field.fromDocumentExpression(_stringLiteral(field.name))};',
     );
   }
 
@@ -239,7 +252,10 @@ void _emitQueryModifierMethods(
       '  CindelPropertyQuery<${collection.dartName}, ${field.dartType}> '
       '${field.name}Property() {',
     )
-    ..writeln('    return property<${field.dartType}>($fieldLiteral);')
+    ..writeln(
+      '    return property<${field.dartType}>('
+      '$fieldLiteral${field.propertyDecodeArgument});',
+    )
     ..writeln('  }');
 }
 
@@ -263,6 +279,7 @@ final class _CollectionInfo {
     final fields = element.fields
         .where((field) => !field.isSynthetic && !field.isStatic)
         .map(_FieldInfo.from)
+        .whereType<_FieldInfo>()
         .toList(growable: false);
 
     if (fields.isEmpty) {
@@ -335,17 +352,25 @@ void _emitFilterMethods(
     ..writeln()
     ..writeln('  $queryType ${methodPrefix}EqualTo(${field.dartType} value) {')
     ..writeln('    return _query.whereMatches(')
-    ..writeln('      CindelFilter.field($fieldLiteral).equalTo(value),')
+    ..writeln(
+      '      CindelFilter.field($fieldLiteral).equalTo('
+      '${field.toStoredValueExpression('value', nullableInput: field.isNullable)}),',
+    )
     ..writeln('    );')
     ..writeln('  }');
 
-  if (field.supportsNumericFilters) {
+  if (field.supportsComparableFilters) {
     final valueType = field.nonNullableDartType;
+    final lower = field.toStoredValueExpression('lower', nullableInput: true);
+    final upper = field.toStoredValueExpression('upper', nullableInput: true);
     buffer
       ..writeln()
       ..writeln('  $queryType ${methodPrefix}GreaterThan($valueType value) {')
       ..writeln('    return _query.whereMatches(')
-      ..writeln('      CindelFilter.field($fieldLiteral).greaterThan(value),')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).greaterThan('
+        '${field.toStoredValueExpression('value')}),',
+      )
       ..writeln('    );')
       ..writeln('  }')
       ..writeln()
@@ -354,14 +379,18 @@ void _emitFilterMethods(
       )
       ..writeln('    return _query.whereMatches(')
       ..writeln(
-        '      CindelFilter.field($fieldLiteral).greaterThanOrEqualTo(value),',
+        '      CindelFilter.field($fieldLiteral).greaterThanOrEqualTo('
+        '${field.toStoredValueExpression('value')}),',
       )
       ..writeln('    );')
       ..writeln('  }')
       ..writeln()
       ..writeln('  $queryType ${methodPrefix}LessThan($valueType value) {')
       ..writeln('    return _query.whereMatches(')
-      ..writeln('      CindelFilter.field($fieldLiteral).lessThan(value),')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).lessThan('
+        '${field.toStoredValueExpression('value')}),',
+      )
       ..writeln('    );')
       ..writeln('  }')
       ..writeln()
@@ -370,7 +399,8 @@ void _emitFilterMethods(
       )
       ..writeln('    return _query.whereMatches(')
       ..writeln(
-        '      CindelFilter.field($fieldLiteral).lessThanOrEqualTo(value),',
+        '      CindelFilter.field($fieldLiteral).lessThanOrEqualTo('
+        '${field.toStoredValueExpression('value')}),',
       )
       ..writeln('    );')
       ..writeln('  }')
@@ -381,7 +411,7 @@ void _emitFilterMethods(
       )
       ..writeln('    return _query.whereMatches(')
       ..writeln(
-        '      CindelFilter.field($fieldLiteral).between(lower, upper),',
+        '      CindelFilter.field($fieldLiteral).between($lower, $upper),',
       )
       ..writeln('    );')
       ..writeln('  }');
@@ -415,6 +445,7 @@ final class _FieldInfo {
   _FieldInfo({
     required this.name,
     required this.dartType,
+    required this.type,
     required this.isId,
     required this.isIndexed,
     required this.isIndexUnique,
@@ -422,22 +453,44 @@ final class _FieldInfo {
     required this.indexType,
   });
 
-  factory _FieldInfo.from(FieldElement element) {
+  static _FieldInfo? from(FieldElement element) {
+    if (_ignoreChecker.hasAnnotationOf(element)) {
+      return null;
+    }
+
     final name = element.name ?? element.displayName;
     final dartType = element.type.getDisplayString();
-    if (!_isSupportedType(element.type)) {
+    final type = _PersistedType.from(element, name, dartType);
+
+    final index = _IndexInfo.from(element);
+    if (index != null && type.isList) {
       throw InvalidGenerationSourceError(
-        'Field `$name` has unsupported type `$dartType`. '
-        'Fase 4 supports int, double, String, bool, and nullable variants.',
+        'Field `$name` uses @Index, but list indexes are not supported yet. '
+        'Primitive lists can be persisted without an index.',
+        element: element,
+      );
+    }
+    if (index != null &&
+        !type.supportsCaseInsensitiveIndex &&
+        !index.caseSensitive) {
+      throw InvalidGenerationSourceError(
+        'Field `$name` uses caseSensitive: false, but only String indexes '
+        'support case-insensitive lookup.',
+        element: element,
+      );
+    }
+    if (index?.type == CindelIndexType.words && !type.supportsWordIndex) {
+      throw InvalidGenerationSourceError(
+        'Field `$name` uses a word index, but word indexes require String '
+        'fields.',
         element: element,
       );
     }
 
-    final index = _IndexInfo.from(element, name, dartType);
-
     return _FieldInfo(
       name: name,
       dartType: dartType,
+      type: type,
       isId: name == 'id',
       isIndexed: index != null,
       isIndexUnique: index?.unique ?? false,
@@ -448,6 +501,7 @@ final class _FieldInfo {
 
   final String name;
   final String dartType;
+  final _PersistedType type;
   final bool isId;
   final bool isIndexed;
   final bool isIndexUnique;
@@ -460,16 +514,35 @@ final class _FieldInfo {
         : dartType;
   }
 
-  bool get supportsRangeQueries {
-    return indexType == CindelIndexType.value &&
-        (nonNullableDartType == 'int' ||
-            nonNullableDartType == 'double' ||
-            nonNullableDartType == 'String');
+  String get toDocumentExpression {
+    return type.toStoredExpression('object.$name');
   }
 
-  bool get supportsNumericFilters {
-    return nonNullableDartType == 'int' || nonNullableDartType == 'double';
+  String fromDocumentExpression(String fieldLiteral) {
+    return type.fromStoredExpression('document[$fieldLiteral]');
   }
+
+  String toStoredValueExpression(
+    String variable, {
+    bool nullableInput = false,
+  }) {
+    return type.toStoredExpression(variable, nullableInput: nullableInput);
+  }
+
+  String get propertyDecodeArgument {
+    final decoder = type.decodeClosure;
+    return decoder == null ? '' : ', decode: $decoder';
+  }
+
+  bool get supportsRangeQueries {
+    return indexType == CindelIndexType.value && type.supportsRangeQueries;
+  }
+
+  bool get supportsComparableFilters {
+    return type.supportsComparableFilters;
+  }
+
+  bool get isNullable => dartType.endsWith('?');
 }
 
 final class _IndexInfo {
@@ -479,11 +552,7 @@ final class _IndexInfo {
     required this.type,
   });
 
-  static _IndexInfo? from(
-    FieldElement element,
-    String fieldName,
-    String dartType,
-  ) {
+  static _IndexInfo? from(FieldElement element) {
     final annotation = _indexChecker.firstAnnotationOf(
       element,
       throwOnUnresolved: false,
@@ -503,23 +572,6 @@ final class _IndexInfo {
       _ => CindelIndexType.value,
     };
     final caseSensitive = reader.peek('caseSensitive')?.boolValue ?? true;
-    final normalizedType = dartType.endsWith('?')
-        ? dartType.substring(0, dartType.length - 1)
-        : dartType;
-    if (!caseSensitive && normalizedType != 'String') {
-      throw InvalidGenerationSourceError(
-        'Field `$fieldName` uses caseSensitive: false, but only String '
-        'indexes support case-insensitive lookup.',
-        element: element,
-      );
-    }
-    if (type == CindelIndexType.words && normalizedType != 'String') {
-      throw InvalidGenerationSourceError(
-        'Field `$fieldName` uses a word index, but word indexes require '
-        'String fields.',
-        element: element,
-      );
-    }
     return _IndexInfo(
       unique: reader.peek('unique')?.boolValue ?? false,
       caseSensitive: caseSensitive,
@@ -532,15 +584,375 @@ final class _IndexInfo {
   final CindelIndexType type;
 }
 
-bool _isSupportedType(DartType type) {
-  final display = type.getDisplayString();
-  final normalized = display.endsWith('?')
-      ? display.substring(0, display.length - 1)
-      : display;
-  return normalized == 'int' ||
-      normalized == 'double' ||
-      normalized == 'String' ||
-      normalized == 'bool';
+final class _PersistedType {
+  const _PersistedType._({
+    required this.dartType,
+    required this.isNullable,
+    required this.kind,
+    this.enumInfo,
+    this.elementType,
+  });
+
+  factory _PersistedType.from(
+    FieldElement element,
+    String fieldName,
+    String dartType,
+  ) {
+    final enumInfo = _EnumInfo.from(element);
+    final type = _PersistedType._fromDartType(
+      type: element.type,
+      dartType: dartType,
+      isNullable: dartType.endsWith('?'),
+      enumInfo: enumInfo,
+    );
+    if (type == null) {
+      throw InvalidGenerationSourceError(
+        'Field `$fieldName` has unsupported type `$dartType`. '
+        'Stage 12 supports int, double, String, bool, DateTime, Duration, '
+        'enums, nullable variants, and lists of those primitive shapes.',
+        element: element,
+      );
+    }
+    return type;
+  }
+
+  static _PersistedType? _fromDartType({
+    required DartType type,
+    required String dartType,
+    required bool isNullable,
+    _EnumInfo? enumInfo,
+  }) {
+    final normalized = _normalizeDartType(dartType);
+    final listElement = _listElementType(type);
+    if (listElement != null) {
+      final elementDisplay = listElement.getDisplayString();
+      final elementEnumInfo = _EnumInfo.fromType(listElement, enumInfo);
+      final elementType = _PersistedType._fromDartType(
+        type: listElement,
+        dartType: elementDisplay,
+        isNullable: elementDisplay.endsWith('?'),
+        enumInfo: elementEnumInfo,
+      );
+      if (elementType == null || elementType.isList) {
+        return null;
+      }
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.list,
+        elementType: elementType,
+      );
+    }
+
+    if (_primitiveTypes.contains(normalized)) {
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.primitive,
+      );
+    }
+    if (normalized == 'DateTime') {
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.dateTime,
+      );
+    }
+    if (normalized == 'Duration') {
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.duration,
+      );
+    }
+
+    final resolvedEnum = enumInfo ?? _EnumInfo.fromType(type, null);
+    if (resolvedEnum != null) {
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.enumeration,
+        enumInfo: resolvedEnum,
+      );
+    }
+
+    return null;
+  }
+
+  final String dartType;
+  final bool isNullable;
+  final _PersistedTypeKind kind;
+  final _EnumInfo? enumInfo;
+  final _PersistedType? elementType;
+
+  bool get isList => kind == _PersistedTypeKind.list;
+
+  bool get supportsCaseInsensitiveIndex {
+    return kind == _PersistedTypeKind.primitive &&
+        _normalizeDartType(dartType) == 'String';
+  }
+
+  bool get supportsWordIndex => supportsCaseInsensitiveIndex;
+
+  bool get supportsRangeQueries {
+    final normalized = _normalizeDartType(dartType);
+    return kind == _PersistedTypeKind.primitive &&
+            (normalized == 'int' ||
+                normalized == 'double' ||
+                normalized == 'String') ||
+        kind == _PersistedTypeKind.dateTime ||
+        kind == _PersistedTypeKind.duration;
+  }
+
+  bool get supportsComparableFilters {
+    final normalized = _normalizeDartType(dartType);
+    return kind == _PersistedTypeKind.primitive &&
+            (normalized == 'int' || normalized == 'double') ||
+        kind == _PersistedTypeKind.dateTime ||
+        kind == _PersistedTypeKind.duration;
+  }
+
+  String? get decodeClosure {
+    if (!needsDecode) {
+      return null;
+    }
+    return '(value) => ${fromStoredExpression('value')}';
+  }
+
+  bool get needsDecode {
+    return switch (kind) {
+      _PersistedTypeKind.primitive => false,
+      _PersistedTypeKind.dateTime ||
+      _PersistedTypeKind.duration ||
+      _PersistedTypeKind.enumeration ||
+      _PersistedTypeKind.list => true,
+    };
+  }
+
+  String toStoredExpression(String expression, {bool? nullableInput}) {
+    final allowsNull = nullableInput ?? isNullable;
+    if (!allowsNull) {
+      return _toStoredExpressionNonNull(expression);
+    }
+    if (kind == _PersistedTypeKind.primitive) {
+      return expression;
+    }
+    return _toStoredExpressionNullable(expression);
+  }
+
+  String _toStoredExpressionNonNull(String expression) {
+    return switch (kind) {
+      _PersistedTypeKind.primitive => expression,
+      _PersistedTypeKind.dateTime => '$expression.microsecondsSinceEpoch',
+      _PersistedTypeKind.duration => '$expression.inMicroseconds',
+      _PersistedTypeKind.enumeration => enumInfo!._toStoredExpression(
+        expression,
+      ),
+      _PersistedTypeKind.list =>
+        '$expression.map((value) => '
+            '${elementType!._toStoredExpressionNonNull('value')})'
+            '.toList(growable: false)',
+    };
+  }
+
+  String _toStoredExpressionNullable(String expression) {
+    return switch (kind) {
+      _PersistedTypeKind.primitive => expression,
+      _PersistedTypeKind.dateTime => '$expression?.microsecondsSinceEpoch',
+      _PersistedTypeKind.duration => '$expression?.inMicroseconds',
+      _PersistedTypeKind.enumeration => enumInfo!._toStoredExpressionNullable(
+        expression,
+      ),
+      _PersistedTypeKind.list =>
+        '$expression?.map((value) => '
+            '${elementType!._toStoredExpressionNonNull('value')})'
+            '.toList(growable: false)',
+    };
+  }
+
+  String fromStoredExpression(String expression) {
+    final decoded = _fromStoredExpressionNonNull(expression);
+    if (!isNullable) {
+      return decoded;
+    }
+    return '$expression == null ? null : $decoded';
+  }
+
+  String _fromStoredExpressionNonNull(String expression) {
+    return switch (kind) {
+      _PersistedTypeKind.primitive => '$expression as $dartType',
+      _PersistedTypeKind.dateTime =>
+        'DateTime.fromMicrosecondsSinceEpoch($expression as int, isUtc: true)',
+      _PersistedTypeKind.duration =>
+        'Duration(microseconds: $expression as int)',
+      _PersistedTypeKind.enumeration => enumInfo!._fromStoredExpression(
+        expression,
+      ),
+      _PersistedTypeKind.list =>
+        '($expression as List<Object?>)'
+            '.map((value) => '
+            '${elementType!._fromStoredExpressionNonNull('value')})'
+            '.toList(growable: false)',
+    };
+  }
+}
+
+enum _PersistedTypeKind { primitive, dateTime, duration, enumeration, list }
+
+final class _EnumInfo {
+  const _EnumInfo({
+    required this.enumType,
+    required this.strategy,
+    this.valueField,
+  });
+
+  static _EnumInfo? from(FieldElement element) {
+    final enumElement = _enumElement(element.type);
+    if (enumElement == null) {
+      final annotation = _enumeratedChecker.firstAnnotationOf(
+        element,
+        throwOnUnresolved: false,
+      );
+      if (annotation != null) {
+        throw InvalidGenerationSourceError(
+          '@Enumerated can only be used on enum fields.',
+          element: element,
+        );
+      }
+      return null;
+    }
+    final annotation = _enumeratedChecker.firstAnnotationOf(
+      element,
+      throwOnUnresolved: false,
+    );
+    return _fromAnnotation(enumElement, annotation, element);
+  }
+
+  static _EnumInfo? fromType(DartType type, _EnumInfo? fallback) {
+    final enumElement = _enumElement(type);
+    if (enumElement == null) {
+      return null;
+    }
+    if (fallback != null && fallback.enumType == enumElement.name) {
+      return fallback;
+    }
+    return _EnumInfo(
+      enumType: enumElement.name ?? enumElement.displayName,
+      strategy: CindelEnumType.name,
+    );
+  }
+
+  static _EnumInfo _fromAnnotation(
+    EnumElement enumElement,
+    DartObject? annotation,
+    FieldElement field,
+  ) {
+    if (annotation == null) {
+      return _EnumInfo(
+        enumType: enumElement.name ?? enumElement.displayName,
+        strategy: CindelEnumType.name,
+      );
+    }
+    final reader = ConstantReader(annotation);
+    final typeIndex = reader
+        .peek('type')
+        ?.objectValue
+        .getField('index')
+        ?.toIntValue();
+    final strategy = switch (typeIndex) {
+      1 => CindelEnumType.ordinal,
+      2 => CindelEnumType.value,
+      _ => CindelEnumType.name,
+    };
+    final valueField = reader.peek('valueField')?.stringValue;
+    if (strategy == CindelEnumType.value) {
+      if (valueField == null || valueField.trim().isEmpty) {
+        throw InvalidGenerationSourceError(
+          'Enum field `${field.name}` uses CindelEnumType.value but does not '
+          'declare valueField.',
+          element: field,
+        );
+      }
+      final enumField = enumElement.fields
+          .where((candidate) => candidate.name == valueField)
+          .firstOrNull;
+      if (enumField == null) {
+        throw InvalidGenerationSourceError(
+          'Enum `${enumElement.name}` does not declare a `$valueField` field.',
+          element: field,
+        );
+      }
+      final storedType = _normalizeDartType(enumField.type.getDisplayString());
+      if (!_primitiveTypes.contains(storedType)) {
+        throw InvalidGenerationSourceError(
+          'Enum custom value `${enumElement.name}.$valueField` must be int, '
+          'double, String, or bool.',
+          element: field,
+        );
+      }
+    }
+    return _EnumInfo(
+      enumType: enumElement.name ?? enumElement.displayName,
+      strategy: strategy,
+      valueField: valueField,
+    );
+  }
+
+  final String enumType;
+  final CindelEnumType strategy;
+  final String? valueField;
+
+  String _toStoredExpression(String expression) {
+    return switch (strategy) {
+      CindelEnumType.name => '$expression.name',
+      CindelEnumType.ordinal => '$expression.index',
+      CindelEnumType.value => '$expression.$valueField',
+    };
+  }
+
+  String _toStoredExpressionNullable(String expression) {
+    return switch (strategy) {
+      CindelEnumType.name => '$expression?.name',
+      CindelEnumType.ordinal => '$expression?.index',
+      CindelEnumType.value => '$expression?.$valueField',
+    };
+  }
+
+  String _fromStoredExpression(String expression) {
+    return switch (strategy) {
+      CindelEnumType.name => '$enumType.values.byName($expression as String)',
+      CindelEnumType.ordinal => '$enumType.values[$expression as int]',
+      CindelEnumType.value =>
+        '$enumType.values.firstWhere((enumValue) => '
+            'enumValue.$valueField == $expression)',
+    };
+  }
+}
+
+const _primitiveTypes = {'int', 'double', 'String', 'bool'};
+
+DartType? _listElementType(DartType type) {
+  if (type is! InterfaceType) {
+    return null;
+  }
+  final elementName = type.element.name ?? type.element.displayName;
+  if (elementName != 'List' || type.typeArguments.length != 1) {
+    return null;
+  }
+  return type.typeArguments.single;
+}
+
+EnumElement? _enumElement(DartType type) {
+  if (type is InterfaceType && type.element is EnumElement) {
+    return type.element as EnumElement;
+  }
+  return null;
+}
+
+String _normalizeDartType(String dartType) {
+  return dartType.endsWith('?')
+      ? dartType.substring(0, dartType.length - 1)
+      : dartType;
 }
 
 void _emitIndexedWhereMethods(
@@ -598,7 +1010,7 @@ void _emitIndexedWhereMethods(
     ..writeln('      database: _collection.database,')
     ..writeln('      schema: ${collection.schemaName},')
     ..writeln('      field: $fieldLiteral,')
-    ..writeln('      value: value,')
+    ..writeln('      value: ${field.toStoredValueExpression('value')},')
     ..writeln('    );')
     ..writeln('  }');
 
@@ -627,8 +1039,12 @@ void _emitIndexedWhereMethods(
       ..writeln('      database: _collection.database,')
       ..writeln('      schema: ${collection.schemaName},')
       ..writeln('      field: $fieldLiteral,')
-      ..writeln('      lower: lower,')
-      ..writeln('      upper: upper,')
+      ..writeln(
+        '      lower: ${field.toStoredValueExpression('lower', nullableInput: true)},',
+      )
+      ..writeln(
+        '      upper: ${field.toStoredValueExpression('upper', nullableInput: true)},',
+      )
       ..writeln('    );')
       ..writeln('  }');
   }

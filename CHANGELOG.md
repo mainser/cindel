@@ -5,6 +5,19 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.10 - 2026-05-21
+
+- Added generated serialization for `DateTime` and `Duration`.
+- Added generated primitive list persistence.
+- Added `@ignore` for transient fields.
+- Added `@Enumerated` with `CindelEnumType.name`, `ordinal`, and custom
+  `valueField` strategies.
+- Added generated property decoding for fields stored in encoded form.
+- Added indexed query support for generated DateTime, Duration, and enum
+  encoded values.
+- Expanded schema generation tests to round-trip dates, durations, lists,
+  nullable fields, enums, and ignored fields through an in-memory database.
+
 ## 0.1.9 - 2026-05-21
 
 - Added `CindelIndexType.words` for simple full-text-style word indexes over

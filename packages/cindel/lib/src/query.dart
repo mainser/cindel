@@ -382,9 +382,16 @@ final class CindelQuery<T> {
   }
 
   /// Projects this query to one field.
-  CindelPropertyQuery<T, R> property<R>(String field) {
+  CindelPropertyQuery<T, R> property<R>(
+    String field, {
+    R Function(Object? value)? decode,
+  }) {
     _checkFieldName(field);
-    return CindelPropertyQuery<T, R>._(query: this, field: field);
+    return CindelPropertyQuery<T, R>._(
+      query: this,
+      field: field,
+      decode: decode,
+    );
   }
 
   /// Projects this query to multiple fields.
@@ -517,16 +524,23 @@ final class CindelPropertyQuery<T, R> {
   const CindelPropertyQuery._({
     required CindelQuery<T> query,
     required String field,
+    required R Function(Object? value)? decode,
   }) : _query = query,
-       _field = field;
+       _field = field,
+       _decode = decode;
 
   final CindelQuery<T> _query;
   final String _field;
+  final R Function(Object? value)? _decode;
 
   /// Returns every projected value.
   Future<List<R>> findAll() async {
     final documents = await _query._matchingDocuments();
-    return [for (final document in documents) document[_field] as R];
+    final decode = _decode;
+    return [
+      for (final document in documents)
+        if (decode == null) document[_field] as R else decode(document[_field]),
+    ];
   }
 
   /// Returns the first projected value, or `null`.

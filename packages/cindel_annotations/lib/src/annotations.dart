@@ -37,6 +37,39 @@ class Index {
 /// Marks a field as indexed.
 const index = Index();
 
+/// Excludes a field from generated Cindel persistence.
+class Ignore {
+  /// Creates an ignore annotation.
+  const Ignore();
+}
+
+/// Excludes a field from generated Cindel persistence.
+const ignore = Ignore();
+
+/// Configures how enum fields are persisted.
+class Enumerated {
+  /// Creates an enum persistence annotation.
+  const Enumerated(this.type, {this.valueField});
+
+  /// Persistence strategy used for the enum value.
+  final CindelEnumType type;
+
+  /// Enum instance field used when [type] is [CindelEnumType.value].
+  final String? valueField;
+}
+
+/// Enum persistence strategy.
+enum CindelEnumType {
+  /// Stores the enum case name.
+  name,
+
+  /// Stores the enum case index.
+  ordinal,
+
+  /// Stores the value of an enum instance field.
+  value,
+}
+
 /// Storage strategy for a Cindel index.
 enum CindelIndexType {
   /// Stores the original sortable value.

@@ -951,7 +951,38 @@ Map<String, Object> _indexValueJson(
       'value': value,
     },
     ('String', final String value) => _stringIndexValueJson(value, field),
+    ('DateTime', final DateTime value) => {
+      'type': 'int',
+      'value': _checkSqliteInteger(value.microsecondsSinceEpoch, argumentName),
+    },
+    ('DateTime', final int value) => {
+      'type': 'int',
+      'value': _checkSqliteInteger(value, argumentName),
+    },
+    ('Duration', final Duration value) => {
+      'type': 'int',
+      'value': _checkSqliteInteger(value.inMicroseconds, argumentName),
+    },
+    ('Duration', final int value) => {
+      'type': 'int',
+      'value': _checkSqliteInteger(value, argumentName),
+    },
     ('double', final double value) => throw ArgumentError.value(
+      value,
+      argumentName,
+      'Must be finite.',
+    ),
+    (_, final bool value) => {'type': 'bool', 'value': value},
+    (_, final int value) => {
+      'type': 'int',
+      'value': _checkSqliteInteger(value, argumentName),
+    },
+    (_, final double value) when value.isFinite => {
+      'type': 'double',
+      'value': value,
+    },
+    (_, final String value) => {'type': 'string', 'value': value},
+    (_, final double value) => throw ArgumentError.value(
       value,
       argumentName,
       'Must be finite.',
@@ -993,7 +1024,29 @@ bool _indexedValuesEqual(
         expected is String &&
         actual.toLowerCase() == expected.toLowerCase();
   }
+  if (_nonNullableDartType(field.dartType) == 'DateTime') {
+    return _dateTimeMicros(actual) == _dateTimeMicros(expected);
+  }
+  if (_nonNullableDartType(field.dartType) == 'Duration') {
+    return _durationMicros(actual) == _durationMicros(expected);
+  }
   return actual == expected;
+}
+
+int? _dateTimeMicros(Object? value) {
+  return switch (value) {
+    DateTime() => value.microsecondsSinceEpoch,
+    int() => value,
+    _ => null,
+  };
+}
+
+int? _durationMicros(Object? value) {
+  return switch (value) {
+    Duration() => value.inMicroseconds,
+    int() => value,
+    _ => null,
+  };
 }
 
 String _stableJson(Object value) => jsonEncode(value);

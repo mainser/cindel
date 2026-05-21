@@ -315,6 +315,11 @@ Map<String, Object?> _user(
     if (accessToken != null) 'accessToken': accessToken,
     if (bio != null) 'bio': bio,
     'active': true,
+    'createdAt': 0,
+    'tags': <String>[],
+    'role': 'member',
+    'status': 0,
+    'plan': 'free',
   };
 }
 

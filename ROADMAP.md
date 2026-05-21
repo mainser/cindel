@@ -28,6 +28,13 @@ feature at once.
   - `CindelDatabase.delete`
 - [x] Input validation and closed-database errors.
 - [x] Generated collection schemas and serializers.
+- [x] Schema type expansion:
+  - `DateTime`,
+  - `Duration`,
+  - primitive lists,
+  - nullable fields,
+  - enum persistence by name, ordinal, and custom value,
+  - ignored transient fields.
 - [x] Simple index entries generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
@@ -159,7 +166,7 @@ feature at once.
 
 ## Schema and Serialization
 
-- [ ] Expand supported field types.
+- [x] Expand supported field types.
   - `bool`
   - `int`
   - `double`
@@ -167,14 +174,14 @@ feature at once.
   - `DateTime`
   - `Duration`
   - primitive lists.
-- [ ] Nullable field support.
-- [ ] Enum persistence strategies.
+- [x] Nullable field support.
+- [x] Enum persistence strategies.
   - by name,
   - by ordinal,
   - by custom value.
-- [ ] Ignored or transient fields.
+- [x] Ignored or transient fields.
   - Annotation-level ignore.
-  - Collection-level ignore list.
+- [ ] Collection-level ignore list.
 - [ ] Embedded objects.
   - Single embedded value.
   - Lists of embedded values.
@@ -324,10 +331,10 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is schema type expansion. Cindel now has the
-first complete typed query pipeline plus index variants for uniqueness,
-case-insensitive strings, value indexes, hash equality indexes, and word-token
-indexes.
+The next implementation milestone is embedded objects. Cindel now has the first
+complete typed query pipeline plus index variants, word-token indexes, and
+expanded generated serialization for dates, durations, primitive lists,
+nullable fields, enum persistence strategies, and ignored transient fields.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

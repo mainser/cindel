@@ -29,6 +29,8 @@ The API is still experimental and can change before a public release.
 - Rust native core hidden behind Dart FFI.
 - SQLite storage backend for the MVP.
 - Generated collection schemas and serializers.
+- Generated conversion for `DateTime`, `Duration`, primitive lists, nullable
+  fields, enum strategies, and ignored transient fields.
 - Manual document API with `put`, `get`, and `delete`.
 - Generated typed collection accessors.
 - Native auto-increment ids through `autoIncrement`.
@@ -96,8 +98,18 @@ class User {
   @index
   late String email;
 
+  late DateTime createdAt;
+
+  @Enumerated(CindelEnumType.name)
+  late UserRole role;
+
+  @ignore
+  String transientNote = '';
+
   bool? active;
 }
+
+enum UserRole { admin, member }
 ```
 
 Generate schema code:
@@ -160,6 +172,46 @@ await db.users.delete(user.id);
 
 When a generated model keeps `id = autoIncrement`, `put` asks the native engine
 for the next collection id and writes it back to the object before persistence.
+
+## Schema Types
+
+Generated schemas persist common Dart model shapes while keeping the native
+document payload JSON-compatible:
+
+- `int`, `double`, `String`, `bool`, and nullable variants are stored directly.
+- `DateTime` is stored as `microsecondsSinceEpoch` and restored as UTC.
+- `Duration` is stored as `inMicroseconds`.
+- Primitive lists are stored as JSON arrays.
+- Enum fields default to `CindelEnumType.name`.
+- `@Enumerated(CindelEnumType.ordinal)` stores the enum index.
+- `@Enumerated(CindelEnumType.value, valueField: 'code')` stores a custom enum
+  instance field.
+- `@ignore` excludes transient fields from generated persistence.
+
+```dart
+enum Plan {
+  free('free'),
+  pro('pro');
+
+  const Plan(this.code);
+
+  final String code;
+}
+
+class User {
+  Id id = autoIncrement;
+
+  late DateTime createdAt;
+  Duration? sessionLength;
+  late List<String> tags;
+
+  @Enumerated(CindelEnumType.value, valueField: 'code')
+  late Plan plan;
+
+  @ignore
+  Object? uiState;
+}
+```
 
 Bulk typed operations use native batch writes and deletes:
 
@@ -456,6 +508,8 @@ Validated so far:
 - [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Unique, case-insensitive, value, and hash index variants.
 - [x] Word-token indexes for simple full-text-style search.
+- [x] Schema type expansion for dates, durations, primitive lists, enums,
+  nullable fields, and ignored fields.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.

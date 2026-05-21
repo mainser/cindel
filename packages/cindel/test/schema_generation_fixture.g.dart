@@ -85,6 +85,69 @@ final UserSchema = CindelCollectionSchema<User>(
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
+    CindelFieldSchema(
+      name: "createdAt",
+      dartType: "DateTime",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "sessionLength",
+      dartType: "Duration?",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "tags",
+      dartType: "List<String>",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "scores",
+      dartType: "List<int>?",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "role",
+      dartType: "UserRole",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "status",
+      dartType: "UserStatus",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "plan",
+      dartType: "UserPlan",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
   ],
   toDocument: _$UserToCindelDocument,
   fromDocument: _$UserFromCindelDocument,
@@ -330,6 +393,232 @@ extension UserCindelQueryModifierAccess on CindelQuery<User> {
   CindelPropertyQuery<User, bool?> activeProperty() {
     return property<bool?>("active");
   }
+
+  CindelQuery<User> sortByCreatedAt({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("createdAt", order: order);
+  }
+
+  CindelQuery<User> sortByCreatedAtDesc() {
+    return sortBy("createdAt", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByCreatedAt({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("createdAt", order: order);
+  }
+
+  CindelQuery<User> thenByCreatedAtDesc() {
+    return thenBy("createdAt", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByCreatedAt() {
+    return distinctBy("createdAt");
+  }
+
+  CindelPropertyQuery<User, DateTime> createdAtProperty() {
+    return property<DateTime>(
+      "createdAt",
+      decode: (value) =>
+          DateTime.fromMicrosecondsSinceEpoch(value as int, isUtc: true),
+    );
+  }
+
+  CindelQuery<User> sortBySessionLength({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("sessionLength", order: order);
+  }
+
+  CindelQuery<User> sortBySessionLengthDesc() {
+    return sortBy("sessionLength", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenBySessionLength({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("sessionLength", order: order);
+  }
+
+  CindelQuery<User> thenBySessionLengthDesc() {
+    return thenBy("sessionLength", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctBySessionLength() {
+    return distinctBy("sessionLength");
+  }
+
+  CindelPropertyQuery<User, Duration?> sessionLengthProperty() {
+    return property<Duration?>(
+      "sessionLength",
+      decode: (value) =>
+          value == null ? null : Duration(microseconds: value as int),
+    );
+  }
+
+  CindelQuery<User> sortByTags({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("tags", order: order);
+  }
+
+  CindelQuery<User> sortByTagsDesc() {
+    return sortBy("tags", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByTags({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("tags", order: order);
+  }
+
+  CindelQuery<User> thenByTagsDesc() {
+    return thenBy("tags", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByTags() {
+    return distinctBy("tags");
+  }
+
+  CindelPropertyQuery<User, List<String>> tagsProperty() {
+    return property<List<String>>(
+      "tags",
+      decode: (value) => (value as List<Object?>)
+          .map((value) => value as String)
+          .toList(growable: false),
+    );
+  }
+
+  CindelQuery<User> sortByScores({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("scores", order: order);
+  }
+
+  CindelQuery<User> sortByScoresDesc() {
+    return sortBy("scores", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByScores({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("scores", order: order);
+  }
+
+  CindelQuery<User> thenByScoresDesc() {
+    return thenBy("scores", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByScores() {
+    return distinctBy("scores");
+  }
+
+  CindelPropertyQuery<User, List<int>?> scoresProperty() {
+    return property<List<int>?>(
+      "scores",
+      decode: (value) => value == null
+          ? null
+          : (value as List<Object?>)
+                .map((value) => value as int)
+                .toList(growable: false),
+    );
+  }
+
+  CindelQuery<User> sortByRole({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("role", order: order);
+  }
+
+  CindelQuery<User> sortByRoleDesc() {
+    return sortBy("role", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByRole({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("role", order: order);
+  }
+
+  CindelQuery<User> thenByRoleDesc() {
+    return thenBy("role", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByRole() {
+    return distinctBy("role");
+  }
+
+  CindelPropertyQuery<User, UserRole> roleProperty() {
+    return property<UserRole>(
+      "role",
+      decode: (value) => UserRole.values.byName(value as String),
+    );
+  }
+
+  CindelQuery<User> sortByStatus({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("status", order: order);
+  }
+
+  CindelQuery<User> sortByStatusDesc() {
+    return sortBy("status", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByStatus({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("status", order: order);
+  }
+
+  CindelQuery<User> thenByStatusDesc() {
+    return thenBy("status", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByStatus() {
+    return distinctBy("status");
+  }
+
+  CindelPropertyQuery<User, UserStatus> statusProperty() {
+    return property<UserStatus>(
+      "status",
+      decode: (value) => UserStatus.values[value as int],
+    );
+  }
+
+  CindelQuery<User> sortByPlan({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("plan", order: order);
+  }
+
+  CindelQuery<User> sortByPlanDesc() {
+    return sortBy("plan", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByPlan({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("plan", order: order);
+  }
+
+  CindelQuery<User> thenByPlanDesc() {
+    return thenBy("plan", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByPlan() {
+    return distinctBy("plan");
+  }
+
+  CindelPropertyQuery<User, UserPlan> planProperty() {
+    return property<UserPlan>(
+      "plan",
+      decode: (value) =>
+          UserPlan.values.firstWhere((enumValue) => enumValue.code == value),
+    );
+  }
 }
 
 final class UserQueryWhere {
@@ -463,6 +752,34 @@ final class UserQueryWhere {
   CindelQuery<User> bioWordsStartWith(String prefix) {
     return bioWordStartsWith(prefix);
   }
+
+  CindelQuery<User> createdAtEqualTo(DateTime value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "createdAt",
+      value: value.microsecondsSinceEpoch,
+    );
+  }
+
+  CindelQuery<User> createdAtBetween(DateTime? lower, DateTime? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "createdAt",
+      lower: lower?.microsecondsSinceEpoch,
+      upper: upper?.microsecondsSinceEpoch,
+    );
+  }
+
+  CindelQuery<User> statusEqualTo(UserStatus value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "status",
+      value: value.index,
+    );
+  }
 }
 
 final class UserQueryFilter {
@@ -585,6 +902,120 @@ final class UserQueryFilter {
   CindelQuery<User> activeEqualTo(bool? value) {
     return _query.whereMatches(CindelFilter.field("active").equalTo(value));
   }
+
+  CindelQuery<User> createdAtEqualTo(DateTime value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAt").equalTo(value.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> createdAtGreaterThan(DateTime value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAt").greaterThan(value.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> createdAtGreaterThanOrEqualTo(DateTime value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "createdAt",
+      ).greaterThanOrEqualTo(value.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> createdAtLessThan(DateTime value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAt").lessThan(value.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> createdAtLessThanOrEqualTo(DateTime value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "createdAt",
+      ).lessThanOrEqualTo(value.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> createdAtBetween(DateTime? lower, DateTime? upper) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "createdAt",
+      ).between(lower?.microsecondsSinceEpoch, upper?.microsecondsSinceEpoch),
+    );
+  }
+
+  CindelQuery<User> sessionLengthEqualTo(Duration? value) {
+    return _query.whereMatches(
+      CindelFilter.field("sessionLength").equalTo(value?.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> sessionLengthGreaterThan(Duration value) {
+    return _query.whereMatches(
+      CindelFilter.field("sessionLength").greaterThan(value.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> sessionLengthGreaterThanOrEqualTo(Duration value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "sessionLength",
+      ).greaterThanOrEqualTo(value.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> sessionLengthLessThan(Duration value) {
+    return _query.whereMatches(
+      CindelFilter.field("sessionLength").lessThan(value.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> sessionLengthLessThanOrEqualTo(Duration value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "sessionLength",
+      ).lessThanOrEqualTo(value.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> sessionLengthBetween(Duration? lower, Duration? upper) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "sessionLength",
+      ).between(lower?.inMicroseconds, upper?.inMicroseconds),
+    );
+  }
+
+  CindelQuery<User> tagsEqualTo(List<String> value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "tags",
+      ).equalTo(value.map((value) => value).toList(growable: false)),
+    );
+  }
+
+  CindelQuery<User> scoresEqualTo(List<int>? value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "scores",
+      ).equalTo(value?.map((value) => value).toList(growable: false)),
+    );
+  }
+
+  CindelQuery<User> roleEqualTo(UserRole value) {
+    return _query.whereMatches(CindelFilter.field("role").equalTo(value.name));
+  }
+
+  CindelQuery<User> statusEqualTo(UserStatus value) {
+    return _query.whereMatches(
+      CindelFilter.field("status").equalTo(value.index),
+    );
+  }
+
+  CindelQuery<User> planEqualTo(UserPlan value) {
+    return _query.whereMatches(CindelFilter.field("plan").equalTo(value.code));
+  }
 }
 
 Map<String, Object?> _$UserToCindelDocument(User object) {
@@ -597,6 +1028,13 @@ Map<String, Object?> _$UserToCindelDocument(User object) {
     "accessToken": object.accessToken,
     "bio": object.bio,
     "active": object.active,
+    "createdAt": object.createdAt.microsecondsSinceEpoch,
+    "sessionLength": object.sessionLength?.inMicroseconds,
+    "tags": object.tags.map((value) => value).toList(growable: false),
+    "scores": object.scores?.map((value) => value).toList(growable: false),
+    "role": object.role.name,
+    "status": object.status.index,
+    "plan": object.plan.code,
   };
 }
 
@@ -605,11 +1043,39 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
   object.id = document["id"] as int;
   object.name = document["name"] as String;
   object.email = document["email"] as String;
-  object.username = document["username"] as String?;
-  object.displayName = document["displayName"] as String?;
-  object.accessToken = document["accessToken"] as String?;
-  object.bio = document["bio"] as String?;
-  object.active = document["active"] as bool?;
+  object.username = document["username"] == null
+      ? null
+      : document["username"] as String?;
+  object.displayName = document["displayName"] == null
+      ? null
+      : document["displayName"] as String?;
+  object.accessToken = document["accessToken"] == null
+      ? null
+      : document["accessToken"] as String?;
+  object.bio = document["bio"] == null ? null : document["bio"] as String?;
+  object.active = document["active"] == null
+      ? null
+      : document["active"] as bool?;
+  object.createdAt = DateTime.fromMicrosecondsSinceEpoch(
+    document["createdAt"] as int,
+    isUtc: true,
+  );
+  object.sessionLength = document["sessionLength"] == null
+      ? null
+      : Duration(microseconds: document["sessionLength"] as int);
+  object.tags = (document["tags"] as List<Object?>)
+      .map((value) => value as String)
+      .toList(growable: false);
+  object.scores = document["scores"] == null
+      ? null
+      : (document["scores"] as List<Object?>)
+            .map((value) => value as int)
+            .toList(growable: false);
+  object.role = UserRole.values.byName(document["role"] as String);
+  object.status = UserStatus.values[document["status"] as int];
+  object.plan = UserPlan.values.firstWhere(
+    (enumValue) => enumValue.code == document["plan"],
+  );
   return object;
 }
 
