@@ -119,7 +119,7 @@ packages:
       path: "../../packages/cindel"
       relative: true
     source: path
-    version: "0.1.5"
+    version: "0.1.6"
   cindel_annotations:
     dependency: transitive
     description:
@@ -140,7 +140,7 @@ packages:
       path: "../../packages/cindel_generator"
       relative: true
     source: path
-    version: "0.1.2"
+    version: "0.1.3"
   cli_config:
     dependency: transitive
     description:

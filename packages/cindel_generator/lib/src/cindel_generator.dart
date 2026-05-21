@@ -89,6 +89,26 @@ String _emitCollection(_CollectionInfo collection) {
       '  ${collection.queryWhereName} where() => '
       '${collection.queryWhereName}(this);',
     )
+    ..writeln()
+    ..writeln(
+      '  ${collection.queryFilterName} filter() => '
+      '${collection.queryFilterName}(',
+    )
+    ..writeln('    CindelQuery.all(')
+    ..writeln('      database: database,')
+    ..writeln('      schema: ${collection.schemaName},')
+    ..writeln('    ),')
+    ..writeln('  );')
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      'extension ${collection.dartName}CindelQueryFilterAccess '
+      'on CindelQuery<${collection.dartName}> {',
+    )
+    ..writeln(
+      '  ${collection.queryFilterName} filter() => '
+      '${collection.queryFilterName}(this);',
+    )
     ..writeln('}')
     ..writeln()
     ..writeln('final class ${collection.queryWhereName} {')
@@ -100,6 +120,18 @@ String _emitCollection(_CollectionInfo collection) {
 
   for (final field in collection.indexedFields) {
     _emitIndexedWhereMethods(buffer, collection, field);
+  }
+
+  buffer
+    ..writeln('}')
+    ..writeln()
+    ..writeln('final class ${collection.queryFilterName} {')
+    ..writeln('  const ${collection.queryFilterName}(this._query);')
+    ..writeln()
+    ..writeln('  final CindelQuery<${collection.dartName}> _query;');
+
+  for (final field in collection.fields) {
+    _emitFilterMethods(buffer, collection, field);
   }
 
   buffer
@@ -219,8 +251,98 @@ final class _CollectionInfo {
 
   String get queryWhereName => '${dartName}QueryWhere';
 
+  String get queryFilterName => '${dartName}QueryFilter';
+
   Iterable<_FieldInfo> get indexedFields {
     return fields.where((field) => field.isIndexed);
+  }
+}
+
+void _emitFilterMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _FieldInfo field,
+) {
+  final queryType = 'CindelQuery<${collection.dartName}>';
+  final fieldLiteral = _stringLiteral(field.name);
+  final methodPrefix = field.name;
+
+  buffer
+    ..writeln()
+    ..writeln('  $queryType ${methodPrefix}EqualTo(${field.dartType} value) {')
+    ..writeln('    return _query.whereMatches(')
+    ..writeln('      CindelFilter.field($fieldLiteral).equalTo(value),')
+    ..writeln('    );')
+    ..writeln('  }');
+
+  if (field.supportsNumericFilters) {
+    final valueType = field.nonNullableDartType;
+    buffer
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}GreaterThan($valueType value) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).greaterThan(value),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}GreaterThanOrEqualTo($valueType value) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).greaterThanOrEqualTo(value),',
+      )
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}LessThan($valueType value) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).lessThan(value),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}LessThanOrEqualTo($valueType value) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).lessThanOrEqualTo(value),',
+      )
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}Between('
+        '$valueType? lower, $valueType? upper) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).between(lower, upper),',
+      )
+      ..writeln('    );')
+      ..writeln('  }');
+  }
+
+  if (field.nonNullableDartType == 'String') {
+    buffer
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}Contains(String value) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).contains(value),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}StartsWith(String value) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).startsWith(value),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}EndsWith(String value) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).endsWith(value),')
+      ..writeln('    );')
+      ..writeln('  }');
   }
 }
 
@@ -269,6 +391,10 @@ final class _FieldInfo {
     return nonNullableDartType == 'int' ||
         nonNullableDartType == 'double' ||
         nonNullableDartType == 'String';
+  }
+
+  bool get supportsNumericFilters {
+    return nonNullableDartType == 'int' || nonNullableDartType == 'double';
   }
 }
 

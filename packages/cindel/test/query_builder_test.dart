@@ -178,6 +178,128 @@ void main() {
       expect(teamCount, 0);
       expect(soloUser?.name, 'Ben');
     });
+
+    // Scenario: A generated filter starts from the whole collection.
+    // Covers:
+    // - Generated [UserQueryFilter.activeEqualTo].
+    // - Full collection scans through [CindelQuery.all].
+    // Expected: Non-indexed bool filters can be used without a where clause.
+    test('filters the whole typed collection by bool equality.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final inactiveUsers = await database.users
+          .filter()
+          .activeEqualTo(false)
+          .findAll();
+
+      // Assert.
+      expect(inactiveUsers.map((user) => user.name), ['Cid']);
+    });
+
+    // Scenario: An indexed where clause is followed by a non-indexed filter.
+    // Covers:
+    // - Execution order: indexed where first, Dart filter second.
+    // - Generated [UserQueryFilter.activeEqualTo] on an existing query.
+    // Expected: The filter narrows the indexed result set.
+    test('combines indexed where clauses with non-indexed filters.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final activeTeamUsers = await database.users
+          .where()
+          .emailEqualTo('team@example.com')
+          .filter()
+          .activeEqualTo(true)
+          .findAll();
+
+      // Assert.
+      expect(activeTeamUsers.map((user) => user.name), ['Ana']);
+    });
+
+    // Scenario: String filters run over typed documents.
+    // Covers:
+    // - Generated string contains, startsWith, and endsWith filter helpers.
+    // Expected: String predicates match only string fields.
+    test('filters by string contains, startsWith, and endsWith.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final contains = await database.users
+          .filter()
+          .nameContains('e')
+          .findAll();
+      final startsWith = await database.users
+          .filter()
+          .nameStartsWith('A')
+          .findAll();
+      final endsWith = await database.users
+          .filter()
+          .nameEndsWith('n')
+          .findAll();
+
+      // Assert.
+      expect(contains.map((user) => user.name), ['Ben', 'Dee']);
+      expect(startsWith.map((user) => user.name), ['Ana']);
+      expect(endsWith.map((user) => user.name), ['Ben']);
+    });
+
+    // Scenario: Numeric filters run over typed documents.
+    // Covers:
+    // - Generated comparison helpers for numeric fields.
+    // - Inclusive generated between filters.
+    // Expected: Numeric predicates preserve collection id ordering.
+    test('filters by numeric comparisons.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final greaterThan = await database.users
+          .filter()
+          .idGreaterThan(2)
+          .findAll();
+      final between = await database.users.filter().idBetween(2, 3).findAll();
+
+      // Assert.
+      expect(greaterThan.map((user) => user.name), ['Cid', 'Dee']);
+      expect(between.map((user) => user.name), ['Ben', 'Cid']);
+    });
+
+    // Scenario: Filters are composed manually with boolean groups.
+    // Covers:
+    // - [CindelFilter.all], [CindelFilter.any], and [CindelFilter.not].
+    // - [CindelQuery.whereMatches] custom predicate composition.
+    // Expected: Grouped predicates narrow query results predictably.
+    test('supports all, any, and not filter groups.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final users = await database.users
+          .where()
+          .emailStartsWith('team')
+          .whereMatches(
+            CindelFilter.all([
+              CindelFilter.any([
+                CindelFilter.field('name').startsWith('A'),
+                CindelFilter.field('name').startsWith('D'),
+              ]),
+              CindelFilter.not(CindelFilter.field('active').equalTo(false)),
+            ]),
+          )
+          .findAll();
+
+      // Assert.
+      expect(users.map((user) => user.name), ['Dee', 'Ana']);
+    });
   });
 }
 
@@ -190,7 +312,7 @@ Future<CindelDatabase> _openSeededUsers() async {
     _user(id: 2, name: 'Ben', email: 'solo@example.com'),
   );
   await database.users.put(
-    _user(id: 3, name: 'Cid', email: 'team@example.com'),
+    _user(id: 3, name: 'Cid', email: 'team@example.com', active: false),
   );
   await database.users.put(
     _user(id: 4, name: 'Dee', email: 'team-alpha@example.com'),
@@ -198,10 +320,15 @@ Future<CindelDatabase> _openSeededUsers() async {
   return database;
 }
 
-User _user({required int id, required String name, required String email}) {
+User _user({
+  required int id,
+  required String name,
+  required String email,
+  bool active = true,
+}) {
   return User()
     ..id = id
     ..name = name
     ..email = email
-    ..active = true;
+    ..active = active;
 }

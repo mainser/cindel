@@ -49,6 +49,13 @@ extension UserCindelCollectionAccess on CindelDatabase {
 
 extension UserCindelQueryAccess on CindelTypedCollection<User> {
   UserQueryWhere where() => UserQueryWhere(this);
+
+  UserQueryFilter filter() =>
+      UserQueryFilter(CindelQuery.all(database: database, schema: UserSchema));
+}
+
+extension UserCindelQueryFilterAccess on CindelQuery<User> {
+  UserQueryFilter filter() => UserQueryFilter(this);
 }
 
 final class UserQueryWhere {
@@ -82,6 +89,76 @@ final class UserQueryWhere {
       lower: lower,
       upper: upper,
     );
+  }
+}
+
+final class UserQueryFilter {
+  const UserQueryFilter(this._query);
+
+  final CindelQuery<User> _query;
+
+  CindelQuery<User> idEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  }
+
+  CindelQuery<User> idGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").greaterThan(value));
+  }
+
+  CindelQuery<User> idGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<User> idLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").lessThan(value));
+  }
+
+  CindelQuery<User> idLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<User> idBetween(int? lower, int? upper) {
+    return _query.whereMatches(CindelFilter.field("id").between(lower, upper));
+  }
+
+  CindelQuery<User> nameEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("name").equalTo(value));
+  }
+
+  CindelQuery<User> nameContains(String value) {
+    return _query.whereMatches(CindelFilter.field("name").contains(value));
+  }
+
+  CindelQuery<User> nameStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("name").startsWith(value));
+  }
+
+  CindelQuery<User> nameEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("name").endsWith(value));
+  }
+
+  CindelQuery<User> emailEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("email").equalTo(value));
+  }
+
+  CindelQuery<User> emailContains(String value) {
+    return _query.whereMatches(CindelFilter.field("email").contains(value));
+  }
+
+  CindelQuery<User> emailStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").startsWith(value));
+  }
+
+  CindelQuery<User> emailEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").endsWith(value));
+  }
+
+  CindelQuery<User> activeEqualTo(bool? value) {
+    return _query.whereMatches(CindelFilter.field("active").equalTo(value));
   }
 }
 

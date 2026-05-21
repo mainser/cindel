@@ -36,6 +36,7 @@ The API is still experimental and can change before a public release.
 - Simple indexed queries by equality and inclusive range.
 - Generated typed query builders for indexed equality, string prefix, and range
   queries.
+- Generated filter builders for non-indexed predicates.
 - Explicit read and write transactions.
 - Document and collection watchers with Dart streams.
 - In-memory databases for tests and short-lived work.
@@ -226,6 +227,38 @@ final deletedOne = await db.users.where().emailEqualTo(email).deleteFirst();
 final deletedCount = await db.users.where().emailStartsWith('team').deleteAll();
 ```
 
+Filters run after the indexed `where` clause. They can also start from the whole
+collection:
+
+```dart
+final activeTeamUsers = await db.users
+    .where()
+    .emailStartsWith('team')
+    .filter()
+    .activeEqualTo(true)
+    .findAll();
+
+final matchingNames = await db.users.filter().nameContains('No').findAll();
+```
+
+For dynamic predicates, use `whereMatches` with `CindelFilter`:
+
+```dart
+final users = await db.users
+    .where()
+    .emailStartsWith('team')
+    .whereMatches(
+      CindelFilter.all([
+        CindelFilter.field('active').equalTo(true),
+        CindelFilter.not(CindelFilter.field('name').endsWith('test')),
+      ]),
+    )
+    .findAll();
+```
+
+Execution order is intentionally simple in this stage: indexed `where`, then
+filter, then later stages will add sort, distinct, offset, and limit.
+
 The lower-level manual query API remains available when generated typed helpers
 are not being used:
 
@@ -351,6 +384,7 @@ Validated so far:
 - [x] Generated typed query builders.
 - [x] Query deletes.
 - [x] Explicit read and write transactions.
+- [x] Generated filter builders.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -368,6 +402,7 @@ Next areas:
 - [x] Auto-increment id support.
 - [x] Bulk collection operations.
 - [x] Transaction API.
+- [x] Filter builder.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

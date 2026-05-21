@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.6 - 2026-05-21
+
+- Added typed filter builders generated for collection fields.
+- Added `CindelQuery.all`, `whereMatches`, and `CindelFilter` predicate
+  composition.
+- Supported bool equality, numeric comparisons, string equality, contains,
+  startsWith, endsWith, and inclusive numeric between filters.
+- Supported grouped filter predicates with `CindelFilter.all`, `any`, and
+  `not`.
+- Documented query execution order: indexed `where` first, then Dart-level
+  filters.
+- Added Dart tests for full collection filters, where-plus-filter queries,
+  string filters, numeric filters, and grouped predicates.
+
 ## 0.1.5 - 2026-05-21
 
 - Added native explicit read and write transactions.

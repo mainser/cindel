@@ -102,12 +102,12 @@ feature at once.
   - Range helpers for sortable indexed fields.
   - Prefix helpers for indexed strings.
   - Typed query result mapping.
-- [ ] Filter builder for non-indexed predicates.
+- [x] Filter builder for non-indexed predicates.
   - Boolean fields.
   - Numeric comparisons.
   - String equality, contains, starts-with, ends-with.
   - Null checks when nullable fields are supported.
-- [ ] Boolean query composition.
+- [x] Boolean query composition.
   - `and`
   - `or`
   - `not`
@@ -126,7 +126,7 @@ feature at once.
   - Distinct by one field.
   - Distinct by multiple fields.
   - Index-assisted distinct where possible.
-- [ ] Query builder execution planning.
+- [x] Query builder execution planning.
   - Prefer indexed where clauses before filters.
   - Document execution order clearly.
   - Add tests for index-assisted sorting and filtering.
@@ -316,9 +316,10 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is the level 1 filter builder. Cindel now has
-explicit read and write transactions, so Stage 08 can add non-indexed predicates
-while preserving the execution order of indexed where clauses first.
+The next implementation milestone is sorting, pagination, distinct, and
+projections. Cindel now applies indexed where clauses before Dart-level filters,
+so Stage 09 can extend the documented execution order with sort, distinct,
+offset, and limit.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

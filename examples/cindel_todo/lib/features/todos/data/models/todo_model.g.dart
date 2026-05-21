@@ -50,6 +50,14 @@ extension TodoModelCindelCollectionAccess on CindelDatabase {
 
 extension TodoModelCindelQueryAccess on CindelTypedCollection<TodoModel> {
   TodoModelQueryWhere where() => TodoModelQueryWhere(this);
+
+  TodoModelQueryFilter filter() => TodoModelQueryFilter(
+    CindelQuery.all(database: database, schema: TodoModelSchema),
+  );
+}
+
+extension TodoModelCindelQueryFilterAccess on CindelQuery<TodoModel> {
+  TodoModelQueryFilter filter() => TodoModelQueryFilter(this);
 }
 
 final class TodoModelQueryWhere {
@@ -82,6 +90,96 @@ final class TodoModelQueryWhere {
       field: "title",
       lower: lower,
       upper: upper,
+    );
+  }
+}
+
+final class TodoModelQueryFilter {
+  const TodoModelQueryFilter(this._query);
+
+  final CindelQuery<TodoModel> _query;
+
+  CindelQuery<TodoModel> idEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  }
+
+  CindelQuery<TodoModel> idGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").greaterThan(value));
+  }
+
+  CindelQuery<TodoModel> idGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<TodoModel> idLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").lessThan(value));
+  }
+
+  CindelQuery<TodoModel> idLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<TodoModel> idBetween(int? lower, int? upper) {
+    return _query.whereMatches(CindelFilter.field("id").between(lower, upper));
+  }
+
+  CindelQuery<TodoModel> titleEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("title").equalTo(value));
+  }
+
+  CindelQuery<TodoModel> titleContains(String value) {
+    return _query.whereMatches(CindelFilter.field("title").contains(value));
+  }
+
+  CindelQuery<TodoModel> titleStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("title").startsWith(value));
+  }
+
+  CindelQuery<TodoModel> titleEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("title").endsWith(value));
+  }
+
+  CindelQuery<TodoModel> completedEqualTo(bool value) {
+    return _query.whereMatches(CindelFilter.field("completed").equalTo(value));
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").equalTo(value),
+    );
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosGreaterThan(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").greaterThan(value),
+    );
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosLessThan(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").lessThan(value),
+    );
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<TodoModel> createdAtMicrosBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("createdAtMicros").between(lower, upper),
     );
   }
 }

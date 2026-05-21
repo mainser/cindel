@@ -243,6 +243,15 @@ class CindelDatabase {
     return documents;
   }
 
+  /// Returns every document in [collection], ordered by id.
+  Future<List<CindelDocument>> queryAll(String collection) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+
+    final ids = _bindings.documentIds(handle, collection);
+    return _documentsByIds(collection, ids);
+  }
+
   /// Deletes the document stored in [collection] under [id], if it exists.
   ///
   /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a
