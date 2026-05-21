@@ -91,9 +91,10 @@ feature at once.
   - typed result mapping.
 - [ ] Query result existence helper.
   - `exists`
-- [ ] Property projections.
+- [x] Property projections.
   - Query a single property without hydrating full objects.
-  - Support primitive and list property projections.
+  - Support primitive property projections.
+  - Support list property projections.
 
 ## Query System
 
@@ -116,15 +117,16 @@ feature at once.
   - `optional`
   - `anyOf`
   - `allOf`
-- [ ] Sorting and pagination.
+- [x] Sorting and pagination.
   - `sortBy`
   - `thenBy`
   - ascending and descending order.
   - `offset`
   - `limit`
-- [ ] Distinct queries.
+- [x] Distinct queries.
   - Distinct by one field.
   - Distinct by multiple fields.
+- [ ] Index-assisted distinct.
   - Index-assisted distinct where possible.
 - [x] Query builder execution planning.
   - Prefer indexed where clauses before filters.
@@ -316,10 +318,9 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is sorting, pagination, distinct, and
-projections. Cindel now applies indexed where clauses before Dart-level filters,
-so Stage 09 can extend the documented execution order with sort, distinct,
-offset, and limit.
+The next implementation milestone is index variants. Cindel now has the first
+complete typed query pipeline: indexed where, filter, sort, distinct, offset,
+limit, and projection.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

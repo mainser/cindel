@@ -60,6 +60,120 @@ extension TodoModelCindelQueryFilterAccess on CindelQuery<TodoModel> {
   TodoModelQueryFilter filter() => TodoModelQueryFilter(this);
 }
 
+extension TodoModelCindelQueryModifierAccess on CindelQuery<TodoModel> {
+  CindelQuery<TodoModel> sortById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("id", order: order);
+  }
+
+  CindelQuery<TodoModel> sortByIdDesc() {
+    return sortBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> thenById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("id", order: order);
+  }
+
+  CindelQuery<TodoModel> thenByIdDesc() {
+    return thenBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> distinctById() {
+    return distinctBy("id");
+  }
+
+  CindelPropertyQuery<TodoModel, int> idProperty() {
+    return property<int>("id");
+  }
+
+  CindelQuery<TodoModel> sortByTitle({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("title", order: order);
+  }
+
+  CindelQuery<TodoModel> sortByTitleDesc() {
+    return sortBy("title", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> thenByTitle({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("title", order: order);
+  }
+
+  CindelQuery<TodoModel> thenByTitleDesc() {
+    return thenBy("title", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> distinctByTitle() {
+    return distinctBy("title");
+  }
+
+  CindelPropertyQuery<TodoModel, String> titleProperty() {
+    return property<String>("title");
+  }
+
+  CindelQuery<TodoModel> sortByCompleted({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("completed", order: order);
+  }
+
+  CindelQuery<TodoModel> sortByCompletedDesc() {
+    return sortBy("completed", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> thenByCompleted({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("completed", order: order);
+  }
+
+  CindelQuery<TodoModel> thenByCompletedDesc() {
+    return thenBy("completed", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> distinctByCompleted() {
+    return distinctBy("completed");
+  }
+
+  CindelPropertyQuery<TodoModel, bool> completedProperty() {
+    return property<bool>("completed");
+  }
+
+  CindelQuery<TodoModel> sortByCreatedAtMicros({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("createdAtMicros", order: order);
+  }
+
+  CindelQuery<TodoModel> sortByCreatedAtMicrosDesc() {
+    return sortBy("createdAtMicros", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> thenByCreatedAtMicros({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("createdAtMicros", order: order);
+  }
+
+  CindelQuery<TodoModel> thenByCreatedAtMicrosDesc() {
+    return thenBy("createdAtMicros", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> distinctByCreatedAtMicros() {
+    return distinctBy("createdAtMicros");
+  }
+
+  CindelPropertyQuery<TodoModel, int> createdAtMicrosProperty() {
+    return property<int>("createdAtMicros");
+  }
+}
+
 final class TodoModelQueryWhere {
   const TodoModelQueryWhere(this._collection);
 

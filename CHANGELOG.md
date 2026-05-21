@@ -5,6 +5,22 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.7 - 2026-05-21
+
+- Added typed query sorting with generated `sortBy*`, `sortBy*Desc`,
+  `thenBy*`, and `thenBy*Desc` helpers.
+- Added query `offset` and `limit` pagination.
+- Added `distinctBy` and `distinctByFields` support, plus generated
+  `distinctBy*` helpers.
+- Added primitive property projections through generated `*Property` helpers
+  and dynamic multi-field `properties` projections.
+- Added `CindelTypedCollection.all()` to start a query over a whole typed
+  collection.
+- Documented the full query execution order: where, filter, sort, distinct,
+  offset, limit, and projection.
+- Added Dart tests for sorting, secondary sorting, pagination, distinct,
+  projections, and combined execution order.
+
 ## 0.1.6 - 2026-05-21
 
 - Added typed filter builders generated for collection fields.

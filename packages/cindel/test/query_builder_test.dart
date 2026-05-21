@@ -300,6 +300,152 @@ void main() {
       // Assert.
       expect(users.map((user) => user.name), ['Dee', 'Ana']);
     });
+
+    // Scenario: A query sorts, offsets, and limits typed results.
+    // Covers:
+    // - Generated sortBy and descending helpers.
+    // - Query offset and limit windowing after sort.
+    // Expected: Results are sorted before pagination is applied.
+    test('sorts and paginates typed query results.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final users = await database.users
+          .all()
+          .sortByNameDesc()
+          .offset(1)
+          .limit(2)
+          .findAll();
+
+      // Assert.
+      expect(users.map((user) => user.name), ['Cid', 'Ben']);
+    });
+
+    // Scenario: A query uses a secondary sort key.
+    // Covers:
+    // - Generated thenBy helpers.
+    // - Stable tie-breaking after primary sort values match.
+    // Expected: Duplicate names are ordered by the secondary email field.
+    test('sorts by secondary keys.', () async {
+      // Arrange.
+      final database = await _openUsersWithDuplicateNames();
+      addTearDown(database.close);
+
+      // Act.
+      final users = await database.users
+          .all()
+          .sortByName()
+          .thenByEmailDesc()
+          .findAll();
+
+      // Assert.
+      expect(users.map((user) => '${user.name}:${user.email}'), [
+        'Ana:z@example.com',
+        'Ana:a@example.com',
+        'Ben:b@example.com',
+      ]);
+    });
+
+    // Scenario: A query removes duplicate values after sorting.
+    // Covers:
+    // - Generated distinctBy helpers.
+    // - Multi-field distinct tuples through [CindelQuery.distinctByFields].
+    // Expected: Distinct keeps the first sorted result for each key.
+    test('returns distinct results by one or multiple fields.', () async {
+      // Arrange.
+      final database = await _openUsersWithDuplicateNames();
+      addTearDown(database.close);
+
+      // Act.
+      final distinctNames = await database.users
+          .all()
+          .sortByEmail()
+          .distinctByName()
+          .findAll();
+      final distinctTuples = await database.users
+          .all()
+          .sortByEmail()
+          .distinctByFields(['name', 'active'])
+          .findAll();
+
+      // Assert.
+      expect(distinctNames.map((user) => user.email), [
+        'a@example.com',
+        'b@example.com',
+      ]);
+      expect(distinctTuples.map((user) => user.email), [
+        'a@example.com',
+        'b@example.com',
+        'z@example.com',
+      ]);
+    });
+
+    // Scenario: A query projects primitive field values.
+    // Covers:
+    // - Generated property projection helpers.
+    // - Multi-property projections.
+    // Expected: Projections preserve the query order and selected fields.
+    test('projects primitive fields.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final names = await database.users
+          .all()
+          .sortById()
+          .nameProperty()
+          .findAll();
+      final firstEmail = await database.users
+          .all()
+          .sortByNameDesc()
+          .emailProperty()
+          .findFirst();
+      final rows = await database.users.all().sortById().limit(2).properties([
+        'name',
+        'active',
+      ]).findAll();
+
+      // Assert.
+      expect(names, ['Ana', 'Ben', 'Cid', 'Dee']);
+      expect(firstEmail, 'team-alpha@example.com');
+      expect(rows, [
+        {'name': 'Ana', 'active': true},
+        {'name': 'Ben', 'active': true},
+      ]);
+    });
+
+    // Scenario: Query modifiers are combined in the documented order.
+    // Covers:
+    // - Execution order: where, filter, sort, distinct, offset, limit,
+    //   projection.
+    // Expected: Pagination is applied after the distinct sorted result.
+    test(
+      'applies where, filter, sort, distinct, window, and projection in order.',
+      () async {
+        // Arrange.
+        final database = await _openUsersForExecutionOrder();
+        addTearDown(database.close);
+
+        // Act.
+        final names = await database.users
+            .where()
+            .emailStartsWith('team')
+            .filter()
+            .activeEqualTo(true)
+            .sortByName()
+            .distinctByEmail()
+            .offset(1)
+            .limit(2)
+            .nameProperty()
+            .findAll();
+
+        // Assert.
+        expect(names, ['Cid', 'Dee']);
+      },
+    );
   });
 }
 
@@ -316,6 +462,43 @@ Future<CindelDatabase> _openSeededUsers() async {
   );
   await database.users.put(
     _user(id: 4, name: 'Dee', email: 'team-alpha@example.com'),
+  );
+  return database;
+}
+
+Future<CindelDatabase> _openUsersWithDuplicateNames() async {
+  final database = await Cindel.openInMemory(schemas: [UserSchema]);
+  await database.users.put(
+    _user(id: 1, name: 'Ana', email: 'z@example.com', active: false),
+  );
+  await database.users.put(
+    _user(id: 2, name: 'Ben', email: 'b@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 3, name: 'Ana', email: 'a@example.com', active: true),
+  );
+  return database;
+}
+
+Future<CindelDatabase> _openUsersForExecutionOrder() async {
+  final database = await Cindel.openInMemory(schemas: [UserSchema]);
+  await database.users.put(
+    _user(id: 1, name: 'Bob', email: 'team-a@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 2, name: 'Ana', email: 'team-a@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 3, name: 'Cid', email: 'team-c@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 4, name: 'Dee', email: 'team-d@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 5, name: 'Eli', email: 'solo@example.com', active: true),
+  );
+  await database.users.put(
+    _user(id: 6, name: 'Fox', email: 'team-f@example.com', active: false),
   );
   return database;
 }

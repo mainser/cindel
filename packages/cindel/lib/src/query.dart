@@ -3,6 +3,15 @@ import 'schema.dart';
 
 typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
 
+/// Sort direction for Cindel query results.
+enum CindelSortOrder {
+  /// Ascending order.
+  ascending,
+
+  /// Descending order.
+  descending,
+}
+
 /// Predicate used by Cindel query filters.
 abstract interface class CindelFilterPredicate {
   /// Returns whether [document] matches this predicate.
@@ -143,10 +152,18 @@ final class CindelQuery<T> {
     required CindelCollectionSchema<T> schema,
     required _CindelDocumentReader readDocuments,
     CindelFilterPredicate? filter,
+    List<_CindelSortKey> sortKeys = const [],
+    List<String> distinctFields = const [],
+    int offset = 0,
+    int? limit,
   }) : _database = database,
        _schema = schema,
        _readDocuments = readDocuments,
-       _filter = filter;
+       _filter = filter,
+       _sortKeys = sortKeys,
+       _distinctFields = distinctFields,
+       _offset = offset,
+       _limit = limit;
 
   /// Creates a typed query that starts from every document in the collection.
   factory CindelQuery.all({
@@ -221,18 +238,89 @@ final class CindelQuery<T> {
   final CindelCollectionSchema<T> _schema;
   final _CindelDocumentReader _readDocuments;
   final CindelFilterPredicate? _filter;
+  final List<_CindelSortKey> _sortKeys;
+  final List<String> _distinctFields;
+  final int _offset;
+  final int? _limit;
 
   /// Returns a new query that filters the current query result by [predicate].
   CindelQuery<T> whereMatches(CindelFilterPredicate predicate) {
     final existing = _filter;
-    return CindelQuery._(
-      database: _database,
-      schema: _schema,
-      readDocuments: _readDocuments,
+    return _copyWith(
       filter: existing == null
           ? predicate
           : CindelFilter.all([existing, predicate]),
     );
+  }
+
+  /// Sorts this query by [field].
+  CindelQuery<T> sortBy(
+    String field, {
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    _checkFieldName(field);
+    return _copyWith(sortKeys: [_CindelSortKey(field, order)]);
+  }
+
+  /// Adds a secondary sort by [field].
+  CindelQuery<T> thenBy(
+    String field, {
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    _checkFieldName(field);
+    return _copyWith(sortKeys: [..._sortKeys, _CindelSortKey(field, order)]);
+  }
+
+  /// Keeps only the first result for each distinct [field] value.
+  CindelQuery<T> distinctBy(String field) {
+    _checkFieldName(field);
+    return distinctByFields([field]);
+  }
+
+  /// Keeps only the first result for each distinct tuple of [fields].
+  CindelQuery<T> distinctByFields(Iterable<String> fields) {
+    final fieldList = fields.toList(growable: false);
+    if (fieldList.isEmpty) {
+      throw ArgumentError.value(fields, 'fields', 'Must not be empty.');
+    }
+    for (final field in fieldList) {
+      _checkFieldName(field);
+    }
+    return _copyWith(distinctFields: fieldList);
+  }
+
+  /// Skips [count] results after filtering, sorting, and distinct.
+  CindelQuery<T> offset(int count) {
+    if (count < 0) {
+      throw ArgumentError.value(count, 'count', 'Must not be negative.');
+    }
+    return _copyWith(offset: count);
+  }
+
+  /// Limits this query to [count] results after offset.
+  CindelQuery<T> limit(int count) {
+    if (count < 0) {
+      throw ArgumentError.value(count, 'count', 'Must not be negative.');
+    }
+    return _copyWith(limit: count);
+  }
+
+  /// Projects this query to one field.
+  CindelPropertyQuery<T, R> property<R>(String field) {
+    _checkFieldName(field);
+    return CindelPropertyQuery<T, R>._(query: this, field: field);
+  }
+
+  /// Projects this query to multiple fields.
+  CindelPropertiesQuery<T> properties(Iterable<String> fields) {
+    final fieldList = fields.toList(growable: false);
+    if (fieldList.isEmpty) {
+      throw ArgumentError.value(fields, 'fields', 'Must not be empty.');
+    }
+    for (final field in fieldList) {
+      _checkFieldName(field);
+    }
+    return CindelPropertiesQuery<T>._(query: this, fields: fieldList);
   }
 
   /// Returns every object matching this query.
@@ -290,12 +378,204 @@ final class CindelQuery<T> {
 
   Future<List<CindelDocument>> _matchingDocuments() async {
     final documents = await _readDocuments();
+    var matchingDocuments = documents;
     final filter = _filter;
-    if (filter == null) {
-      return documents;
+    if (filter != null) {
+      matchingDocuments = matchingDocuments.where(filter.matches).toList();
     }
-    return documents.where(filter.matches).toList(growable: false);
+    if (_sortKeys.isNotEmpty) {
+      matchingDocuments = _sortDocuments(matchingDocuments, _sortKeys);
+    }
+    if (_distinctFields.isNotEmpty) {
+      matchingDocuments = _distinctDocuments(
+        matchingDocuments,
+        _distinctFields,
+      );
+    }
+    if (_offset > 0 || _limit != null) {
+      matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
+    }
+    return matchingDocuments;
   }
+
+  CindelQuery<T> _copyWith({
+    CindelFilterPredicate? filter,
+    List<_CindelSortKey>? sortKeys,
+    List<String>? distinctFields,
+    int? offset,
+    int? limit,
+  }) {
+    return CindelQuery._(
+      database: _database,
+      schema: _schema,
+      readDocuments: _readDocuments,
+      filter: filter ?? _filter,
+      sortKeys: sortKeys ?? _sortKeys,
+      distinctFields: distinctFields ?? _distinctFields,
+      offset: offset ?? _offset,
+      limit: limit ?? _limit,
+    );
+  }
+}
+
+/// A projected query over a single field.
+final class CindelPropertyQuery<T, R> {
+  const CindelPropertyQuery._({
+    required CindelQuery<T> query,
+    required String field,
+  }) : _query = query,
+       _field = field;
+
+  final CindelQuery<T> _query;
+  final String _field;
+
+  /// Returns every projected value.
+  Future<List<R>> findAll() async {
+    final documents = await _query._matchingDocuments();
+    return [for (final document in documents) document[_field] as R];
+  }
+
+  /// Returns the first projected value, or `null`.
+  Future<R?> findFirst() async {
+    final values = await findAll();
+    if (values.isEmpty) {
+      return null;
+    }
+    return values.first;
+  }
+}
+
+/// A projected query over multiple fields.
+final class CindelPropertiesQuery<T> {
+  const CindelPropertiesQuery._({
+    required CindelQuery<T> query,
+    required List<String> fields,
+  }) : _query = query,
+       _fields = fields;
+
+  final CindelQuery<T> _query;
+  final List<String> _fields;
+
+  /// Returns every projected document.
+  Future<List<CindelDocument>> findAll() async {
+    final documents = await _query._matchingDocuments();
+    return [
+      for (final document in documents)
+        {for (final field in _fields) field: document[field]},
+    ];
+  }
+
+  /// Returns the first projected document, or `null`.
+  Future<CindelDocument?> findFirst() async {
+    final documents = await findAll();
+    if (documents.isEmpty) {
+      return null;
+    }
+    return documents.first;
+  }
+}
+
+void _checkFieldName(String field) {
+  if (field.trim().isEmpty) {
+    throw ArgumentError.value(field, 'field', 'Must not be empty.');
+  }
+}
+
+final class _CindelSortKey {
+  const _CindelSortKey(this.field, this.order);
+
+  final String field;
+  final CindelSortOrder order;
+}
+
+final class _PositionedDocument {
+  const _PositionedDocument(this.document, this.position);
+
+  final CindelDocument document;
+  final int position;
+}
+
+List<CindelDocument> _sortDocuments(
+  List<CindelDocument> documents,
+  List<_CindelSortKey> sortKeys,
+) {
+  final positioned = [
+    for (var index = 0; index < documents.length; index += 1)
+      _PositionedDocument(documents[index], index),
+  ];
+  positioned.sort((left, right) {
+    for (final sortKey in sortKeys) {
+      final comparison = _compareValues(
+        left.document[sortKey.field],
+        right.document[sortKey.field],
+      );
+      if (comparison == 0) {
+        continue;
+      }
+      return sortKey.order == CindelSortOrder.ascending
+          ? comparison
+          : -comparison;
+    }
+    return left.position.compareTo(right.position);
+  });
+  return [for (final item in positioned) item.document];
+}
+
+int _compareValues(Object? left, Object? right) {
+  if (left == null && right == null) {
+    return 0;
+  }
+  if (left == null) {
+    return -1;
+  }
+  if (right == null) {
+    return 1;
+  }
+  if (left is num && right is num) {
+    return left.compareTo(right);
+  }
+  if (left is String && right is String) {
+    return left.compareTo(right);
+  }
+  if (left is bool && right is bool) {
+    return left == right ? 0 : (left ? 1 : -1);
+  }
+  return left.toString().compareTo(right.toString());
+}
+
+List<CindelDocument> _distinctDocuments(
+  List<CindelDocument> documents,
+  List<String> fields,
+) {
+  final seen = <String>{};
+  final distinct = <CindelDocument>[];
+  for (final document in documents) {
+    final key = _distinctKey(document, fields);
+    if (seen.add(key)) {
+      distinct.add(document);
+    }
+  }
+  return distinct;
+}
+
+String _distinctKey(CindelDocument document, List<String> fields) {
+  return fields
+      .map((field) => '${document[field].runtimeType}:${document[field]}')
+      .join('\u0001');
+}
+
+List<CindelDocument> _windowDocuments(
+  List<CindelDocument> documents,
+  int offset,
+  int? limit,
+) {
+  if (offset >= documents.length) {
+    return <CindelDocument>[];
+  }
+  final end = limit == null
+      ? documents.length
+      : (offset + limit).clamp(0, documents.length);
+  return documents.sublist(offset, end);
 }
 
 enum _FilterOperation {

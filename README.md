@@ -37,6 +37,7 @@ The API is still experimental and can change before a public release.
 - Generated typed query builders for indexed equality, string prefix, and range
   queries.
 - Generated filter builders for non-indexed predicates.
+- Sorting, pagination, distinct, and primitive property projections.
 - Explicit read and write transactions.
 - Document and collection watchers with Dart streams.
 - In-memory databases for tests and short-lived work.
@@ -256,8 +257,41 @@ final users = await db.users
     .findAll();
 ```
 
-Execution order is intentionally simple in this stage: indexed `where`, then
-filter, then later stages will add sort, distinct, offset, and limit.
+Sorting, pagination, distinct, and projections can be chained after `where` and
+`filter`:
+
+```dart
+final page = await db.users
+    .all()
+    .sortByName()
+    .thenByEmailDesc()
+    .offset(20)
+    .limit(10)
+    .findAll();
+
+final names = await db.users
+    .where()
+    .emailStartsWith('team')
+    .filter()
+    .activeEqualTo(true)
+    .sortByName()
+    .distinctByEmail()
+    .nameProperty()
+    .findAll();
+```
+
+For dynamic projections, use `properties`:
+
+```dart
+final rows = await db.users
+    .all()
+    .sortById()
+    .properties(['name', 'email'])
+    .findAll();
+```
+
+Execution order is: indexed `where`, filter, sort, distinct, offset, limit,
+then projection.
 
 The lower-level manual query API remains available when generated typed helpers
 are not being used:
@@ -385,6 +419,7 @@ Validated so far:
 - [x] Query deletes.
 - [x] Explicit read and write transactions.
 - [x] Generated filter builders.
+- [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -403,6 +438,7 @@ Next areas:
 - [x] Bulk collection operations.
 - [x] Transaction API.
 - [x] Filter builder.
+- [x] Sorting, pagination, distinct, and primitive property projections.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

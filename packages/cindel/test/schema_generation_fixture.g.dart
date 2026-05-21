@@ -58,6 +58,120 @@ extension UserCindelQueryFilterAccess on CindelQuery<User> {
   UserQueryFilter filter() => UserQueryFilter(this);
 }
 
+extension UserCindelQueryModifierAccess on CindelQuery<User> {
+  CindelQuery<User> sortById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("id", order: order);
+  }
+
+  CindelQuery<User> sortByIdDesc() {
+    return sortBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("id", order: order);
+  }
+
+  CindelQuery<User> thenByIdDesc() {
+    return thenBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctById() {
+    return distinctBy("id");
+  }
+
+  CindelPropertyQuery<User, int> idProperty() {
+    return property<int>("id");
+  }
+
+  CindelQuery<User> sortByName({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("name", order: order);
+  }
+
+  CindelQuery<User> sortByNameDesc() {
+    return sortBy("name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByName({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("name", order: order);
+  }
+
+  CindelQuery<User> thenByNameDesc() {
+    return thenBy("name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByName() {
+    return distinctBy("name");
+  }
+
+  CindelPropertyQuery<User, String> nameProperty() {
+    return property<String>("name");
+  }
+
+  CindelQuery<User> sortByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("email", order: order);
+  }
+
+  CindelQuery<User> sortByEmailDesc() {
+    return sortBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("email", order: order);
+  }
+
+  CindelQuery<User> thenByEmailDesc() {
+    return thenBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByEmail() {
+    return distinctBy("email");
+  }
+
+  CindelPropertyQuery<User, String> emailProperty() {
+    return property<String>("email");
+  }
+
+  CindelQuery<User> sortByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("active", order: order);
+  }
+
+  CindelQuery<User> sortByActiveDesc() {
+    return sortBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("active", order: order);
+  }
+
+  CindelQuery<User> thenByActiveDesc() {
+    return thenBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByActive() {
+    return distinctBy("active");
+  }
+
+  CindelPropertyQuery<User, bool?> activeProperty() {
+    return property<bool?>("active");
+  }
+}
+
 final class UserQueryWhere {
   const UserQueryWhere(this._collection);
 

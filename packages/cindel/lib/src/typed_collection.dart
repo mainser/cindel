@@ -1,6 +1,7 @@
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'database.dart';
+import 'query.dart';
 import 'schema.dart';
 
 /// Adds typed collection access to [CindelDatabase].
@@ -26,6 +27,11 @@ final class CindelTypedCollection<T> {
 
   /// Generated schema metadata for this collection.
   final CindelCollectionSchema<T> schema;
+
+  /// Starts a typed query over every object in this collection.
+  CindelQuery<T> all() {
+    return CindelQuery.all(database: database, schema: schema);
+  }
 
   /// Stores [object] using the id field declared by [schema].
   Future<void> put(T object) async {

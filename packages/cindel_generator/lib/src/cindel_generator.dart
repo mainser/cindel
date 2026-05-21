@@ -111,6 +111,18 @@ String _emitCollection(_CollectionInfo collection) {
     )
     ..writeln('}')
     ..writeln()
+    ..writeln(
+      'extension ${collection.dartName}CindelQueryModifierAccess '
+      'on CindelQuery<${collection.dartName}> {',
+    );
+
+  for (final field in collection.fields) {
+    _emitQueryModifierMethods(buffer, collection, field);
+  }
+
+  buffer
+    ..writeln('}')
+    ..writeln()
     ..writeln('final class ${collection.queryWhereName} {')
     ..writeln('  const ${collection.queryWhereName}(this._collection);')
     ..writeln()
@@ -177,6 +189,55 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('}');
 
   return buffer.toString();
+}
+
+void _emitQueryModifierMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _FieldInfo field,
+) {
+  final queryType = 'CindelQuery<${collection.dartName}>';
+  final fieldLiteral = _stringLiteral(field.name);
+  final suffix = _upperFirst(field.name);
+
+  buffer
+    ..writeln()
+    ..writeln(
+      '  $queryType sortBy$suffix({'
+      'CindelSortOrder order = CindelSortOrder.ascending}) {',
+    )
+    ..writeln('    return sortBy($fieldLiteral, order: order);')
+    ..writeln('  }')
+    ..writeln()
+    ..writeln('  $queryType sortBy${suffix}Desc() {')
+    ..writeln(
+      '    return sortBy($fieldLiteral, order: CindelSortOrder.descending);',
+    )
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  $queryType thenBy$suffix({'
+      'CindelSortOrder order = CindelSortOrder.ascending}) {',
+    )
+    ..writeln('    return thenBy($fieldLiteral, order: order);')
+    ..writeln('  }')
+    ..writeln()
+    ..writeln('  $queryType thenBy${suffix}Desc() {')
+    ..writeln(
+      '    return thenBy($fieldLiteral, order: CindelSortOrder.descending);',
+    )
+    ..writeln('  }')
+    ..writeln()
+    ..writeln('  $queryType distinctBy$suffix() {')
+    ..writeln('    return distinctBy($fieldLiteral);')
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  CindelPropertyQuery<${collection.dartName}, ${field.dartType}> '
+      '${field.name}Property() {',
+    )
+    ..writeln('    return property<${field.dartType}>($fieldLiteral);')
+    ..writeln('  }');
 }
 
 String _stringLiteral(String value) => jsonEncode(value);
@@ -465,6 +526,13 @@ String _lowerFirst(String value) {
     return value;
   }
   return value[0].toLowerCase() + value.substring(1);
+}
+
+String _upperFirst(String value) {
+  if (value.isEmpty) {
+    return value;
+  }
+  return value[0].toUpperCase() + value.substring(1);
 }
 
 String _accessorName(String collectionName, String dartName) {

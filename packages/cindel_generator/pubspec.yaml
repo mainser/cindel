@@ -1,6 +1,6 @@
 name: cindel_generator
 description: Code generator for Cindel schemas, serializers, and query helpers.
-version: 0.1.3
+version: 0.1.4
 publish_to: none
 
 environment:
