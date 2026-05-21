@@ -4,9 +4,9 @@ Cindel is an experimental Flutter-first local database library with a Dart API,
 generated schemas, a Rust native core, and a narrow FFI bridge.
 
 This roadmap tracks what has been validated so far and the next areas to build
-or explore. It is inspired by Isar's developer experience, but Cindel should
-grow deliberately in small, testable slices instead of trying to clone every
-feature at once.
+or explore. Cindel grows deliberately in small, testable slices so each public
+API, native feature, and binary distribution change can be validated before the
+next layer is added.
 
 ## Validated
 
@@ -307,6 +307,9 @@ feature at once.
 - [ ] Package publishing preparation.
   - Per-package pub.dev metadata.
   - Changelogs.
+  - Package-level README and LICENSE files.
+  - Hosted dependency constraints for publishable packages.
+  - `dart pub publish --dry-run` validation.
   - Pub score polish.
 
 ## Quality Goals

@@ -27,7 +27,7 @@ public release.
 ```text
 Cindel/
   docs/                         Project notes and backend evaluation
-  examples/cindel_todo/         Placeholder Flutter example app
+  examples/cindel_todo/         Flutter example app
   packages/cindel/              Public Dart API, FFI bridge, native Rust core
   packages/cindel_annotations/  Public annotations and shared types
   packages/cindel_flutter_libs/ Prebuilt native libraries for Flutter apps
@@ -142,6 +142,23 @@ Pull requests should include:
 - Notes about migrations, native build impact, or public API changes.
 
 Small, focused pull requests are preferred.
+
+## Publishing Preparation
+
+Cindel is not published yet. The repository root stays private to pub.dev with
+`publish_to: none`; individual packages will be prepared and published in a
+controlled order when the API is ready.
+
+Before any package publication:
+
+- Keep `README.md`, `CHANGELOG.md`, `LICENSE`, and `pubspec.yaml` present at
+  each package root.
+- Replace local path dependencies with hosted version constraints.
+- Run `dart pub publish --dry-run` from the package directory and inspect the
+  file list.
+- Keep all public GitHub URLs pointed at
+  `https://github.com/mainser/Cindel`.
+- Keep maintainer references as Alain Ramirez <nolbertrg@gmail.com>.
 
 ## Commit Messages
 

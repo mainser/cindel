@@ -5,6 +5,15 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.15 - 2026-05-21
+
+- Added pub.dev-oriented metadata to the publishable Cindel packages.
+- Added package-level README and CHANGELOG files for the public packages.
+- Added a pub.dev publication preparation plan under `docs/`.
+- Updated public wording to describe Cindel as an ultra-fast, lightweight NoSQL
+  local database built on its own Rust native core.
+- Added real repository and maintainer information for publication materials.
+
 ## 0.1.14 - 2026-05-21
 
 - Added a native batch document read path so collection reads, indexed queries,

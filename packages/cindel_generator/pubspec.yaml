@@ -1,7 +1,17 @@
 name: cindel_generator
-description: Code generator for Cindel schemas, serializers, and query helpers.
-version: 0.1.8
+description: Source generator for Cindel schemas, serializers, typed collections, and query builders.
+version: 0.1.9
 publish_to: none
+homepage: https://github.com/mainser/Cindel
+repository: https://github.com/mainser/Cindel
+issue_tracker: https://github.com/mainser/Cindel/issues
+documentation: https://github.com/mainser/Cindel/tree/dev/packages/cindel_generator#readme
+topics:
+  - database
+  - nosql
+  - codegen
+  - build-runner
+  - source-gen
 
 environment:
   sdk: ^3.11.0

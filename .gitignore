@@ -24,6 +24,7 @@ target/
 
 # Local planning scratchpad
 cindel_steps.txt
+docs/pubdev_publication_plan.md
 
 # IDE and OS files
 .idea/

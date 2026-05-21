@@ -1,11 +1,11 @@
 # Cindel
 
-Cindel is an experimental Flutter-first local database library inspired by the
-architecture that makes Isar compelling: a clean Dart API, generated schemas, a
-native Rust core, and a narrow FFI bridge.
+Cindel is an ultra-fast, lightweight NoSQL local database for Flutter and Dart
+apps. It combines a generated Dart API, typed schemas, reactive queries,
+prebuilt native binaries, and a compact Rust core behind a narrow FFI bridge.
 
-Cindel is not affiliated with Isar. It is a separate project that explores a
-similar local-first developer experience with its own implementation choices.
+Cindel is inspired by the developer experience of Isar, but it is built from
+scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
@@ -62,9 +62,25 @@ The API is still experimental and can change before a public release.
 - `examples/cindel_todo`: Flutter example app using Cindel like a normal
   application dependency.
 
+Maintainer: Alain Ramirez <nolbertrg@gmail.com>
+
+Repository: <https://github.com/mainser/Cindel>
+
 ## Quickstart
 
-Add the packages locally while Cindel is private:
+Add the runtime packages:
+
+```yaml
+dependencies:
+  cindel: ^0.1.15
+  cindel_flutter_libs: ^0.1.9
+
+dev_dependencies:
+  build_runner: ^2.15.0
+  cindel_generator: ^0.1.9
+```
+
+For workspace development, use the local path packages instead:
 
 ```yaml
 dependencies:

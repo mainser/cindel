@@ -2,17 +2,23 @@
 
 Prebuilt native libraries for Flutter apps that use Cindel.
 
-This package is intentionally similar in shape to `isar_flutter_libs`: it does
-not expose a Dart API. It only makes Flutter bundle the correct Cindel native
-library for each platform so application developers do not need Rust or Cargo
-installed locally.
+This package does not expose a Dart API. It only makes Flutter bundle the
+correct Cindel native library for each supported platform so application
+developers do not need Rust or Cargo installed locally.
 
-Expected binary locations:
+Maintainer: Alain Ramirez <nolbertrg@gmail.com>
+
+Repository: <https://github.com/mainser/Cindel>
+
+Current binary locations:
 
 - Android: `android/src/main/jniLibs/<abi>/libcindel_native.so`
 - iOS: `ios/cindel.xcframework`
-- macOS: `macos/libcindel_native.dylib`
 - Windows: `windows/cindel_native.dll`
+
+Planned binary locations:
+
+- macOS: `macos/libcindel_native.dylib`
 - Linux: `linux/libcindel_native.so`
 
 Maintainers can regenerate these binaries with the scripts in
