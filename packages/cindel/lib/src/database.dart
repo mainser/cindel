@@ -10,7 +10,9 @@ import 'schema.dart';
 typedef CindelDocument = Map<String, Object?>;
 
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
-const _defaultWatchPollInterval = Duration(milliseconds: 50);
+
+/// Default polling interval used by Cindel watchers.
+const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 
 /// An open handle to a local Cindel database.
 class CindelDatabase {
@@ -152,7 +154,7 @@ class CindelDatabase {
   Stream<CindelDocument?> watchDocument(
     String collection,
     int id, {
-    Duration pollInterval = _defaultWatchPollInterval,
+    Duration pollInterval = defaultCindelWatchPollInterval,
   }) {
     _checkOpen();
     _checkCollection(collection);
@@ -172,7 +174,7 @@ class CindelDatabase {
   /// and then reacts to native collection revision changes.
   Stream<List<CindelDocument>> watchCollection(
     String collection, {
-    Duration pollInterval = _defaultWatchPollInterval,
+    Duration pollInterval = defaultCindelWatchPollInterval,
   }) {
     _checkOpen();
     _checkCollection(collection);

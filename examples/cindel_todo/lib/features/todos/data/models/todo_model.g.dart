@@ -42,6 +42,11 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
   fromDocument: _$TodoModelFromCindelDocument,
 );
 
+extension TodoModelCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<TodoModel> get todos =>
+      typedCollection(TodoModelSchema);
+}
+
 Map<String, Object?> _$TodoModelToCindelDocument(TodoModel object) {
   return <String, Object?>{
     "id": object.id,

@@ -9,17 +9,17 @@ final class TodosLocalDataSource {
 
   Future<void> save(TodoModel todo) async {
     final database = await _database;
-    await database.put('todos', todo.id, TodoModelSchema.toDocument(todo));
+    await database.todos.put(todo);
   }
 
   Future<void> delete(int id) async {
     final database = await _database;
-    await database.delete('todos', id);
+    await database.todos.delete(id);
   }
 
   Stream<List<TodoModel>> watchTodos() async* {
     final database = await _database;
-    yield* database.watchCollection('todos').map(_modelsFromDocuments);
+    yield* database.todos.watchCollection().map(_sortModels);
   }
 
   Future<List<TodoModel>> searchByExactTitle(String title) async {
@@ -52,10 +52,12 @@ final class TodosLocalDataSource {
 }
 
 List<TodoModel> _modelsFromDocuments(Iterable<CindelDocument> documents) {
-  final models = documents
-      .map(TodoModelSchema.fromDocument)
-      .toList(growable: false);
-  return models..sort(
+  return _sortModels(documents.map(TodoModelSchema.fromDocument));
+}
+
+List<TodoModel> _sortModels(Iterable<TodoModel> models) {
+  final sortedModels = models.toList(growable: false);
+  return sortedModels..sort(
     (left, right) => right.createdAtMicros.compareTo(left.createdAtMicros),
   );
 }

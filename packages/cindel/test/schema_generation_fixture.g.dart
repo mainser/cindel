@@ -6,7 +6,7 @@ part of 'schema_generation_fixture.dart';
 // CindelGenerator
 // **************************************************************************
 
-// ignore_for_file: constant_identifier_names
+// ignore_for_file: non_constant_identifier_names
 
 final UserSchema = CindelCollectionSchema<User>(
   name: "users",
@@ -41,6 +41,10 @@ final UserSchema = CindelCollectionSchema<User>(
   toDocument: _$UserToCindelDocument,
   fromDocument: _$UserFromCindelDocument,
 );
+
+extension UserCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<User> get users => typedCollection(UserSchema);
+}
 
 Map<String, Object?> _$UserToCindelDocument(User object) {
   return <String, Object?>{

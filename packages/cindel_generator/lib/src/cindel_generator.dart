@@ -69,6 +69,17 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  fromDocument: _\$${collection.dartName}FromCindelDocument,')
     ..writeln(');')
     ..writeln()
+    ..writeln(
+      'extension ${collection.dartName}CindelCollectionAccess '
+      'on CindelDatabase {',
+    )
+    ..writeln(
+      '  CindelTypedCollection<${collection.dartName}> '
+      'get ${collection.accessorName} => '
+      'typedCollection(${collection.schemaName});',
+    )
+    ..writeln('}')
+    ..writeln()
     ..writeln('Map<String, Object?> _\$${collection.dartName}ToCindelDocument(')
     ..writeln('  ${collection.dartName} object,')
     ..writeln(') {')
@@ -110,6 +121,7 @@ final class _CollectionInfo {
   _CollectionInfo({
     required this.dartName,
     required this.name,
+    required this.accessorName,
     required this.schemaName,
     required this.idField,
     required this.fields,
@@ -159,6 +171,7 @@ final class _CollectionInfo {
     return _CollectionInfo(
       dartName: dartName,
       name: collectionName,
+      accessorName: _accessorName(collectionName, dartName),
       schemaName: '${dartName}Schema',
       idField: idFields.single,
       fields: fields,
@@ -167,6 +180,7 @@ final class _CollectionInfo {
 
   final String dartName;
   final String name;
+  final String accessorName;
   final String schemaName;
   final _FieldInfo idField;
   final List<_FieldInfo> fields;
@@ -224,4 +238,14 @@ String _lowerFirst(String value) {
     return value;
   }
   return value[0].toLowerCase() + value.substring(1);
+}
+
+String _accessorName(String collectionName, String dartName) {
+  return _isDartIdentifier(collectionName)
+      ? collectionName
+      : _lowerFirst(dartName);
+}
+
+bool _isDartIdentifier(String value) {
+  return RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$').hasMatch(value);
 }
