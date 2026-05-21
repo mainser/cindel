@@ -31,6 +31,14 @@ feature at once.
 - [x] Simple index entries generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
+- [x] Generated query builders for indexed equality, string prefix, and range
+  queries.
+- [x] Query result helpers:
+  - `findAll`
+  - `findFirst`
+  - `count`
+- [x] Native auto-increment id allocation.
+- [x] Generated typed writes assign native ids for `autoIncrement`.
 - [x] Document watchers with Dart streams.
 - [x] Collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
@@ -60,7 +68,7 @@ feature at once.
 
 - [x] Typed collection APIs generated from schemas.
   - Example target: `db.users.put(user)`, `db.users.get(id)`.
-- [ ] Auto-increment id support.
+- [x] Auto-increment id support.
   - Native id allocation.
   - Typed generator support for `autoIncrement`.
 - [ ] Bulk collection operations.
@@ -68,19 +76,20 @@ feature at once.
   - `getAll`
   - `deleteAll`
   - query-based deletes.
-- [ ] Query result operations.
+- [x] Query result operations.
   - `findAll`
   - `findFirst`
   - `count`
-  - `exists`
   - typed result mapping.
+- [ ] Query result existence helper.
+  - `exists`
 - [ ] Property projections.
   - Query a single property without hydrating full objects.
   - Support primitive and list property projections.
 
 ## Query System
 
-- [ ] Generated query builders.
+- [x] Generated query builders.
   - Equality helpers for indexed fields.
   - Range helpers for sortable indexed fields.
   - Prefix helpers for indexed strings.
@@ -299,8 +308,11 @@ feature at once.
 
 ## Current Focus
 
-The next practical milestone is completing the remaining Apple and Linux
-prebuilt binaries. The package boundary, Android and Windows binaries, consumer
-loading path, maintainer scripts, and opt-in Rust hook are in place; macOS
-should produce `ios/cindel.xcframework` and `macos/libcindel_native.dylib`, and
-Linux should produce `linux/libcindel_native.so`.
+The next implementation milestone is bulk collection operations and
+query-based deletes. That keeps the public API moving in small, testable
+slices after typed CRUD, native auto-increment ids, and query builders.
+
+Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
+still pending collaborator machines. macOS should produce
+`ios/cindel.xcframework` and `macos/libcindel_native.dylib`, and Linux should
+produce `linux/libcindel_native.so`.

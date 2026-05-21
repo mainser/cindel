@@ -48,6 +48,44 @@ extension TodoModelCindelCollectionAccess on CindelDatabase {
       typedCollection(TodoModelSchema);
 }
 
+extension TodoModelCindelQueryAccess on CindelTypedCollection<TodoModel> {
+  TodoModelQueryWhere where() => TodoModelQueryWhere(this);
+}
+
+final class TodoModelQueryWhere {
+  const TodoModelQueryWhere(this._collection);
+
+  final CindelTypedCollection<TodoModel> _collection;
+
+  CindelQuery<TodoModel> titleEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: TodoModelSchema,
+      field: "title",
+      value: value,
+    );
+  }
+
+  CindelQuery<TodoModel> titleStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: TodoModelSchema,
+      field: "title",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<TodoModel> titleBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: TodoModelSchema,
+      field: "title",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
 Map<String, Object?> _$TodoModelToCindelDocument(TodoModel object) {
   return <String, Object?>{
     "id": object.id,

@@ -47,6 +47,44 @@ extension UserCindelCollectionAccess on CindelDatabase {
   CindelTypedCollection<User> get users => typedCollection(UserSchema);
 }
 
+extension UserCindelQueryAccess on CindelTypedCollection<User> {
+  UserQueryWhere where() => UserQueryWhere(this);
+}
+
+final class UserQueryWhere {
+  const UserQueryWhere(this._collection);
+
+  final CindelTypedCollection<User> _collection;
+
+  CindelQuery<User> emailEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "email",
+      value: value,
+    );
+  }
+
+  CindelQuery<User> emailStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "email",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<User> emailBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "email",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
 Map<String, Object?> _$UserToCindelDocument(User object) {
   return <String, Object?>{
     "id": object.id,

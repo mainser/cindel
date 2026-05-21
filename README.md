@@ -31,7 +31,10 @@ The API is still experimental and can change before a public release.
 - Generated collection schemas and serializers.
 - Manual document API with `put`, `get`, and `delete`.
 - Generated typed collection accessors.
+- Native auto-increment ids through `autoIncrement`.
 - Simple indexed queries by equality and inclusive range.
+- Generated typed query builders for indexed equality, string prefix, and range
+  queries.
 - Document and collection watchers with Dart streams.
 - In-memory databases for tests and short-lived work.
 - Schema version registration and compatible additive migrations.
@@ -141,32 +144,55 @@ Generated typed collection accessors are available for models with generated
 schemas:
 
 ```dart
+final user = User()
+  ..name = 'Noel'
+  ..email = 'noel@example.com'
+  ..active = true;
+
 await db.users.put(user);
 final savedUser = await db.users.get(user.id);
 await db.users.delete(user.id);
 ```
 
+When a generated model keeps `id = autoIncrement`, `put` asks the native engine
+for the next collection id and writes it back to the object before persistence.
+
 ## Queries
 
-Indexed fields can be queried by equality:
+Generated typed query builders are available for indexed fields:
 
 ```dart
-final users = await db.queryEqual(
-  'users',
-  'email',
-  'noel@example.com',
-);
+final users = await db.users.where().emailEqualTo('noel@example.com').findAll();
 ```
 
-Range queries are inclusive:
+Indexed string fields also get prefix helpers:
 
 ```dart
-final users = await db.queryRange(
-  'users',
-  'email',
-  lower: 'a@example.com',
-  upper: 'm@example.com',
-);
+final users = await db.users.where().emailStartsWith('team').findAll();
+```
+
+Range queries are inclusive and support indexed `int`, `double`, and `String`
+fields:
+
+```dart
+final users = await db.users
+    .where()
+    .emailBetween('a@example.com', 'm@example.com')
+    .findAll();
+```
+
+Queries can return all results, the first result, or a count:
+
+```dart
+final first = await db.users.where().emailEqualTo(email).findFirst();
+final count = await db.users.where().emailStartsWith('team').count();
+```
+
+The lower-level manual query API remains available when generated typed helpers
+are not being used:
+
+```dart
+final documents = await db.queryEqual('users', 'email', 'noel@example.com');
 ```
 
 ## Watchers
@@ -279,9 +305,11 @@ Validated so far:
 - [x] Manual Dart API with `put`, `get`, and `delete`.
 - [x] Generated collection schemas and serializers.
 - [x] Generated typed collection accessors.
+- [x] Native auto-increment id allocation.
 - [x] Simple indexes generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
+- [x] Generated typed query builders.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -294,15 +322,17 @@ Validated so far:
 Next areas:
 
 - [x] Typed collection APIs.
-- [ ] Prebuilt native binary distribution.
-- [ ] Query builders.
+- [x] Prebuilt native binary distribution for Android and Windows.
+- [x] Query builders.
+- [x] Auto-increment id support.
+- [ ] Bulk collection operations.
 - [ ] Transaction API.
-- [ ] Auto-increment id support.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.
 - [ ] `libmdbx` prototype behind the existing storage trait.
-- [ ] Example Flutter application.
+- [x] Example Flutter application.
+- [ ] Apple and Linux prebuilt native binaries.
 - [ ] Public package publishing polish.
 
 ## License

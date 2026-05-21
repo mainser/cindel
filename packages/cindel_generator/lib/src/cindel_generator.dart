@@ -81,6 +81,30 @@ String _emitCollection(_CollectionInfo collection) {
     )
     ..writeln('}')
     ..writeln()
+    ..writeln(
+      'extension ${collection.dartName}CindelQueryAccess '
+      'on CindelTypedCollection<${collection.dartName}> {',
+    )
+    ..writeln(
+      '  ${collection.queryWhereName} where() => '
+      '${collection.queryWhereName}(this);',
+    )
+    ..writeln('}')
+    ..writeln()
+    ..writeln('final class ${collection.queryWhereName} {')
+    ..writeln('  const ${collection.queryWhereName}(this._collection);')
+    ..writeln()
+    ..writeln(
+      '  final CindelTypedCollection<${collection.dartName}> _collection;',
+    );
+
+  for (final field in collection.indexedFields) {
+    _emitIndexedWhereMethods(buffer, collection, field);
+  }
+
+  buffer
+    ..writeln('}')
+    ..writeln()
     ..writeln('Map<String, Object?> _\$${collection.dartName}ToCindelDocument(')
     ..writeln('  ${collection.dartName} object,')
     ..writeln(') {')
@@ -192,6 +216,12 @@ final class _CollectionInfo {
   final String schemaName;
   final _FieldInfo idField;
   final List<_FieldInfo> fields;
+
+  String get queryWhereName => '${dartName}QueryWhere';
+
+  Iterable<_FieldInfo> get indexedFields {
+    return fields.where((field) => field.isIndexed);
+  }
 }
 
 final class _FieldInfo {
@@ -228,6 +258,18 @@ final class _FieldInfo {
   final String dartType;
   final bool isId;
   final bool isIndexed;
+
+  String get nonNullableDartType {
+    return dartType.endsWith('?')
+        ? dartType.substring(0, dartType.length - 1)
+        : dartType;
+  }
+
+  bool get supportsRangeQueries {
+    return nonNullableDartType == 'int' ||
+        nonNullableDartType == 'double' ||
+        nonNullableDartType == 'String';
+  }
 }
 
 bool _isSupportedType(DartType type) {
@@ -239,6 +281,57 @@ bool _isSupportedType(DartType type) {
       normalized == 'double' ||
       normalized == 'String' ||
       normalized == 'bool';
+}
+
+void _emitIndexedWhereMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _FieldInfo field,
+) {
+  final queryType = 'CindelQuery<${collection.dartName}>';
+  final valueType = field.nonNullableDartType;
+  final fieldLiteral = _stringLiteral(field.name);
+
+  buffer
+    ..writeln()
+    ..writeln('  $queryType ${field.name}EqualTo($valueType value) {')
+    ..writeln('    return CindelQuery.equal(')
+    ..writeln('      database: _collection.database,')
+    ..writeln('      schema: ${collection.schemaName},')
+    ..writeln('      field: $fieldLiteral,')
+    ..writeln('      value: value,')
+    ..writeln('    );')
+    ..writeln('  }');
+
+  if (field.nonNullableDartType == 'String') {
+    buffer
+      ..writeln()
+      ..writeln('  $queryType ${field.name}StartsWith(String prefix) {')
+      ..writeln('    return CindelQuery.stringStartsWith(')
+      ..writeln('      database: _collection.database,')
+      ..writeln('      schema: ${collection.schemaName},')
+      ..writeln('      field: $fieldLiteral,')
+      ..writeln('      prefix: prefix,')
+      ..writeln('    );')
+      ..writeln('  }');
+  }
+
+  if (field.supportsRangeQueries) {
+    buffer
+      ..writeln()
+      ..writeln(
+        '  $queryType ${field.name}Between('
+        '$valueType? lower, $valueType? upper) {',
+      )
+      ..writeln('    return CindelQuery.range(')
+      ..writeln('      database: _collection.database,')
+      ..writeln('      schema: ${collection.schemaName},')
+      ..writeln('      field: $fieldLiteral,')
+      ..writeln('      lower: lower,')
+      ..writeln('      upper: upper,')
+      ..writeln('    );')
+      ..writeln('  }');
+  }
 }
 
 String _lowerFirst(String value) {

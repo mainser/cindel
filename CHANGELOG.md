@@ -5,6 +5,18 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.3 - 2026-05-21
+
+- Added typed `CindelQuery<T>` with `findAll`, `findFirst`, and `count`.
+- Updated generated collection accessors to emit `where()` helpers for indexed
+  fields.
+- Added generated indexed equality, string prefix, and inclusive range query
+  methods.
+- Updated `cindel_todo` search to use the generated query builder instead of
+  manual `queryEqual` and `queryRange` calls.
+- Added Dart tests for typed equality, prefix, range, first, and count query
+  builder behavior.
+
 ## 0.1.2 - 2026-05-21
 
 - Added native per-collection auto-increment id allocation.

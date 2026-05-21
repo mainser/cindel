@@ -9,8 +9,8 @@ The example demonstrates:
 - Persisting documents.
 - Reading live collection updates through watchers.
 - Updating and deleting documents.
-- Querying an indexed field by equality.
-- Querying an indexed field by range for prefix search.
+- Querying an indexed field through generated query builder helpers.
+- Filtering by exact title and title prefix with typed query results.
 - Reading the stored schema version.
 - Wiring the feature with Riverpod providers.
 - Loading Cindel's prebuilt native libraries through `cindel_flutter_libs`.

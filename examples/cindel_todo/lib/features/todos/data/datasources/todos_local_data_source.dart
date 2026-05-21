@@ -24,25 +24,17 @@ final class TodosLocalDataSource {
 
   Future<List<TodoModel>> searchByExactTitle(String title) async {
     final database = await _database;
-    final documents = await database.queryEqual('todos', 'title', title);
-    return _modelsFromDocuments(documents);
+    final todos = await database.todos.where().titleEqualTo(title).findAll();
+    return _sortModels(todos);
   }
 
   Future<List<TodoModel>> searchByTitlePrefix(String prefix) async {
     final database = await _database;
-    final upperBound = _inclusivePrefixUpperBound(prefix);
-    final documents = await database.queryRange(
-      'todos',
-      'title',
-      lower: prefix,
-      upper: upperBound,
-    );
-    return _modelsFromDocuments(
-      documents.where((document) {
-        final title = document['title'];
-        return title is String && title.startsWith(prefix);
-      }),
-    );
+    final todos = await database.todos
+        .where()
+        .titleStartsWith(prefix)
+        .findAll();
+    return _sortModels(todos);
   }
 
   Future<int> readSchemaVersion() async {
@@ -51,22 +43,9 @@ final class TodosLocalDataSource {
   }
 }
 
-List<TodoModel> _modelsFromDocuments(Iterable<CindelDocument> documents) {
-  return _sortModels(documents.map(TodoModelSchema.fromDocument));
-}
-
 List<TodoModel> _sortModels(Iterable<TodoModel> models) {
   final sortedModels = models.toList(growable: false);
   return sortedModels..sort(
     (left, right) => right.createdAtMicros.compareTo(left.createdAtMicros),
   );
-}
-
-String _inclusivePrefixUpperBound(String prefix) {
-  if (prefix.isEmpty) {
-    return prefix;
-  }
-  final lastCodeUnit = prefix.codeUnitAt(prefix.length - 1);
-  final nextCodeUnit = lastCodeUnit + 1;
-  return '${prefix.substring(0, prefix.length - 1)}${String.fromCharCode(nextCodeUnit)}';
 }
