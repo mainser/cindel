@@ -43,8 +43,26 @@ class User {
   @Enumerated(CindelEnumType.value, valueField: 'code')
   UserPlan plan = UserPlan.free;
 
+  Recipient? primaryRecipient;
+
+  List<Recipient>? recipients;
+
   @ignore
   String transientNote = '';
+}
+
+@embedded
+class Recipient {
+  String? name;
+
+  String? address;
+
+  RecipientMetadata? metadata;
+}
+
+@embedded
+class RecipientMetadata {
+  String? label;
 }
 
 enum UserRole { owner, member }

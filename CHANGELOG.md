@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.11 - 2026-05-21
+
+- Added `@Embedded` for generated nested value-object persistence.
+- Added generated serialization and deserialization for one embedded object.
+- Added generated serialization and deserialization for lists of embedded
+  objects.
+- Added nested embedded-object helper generation.
+- Added embedded object decoding for property projections.
+- Expanded schema generation tests to round-trip embedded objects and embedded
+  object lists through an in-memory database.
+
 ## 0.1.10 - 2026-05-21
 
 - Added generated serialization for `DateTime` and `Duration`.

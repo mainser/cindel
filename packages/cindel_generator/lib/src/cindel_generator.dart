@@ -22,6 +22,11 @@ const _enumeratedChecker = TypeChecker.typeNamed(
   inPackage: 'cindel_annotations',
 );
 
+const _embeddedChecker = TypeChecker.typeNamed(
+  Embedded,
+  inPackage: 'cindel_annotations',
+);
+
 /// Generates schemas and serializers for classes annotated with `@collection`.
 final class CindelGenerator extends GeneratorForAnnotation<Collection> {
   /// Creates a Cindel generator.
@@ -204,7 +209,46 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  object.${collection.idField.name} = id;')
     ..writeln('}');
 
+  for (final embedded in collection.embeddedTypes) {
+    _emitEmbeddedHelpers(buffer, embedded);
+  }
+
   return buffer.toString();
+}
+
+void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
+  buffer
+    ..writeln()
+    ..writeln('Map<String, Object?> _\$${embedded.dartName}ToCindelEmbedded(')
+    ..writeln('  ${embedded.dartName} object,')
+    ..writeln(') {')
+    ..writeln('  return <String, Object?>{');
+
+  for (final field in embedded.fields) {
+    buffer.writeln(
+      '    ${_stringLiteral(field.name)}: ${field.toDocumentExpression},',
+    );
+  }
+
+  buffer
+    ..writeln('  };')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('${embedded.dartName} _\$${embedded.dartName}FromCindelEmbedded(')
+    ..writeln('  Map<String, Object?> document,')
+    ..writeln(') {')
+    ..writeln('  final object = ${embedded.dartName}();');
+
+  for (final field in embedded.fields) {
+    buffer.writeln(
+      '  object.${field.name} = '
+      '${field.fromDocumentExpression(_stringLiteral(field.name))};',
+    );
+  }
+
+  buffer
+    ..writeln('  return object;')
+    ..writeln('}');
 }
 
 void _emitQueryModifierMethods(
@@ -269,6 +313,7 @@ final class _CollectionInfo {
     required this.schemaName,
     required this.idField,
     required this.fields,
+    required this.embeddedTypes,
   });
 
   factory _CollectionInfo.from(
@@ -320,6 +365,7 @@ final class _CollectionInfo {
       schemaName: '${dartName}Schema',
       idField: idFields.single,
       fields: fields,
+      embeddedTypes: _collectEmbeddedTypes(fields),
     );
   }
 
@@ -329,6 +375,7 @@ final class _CollectionInfo {
   final String schemaName;
   final _FieldInfo idField;
   final List<_FieldInfo> fields;
+  final List<_EmbeddedInfo> embeddedTypes;
 
   String get queryWhereName => '${dartName}QueryWhere';
 
@@ -526,7 +573,11 @@ final class _FieldInfo {
     String variable, {
     bool nullableInput = false,
   }) {
-    return type.toStoredExpression(variable, nullableInput: nullableInput);
+    return type.toStoredExpression(
+      variable,
+      nullableInput: nullableInput,
+      nullableCast: false,
+    );
   }
 
   String get propertyDecodeArgument {
@@ -584,12 +635,88 @@ final class _IndexInfo {
   final CindelIndexType type;
 }
 
+final class _EmbeddedInfo {
+  const _EmbeddedInfo({required this.dartName, required this.fields});
+
+  factory _EmbeddedInfo.from(ClassElement element) {
+    if (element.isAbstract) {
+      throw InvalidGenerationSourceError(
+        '@Embedded classes must be concrete.',
+        element: element,
+      );
+    }
+
+    final hasDefaultConstructor = element.constructors.any(
+      (constructor) =>
+          constructor.name == 'new' && constructor.formalParameters.isEmpty,
+    );
+    if (!hasDefaultConstructor) {
+      throw InvalidGenerationSourceError(
+        '@Embedded classes need an unnamed constructor with no parameters.',
+        element: element,
+      );
+    }
+
+    return _EmbeddedInfo(
+      dartName: element.name ?? element.displayName,
+      fields: element.fields
+          .where((field) => !field.isSynthetic && !field.isStatic)
+          .map(_EmbeddedFieldInfo.from)
+          .whereType<_EmbeddedFieldInfo>()
+          .toList(growable: false),
+    );
+  }
+
+  static _EmbeddedInfo? fromType(DartType type) {
+    final element = _embeddedElement(type);
+    return element == null ? null : _EmbeddedInfo.from(element);
+  }
+
+  final String dartName;
+  final List<_EmbeddedFieldInfo> fields;
+}
+
+final class _EmbeddedFieldInfo {
+  const _EmbeddedFieldInfo({required this.name, required this.type});
+
+  static _EmbeddedFieldInfo? from(FieldElement element) {
+    if (_ignoreChecker.hasAnnotationOf(element)) {
+      return null;
+    }
+    if (_indexChecker.hasAnnotationOf(element)) {
+      throw InvalidGenerationSourceError(
+        'Embedded field `${element.name}` uses @Index, but embedded indexes '
+        'are not supported yet. Index the parent collection field instead.',
+        element: element,
+      );
+    }
+
+    final name = element.name ?? element.displayName;
+    return _EmbeddedFieldInfo(
+      name: name,
+      type: _PersistedType.from(element, name, element.type.getDisplayString()),
+    );
+  }
+
+  final String name;
+  final _PersistedType type;
+
+  String get toDocumentExpression {
+    return type.toStoredExpression('object.$name');
+  }
+
+  String fromDocumentExpression(String fieldLiteral) {
+    return type.fromStoredExpression('document[$fieldLiteral]');
+  }
+}
+
 final class _PersistedType {
   const _PersistedType._({
     required this.dartType,
     required this.isNullable,
     required this.kind,
     this.enumInfo,
+    this.embeddedInfo,
     this.elementType,
   });
 
@@ -608,8 +735,9 @@ final class _PersistedType {
     if (type == null) {
       throw InvalidGenerationSourceError(
         'Field `$fieldName` has unsupported type `$dartType`. '
-        'Stage 12 supports int, double, String, bool, DateTime, Duration, '
-        'enums, nullable variants, and lists of those primitive shapes.',
+        'Cindel supports int, double, String, bool, DateTime, Duration, '
+        'enums, embedded objects, nullable variants, and lists of those '
+        'supported shapes.',
         element: element,
       );
     }
@@ -676,6 +804,16 @@ final class _PersistedType {
       );
     }
 
+    final embeddedInfo = _EmbeddedInfo.fromType(type);
+    if (embeddedInfo != null) {
+      return _PersistedType._(
+        dartType: dartType,
+        isNullable: isNullable,
+        kind: _PersistedTypeKind.embedded,
+        embeddedInfo: embeddedInfo,
+      );
+    }
+
     return null;
   }
 
@@ -683,6 +821,7 @@ final class _PersistedType {
   final bool isNullable;
   final _PersistedTypeKind kind;
   final _EnumInfo? enumInfo;
+  final _EmbeddedInfo? embeddedInfo;
   final _PersistedType? elementType;
 
   bool get isList => kind == _PersistedTypeKind.list;
@@ -725,11 +864,16 @@ final class _PersistedType {
       _PersistedTypeKind.dateTime ||
       _PersistedTypeKind.duration ||
       _PersistedTypeKind.enumeration ||
+      _PersistedTypeKind.embedded ||
       _PersistedTypeKind.list => true,
     };
   }
 
-  String toStoredExpression(String expression, {bool? nullableInput}) {
+  String toStoredExpression(
+    String expression, {
+    bool? nullableInput,
+    bool nullableCast = true,
+  }) {
     final allowsNull = nullableInput ?? isNullable;
     if (!allowsNull) {
       return _toStoredExpressionNonNull(expression);
@@ -737,7 +881,7 @@ final class _PersistedType {
     if (kind == _PersistedTypeKind.primitive) {
       return expression;
     }
-    return _toStoredExpressionNullable(expression);
+    return _toStoredExpressionNullable(expression, nullableCast: nullableCast);
   }
 
   String _toStoredExpressionNonNull(String expression) {
@@ -748,6 +892,8 @@ final class _PersistedType {
       _PersistedTypeKind.enumeration => enumInfo!._toStoredExpression(
         expression,
       ),
+      _PersistedTypeKind.embedded =>
+        '_\$${embeddedInfo!.dartName}ToCindelEmbedded($expression)',
       _PersistedTypeKind.list =>
         '$expression.map((value) => '
             '${elementType!._toStoredExpressionNonNull('value')})'
@@ -755,7 +901,13 @@ final class _PersistedType {
     };
   }
 
-  String _toStoredExpressionNullable(String expression) {
+  String _toStoredExpressionNullable(
+    String expression, {
+    required bool nullableCast,
+  }) {
+    final embeddedExpression = nullableCast
+        ? '$expression as ${embeddedInfo?.dartName}'
+        : expression;
     return switch (kind) {
       _PersistedTypeKind.primitive => expression,
       _PersistedTypeKind.dateTime => '$expression?.microsecondsSinceEpoch',
@@ -763,6 +915,10 @@ final class _PersistedType {
       _PersistedTypeKind.enumeration => enumInfo!._toStoredExpressionNullable(
         expression,
       ),
+      _PersistedTypeKind.embedded =>
+        '$expression == null ? null : '
+            '_\$${embeddedInfo!.dartName}ToCindelEmbedded('
+            '$embeddedExpression)',
       _PersistedTypeKind.list =>
         '$expression?.map((value) => '
             '${elementType!._toStoredExpressionNonNull('value')})'
@@ -788,6 +944,9 @@ final class _PersistedType {
       _PersistedTypeKind.enumeration => enumInfo!._fromStoredExpression(
         expression,
       ),
+      _PersistedTypeKind.embedded =>
+        '_\$${embeddedInfo!.dartName}FromCindelEmbedded('
+            '($expression as Map).cast<String, Object?>())',
       _PersistedTypeKind.list =>
         '($expression as List<Object?>)'
             '.map((value) => '
@@ -797,7 +956,14 @@ final class _PersistedType {
   }
 }
 
-enum _PersistedTypeKind { primitive, dateTime, duration, enumeration, list }
+enum _PersistedTypeKind {
+  primitive,
+  dateTime,
+  duration,
+  enumeration,
+  embedded,
+  list,
+}
 
 final class _EnumInfo {
   const _EnumInfo({
@@ -947,6 +1113,43 @@ EnumElement? _enumElement(DartType type) {
     return type.element as EnumElement;
   }
   return null;
+}
+
+ClassElement? _embeddedElement(DartType type) {
+  if (type is! InterfaceType || type.element is! ClassElement) {
+    return null;
+  }
+  final element = type.element as ClassElement;
+  return _embeddedChecker.hasAnnotationOf(element) ? element : null;
+}
+
+List<_EmbeddedInfo> _collectEmbeddedTypes(List<_FieldInfo> fields) {
+  final embeddedTypes = <String, _EmbeddedInfo>{};
+  for (final field in fields) {
+    _collectEmbeddedTypesFrom(field.type, embeddedTypes);
+  }
+  return embeddedTypes.values.toList(growable: false);
+}
+
+void _collectEmbeddedTypesFrom(
+  _PersistedType type,
+  Map<String, _EmbeddedInfo> embeddedTypes,
+) {
+  if (type.kind == _PersistedTypeKind.list) {
+    _collectEmbeddedTypesFrom(type.elementType!, embeddedTypes);
+    return;
+  }
+  if (type.kind != _PersistedTypeKind.embedded) {
+    return;
+  }
+  final embedded = type.embeddedInfo!;
+  if (embeddedTypes.containsKey(embedded.dartName)) {
+    return;
+  }
+  embeddedTypes[embedded.dartName] = embedded;
+  for (final field in embedded.fields) {
+    _collectEmbeddedTypesFrom(field.type, embeddedTypes);
+  }
 }
 
 String _normalizeDartType(String dartType) {

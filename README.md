@@ -31,6 +31,7 @@ The API is still experimental and can change before a public release.
 - Generated collection schemas and serializers.
 - Generated conversion for `DateTime`, `Duration`, primitive lists, nullable
   fields, enum strategies, and ignored transient fields.
+- Embedded value objects with generated nested JSON serialization.
 - Manual document API with `put`, `get`, and `delete`.
 - Generated typed collection accessors.
 - Native auto-increment ids through `autoIncrement`.
@@ -52,7 +53,7 @@ The API is still experimental and can change before a public release.
 
 - `packages/cindel`: public Dart API, FFI bridge, and native Rust core.
 - `packages/cindel_annotations`: annotations and shared public types such as
-  `@Collection`, `@index`, `Id`, and `autoIncrement`.
+  `@Collection`, `@Embedded`, `@index`, `Id`, and `autoIncrement`.
 - `packages/cindel_flutter_libs`: prebuilt native libraries for Flutter apps.
 - `packages/cindel_generator`: source generator for schemas and serializers.
 - `examples/cindel_todo`: Flutter example app using Cindel like a normal
@@ -187,6 +188,8 @@ document payload JSON-compatible:
 - `@Enumerated(CindelEnumType.value, valueField: 'code')` stores a custom enum
   instance field.
 - `@ignore` excludes transient fields from generated persistence.
+- `@Embedded` stores nested value objects as JSON maps.
+- `List<EmbeddedType>` stores lists of embedded value objects.
 
 ```dart
 enum Plan {
@@ -212,6 +215,48 @@ class User {
   Object? uiState;
 }
 ```
+
+## Embedded Objects
+
+Use `@Embedded` for value objects that live inside a parent collection document
+instead of their own collection. Embedded values can be nullable and can also be
+stored as lists:
+
+```dart
+@Collection(name: 'emails')
+class Email {
+  Id id = autoIncrement;
+
+  String? title;
+
+  Recipient? sender;
+
+  List<Recipient>? recipients;
+}
+
+@Embedded()
+class Recipient {
+  String? name;
+  String? address;
+}
+```
+
+Generated serializers store embedded objects as nested JSON-compatible maps:
+
+```dart
+{
+  'id': 1,
+  'title': 'Hello',
+  'sender': {'name': 'Ada', 'address': 'ada@example.com'},
+  'recipients': [
+    {'name': 'Ben', 'address': 'ben@example.com'},
+  ],
+}
+```
+
+The first embedded-object slice focuses on persistence and property projection
+round-trips. Query builders for filtering inside embedded fields are planned for
+a later stage.
 
 Bulk typed operations use native batch writes and deletes:
 
@@ -510,6 +555,7 @@ Validated so far:
 - [x] Word-token indexes for simple full-text-style search.
 - [x] Schema type expansion for dates, durations, primitive lists, enums,
   nullable fields, and ignored fields.
+- [x] Embedded objects and embedded object lists.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -531,6 +577,7 @@ Next areas:
 - [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Index variants.
 - [x] Full-text search primitives.
+- [x] Embedded objects.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

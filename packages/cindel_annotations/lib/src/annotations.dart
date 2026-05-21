@@ -13,6 +13,18 @@ class Collection {
 /// Marks a Dart class as a Cindel collection.
 const collection = Collection();
 
+/// Marks a Dart class as an embedded value object.
+///
+/// Embedded objects are stored inside a parent collection document instead of
+/// getting their own collection.
+class Embedded {
+  /// Creates an embedded annotation.
+  const Embedded();
+}
+
+/// Marks a Dart class as an embedded value object.
+const embedded = Embedded();
+
 /// Marks a field as indexed.
 class Index {
   /// Creates an index annotation.

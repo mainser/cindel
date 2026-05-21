@@ -29,6 +29,12 @@ void main() {
         (field) => field.name == 'createdAt',
       );
       final plan = fields.singleWhere((field) => field.name == 'plan');
+      final primaryRecipient = fields.singleWhere(
+        (field) => field.name == 'primaryRecipient',
+      );
+      final recipients = fields.singleWhere(
+        (field) => field.name == 'recipients',
+      );
 
       // Assert.
       expect(schema.name, 'users');
@@ -50,6 +56,8 @@ void main() {
         'role',
         'status',
         'plan',
+        'primaryRecipient',
+        'recipients',
       ]);
       expect(indexedFields.map((field) => field.name), [
         'email',
@@ -67,6 +75,8 @@ void main() {
       expect(bio.indexCaseSensitive, isFalse);
       expect(createdAt.dartType, 'DateTime');
       expect(plan.dartType, 'UserPlan');
+      expect(primaryRecipient.dartType, 'Recipient?');
+      expect(recipients.dartType, 'List<Recipient>?');
       expect(fields.any((field) => field.name == 'transientNote'), isFalse);
     });
 
@@ -78,6 +88,13 @@ void main() {
     test('generates serializers for typed objects.', () {
       // Arrange.
       final createdAt = DateTime.utc(2026, 5, 21, 12, 30, 45, 123, 456);
+      final recipient = Recipient()
+        ..name = 'Ada'
+        ..address = 'ada@example.com'
+        ..metadata = (RecipientMetadata()..label = 'primary');
+      final secondaryRecipient = Recipient()
+        ..name = 'Ben'
+        ..address = 'ben@example.com';
       final user = User()
         ..id = 7
         ..name = 'Noel'
@@ -94,6 +111,8 @@ void main() {
         ..role = UserRole.owner
         ..status = UserStatus.active
         ..plan = UserPlan.pro
+        ..primaryRecipient = recipient
+        ..recipients = [recipient, secondaryRecipient]
         ..transientNote = 'not persisted';
 
       // Act.
@@ -120,6 +139,19 @@ void main() {
         'role': 'owner',
         'status': 1,
         'plan': 'pro',
+        'primaryRecipient': {
+          'name': 'Ada',
+          'address': 'ada@example.com',
+          'metadata': {'label': 'primary'},
+        },
+        'recipients': [
+          {
+            'name': 'Ada',
+            'address': 'ada@example.com',
+            'metadata': {'label': 'primary'},
+          },
+          {'name': 'Ben', 'address': 'ben@example.com', 'metadata': null},
+        ],
       });
       expect(restored.id, 7);
       expect(restored.name, 'Noel');
@@ -139,6 +171,13 @@ void main() {
       expect(restored.role, UserRole.owner);
       expect(restored.status, UserStatus.active);
       expect(restored.plan, UserPlan.pro);
+      expect(restored.primaryRecipient?.name, 'Ada');
+      expect(restored.primaryRecipient?.address, 'ada@example.com');
+      expect(restored.primaryRecipient?.metadata?.label, 'primary');
+      expect(restored.recipients?.map((recipient) => recipient.name), [
+        'Ada',
+        'Ben',
+      ]);
       expect(restored.transientNote, '');
     });
 
@@ -170,6 +209,13 @@ void main() {
       // Arrange.
       final db = await Cindel.openInMemory(schemas: [UserSchema]);
       final createdAt = DateTime.utc(2026, 5, 21, 13, 20);
+      final primaryRecipient = Recipient()
+        ..name = 'Grace'
+        ..address = 'grace@example.com'
+        ..metadata = (RecipientMetadata()..label = 'lead');
+      final secondaryRecipient = Recipient()
+        ..name = 'Mary'
+        ..address = 'mary@example.com';
       final user = User()
         ..name = 'Ada'
         ..email = 'ada@example.com'
@@ -184,7 +230,9 @@ void main() {
         ..scores = null
         ..role = UserRole.member
         ..status = UserStatus.blocked
-        ..plan = UserPlan.enterprise;
+        ..plan = UserPlan.enterprise
+        ..primaryRecipient = primaryRecipient
+        ..recipients = [primaryRecipient, secondaryRecipient];
 
       addTearDown(db.close);
 
@@ -205,6 +253,14 @@ void main() {
           .findAll();
       final statusValues = await db.users.all().statusProperty().findAll();
       final planValues = await db.users.all().planProperty().findAll();
+      final primaryRecipientValues = await db.users
+          .all()
+          .primaryRecipientProperty()
+          .findAll();
+      final recipientValues = await db.users
+          .all()
+          .recipientsProperty()
+          .findAll();
 
       // Assert.
       expect(restored, isNotNull);
@@ -215,11 +271,22 @@ void main() {
       expect(restored.role, UserRole.member);
       expect(restored.status, UserStatus.blocked);
       expect(restored.plan, UserPlan.enterprise);
+      expect(restored.primaryRecipient?.name, 'Grace');
+      expect(restored.primaryRecipient?.metadata?.label, 'lead');
+      expect(restored.recipients?.map((recipient) => recipient.address), [
+        'grace@example.com',
+        'mary@example.com',
+      ]);
       expect(createdAtMatches.map((user) => user.email), ['ada@example.com']);
       expect(statusMatches.map((user) => user.email), ['ada@example.com']);
       expect(createdAtValues, [createdAt]);
       expect(statusValues, [UserStatus.blocked]);
       expect(planValues, [UserPlan.enterprise]);
+      expect(primaryRecipientValues.single?.name, 'Grace');
+      expect(recipientValues.single?.map((recipient) => recipient.name), [
+        'Grace',
+        'Mary',
+      ]);
     });
   });
 }

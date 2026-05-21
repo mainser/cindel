@@ -35,6 +35,11 @@ feature at once.
   - nullable fields,
   - enum persistence by name, ordinal, and custom value,
   - ignored transient fields.
+- [x] Embedded object persistence:
+  - single embedded value objects,
+  - lists of embedded value objects,
+  - nested embedded value objects,
+  - property projection decoding for embedded fields.
 - [x] Simple index entries generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
@@ -182,10 +187,12 @@ feature at once.
 - [x] Ignored or transient fields.
   - Annotation-level ignore.
 - [ ] Collection-level ignore list.
-- [ ] Embedded objects.
+- [x] Embedded objects.
   - Single embedded value.
   - Lists of embedded values.
   - Nested serialization and deserialization.
+- [ ] Embedded object filters.
+  - Generated filter builders for embedded fields.
 - [ ] Schema diagnostics.
   - Better generator errors for unsupported types.
   - Clear errors for missing ids, duplicate ids, and invalid indexes.
@@ -331,10 +338,9 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is embedded objects. Cindel now has the first
-complete typed query pipeline plus index variants, word-token indexes, and
-expanded generated serialization for dates, durations, primitive lists,
-nullable fields, enum persistence strategies, and ignored transient fields.
+The next implementation milestone is query watchers. Cindel now has the first
+complete typed query pipeline plus index variants, word-token indexes, expanded
+generated serialization, and embedded value-object persistence.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

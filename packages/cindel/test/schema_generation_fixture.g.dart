@@ -148,6 +148,24 @@ final UserSchema = CindelCollectionSchema<User>(
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
+    CindelFieldSchema(
+      name: "primaryRecipient",
+      dartType: "Recipient?",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "recipients",
+      dartType: "List<Recipient>?",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
   ],
   toDocument: _$UserToCindelDocument,
   fromDocument: _$UserFromCindelDocument,
@@ -619,6 +637,80 @@ extension UserCindelQueryModifierAccess on CindelQuery<User> {
           UserPlan.values.firstWhere((enumValue) => enumValue.code == value),
     );
   }
+
+  CindelQuery<User> sortByPrimaryRecipient({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("primaryRecipient", order: order);
+  }
+
+  CindelQuery<User> sortByPrimaryRecipientDesc() {
+    return sortBy("primaryRecipient", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByPrimaryRecipient({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("primaryRecipient", order: order);
+  }
+
+  CindelQuery<User> thenByPrimaryRecipientDesc() {
+    return thenBy("primaryRecipient", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByPrimaryRecipient() {
+    return distinctBy("primaryRecipient");
+  }
+
+  CindelPropertyQuery<User, Recipient?> primaryRecipientProperty() {
+    return property<Recipient?>(
+      "primaryRecipient",
+      decode: (value) => value == null
+          ? null
+          : _$RecipientFromCindelEmbedded(
+              (value as Map).cast<String, Object?>(),
+            ),
+    );
+  }
+
+  CindelQuery<User> sortByRecipients({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("recipients", order: order);
+  }
+
+  CindelQuery<User> sortByRecipientsDesc() {
+    return sortBy("recipients", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByRecipients({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("recipients", order: order);
+  }
+
+  CindelQuery<User> thenByRecipientsDesc() {
+    return thenBy("recipients", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByRecipients() {
+    return distinctBy("recipients");
+  }
+
+  CindelPropertyQuery<User, List<Recipient>?> recipientsProperty() {
+    return property<List<Recipient>?>(
+      "recipients",
+      decode: (value) => value == null
+          ? null
+          : (value as List<Object?>)
+                .map(
+                  (value) => _$RecipientFromCindelEmbedded(
+                    (value as Map).cast<String, Object?>(),
+                  ),
+                )
+                .toList(growable: false),
+    );
+  }
 }
 
 final class UserQueryWhere {
@@ -1016,6 +1108,24 @@ final class UserQueryFilter {
   CindelQuery<User> planEqualTo(UserPlan value) {
     return _query.whereMatches(CindelFilter.field("plan").equalTo(value.code));
   }
+
+  CindelQuery<User> primaryRecipientEqualTo(Recipient? value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "primaryRecipient",
+      ).equalTo(value == null ? null : _$RecipientToCindelEmbedded(value)),
+    );
+  }
+
+  CindelQuery<User> recipientsEqualTo(List<Recipient>? value) {
+    return _query.whereMatches(
+      CindelFilter.field("recipients").equalTo(
+        value
+            ?.map((value) => _$RecipientToCindelEmbedded(value))
+            .toList(growable: false),
+      ),
+    );
+  }
 }
 
 Map<String, Object?> _$UserToCindelDocument(User object) {
@@ -1035,6 +1145,12 @@ Map<String, Object?> _$UserToCindelDocument(User object) {
     "role": object.role.name,
     "status": object.status.index,
     "plan": object.plan.code,
+    "primaryRecipient": object.primaryRecipient == null
+        ? null
+        : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient),
+    "recipients": object.recipients
+        ?.map((value) => _$RecipientToCindelEmbedded(value))
+        .toList(growable: false),
   };
 }
 
@@ -1076,9 +1192,65 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
   object.plan = UserPlan.values.firstWhere(
     (enumValue) => enumValue.code == document["plan"],
   );
+  object.primaryRecipient = document["primaryRecipient"] == null
+      ? null
+      : _$RecipientFromCindelEmbedded(
+          (document["primaryRecipient"] as Map).cast<String, Object?>(),
+        );
+  object.recipients = document["recipients"] == null
+      ? null
+      : (document["recipients"] as List<Object?>)
+            .map(
+              (value) => _$RecipientFromCindelEmbedded(
+                (value as Map).cast<String, Object?>(),
+              ),
+            )
+            .toList(growable: false);
   return object;
 }
 
 void _$UserSetCindelId(User object, int id) {
   object.id = id;
+}
+
+Map<String, Object?> _$RecipientToCindelEmbedded(Recipient object) {
+  return <String, Object?>{
+    "name": object.name,
+    "address": object.address,
+    "metadata": object.metadata == null
+        ? null
+        : _$RecipientMetadataToCindelEmbedded(
+            object.metadata as RecipientMetadata,
+          ),
+  };
+}
+
+Recipient _$RecipientFromCindelEmbedded(Map<String, Object?> document) {
+  final object = Recipient();
+  object.name = document["name"] == null ? null : document["name"] as String?;
+  object.address = document["address"] == null
+      ? null
+      : document["address"] as String?;
+  object.metadata = document["metadata"] == null
+      ? null
+      : _$RecipientMetadataFromCindelEmbedded(
+          (document["metadata"] as Map).cast<String, Object?>(),
+        );
+  return object;
+}
+
+Map<String, Object?> _$RecipientMetadataToCindelEmbedded(
+  RecipientMetadata object,
+) {
+  return <String, Object?>{"label": object.label};
+}
+
+RecipientMetadata _$RecipientMetadataFromCindelEmbedded(
+  Map<String, Object?> document,
+) {
+  final object = RecipientMetadata();
+  object.label = document["label"] == null
+      ? null
+      : document["label"] as String?;
+  return object;
 }
