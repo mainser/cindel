@@ -6,4 +6,5 @@ export 'src/cindel.dart';
 export 'src/database.dart';
 export 'src/query.dart';
 export 'src/schema.dart';
+export 'src/text.dart';
 export 'src/typed_collection.dart';

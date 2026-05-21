@@ -619,7 +619,8 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
                 collection.name, field.name
             ));
         }
-        if field.index_type != "value" && field.index_type != "hash" {
+        if field.index_type != "value" && field.index_type != "hash" && field.index_type != "words"
+        {
             return Err(format!(
                 "schema field `{}.{}` uses unsupported index type `{}`",
                 collection.name, field.name, field.index_type
@@ -640,6 +641,12 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         if field.is_indexed && !field.index_case_sensitive && normalized_dart_type != "String" {
             return Err(format!(
                 "schema field `{}.{}` case-insensitive indexes require String fields",
+                collection.name, field.name
+            ));
+        }
+        if field.is_indexed && field.index_type == "words" && normalized_dart_type != "String" {
+            return Err(format!(
+                "schema field `{}.{}` word indexes require String fields",
                 collection.name, field.name
             ));
         }
@@ -1264,7 +1271,10 @@ mod tests {
         email.index_case_sensitive = false;
         let mut token = field("token", "String", false, true);
         token.index_type = "hash".to_string();
-        let manifest = schema_manifest(vec![user_schema(vec![email, token])]);
+        let mut bio = field("bio", "String", false, true);
+        bio.index_type = "words".to_string();
+        bio.index_case_sensitive = false;
+        let manifest = schema_manifest(vec![user_schema(vec![email, token, bio])]);
 
         // Act.
         storage.register_schemas(&manifest).unwrap();

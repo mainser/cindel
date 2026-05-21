@@ -32,7 +32,7 @@ final class TodosLocalDataSource {
     final database = await _database;
     final todos = await database.todos
         .where()
-        .titleStartsWith(prefix)
+        .titleWordsStartsWith(prefix)
         .findAll();
     return _sortModels(todos);
   }

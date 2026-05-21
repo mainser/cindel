@@ -1,5 +1,6 @@
 import 'database.dart';
 import 'schema.dart';
+import 'text.dart';
 
 /// Entry point for opening Cindel databases.
 abstract final class Cindel {
@@ -22,5 +23,10 @@ abstract final class Cindel {
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
   }) {
     return CindelDatabase.openInMemory(schemas: schemas);
+  }
+
+  /// Splits text the same way Cindel word indexes do.
+  static List<String> splitWords(String text, {bool caseSensitive = false}) {
+    return cindelSplitWords(text, caseSensitive: caseSensitive);
   }
 }

@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.9 - 2026-05-21
+
+- Added `CindelIndexType.words` for simple full-text-style word indexes over
+  `String` fields.
+- Added `Cindel.splitWords` and `cindelSplitWords` for Unicode-aware word
+  tokenization.
+- Stored word indexes as multiple native index entries per document.
+- Added generated `*WordEqualTo`, `*WordStartsWith`, `*WordsContain`, and
+  `*WordsStartWith` helpers for word-indexed fields.
+- Added case-insensitive token-prefix search for word indexes.
+- Updated the Todo example to use a tokenized title index for prefix search.
+- Added Dart and Rust tests for tokenization, word indexes, and word-index
+  schema metadata.
+
 ## 0.1.8 - 2026-05-21
 
 - Added index variants through `@Index(unique:)`, `@Index(caseSensitive:)`,

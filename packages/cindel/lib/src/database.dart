@@ -7,6 +7,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'native/bindings.dart';
 import 'schema.dart';
+import 'text.dart';
 
 /// A JSON-like document accepted by Cindel's manual API.
 typedef CindelDocument = Map<String, Object?>;
@@ -355,7 +356,10 @@ class CindelDatabase {
       field,
       encodedValue,
     );
-    final documents = await _documentsByIds(collection, ids);
+    final documents = await _documentsByIds(
+      collection,
+      schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
+    );
     if (schemaField.indexType == CindelIndexType.hash) {
       return documents
           .where(
@@ -405,7 +409,10 @@ class CindelDatabase {
       encodedLower?.bytes,
       encodedUpper?.bytes,
     );
-    return _documentsByIds(collection, ids);
+    return _documentsByIds(
+      collection,
+      schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
+    );
   }
 
   /// Returns the persisted schema version for [collection], or `null`.
@@ -495,6 +502,24 @@ class CindelDatabase {
       }
       final fieldValue = value[field.name];
       if (fieldValue == null) {
+        continue;
+      }
+      if (field.indexType == CindelIndexType.words) {
+        if (fieldValue is! String) {
+          throw ArgumentError.value(
+            fieldValue,
+            'value.${field.name}',
+            'Word indexes require String values.',
+          );
+        }
+        for (final token in cindelSplitWords(
+          fieldValue,
+          caseSensitive: field.indexCaseSensitive,
+        )) {
+          entries.add(
+            _IndexEntry(name: field.name, value: _indexValueJson(token, field)),
+          );
+        }
         continue;
       }
       entries.add(
@@ -704,6 +729,14 @@ String _uniqueValueKey(CindelFieldSchema field, Object? value) {
     return '${field.name}:String:${value.toLowerCase()}';
   }
   return '${field.name}:${value.runtimeType}:$value';
+}
+
+List<int> _dedupeIds(List<int> ids) {
+  final seen = <int>{};
+  return [
+    for (final id in ids)
+      if (seen.add(id)) id,
+  ];
 }
 
 Uint8List _encodeDocument(CindelDocument value) {

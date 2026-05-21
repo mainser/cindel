@@ -222,6 +222,43 @@ void main() {
       await expectLater(range, throwsA(isA<StateError>()));
     });
 
+    // Scenario: A string field is indexed as words.
+    // Covers:
+    // - [CindelIndexType.words] generated metadata.
+    // - Multi-entry token writes for one document field.
+    // - Case-insensitive exact word and token-prefix queries.
+    // Expected: Documents can be found by indexed words rather than linear
+    // contains filters.
+    test('supports case-insensitive word indexes.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      await database.put(
+        'users',
+        1,
+        _user(1, 'Ana', 'ana@example.com', bio: 'Café rapido local database'),
+      );
+      await database.put(
+        'users',
+        2,
+        _user(2, 'Ben', 'ben@example.com', bio: 'Remote cache database'),
+      );
+
+      // Act.
+      final exact = await database.users
+          .where()
+          .bioWordEqualTo('CAFÉ')
+          .findAll();
+      final prefix = await database.users
+          .where()
+          .bioWordStartsWith('dat')
+          .findAll();
+
+      // Assert.
+      expect(exact.map((user) => user.name), ['Ana']);
+      expect(prefix.map((user) => user.name), ['Ana', 'Ben']);
+    });
+
     // Scenario: A query is requested without a valid registered index.
     // Covers:
     // - Missing schema rejection.
@@ -267,6 +304,7 @@ Map<String, Object?> _user(
   String? username,
   String? displayName,
   String? accessToken,
+  String? bio,
 }) {
   return {
     'id': id,
@@ -275,6 +313,7 @@ Map<String, Object?> _user(
     if (username != null) 'username': username,
     if (displayName != null) 'displayName': displayName,
     if (accessToken != null) 'accessToken': accessToken,
+    if (bio != null) 'bio': bio,
     'active': true,
   };
 }

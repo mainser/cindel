@@ -10,7 +10,8 @@ The example demonstrates:
 - Reading live collection updates through watchers.
 - Updating and deleting documents.
 - Querying an indexed field through generated query builder helpers.
-- Filtering by exact title and title prefix with typed query results.
+- Filtering by exact title and tokenized title-prefix search with typed query
+  results.
 - Reading the stored schema version.
 - Wiring the feature with Riverpod providers.
 - Loading Cindel's prebuilt native libraries through `cindel_flutter_libs`.
@@ -45,7 +46,7 @@ The UI depends on providers only. Cindel calls are isolated in the data source.
 
 ```powershell
 flutter pub get
-flutter pub run build_runner build
+dart run build_runner build --delete-conflicting-outputs
 flutter run -d windows
 ```
 

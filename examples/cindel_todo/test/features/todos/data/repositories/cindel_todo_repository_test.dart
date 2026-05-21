@@ -40,32 +40,34 @@ void main() {
     // Scenario: The repository searches the indexed title field.
     // Covers:
     // - Exact title query through Cindel's indexed equality path.
-    // - Prefix title query through Cindel's indexed range path.
+    // - Token-prefix title query through Cindel's word index path.
     // - Domain mapping after query results.
     // Expected: Exact and prefix searches return only matching todos.
-    test('searches exact and prefix titles through indexed queries.', () async {
-      // Arrange.
-      final database = await _openDatabase(
-        seed: [
-          _todo(id: 1, title: 'Alpha release'),
-          _todo(id: 2, title: 'Alpine build'),
-          _todo(id: 3, title: 'Beta docs'),
-        ],
-      );
-      addTearDown(database.close);
-      final repository = _repository(database);
+    test(
+      'searches exact titles and word prefixes through indexed queries.',
+      () async {
+        // Arrange.
+        final database = await _openDatabase(
+          seed: [
+            _todo(id: 1, title: 'Alpha release'),
+            _todo(id: 2, title: 'Alpine build'),
+            _todo(id: 3, title: 'Beta docs'),
+          ],
+        );
+        addTearDown(database.close);
+        final repository = _repository(database);
 
-      // Act.
-      final exactMatches = await repository.searchByExactTitle('Alpha release');
-      final prefixMatches = await repository.searchByTitlePrefix('Al');
+        // Act.
+        final exactMatches = await repository.searchByExactTitle(
+          'Alpha release',
+        );
+        final prefixMatches = await repository.searchByTitlePrefix('rel');
 
-      // Assert.
-      expect(exactMatches.map((todo) => todo.title), ['Alpha release']);
-      expect(prefixMatches.map((todo) => todo.title), [
-        'Alpine build',
-        'Alpha release',
-      ]);
-    });
+        // Assert.
+        expect(exactMatches.map((todo) => todo.title), ['Alpha release']);
+        expect(prefixMatches.map((todo) => todo.title), ['Alpha release']);
+      },
+    );
 
     // Scenario: A todo is updated and then deleted.
     // Covers:

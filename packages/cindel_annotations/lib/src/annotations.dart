@@ -48,4 +48,9 @@ enum CindelIndexType {
   ///
   /// Hash indexes support equality helpers only.
   hash,
+
+  /// Splits a string field into searchable word tokens.
+  ///
+  /// Word indexes support exact token lookup and token-prefix lookup.
+  words,
 }

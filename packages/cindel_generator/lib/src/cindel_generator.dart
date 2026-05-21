@@ -499,6 +499,7 @@ final class _IndexInfo {
         ?.toIntValue();
     final type = switch (typeIndex) {
       1 => CindelIndexType.hash,
+      2 => CindelIndexType.words,
       _ => CindelIndexType.value,
     };
     final caseSensitive = reader.peek('caseSensitive')?.boolValue ?? true;
@@ -509,6 +510,13 @@ final class _IndexInfo {
       throw InvalidGenerationSourceError(
         'Field `$fieldName` uses caseSensitive: false, but only String '
         'indexes support case-insensitive lookup.',
+        element: element,
+      );
+    }
+    if (type == CindelIndexType.words && normalizedType != 'String') {
+      throw InvalidGenerationSourceError(
+        'Field `$fieldName` uses a word index, but word indexes require '
+        'String fields.',
         element: element,
       );
     }
@@ -543,6 +551,45 @@ void _emitIndexedWhereMethods(
   final queryType = 'CindelQuery<${collection.dartName}>';
   final valueType = field.nonNullableDartType;
   final fieldLiteral = _stringLiteral(field.name);
+
+  if (field.indexType == CindelIndexType.words) {
+    buffer
+      ..writeln()
+      ..writeln('  $queryType ${field.name}EqualTo(String word) {')
+      ..writeln('    return ${field.name}WordEqualTo(word);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${field.name}StartsWith(String prefix) {')
+      ..writeln('    return ${field.name}WordStartsWith(prefix);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${field.name}WordEqualTo(String word) {')
+      ..writeln('    return CindelQuery.wordsContain(')
+      ..writeln('      database: _collection.database,')
+      ..writeln('      schema: ${collection.schemaName},')
+      ..writeln('      field: $fieldLiteral,')
+      ..writeln('      word: word,')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${field.name}WordStartsWith(String prefix) {')
+      ..writeln('    return CindelQuery.wordsStartWith(')
+      ..writeln('      database: _collection.database,')
+      ..writeln('      schema: ${collection.schemaName},')
+      ..writeln('      field: $fieldLiteral,')
+      ..writeln('      prefix: prefix,')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${field.name}WordsContain(String word) {')
+      ..writeln('    return ${field.name}WordEqualTo(word);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${field.name}WordsStartWith(String prefix) {')
+      ..writeln('    return ${field.name}WordStartsWith(prefix);')
+      ..writeln('  }');
+    return;
+  }
 
   buffer
     ..writeln()

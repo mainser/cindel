@@ -20,5 +20,8 @@ class User {
   @Index(type: CindelIndexType.hash)
   String? accessToken;
 
+  @Index(type: CindelIndexType.words, caseSensitive: false)
+  String? bio;
+
   bool? active;
 }

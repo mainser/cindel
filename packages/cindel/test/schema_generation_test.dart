@@ -24,6 +24,7 @@ void main() {
       final accessToken = fields.singleWhere(
         (field) => field.name == 'accessToken',
       );
+      final bio = fields.singleWhere((field) => field.name == 'bio');
 
       // Assert.
       expect(schema.name, 'users');
@@ -36,6 +37,7 @@ void main() {
         'username',
         'displayName',
         'accessToken',
+        'bio',
         'active',
       ]);
       expect(indexedFields.map((field) => field.name), [
@@ -43,10 +45,13 @@ void main() {
         'username',
         'displayName',
         'accessToken',
+        'bio',
       ]);
       expect(username.isIndexUnique, isTrue);
       expect(displayName.indexCaseSensitive, isFalse);
       expect(accessToken.indexType, CindelIndexType.hash);
+      expect(bio.indexType, CindelIndexType.words);
+      expect(bio.indexCaseSensitive, isFalse);
     });
 
     // Scenario: A generated serializer is used with a typed object.
@@ -63,6 +68,7 @@ void main() {
         ..username = 'noel'
         ..displayName = 'Noel Alvarez'
         ..accessToken = 'secret-token'
+        ..bio = 'Builds local databases'
         ..active = true;
 
       // Act.
@@ -77,6 +83,7 @@ void main() {
         'username': 'noel',
         'displayName': 'Noel Alvarez',
         'accessToken': 'secret-token',
+        'bio': 'Builds local databases',
         'active': true,
       });
       expect(restored.id, 7);
@@ -85,6 +92,7 @@ void main() {
       expect(restored.username, 'noel');
       expect(restored.displayName, 'Noel Alvarez');
       expect(restored.accessToken, 'secret-token');
+      expect(restored.bio, 'Builds local databases');
       expect(restored.active, isTrue);
     });
 

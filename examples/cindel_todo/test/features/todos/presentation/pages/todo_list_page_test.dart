@@ -55,14 +55,14 @@ void main() {
       );
     });
 
-    // Scenario: A user searches the indexed title field and clears the search.
+    // Scenario: A user searches indexed title fields and clears the search.
     // Covers:
     // - Exact title search filtering the visible list.
-    // - Prefix title search filtering the visible list.
+    // - Token-prefix title search filtering the visible list.
     // - Clear search restoring the live collection.
     // Expected: The main list switches between search results and all todos.
     testWidgets(
-      'filters the visible list by exact and prefix title searches.',
+      'filters the visible list by exact title and word prefix searches.',
       (tester) async {
         // Arrange.
         final database = await _openTodoDatabase(
@@ -84,7 +84,7 @@ void main() {
 
         // Act: run an exact title search.
         await tester.enterText(
-          find.widgetWithText(TextField, 'Indexed title search'),
+          find.widgetWithText(TextField, 'Indexed title or word search'),
           'Alpha release',
         );
         await tester.tap(find.byTooltip('Search exact title'));
@@ -96,18 +96,18 @@ void main() {
         expect(find.widgetWithText(ListTile, 'Alpine build'), findsNothing);
         expect(find.widgetWithText(ListTile, 'Beta docs'), findsNothing);
 
-        // Act: run a prefix title search.
+        // Act: run a token-prefix title search.
         await tester.enterText(
-          find.widgetWithText(TextField, 'Indexed title search'),
-          'Al',
+          find.widgetWithText(TextField, 'Indexed title or word search'),
+          'rel',
         );
         await tester.tap(find.byTooltip('Search title prefix'));
         await tester.pumpAndSettle();
 
-        // Assert: prefix matches are visible and non-matches stay hidden.
+        // Assert: token-prefix matches are visible and non-matches stay hidden.
         expect(find.text('Prefix matches'), findsOneWidget);
         expect(find.widgetWithText(ListTile, 'Alpha release'), findsOneWidget);
-        expect(find.widgetWithText(ListTile, 'Alpine build'), findsOneWidget);
+        expect(find.widgetWithText(ListTile, 'Alpine build'), findsNothing);
         expect(find.widgetWithText(ListTile, 'Beta docs'), findsNothing);
 
         // Act: clear the search.

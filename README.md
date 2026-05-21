@@ -214,8 +214,8 @@ final users = await db.users
     .findAll();
 ```
 
-Indexes can declare uniqueness, case-insensitive string lookup, or compact hash
-storage:
+Indexes can declare uniqueness, case-insensitive string lookup, compact hash
+storage, or word-token search:
 
 ```dart
 class User {
@@ -229,13 +229,23 @@ class User {
 
   @Index(type: CindelIndexType.hash)
   late String accessToken;
+
+  @Index(type: CindelIndexType.words, caseSensitive: false)
+  late String bio;
 }
 ```
 
 `unique` indexes reject duplicate non-null values before writes are persisted.
 Case-insensitive string indexes normalize equality and prefix lookups. Hash
 indexes support equality helpers only; range and prefix helpers are not
-generated for them.
+generated for them. Word indexes split strings into Unicode-aware tokens and
+store them as multiple index entries per document:
+
+```dart
+final dbUsers = await db.users.where().bioWordEqualTo('database').findAll();
+final prefix = await db.users.where().bioWordStartsWith('dat').findAll();
+final tokens = Cindel.splitWords('Café rapido, cafe!');
+```
 
 Queries can return all results, the first result, or a count:
 
@@ -445,6 +455,7 @@ Validated so far:
 - [x] Generated filter builders.
 - [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Unique, case-insensitive, value, and hash index variants.
+- [x] Word-token indexes for simple full-text-style search.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -465,6 +476,7 @@ Next areas:
 - [x] Filter builder.
 - [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Index variants.
+- [x] Full-text search primitives.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.
 - [ ] Better native error reporting.

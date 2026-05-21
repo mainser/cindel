@@ -13,6 +13,9 @@ class TodoModel {
   @index
   late String title;
 
+  @Index(type: CindelIndexType.words, caseSensitive: false)
+  late String titleWords;
+
   late bool completed;
 
   late int createdAtMicros;
@@ -30,6 +33,7 @@ class TodoModel {
     return TodoModel()
       ..id = todo.id
       ..title = todo.title
+      ..titleWords = todo.title
       ..completed = todo.completed
       ..createdAtMicros = todo.createdAt.microsecondsSinceEpoch;
   }

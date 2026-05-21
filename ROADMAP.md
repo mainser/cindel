@@ -35,6 +35,10 @@ feature at once.
   queries.
 - [x] Index variants for unique, case-insensitive string, value, and hash
   indexes.
+- [x] Full-text search primitives:
+  - Unicode-aware word splitting,
+  - multi-entry word indexes over string fields,
+  - case-insensitive token-prefix queries.
 - [x] Query result helpers:
   - `findAll`
   - `findFirst`
@@ -144,7 +148,7 @@ feature at once.
 - [x] Index type options.
   - Value indexes for range and prefix scans.
   - Hash indexes for compact equality lookups.
-- [ ] Full-text search primitives.
+- [x] Full-text search primitives.
   - Word splitting helper.
   - Multi-entry word indexes.
   - Case-insensitive prefix search over token indexes.
@@ -320,9 +324,10 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is full-text search primitives. Cindel now
-has the first complete typed query pipeline plus index variants for uniqueness,
-case-insensitive strings, value indexes, and hash equality indexes.
+The next implementation milestone is schema type expansion. Cindel now has the
+first complete typed query pipeline plus index variants for uniqueness,
+case-insensitive strings, value indexes, hash equality indexes, and word-token
+indexes.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

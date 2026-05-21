@@ -32,6 +32,15 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
       indexType: CindelIndexType.value,
     ),
     CindelFieldSchema(
+      name: "titleWords",
+      dartType: "String",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: false,
+      indexType: CindelIndexType.words,
+    ),
+    CindelFieldSchema(
       name: "completed",
       dartType: "bool",
       isId: false,
@@ -129,6 +138,34 @@ extension TodoModelCindelQueryModifierAccess on CindelQuery<TodoModel> {
     return property<String>("title");
   }
 
+  CindelQuery<TodoModel> sortByTitleWords({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("titleWords", order: order);
+  }
+
+  CindelQuery<TodoModel> sortByTitleWordsDesc() {
+    return sortBy("titleWords", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> thenByTitleWords({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("titleWords", order: order);
+  }
+
+  CindelQuery<TodoModel> thenByTitleWordsDesc() {
+    return thenBy("titleWords", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<TodoModel> distinctByTitleWords() {
+    return distinctBy("titleWords");
+  }
+
+  CindelPropertyQuery<TodoModel, String> titleWordsProperty() {
+    return property<String>("titleWords");
+  }
+
   CindelQuery<TodoModel> sortByCompleted({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
@@ -218,6 +255,40 @@ final class TodoModelQueryWhere {
       upper: upper,
     );
   }
+
+  CindelQuery<TodoModel> titleWordsEqualTo(String word) {
+    return titleWordsWordEqualTo(word);
+  }
+
+  CindelQuery<TodoModel> titleWordsStartsWith(String prefix) {
+    return titleWordsWordStartsWith(prefix);
+  }
+
+  CindelQuery<TodoModel> titleWordsWordEqualTo(String word) {
+    return CindelQuery.wordsContain(
+      database: _collection.database,
+      schema: TodoModelSchema,
+      field: "titleWords",
+      word: word,
+    );
+  }
+
+  CindelQuery<TodoModel> titleWordsWordStartsWith(String prefix) {
+    return CindelQuery.wordsStartWith(
+      database: _collection.database,
+      schema: TodoModelSchema,
+      field: "titleWords",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<TodoModel> titleWordsWordsContain(String word) {
+    return titleWordsWordEqualTo(word);
+  }
+
+  CindelQuery<TodoModel> titleWordsWordsStartWith(String prefix) {
+    return titleWordsWordStartsWith(prefix);
+  }
 }
 
 final class TodoModelQueryFilter {
@@ -269,6 +340,10 @@ final class TodoModelQueryFilter {
     return _query.whereMatches(CindelFilter.field("title").endsWith(value));
   }
 
+  CindelQuery<TodoModel> titleWordsEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("titleWords").equalTo(value));
+  }
+
   CindelQuery<TodoModel> completedEqualTo(bool value) {
     return _query.whereMatches(CindelFilter.field("completed").equalTo(value));
   }
@@ -314,6 +389,7 @@ Map<String, Object?> _$TodoModelToCindelDocument(TodoModel object) {
   return <String, Object?>{
     "id": object.id,
     "title": object.title,
+    "titleWords": object.titleWords,
     "completed": object.completed,
     "createdAtMicros": object.createdAtMicros,
   };
@@ -323,6 +399,7 @@ TodoModel _$TodoModelFromCindelDocument(Map<String, Object?> document) {
   final object = TodoModel();
   object.id = document["id"] as int;
   object.title = document["title"] as String;
+  object.titleWords = document["titleWords"] as String;
   object.completed = document["completed"] as bool;
   object.createdAtMicros = document["createdAtMicros"] as int;
   return object;

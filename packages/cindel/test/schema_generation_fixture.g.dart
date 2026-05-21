@@ -68,6 +68,15 @@ final UserSchema = CindelCollectionSchema<User>(
       indexType: CindelIndexType.hash,
     ),
     CindelFieldSchema(
+      name: "bio",
+      dartType: "String?",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: false,
+      indexType: CindelIndexType.words,
+    ),
+    CindelFieldSchema(
       name: "active",
       dartType: "bool?",
       isId: false,
@@ -266,6 +275,34 @@ extension UserCindelQueryModifierAccess on CindelQuery<User> {
     return property<String?>("accessToken");
   }
 
+  CindelQuery<User> sortByBio({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("bio", order: order);
+  }
+
+  CindelQuery<User> sortByBioDesc() {
+    return sortBy("bio", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> thenByBio({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("bio", order: order);
+  }
+
+  CindelQuery<User> thenByBioDesc() {
+    return thenBy("bio", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<User> distinctByBio() {
+    return distinctBy("bio");
+  }
+
+  CindelPropertyQuery<User, String?> bioProperty() {
+    return property<String?>("bio");
+  }
+
   CindelQuery<User> sortByActive({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
@@ -392,6 +429,40 @@ final class UserQueryWhere {
       value: value,
     );
   }
+
+  CindelQuery<User> bioEqualTo(String word) {
+    return bioWordEqualTo(word);
+  }
+
+  CindelQuery<User> bioStartsWith(String prefix) {
+    return bioWordStartsWith(prefix);
+  }
+
+  CindelQuery<User> bioWordEqualTo(String word) {
+    return CindelQuery.wordsContain(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "bio",
+      word: word,
+    );
+  }
+
+  CindelQuery<User> bioWordStartsWith(String prefix) {
+    return CindelQuery.wordsStartWith(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "bio",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<User> bioWordsContain(String word) {
+    return bioWordEqualTo(word);
+  }
+
+  CindelQuery<User> bioWordsStartWith(String prefix) {
+    return bioWordStartsWith(prefix);
+  }
 }
 
 final class UserQueryFilter {
@@ -507,6 +578,10 @@ final class UserQueryFilter {
     );
   }
 
+  CindelQuery<User> bioEqualTo(String? value) {
+    return _query.whereMatches(CindelFilter.field("bio").equalTo(value));
+  }
+
   CindelQuery<User> activeEqualTo(bool? value) {
     return _query.whereMatches(CindelFilter.field("active").equalTo(value));
   }
@@ -520,6 +595,7 @@ Map<String, Object?> _$UserToCindelDocument(User object) {
     "username": object.username,
     "displayName": object.displayName,
     "accessToken": object.accessToken,
+    "bio": object.bio,
     "active": object.active,
   };
 }
@@ -532,6 +608,7 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
   object.username = document["username"] as String?;
   object.displayName = document["displayName"] as String?;
   object.accessToken = document["accessToken"] as String?;
+  object.bio = document["bio"] as String?;
   object.active = document["active"] as bool?;
   return object;
 }

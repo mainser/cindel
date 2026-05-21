@@ -27,7 +27,7 @@ final class TodoSearchPanel extends StatelessWidget {
               child: TextField(
                 controller: controller,
                 decoration: const InputDecoration(
-                  labelText: 'Indexed title search',
+                  labelText: 'Indexed title or word search',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.search),
                 ),

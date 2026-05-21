@@ -2,6 +2,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'database.dart';
 import 'schema.dart';
+import 'text.dart';
 
 typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
 
@@ -251,6 +252,64 @@ final class CindelQuery<T> {
     );
   }
 
+  /// Creates a typed query for an exact word token in a word index.
+  factory CindelQuery.wordsContain({
+    required CindelDatabase database,
+    required CindelCollectionSchema<T> schema,
+    required String field,
+    required String word,
+  }) {
+    final schemaField = _schemaField(schema, field);
+    _checkWordsIndex(schemaField);
+    final tokens = cindelSplitWords(
+      word,
+      caseSensitive: schemaField.indexCaseSensitive,
+    );
+    if (tokens.isEmpty) {
+      return CindelQuery._(
+        database: database,
+        schema: schema,
+        readDocuments: () async => <CindelDocument>[],
+      );
+    }
+    return CindelQuery.equal(
+      database: database,
+      schema: schema,
+      field: field,
+      value: tokens.first,
+    );
+  }
+
+  /// Creates a typed query for a word-token prefix in a word index.
+  factory CindelQuery.wordsStartWith({
+    required CindelDatabase database,
+    required CindelCollectionSchema<T> schema,
+    required String field,
+    required String prefix,
+  }) {
+    final schemaField = _schemaField(schema, field);
+    _checkWordsIndex(schemaField);
+    final tokens = cindelSplitWords(
+      prefix,
+      caseSensitive: schemaField.indexCaseSensitive,
+    );
+    if (tokens.isEmpty) {
+      return CindelQuery._(
+        database: database,
+        schema: schema,
+        readDocuments: () async => <CindelDocument>[],
+      );
+    }
+    final tokenPrefix = tokens.first;
+    return CindelQuery.range(
+      database: database,
+      schema: schema,
+      field: field,
+      lower: tokenPrefix,
+      upper: _inclusivePrefixUpperBound(tokenPrefix),
+    );
+  }
+
   final CindelDatabase _database;
   final CindelCollectionSchema<T> _schema;
   final _CindelDocumentReader _readDocuments;
@@ -445,6 +504,12 @@ CindelFieldSchema _schemaField<T>(
     }
   }
   throw StateError('Field `$field` is not part of `${schema.dartName}`.');
+}
+
+void _checkWordsIndex(CindelFieldSchema field) {
+  if (field.indexType != CindelIndexType.words) {
+    throw StateError('Field `${field.name}` is not a word index.');
+  }
 }
 
 /// A projected query over a single field.
