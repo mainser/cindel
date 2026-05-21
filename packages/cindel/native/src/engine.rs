@@ -1,4 +1,6 @@
-use crate::storage::{IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine};
+use crate::storage::{
+    DocumentWrite, IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine,
+};
 
 pub struct CindelEngine {
     storage: SqliteStorage,
@@ -37,8 +39,20 @@ impl CindelEngine {
         self.storage.put_indexed(collection, id, bytes, indexes)
     }
 
+    pub fn put_many_indexed(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        self.storage.put_many_indexed(collection, documents)
+    }
+
     pub fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
         self.storage.delete(collection, id)
+    }
+
+    pub fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
+        self.storage.delete_many(collection, ids)
     }
 
     pub fn query_index_equal(

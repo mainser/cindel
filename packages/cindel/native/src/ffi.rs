@@ -1,5 +1,5 @@
 use crate::engine::CindelEngine;
-use crate::storage::{IndexEntry, IndexValue, SchemaManifest};
+use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest};
 
 use serde::Deserialize;
 
@@ -137,6 +137,30 @@ pub unsafe extern "C" fn cindel_put_indexed(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_put_many_indexed(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    documents_ptr: *const u8,
+    documents_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(documents) = read_document_writes(documents_ptr, documents_len) else {
+        return -1;
+    };
+
+    match engine.put_many_indexed(collection, &documents) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_get(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
@@ -214,6 +238,30 @@ pub unsafe extern "C" fn cindel_delete(
     };
 
     match engine.delete(collection, id) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_delete_many(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+
+    match engine.delete_many(collection, &ids) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -419,6 +467,20 @@ unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntr
     entries.into_iter().map(TryInto::try_into).collect()
 }
 
+unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<DocumentWrite>, ()> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let bytes = read_bytes(ptr, len).ok_or(())?;
+    let documents = serde_json::from_slice::<Vec<WireDocumentWrite>>(bytes).map_err(|_| ())?;
+    documents.into_iter().map(TryInto::try_into).collect()
+}
+
+unsafe fn read_json_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
+    let bytes = read_bytes(ptr, len)?;
+    serde_json::from_slice::<Vec<u64>>(bytes).ok()
+}
+
 unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, ()> {
     let bytes = read_bytes(ptr, len).ok_or(())?;
     serde_json::from_slice::<WireIndexValue>(bytes)
@@ -441,6 +503,31 @@ unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option
 struct WireIndexEntry {
     name: String,
     value: WireIndexValue,
+}
+
+#[derive(Deserialize)]
+struct WireDocumentWrite {
+    id: u64,
+    document: serde_json::Value,
+    indexes: Vec<WireIndexEntry>,
+}
+
+impl TryFrom<WireDocumentWrite> for DocumentWrite {
+    type Error = ();
+
+    fn try_from(value: WireDocumentWrite) -> Result<Self, Self::Error> {
+        let bytes = serde_json::to_vec(&value.document).map_err(|_| ())?;
+        let indexes = value
+            .indexes
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            id: value.id,
+            bytes,
+            indexes,
+        })
+    }
 }
 
 impl TryFrom<WireIndexEntry> for IndexEntry {

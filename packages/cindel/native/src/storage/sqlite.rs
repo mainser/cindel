@@ -4,8 +4,8 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use super::{
-    CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest,
-    StorageEngine,
+    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
+    SchemaManifest, StorageEngine,
 };
 
 pub struct SqliteStorage {
@@ -143,16 +143,40 @@ impl StorageEngine for SqliteStorage {
         bytes: &[u8],
         indexes: &[IndexEntry],
     ) -> Result<(), String> {
-        let id = sqlite_id(id)?;
         let transaction = self
             .connection
             .transaction()
             .map_err(|error| error.to_string())?;
 
-        put_document(&transaction, collection, id, bytes)?;
-        delete_index_entries(&transaction, collection, id)?;
-        insert_index_entries(&transaction, collection, id, indexes)?;
-        advance_id_counter(&transaction, collection, id)?;
+        put_document_with_indexes(&transaction, collection, id, bytes, indexes)?;
+        bump_collection_revision(&transaction, collection)?;
+
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
+    fn put_many_indexed(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        if documents.is_empty() {
+            return Ok(());
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        for document in documents {
+            put_document_with_indexes(
+                &transaction,
+                collection,
+                document.id,
+                &document.bytes,
+                &document.indexes,
+            )?;
+        }
         bump_collection_revision(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())
@@ -173,6 +197,29 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())?;
         delete_index_entries(&transaction, collection, id)?;
         if deleted > 0 {
+            bump_collection_revision(&transaction, collection)?;
+        }
+
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
+    fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        let mut deleted_any = false;
+        for id in ids {
+            let id = sqlite_id(*id)?;
+            let deleted = delete_document(&transaction, collection, id)?;
+            deleted_any |= deleted;
+        }
+        if deleted_any {
             bump_collection_revision(&transaction, collection)?;
         }
 
@@ -313,6 +360,20 @@ fn advance_id_counter(
         .map_err(|error| error.to_string())
 }
 
+fn put_document_with_indexes(
+    transaction: &Transaction<'_>,
+    collection: &str,
+    id: u64,
+    bytes: &[u8],
+    indexes: &[IndexEntry],
+) -> Result<(), String> {
+    let id = sqlite_id(id)?;
+    put_document(transaction, collection, id, bytes)?;
+    delete_index_entries(transaction, collection, id)?;
+    insert_index_entries(transaction, collection, id, indexes)?;
+    advance_id_counter(transaction, collection, id)
+}
+
 fn put_document(
     transaction: &Transaction<'_>,
     collection: &str,
@@ -330,6 +391,21 @@ fn put_document(
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+fn delete_document(
+    transaction: &Transaction<'_>,
+    collection: &str,
+    id: i64,
+) -> Result<bool, String> {
+    let deleted = transaction
+        .execute(
+            "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
+            params![collection, id],
+        )
+        .map_err(|error| error.to_string())?;
+    delete_index_entries(transaction, collection, id)?;
+    Ok(deleted > 0)
 }
 
 fn delete_index_entries(
@@ -1267,10 +1343,172 @@ mod tests {
         assert_eq!(deleted_ids, Vec::<u64>::new());
     }
 
+    #[test]
+    fn bulk_puts_documents_atomically_and_updates_indexes() {
+        // Scenario: Multiple indexed documents are written in one batch.
+        // Covers:
+        // - [StorageEngine::put_many_indexed] transaction path.
+        // - Index writes for every document in the batch.
+        // - One collection revision bump for the committed batch.
+        // Expected: All documents and indexes are visible after commit.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("bulk_put");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let documents = vec![
+            document_write(
+                1,
+                br#"{"email":"team@example.com"}"#,
+                vec![index(
+                    "email",
+                    IndexValue::String("team@example.com".into()),
+                )],
+            ),
+            document_write(
+                2,
+                br#"{"email":"solo@example.com"}"#,
+                vec![index(
+                    "email",
+                    IndexValue::String("solo@example.com".into()),
+                )],
+            ),
+        ];
+
+        // Act.
+        storage.put_many_indexed("users", &documents).unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let team_ids = storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("team@example.com".into()),
+            )
+            .unwrap();
+        let revision = storage.collection_revision("users").unwrap();
+
+        // Assert.
+        assert_eq!(ids, vec![1, 2]);
+        assert_eq!(team_ids, vec![1]);
+        assert_eq!(revision, 1);
+    }
+
+    #[test]
+    fn rolls_back_bulk_put_when_one_document_is_invalid() {
+        // Scenario: One document in a batch has an id outside SQLite range.
+        // Covers:
+        // - Native transaction rollback for partial bulk write failure.
+        // - No persisted documents or revision bump after rollback.
+        // Expected: Earlier valid writes in the same batch are not committed.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("bulk_put_rollback");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let documents = vec![
+            document_write(1, br#"{"name":"Ana"}"#, vec![]),
+            document_write(i64::MAX as u64 + 1, br#"{"name":"Bad"}"#, vec![]),
+        ];
+
+        // Act.
+        let result = storage.put_many_indexed("users", &documents);
+        let stored = storage.get("users", 1).unwrap();
+        let revision = storage.collection_revision("users").unwrap();
+
+        // Assert.
+        assert!(result.unwrap_err().contains("exceeds SQLite INTEGER range"));
+        assert_eq!(stored, None);
+        assert_eq!(revision, 0);
+    }
+
+    #[test]
+    fn bulk_deletes_documents_atomically_and_cleans_indexes() {
+        // Scenario: Multiple indexed documents are deleted in one batch.
+        // Covers:
+        // - [StorageEngine::delete_many] transaction path.
+        // - Index cleanup for every deleted document.
+        // - One collection revision bump for the committed batch.
+        // Expected: Documents and index entries are removed together.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("bulk_delete");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        storage
+            .put_many_indexed(
+                "users",
+                &[
+                    document_write(
+                        1,
+                        br#"{"email":"team@example.com"}"#,
+                        vec![index(
+                            "email",
+                            IndexValue::String("team@example.com".into()),
+                        )],
+                    ),
+                    document_write(
+                        2,
+                        br#"{"email":"team@example.com"}"#,
+                        vec![index(
+                            "email",
+                            IndexValue::String("team@example.com".into()),
+                        )],
+                    ),
+                ],
+            )
+            .unwrap();
+
+        // Act.
+        storage.delete_many("users", &[1, 2]).unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let team_ids = storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("team@example.com".into()),
+            )
+            .unwrap();
+        let revision = storage.collection_revision("users").unwrap();
+
+        // Assert.
+        assert_eq!(ids, Vec::<u64>::new());
+        assert_eq!(team_ids, Vec::<u64>::new());
+        assert_eq!(revision, 2);
+    }
+
+    #[test]
+    fn rolls_back_bulk_delete_when_one_id_is_invalid() {
+        // Scenario: One id in a delete batch is outside SQLite range.
+        // Covers:
+        // - Native transaction rollback for partial bulk delete failure.
+        // - Preserving previously deleted documents after rollback.
+        // Expected: The valid delete in the same batch is not committed.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("bulk_delete_rollback");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+
+        // Act.
+        let result = storage.delete_many("users", &[1, i64::MAX as u64 + 1]);
+        let stored = storage.get("users", 1).unwrap();
+        let revision = storage.collection_revision("users").unwrap();
+
+        // Assert.
+        assert!(result.unwrap_err().contains("exceeds SQLite INTEGER range"));
+        assert_eq!(stored, Some(br#"{"name":"Ana"}"#.to_vec()));
+        assert_eq!(revision, 1);
+    }
+
     fn index(name: &str, value: IndexValue) -> IndexEntry {
         IndexEntry {
             name: name.to_string(),
             value,
+        }
+    }
+
+    fn document_write(id: u64, bytes: &[u8], indexes: Vec<IndexEntry>) -> DocumentWrite {
+        DocumentWrite {
+            id,
+            bytes: bytes.to_vec(),
+            indexes,
         }
     }
 

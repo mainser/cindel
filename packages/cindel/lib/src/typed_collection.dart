@@ -40,15 +40,61 @@ final class CindelTypedCollection<T> {
     return database.put(schema.name, id, document);
   }
 
+  /// Stores every object atomically.
+  Future<void> putAll(Iterable<T> objects) async {
+    final objectList = objects.toList(growable: false);
+    if (objectList.isEmpty) {
+      return;
+    }
+
+    final values = <int, CindelDocument>{};
+    final seenIds = <int>{};
+    CindelSetId<T>? setId;
+    for (final object in objectList) {
+      var document = schema.toDocument(object);
+      var id = _idFromDocument(document);
+      if (id == autoIncrement) {
+        setId ??= _idSetter();
+        id = await database.allocateId(schema.name);
+        setId(object, id);
+        document = schema.toDocument(object);
+      }
+      if (!seenIds.add(id)) {
+        throw ArgumentError.value(
+          id,
+          'objects',
+          'Bulk writes cannot contain duplicate ids.',
+        );
+      }
+      values[id] = document;
+    }
+
+    return database.putAll(schema.name, values);
+  }
+
   /// Returns the typed object stored under [id], or `null`.
   Future<T?> get(int id) async {
     final document = await database.get(schema.name, id);
     return document == null ? null : schema.fromDocument(document);
   }
 
+  /// Returns typed objects stored under [ids], preserving input order.
+  Future<List<T?>> getAll(Iterable<int> ids) async {
+    final documents = await database.getAll(schema.name, ids);
+    return [
+      for (final document in documents)
+        document == null ? null : schema.fromDocument(document),
+    ];
+  }
+
   /// Deletes the object stored under [id], if it exists.
   Future<void> delete(int id) {
     return database.delete(schema.name, id);
+  }
+
+  /// Deletes every object stored under [ids] atomically.
+  Future<void> deleteAll(Iterable<int> ids) {
+    return database.deleteAll(schema.name, ids);
   }
 
   /// Watches the typed object stored under [id].

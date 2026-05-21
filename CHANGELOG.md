@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.1.4 - 2026-05-21
+
+- Added atomic native batch writes and deletes.
+- Added manual `CindelDatabase.putAll`, `getAll`, and `deleteAll`.
+- Added typed collection `putAll`, `getAll`, and `deleteAll`.
+- Added query `deleteFirst` and `deleteAll` operations.
+- Regenerated Windows and Android prebuilt native binaries for the new FFI
+  symbols.
+- Added Rust and Dart tests for bulk writes, query deletes, and rollback
+  behavior.
+
 ## 0.1.3 - 2026-05-21
 
 - Added typed `CindelQuery<T>` with `findAll`, `findFirst`, and `count`.

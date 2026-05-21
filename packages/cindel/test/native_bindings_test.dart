@@ -75,6 +75,56 @@ void main() {
       expect(deletedUser, isNull);
     });
 
+    // Scenario: Multiple documents are written, read, and deleted in batches.
+    // Covers:
+    // - [CindelDatabase.putAll] native batch write path.
+    // - [CindelDatabase.getAll] ordered reads with nullable misses.
+    // - [CindelDatabase.deleteAll] native batch delete path.
+    // Expected: Batch writes and deletes affect every requested document.
+    test('persists, reads, and deletes documents in batches.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory();
+      addTearDown(database.close);
+
+      // Act.
+      await database.putAll('users', {
+        1: {'name': 'Ana'},
+        2: {'name': 'Ben'},
+      });
+      final storedUsers = await database.getAll('users', [2, 1, 404]);
+      await database.deleteAll('users', [1, 2]);
+      final deletedUsers = await database.getAll('users', [1, 2]);
+
+      // Assert.
+      expect(storedUsers, [
+        {'name': 'Ben'},
+        {'name': 'Ana'},
+        null,
+      ]);
+      expect(deletedUsers, [null, null]);
+    });
+
+    // Scenario: A batch write includes an invalid document after a valid one.
+    // Covers:
+    // - [CindelDatabase.putAll] validation before native writes.
+    // - No partial writes when public validation fails.
+    // Expected: The valid document is not persisted.
+    test('does not partially write invalid document batches.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory();
+      addTearDown(database.close);
+
+      // Act.
+      final result = database.putAll('users', {
+        1: {'name': 'Ana'},
+        2: {'createdAt': DateTime(2026)},
+      });
+
+      // Assert.
+      await expectLater(result, throwsA(isA<ArgumentError>()));
+      expect(await database.get('users', 1), isNull);
+    });
+
     // Scenario: A document contains nested JSON-compatible values.
     // Covers:
     // - [CindelDatabase.put] accepting nested maps and lists.

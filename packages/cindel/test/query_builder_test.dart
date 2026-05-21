@@ -118,6 +118,66 @@ void main() {
       // Assert.
       expect(count, 3);
     });
+
+    // Scenario: A query deletes only its first matching object.
+    // Covers:
+    // - [CindelQuery.deleteFirst].
+    // - Native batch delete path through query results.
+    // Expected: One matching object is removed and missing queries return false.
+    test('deletes the first matching typed query result.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final deleted = await database.users
+          .where()
+          .emailEqualTo('team@example.com')
+          .deleteFirst();
+      final remainingTeamUsers = await database.users
+          .where()
+          .emailEqualTo('team@example.com')
+          .findAll();
+      final missingDeleted = await database.users
+          .where()
+          .emailEqualTo('missing@example.com')
+          .deleteFirst();
+
+      // Assert.
+      expect(deleted, isTrue);
+      expect(remainingTeamUsers.map((user) => user.name), ['Cid']);
+      expect(missingDeleted, isFalse);
+    });
+
+    // Scenario: A query deletes every matching object.
+    // Covers:
+    // - [CindelQuery.deleteAll].
+    // - Atomic native delete for all matching ids.
+    // Expected: Matching objects are removed and non-matching objects remain.
+    test('deletes all matching typed query results.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final deletedCount = await database.users
+          .where()
+          .emailStartsWith('team')
+          .deleteAll();
+      final teamCount = await database.users
+          .where()
+          .emailStartsWith('team')
+          .count();
+      final soloUser = await database.users
+          .where()
+          .emailEqualTo('solo@example.com')
+          .findFirst();
+
+      // Assert.
+      expect(deletedCount, 3);
+      expect(teamCount, 0);
+      expect(soloUser?.name, 'Ben');
+    });
   });
 }
 

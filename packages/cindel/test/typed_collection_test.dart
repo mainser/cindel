@@ -81,6 +81,62 @@ void main() {
       expect(savedSecondUser!.name, 'Ben');
     });
 
+    // Scenario: Multiple generated objects are saved, read, and deleted.
+    // Covers:
+    // - [CindelTypedCollection.putAll] generated document mapping.
+    // - Auto-increment assignment during typed bulk writes.
+    // - [CindelTypedCollection.getAll] ordered nullable reads.
+    // - [CindelTypedCollection.deleteAll] native batch delete path.
+    // Expected: Bulk typed operations round-trip generated objects.
+    test('stores, reads, and deletes typed objects in batches.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final ana = User()
+        ..name = 'Ana'
+        ..email = 'ana@example.com';
+      final ben = User()
+        ..name = 'Ben'
+        ..email = 'ben@example.com';
+
+      // Act.
+      await database.users.putAll([ana, ben]);
+      final storedUsers = await database.users.getAll([ben.id, ana.id, 404]);
+      await database.users.deleteAll([ana.id, ben.id]);
+      final deletedUsers = await database.users.getAll([ana.id, ben.id]);
+
+      // Assert.
+      expect([ana.id, ben.id], [1, 2]);
+      expect(storedUsers.map((user) => user?.name), ['Ben', 'Ana', null]);
+      expect(deletedUsers, [null, null]);
+    });
+
+    // Scenario: A typed bulk write receives duplicate explicit ids.
+    // Covers:
+    // - [CindelTypedCollection.putAll] preflight duplicate id validation.
+    // - Avoiding partial native writes when generated objects are invalid.
+    // Expected: Nothing is persisted from the invalid batch.
+    test('rejects typed bulk writes with duplicate ids.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final firstUser = User()
+        ..id = 7
+        ..name = 'Ana'
+        ..email = 'ana@example.com';
+      final secondUser = User()
+        ..id = 7
+        ..name = 'Ben'
+        ..email = 'ben@example.com';
+
+      // Act.
+      final result = database.users.putAll([firstUser, secondUser]);
+
+      // Assert.
+      await expectLater(result, throwsA(isA<ArgumentError>()));
+      expect(await database.users.get(7), isNull);
+    });
+
     // Scenario: Generated typed watchers observe collection and object changes.
     // Covers:
     // - [CindelTypedCollection.watchCollection] typed snapshots.

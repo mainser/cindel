@@ -100,6 +100,28 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put indexed');
   }
 
+  void putManyIndexed(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List documents,
+  ) {
+    final status = _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(documents, (documentsPointer, documentsLength) {
+        return _functions.putManyIndexed(
+          handle,
+          collectionPointer,
+          collectionLength,
+          documentsPointer,
+          documentsLength,
+        );
+      });
+    });
+    _checkStatus(status, 'put many indexed');
+  }
+
   Uint8List? get(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
@@ -163,6 +185,24 @@ final class CindelNativeBindings {
       return _functions.delete(handle, collectionPointer, collectionLength, id);
     });
     _checkStatus(status, 'delete');
+  }
+
+  void deleteMany(Pointer<Void> handle, String collection, Uint8List ids) {
+    final status = _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _functions.deleteMany(
+          handle,
+          collectionPointer,
+          collectionLength,
+          idsPointer,
+          idsLength,
+        );
+      });
+    });
+    _checkStatus(status, 'delete many');
   }
 
   int collectionRevision(Pointer<Void> handle, String collection) {
@@ -322,6 +362,9 @@ abstract interface class _CindelNativeFunctions {
   )
   get putIndexed;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get putManyIndexed;
+
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -342,6 +385,9 @@ abstract interface class _CindelNativeFunctions {
   get documentIds;
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get deleteMany;
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision;
@@ -453,6 +499,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_put_indexed'),
+      putManyIndexed = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_put_many_indexed'),
       get = library
           .lookupFunction<
             Int32 Function(
@@ -494,6 +557,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint64),
             int Function(Pointer<Void>, Pointer<Uint8>, int, int)
           >('cindel_delete'),
+      deleteMany = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_delete_many'),
       collectionRevision = library
           .lookupFunction<
             Int32 Function(
@@ -615,6 +695,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   putIndexed;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  putManyIndexed;
+
+  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -637,6 +721,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
 
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, int) delete;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  deleteMany;
 
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -719,6 +807,10 @@ final class _NativeAssetCindelNativeFunctions
   get putIndexed => _cindelPutIndexed;
 
   @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get putManyIndexed => _cindelPutManyIndexed;
+
+  @override
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -742,6 +834,10 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete =>
       _cindelDelete;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get deleteMany => _cindelDeleteMany;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -935,6 +1031,17 @@ external int _cindelPutIndexed(
 );
 
 @Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint8>, Size)
+>(symbol: 'cindel_put_many_indexed', assetId: _assetId)
+external int _cindelPutManyIndexed(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> documents,
+  int documentsLen,
+);
+
+@Native<
   Int32 Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -979,6 +1086,17 @@ external int _cindelDelete(
   Pointer<Uint8> collection,
   int collectionLen,
   int id,
+);
+
+@Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint8>, Size)
+>(symbol: 'cindel_delete_many', assetId: _assetId)
+external int _cindelDeleteMany(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
 );
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(

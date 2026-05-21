@@ -32,6 +32,7 @@ The API is still experimental and can change before a public release.
 - Manual document API with `put`, `get`, and `delete`.
 - Generated typed collection accessors.
 - Native auto-increment ids through `autoIncrement`.
+- Atomic bulk writes and deletes.
 - Simple indexed queries by equality and inclusive range.
 - Generated typed query builders for indexed equality, string prefix, and range
   queries.
@@ -157,6 +158,16 @@ await db.users.delete(user.id);
 When a generated model keeps `id = autoIncrement`, `put` asks the native engine
 for the next collection id and writes it back to the object before persistence.
 
+Bulk typed operations use native batch writes and deletes:
+
+```dart
+await db.users.putAll([ana, ben, cid]);
+final users = await db.users.getAll([ana.id, ben.id, 404]);
+await db.users.deleteAll([ana.id, ben.id]);
+```
+
+`putAll` and `deleteAll` are committed in one native transaction.
+
 ## Queries
 
 Generated typed query builders are available for indexed fields:
@@ -186,6 +197,13 @@ Queries can return all results, the first result, or a count:
 ```dart
 final first = await db.users.where().emailEqualTo(email).findFirst();
 final count = await db.users.where().emailStartsWith('team').count();
+```
+
+Queries can also delete matching objects:
+
+```dart
+final deletedOne = await db.users.where().emailEqualTo(email).deleteFirst();
+final deletedCount = await db.users.where().emailStartsWith('team').deleteAll();
 ```
 
 The lower-level manual query API remains available when generated typed helpers
@@ -306,10 +324,12 @@ Validated so far:
 - [x] Generated collection schemas and serializers.
 - [x] Generated typed collection accessors.
 - [x] Native auto-increment id allocation.
+- [x] Atomic bulk writes and deletes.
 - [x] Simple indexes generated from schema metadata.
 - [x] Equality queries over indexed fields.
 - [x] Inclusive range queries over indexed fields.
 - [x] Generated typed query builders.
+- [x] Query deletes.
 - [x] Document and collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
@@ -325,7 +345,7 @@ Next areas:
 - [x] Prebuilt native binary distribution for Android and Windows.
 - [x] Query builders.
 - [x] Auto-increment id support.
-- [ ] Bulk collection operations.
+- [x] Bulk collection operations.
 - [ ] Transaction API.
 - [ ] Query watchers.
 - [ ] Explicit migration callbacks.

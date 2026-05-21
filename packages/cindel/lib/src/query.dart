@@ -9,10 +9,12 @@ typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
 /// example `database.todos.where().titleEqualTo('Ship').findAll()`.
 final class CindelQuery<T> {
   const CindelQuery._({
+    required CindelDatabase database,
+    required CindelCollectionSchema<T> schema,
     required _CindelDocumentReader readDocuments,
-    required CindelFromDocument<T> fromDocument,
-  }) : _readDocuments = readDocuments,
-       _fromDocument = fromDocument;
+  }) : _database = database,
+       _schema = schema,
+       _readDocuments = readDocuments;
 
   /// Creates a typed equality query for an indexed field.
   factory CindelQuery.equal({
@@ -22,8 +24,9 @@ final class CindelQuery<T> {
     required Object value,
   }) {
     return CindelQuery._(
+      database: database,
+      schema: schema,
       readDocuments: () => database.queryEqual(schema.name, field, value),
-      fromDocument: schema.fromDocument,
     );
   }
 
@@ -36,9 +39,10 @@ final class CindelQuery<T> {
     Object? upper,
   }) {
     return CindelQuery._(
+      database: database,
+      schema: schema,
       readDocuments: () =>
           database.queryRange(schema.name, field, lower: lower, upper: upper),
-      fromDocument: schema.fromDocument,
     );
   }
 
@@ -50,6 +54,8 @@ final class CindelQuery<T> {
     required String prefix,
   }) {
     return CindelQuery._(
+      database: database,
+      schema: schema,
       readDocuments: () async {
         final documents = await database.queryRange(
           schema.name,
@@ -64,17 +70,17 @@ final class CindelQuery<T> {
             })
             .toList(growable: false);
       },
-      fromDocument: schema.fromDocument,
     );
   }
 
+  final CindelDatabase _database;
+  final CindelCollectionSchema<T> _schema;
   final _CindelDocumentReader _readDocuments;
-  final CindelFromDocument<T> _fromDocument;
 
   /// Returns every object matching this query.
   Future<List<T>> findAll() async {
     final documents = await _readDocuments();
-    return documents.map(_fromDocument).toList(growable: false);
+    return documents.map(_schema.fromDocument).toList(growable: false);
   }
 
   /// Returns the first object matching this query, or `null`.
@@ -90,6 +96,38 @@ final class CindelQuery<T> {
   Future<int> count() async {
     final documents = await _readDocuments();
     return documents.length;
+  }
+
+  /// Deletes the first object matching this query, if one exists.
+  Future<bool> deleteFirst() async {
+    final documents = await _readDocuments();
+    if (documents.isEmpty) {
+      return false;
+    }
+    await _database.deleteAll(_schema.name, [_idFromDocument(documents.first)]);
+    return true;
+  }
+
+  /// Deletes every object matching this query atomically.
+  Future<int> deleteAll() async {
+    final documents = await _readDocuments();
+    if (documents.isEmpty) {
+      return 0;
+    }
+    final ids = documents.map(_idFromDocument).toList(growable: false);
+    await _database.deleteAll(_schema.name, ids);
+    return ids.length;
+  }
+
+  int _idFromDocument(CindelDocument document) {
+    final value = document[_schema.idField];
+    if (value is int) {
+      return value;
+    }
+    throw StateError(
+      'Generated schema `${_schema.dartName}` returned a non-int id field '
+      '`${_schema.idField}`.',
+    );
   }
 }
 

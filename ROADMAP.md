@@ -39,6 +39,14 @@ feature at once.
   - `count`
 - [x] Native auto-increment id allocation.
 - [x] Generated typed writes assign native ids for `autoIncrement`.
+- [x] Atomic native batch writes and deletes.
+- [x] Manual and typed bulk collection APIs:
+  - `putAll`
+  - `getAll`
+  - `deleteAll`
+- [x] Query delete operations:
+  - `deleteFirst`
+  - `deleteAll`
 - [x] Document watchers with Dart streams.
 - [x] Collection watchers with Dart streams.
 - [x] Native collection revision counters after committed writes.
@@ -71,7 +79,7 @@ feature at once.
 - [x] Auto-increment id support.
   - Native id allocation.
   - Typed generator support for `autoIncrement`.
-- [ ] Bulk collection operations.
+- [x] Bulk collection operations.
   - `putAll`
   - `getAll`
   - `deleteAll`
@@ -308,9 +316,9 @@ feature at once.
 
 ## Current Focus
 
-The next implementation milestone is bulk collection operations and
-query-based deletes. That keeps the public API moving in small, testable
-slices after typed CRUD, native auto-increment ids, and query builders.
+The next implementation milestone is explicit transactions. Batch writes and
+query deletes now use native transactions internally; Stage 07 should expose
+read and write transaction boundaries as a public API.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

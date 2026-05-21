@@ -126,6 +126,41 @@ class CindelDatabase {
     _notifyWatchers(collection);
   }
 
+  /// Stores every document in [values] atomically.
+  ///
+  /// All documents are committed in one native transaction. If validation or the
+  /// native write fails, none of the documents are persisted.
+  Future<void> putAll(
+    String collection,
+    Map<int, CindelDocument> values,
+  ) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    if (values.isEmpty) {
+      return;
+    }
+
+    final documents = <_BatchPutEntry>[];
+    for (final entry in values.entries) {
+      _checkId(entry.key);
+      _checkDocument(entry.value);
+      documents.add(
+        _BatchPutEntry(
+          id: entry.key,
+          document: entry.value,
+          indexes: _indexEntriesFor(collection, entry.value) ?? const [],
+        ),
+      );
+    }
+
+    _bindings.putManyIndexed(
+      handle,
+      collection,
+      _encodeBatchPutEntries(documents),
+    );
+    _notifyWatchers(collection);
+  }
+
   /// Allocates the next native auto-increment id for [collection].
   ///
   /// The returned id is persisted by the native engine before this method
@@ -158,6 +193,27 @@ class CindelDatabase {
     return decoded.cast<String, Object?>();
   }
 
+  /// Returns the documents stored under [ids], preserving input order.
+  ///
+  /// Missing documents are returned as `null`.
+  Future<List<CindelDocument?>> getAll(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+
+    final documents = <CindelDocument?>[];
+    for (final id in idList) {
+      documents.add(await get(collection, id));
+    }
+    return documents;
+  }
+
   /// Deletes the document stored in [collection] under [id], if it exists.
   ///
   /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a
@@ -169,6 +225,22 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
+    _notifyWatchers(collection);
+  }
+
+  /// Deletes every document under [ids] atomically.
+  Future<void> deleteAll(String collection, Iterable<int> ids) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return;
+    }
+
+    _bindings.deleteMany(handle, collection, _encodeIds(idList));
     _notifyWatchers(collection);
   }
 
@@ -415,6 +487,10 @@ Uint8List _encodeDocument(CindelDocument value) {
   return Uint8List.fromList(utf8.encode(jsonEncode(value)));
 }
 
+Uint8List _encodeIds(Iterable<int> ids) {
+  return Uint8List.fromList(utf8.encode(jsonEncode(ids.toList())));
+}
+
 void _checkDirectory(String directory) {
   if (directory.trim().isEmpty) {
     throw ArgumentError.value(directory, 'directory', 'Must not be empty.');
@@ -511,6 +587,24 @@ Uint8List _encodeIndexEntries(List<_IndexEntry> entries) {
     utf8.encode(
       jsonEncode([
         for (final entry in entries) {'name': entry.name, 'value': entry.value},
+      ]),
+    ),
+  );
+}
+
+Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
+  return Uint8List.fromList(
+    utf8.encode(
+      jsonEncode([
+        for (final entry in entries)
+          {
+            'id': entry.id,
+            'document': entry.document,
+            'indexes': [
+              for (final index in entry.indexes)
+                {'name': index.name, 'value': index.value},
+            ],
+          },
       ]),
     ),
   );
@@ -642,6 +736,18 @@ final class _IndexEntry {
 
   final String name;
   final Map<String, Object> value;
+}
+
+final class _BatchPutEntry {
+  const _BatchPutEntry({
+    required this.id,
+    required this.document,
+    required this.indexes,
+  });
+
+  final int id;
+  final CindelDocument document;
+  final List<_IndexEntry> indexes;
 }
 
 final class _EncodedIndexValue {

@@ -18,6 +18,13 @@ pub enum IndexValue {
     String(String),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentWrite {
+    pub id: u64,
+    pub bytes: Vec<u8>,
+    pub indexes: Vec<IndexEntry>,
+}
+
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SchemaManifest {
     pub collections: Vec<CollectionSchemaManifest>,
@@ -50,7 +57,13 @@ pub trait StorageEngine {
         bytes: &[u8],
         indexes: &[IndexEntry],
     ) -> Result<(), String>;
+    fn put_many_indexed(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String>;
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String>;
+    fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String>;
     fn query_index_equal(
         &self,
         collection: &str,
