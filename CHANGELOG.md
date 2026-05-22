@@ -49,6 +49,8 @@ while the core design settles.
 - Completed MDBX-10 packaging for Windows and Android by regenerating prebuilt
   native libraries with MDBX support and documenting the remaining Linux and
   Apple validation gap.
+- Added the MDBX-11 CI backend matrix with separate SQLite and MDBX validation
+  jobs plus a manual backend benchmark workflow.
 
 ## 0.1.16
 

@@ -65,8 +65,8 @@ jobs:
         working-directory: examples/cindel_todo
         run: flutter analyze
 
-  native-tests:
-    name: Rust and Dart tests
+  sqlite-backend:
+    name: SQLite backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -97,6 +97,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: native-sqlite
           workspaces: |
             packages/cindel/native -> target
 
@@ -113,4 +114,57 @@ jobs:
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Dart tests
+        run: dart test packages/cindel/test -r expanded
+
+  mdbx-backend:
+    name: MDBX backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
+      CINDEL_TEST_BACKEND: mdbx
+      CINDEL_TEST_MDBX: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Cache Dart packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock', 'examples/**/pubspec.lock', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install LLVM/libclang
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - name: Set up Rust
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-mdbx
+          workspaces: |
+            packages/cindel/native -> target
+
+      - name: Install Flutter workspace dependencies
+        run: flutter pub get
+
+      - name: Build Rust native core with MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+
+      - name: Run Rust tests with MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+
+      - name: Run Dart tests with MDBX
         run: dart test packages/cindel/test -r expanded

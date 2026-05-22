@@ -508,6 +508,32 @@ Binary size deltas compared with the previous SQLite-only checked-in binaries:
 - Android `armeabi-v7a/libcindel_native.so`: `+310,636` bytes.
 - Android `x86_64/libcindel_native.so`: `+398,776` bytes.
 
+## MDBX-11 CI Backend Matrix
+
+MDBX-11 updates GitHub Actions so SQLite and MDBX regressions are caught
+without running benchmark workloads on every PR.
+
+Implemented:
+
+- Kept the fast Dart format/analyze job as the first static validation lane.
+- Split backend validation into separate Ubuntu jobs:
+  - `sqlite-backend` builds and tests the default native core, then runs the
+    Dart package suite against SQLite/default.
+  - `mdbx-backend` installs LLVM/libclang, builds and tests the native core
+    with `--features mdbx`, then runs the Dart package suite with
+    `CINDEL_TEST_BACKEND=mdbx` and `CINDEL_TEST_MDBX=1`.
+- Added separate Rust cache keys for SQLite, MDBX, and benchmark builds.
+- Added a manual-only `Backend Benchmark` workflow with `workflow_dispatch`
+  inputs for document count and query repetitions.
+- The benchmark workflow runs `cindel_bench --backend all` with MDBX enabled
+  and uploads `backend-benchmark.csv` as an artifact.
+
+Validation:
+
+- Local workflow edit check: `git diff --check`.
+- Full validation requires pushing to GitHub Actions because the matrix depends
+  on Ubuntu CI images and hosted action behavior.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:
