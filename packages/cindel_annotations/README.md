@@ -22,8 +22,7 @@ Most applications depend on `cindel` directly, which re-exports the public
 annotation API. Generator and tooling packages depend on this package to share
 schema metadata without pulling in the native runtime.
 
-## Publishing Status
+## Release Status
 
-This package is still pre-1.0.0. The `-dev.1` release line is intended as the
-first coordinated Cindel pub.dev development preview history; current package
-updates use normal pub.dev versions while the public API continues to settle.
+This package is still pre-1.0.0. The `0.2.0` package line is the first normal
+release line after the coordinated Cindel development previews.

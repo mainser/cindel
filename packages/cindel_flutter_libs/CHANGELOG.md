@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Prepared the Flutter native libraries package for the coordinated `0.2.0`
+  Cindel release line.
+- Kept Android and Windows as the advertised prebuilt platforms for the current
+  pub.dev package.
+- Updated package and plugin metadata to the `0.2.0` version.
+
 ## 0.1.11
 
 - Updated package documentation to describe MDBX as Cindel's default backend

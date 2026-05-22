@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Prepared the Cindel API package for the coordinated `0.2.0` release line.
+- Updated hosted Cindel package constraints to `^0.2.0`.
+- Refreshed package documentation for MDBX as the default backend, SQLite as an
+  explicit fallback, and the Android/Windows prebuilt binary scope.
+
 ## 0.1.18
 
 - Made MDBX the default storage backend for new Cindel databases.

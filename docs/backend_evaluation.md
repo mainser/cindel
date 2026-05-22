@@ -240,8 +240,9 @@ Linux validation:
 
 - Local WSL validation was attempted with `wsl.exe --status`, but the machine
   returned `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`.
-- Linux release-mode benchmark remains required before making MDBX the default
-  backend.
+- Linux release-mode benchmark remains a future platform-hardening task because
+  Linux binaries are not published in the current Android/Windows package
+  line.
 
 First decision:
 
@@ -284,10 +285,10 @@ Result:
 
 - `44 passed; 0 failed` on Windows with LLVM/libclang installed.
 
-Remaining MDBX adoption gates:
+Remaining validation gates at this point:
 
-- Linux release-mode benchmark validation is still required before making MDBX
-  the default backend.
+- Full Dart parity, prebuilt packaging, and CI matrix validation are still
+  required before promoting MDBX in public package docs.
 
 ## MDBX-07 Transaction Model Integration
 
@@ -379,12 +380,12 @@ Results:
 - Dart package default: `78 passed; 2 skipped`.
 - Dart MDBX targeted: `25 passed; 0 failed`.
 
-Remaining MDBX adoption gates:
+Remaining validation gates at this point:
 
 - Full Dart behavior parity across the broader feature matrix belongs to
   MDBX-09.
-- Linux release-mode benchmark validation is still required before making MDBX
-  the default backend.
+- Linux release-mode benchmark validation remains a future hardening task for
+  the Linux package line.
 
 ## MDBX-09 Full Dart Behavior Parity
 
@@ -428,12 +429,12 @@ Results:
 - Dart package with SQLite/default: `79 passed; 2 skipped`.
 - Dart package with MDBX: `81 passed; 0 failed`.
 
-Remaining MDBX adoption gates:
+Remaining validation gates at this point:
 
 - Prebuilt binaries must be rebuilt with MDBX support before consumers can use
   the MDBX backend without a local Rust toolchain.
-- Linux release-mode benchmark validation is still required before making MDBX
-  the default backend.
+- Linux release-mode benchmark validation remains a future hardening task for
+  the Linux package line.
 
 ## MDBX-10 Prebuilt Binary and Platform Packaging
 
@@ -575,28 +576,36 @@ Validation:
 
 ## Benchmark Baseline
 
-The phase 8 baseline benchmark is implemented as an internal Rust binary:
+The backend comparison benchmark is implemented as an internal Rust binary:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- --documents 10000 --query-repeats 1000
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
 ```
 
 The output is CSV:
 
 ```text
 backend,operation,items,total_ms,ops_per_second
+sqlite,open,...
+sqlite,register_schemas,...
 sqlite,put_indexed,...
 sqlite,get,...
-sqlite,query_equal,...
-sqlite,query_range,...
+mdbx,open,...
+mdbx,register_schemas,...
+mdbx,put_indexed,...
+mdbx,get,...
 ```
 
 Measured operations:
 
+- Database open.
+- Schema registration.
 - Indexed document writes.
 - Point reads by collection/id.
 - Equality query through an index.
 - Range query through an index.
+- Batch indexed writes.
+- Batch deletes.
 
 ## Adoption Gate
 

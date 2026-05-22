@@ -13,12 +13,12 @@ Repository: <https://github.com/mainser/Cindel>
 
 ```yaml
 dependencies:
-  cindel: ^0.1.18
-  cindel_flutter_libs: ^0.1.11
+  cindel: ^0.2.0
+  cindel_flutter_libs: ^0.2.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.11
+  cindel_generator: ^0.2.0
 ```
 
 Define a collection:
@@ -95,8 +95,8 @@ through `cindel_flutter_libs`.
 iOS, macOS, and Linux support are planned, but they are not advertised as
 available until their native binaries are generated and validated.
 
-## Publishing Status
+## Release Status
 
-Cindel is still pre-1.0.0. The `-dev.1` release line is intended as a pub.dev
-development preview history; current package updates use normal pub.dev
-versions while the public API continues to settle before 1.0.
+Cindel is still pre-1.0.0. The `0.2.0` package line is the first normal
+release line after the development previews and ships MDBX as the default
+backend with SQLite available explicitly.

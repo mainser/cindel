@@ -20,8 +20,8 @@ Dart FFI
 Rust Core
    |
    v
-Storage backend: SQLite first, libmdbx later
+Storage backend: MDBX by default, SQLite as explicit fallback
 ```
 
-Phase 8 benchmark and backend adoption notes live in
+Backend decision notes, benchmark evidence, and platform limits live in
 `docs/backend_evaluation.md`.

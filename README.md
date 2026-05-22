@@ -9,13 +9,14 @@ scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
-Cindel is in early MVP development. It already has a working vertical slice:
+Cindel is in early pre-1.0 development. The current `0.2.0` line has the core
+local database slice working end to end:
 
 ```text
-Dart API -> FFI -> Rust core -> SQLite storage -> Rust -> FFI -> Dart
+Dart API -> generated schemas -> FFI -> Rust core -> MDBX storage -> Dart
 ```
 
-The API is still experimental and can change before a public release.
+The API is still experimental and can change before 1.0.
 
 ## Supported Platforms
 
@@ -50,8 +51,7 @@ The API is still experimental and can change before a public release.
 - Explicit migration callbacks for backfills, renames, index rebuilds, and
   dry-run diagnostics.
 - Prebuilt native library package for Flutter consumers.
-- Benchmark baseline for backend evaluation.
-- MDBX backend adoption path in progress.
+- Manual backend benchmark harness for SQLite versus MDBX.
 
 ## Packages
 
@@ -73,12 +73,12 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.18
-  cindel_flutter_libs: ^0.1.11
+  cindel: ^0.2.0
+  cindel_flutter_libs: ^0.2.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.11
+  cindel_generator: ^0.2.0
 ```
 
 For workspace development, use the local path packages instead:
@@ -576,17 +576,17 @@ final report = await Cindel.dryRunMigration(
 
 ## Benchmarks
 
-Run the SQLite backend benchmark baseline:
+Run the backend comparison benchmark:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- --documents 10000 --query-repeats 1000
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
 ```
 
-The benchmark prints CSV rows for indexed writes, point reads, equality
-queries, and range queries.
+The benchmark prints CSV rows for open, schema registration, indexed writes,
+point reads, indexed queries, batch writes, and deletes.
 
-See `docs/backend_evaluation.md` for the current `libmdbx` evaluation and
-backend adoption criteria.
+See `docs/backend_evaluation.md` for the current `libmdbx` decision record and
+benchmark evidence.
 
 ## Native Binaries
 
@@ -697,7 +697,7 @@ Next areas:
 - [ ] Better native error reporting.
 - [x] Example Flutter application.
 - [ ] Apple and Linux prebuilt native binaries.
-- [ ] Public package publishing polish.
+- [x] Public package publishing polish for the `0.2.0` package line.
 
 ## License
 

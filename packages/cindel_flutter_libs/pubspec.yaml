@@ -1,10 +1,10 @@
 name: cindel_flutter_libs
 description: Prebuilt native runtime libraries for Flutter apps that use the Cindel NoSQL local database.
-version: 0.1.11
+version: 0.2.0
 homepage: https://github.com/mainser/Cindel
 repository: https://github.com/mainser/Cindel
 issue_tracker: https://github.com/mainser/Cindel/issues
-documentation: https://github.com/mainser/Cindel/tree/dev/packages/cindel_flutter_libs#readme
+documentation: https://github.com/mainser/Cindel/tree/main/packages/cindel_flutter_libs#readme
 topics:
   - database
   - nosql

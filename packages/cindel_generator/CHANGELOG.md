@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Prepared the generator package for the coordinated `0.2.0` Cindel release
+  line.
+- Updated the annotations dependency constraint to `^0.2.0`.
+- Updated package usage snippets to reference the `0.2.0` release line.
+
 ## 0.1.11
 
 - Moved the package back to normal pub.dev versioning after the development

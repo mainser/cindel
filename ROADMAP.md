@@ -70,10 +70,10 @@ next layer is added.
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration.
 - [x] Schema version persistence.
-- [x] In-memory SQLite databases for tests and short-lived work.
+- [x] In-memory databases for tests and short-lived work.
 - [x] Compatible additive schema migrations.
 - [x] Rejection of incompatible schema changes.
-- [x] Internal Rust benchmark baseline for SQLite.
+- [x] Internal Rust benchmark comparing SQLite and MDBX.
 - [x] Flutter Todo example application:
   - CRUD UI,
   - watcher-driven live list,
@@ -280,16 +280,20 @@ next layer is added.
 
 ## Backend Exploration
 
-- [ ] Prototype `libmdbx` behind the existing `StorageEngine` trait.
-- [ ] Compare SQLite and MDBX with the same benchmark workload.
-- [ ] Evaluate Windows native asset build reliability for MDBX.
-- [ ] Evaluate binary size and compile-time cost.
-- [ ] Design backend-agnostic storage layout for:
+- [x] Prototype `libmdbx` behind the existing `StorageEngine` trait.
+- [x] Compare SQLite and MDBX with the same benchmark workload.
+- [x] Evaluate Windows native asset build reliability for MDBX.
+- [x] Evaluate binary size and compile-time cost for Windows and Android
+  prebuilt binaries.
+- [x] Design backend-agnostic storage layout for:
   - documents,
   - index entries,
   - schema metadata,
   - collection revision counters.
-- [ ] Keep the public Dart API independent of backend details.
+- [x] Keep the public Dart API independent of backend details.
+- [x] Make MDBX the default backend while keeping SQLite explicitly
+  selectable.
+- [ ] Add an explicit SQLite-to-MDBX migration helper.
 
 ## Errors, Diagnostics, and Tooling
 
@@ -304,13 +308,13 @@ next layer is added.
 - [ ] Debug logging hooks.
 - [ ] Inspector or developer tooling prototype.
 - [ ] Documentation for generated schemas and current MVP limits.
-- [ ] Package publishing preparation.
+- [x] Package publishing preparation for the `0.2.0` line.
   - Per-package pub.dev metadata.
   - Changelogs.
   - Package-level README and LICENSE files.
   - Hosted dependency constraints for publishable packages.
-  - `dart pub publish --dry-run` validation.
-  - Pub score polish.
+- [ ] `dart pub publish --dry-run` validation for every publishable package.
+- [ ] Pub score polish after pub.dev re-analysis.
 
 ## Quality Goals
 
@@ -341,10 +345,11 @@ next layer is added.
 
 ## Current Focus
 
-The next implementation milestone is the relationships prototype. Cindel now
-has the first complete typed query pipeline plus index variants, word-token
+The current implementation focus is release validation for the `0.2.0` package
+line. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
-query/lazy watchers, and explicit migration callbacks.
+query/lazy watchers, explicit migration callbacks, and MDBX as the default
+backend with SQLite as an explicit fallback.
 
 Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
 still pending collaborator machines. macOS should produce

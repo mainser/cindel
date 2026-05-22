@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- Prepared the annotations package for the coordinated `0.2.0` Cindel release
+  line.
+- Updated release documentation to remove development-preview wording.
+
 ## 0.1.7
 
 - Moved the package back to normal pub.dev versioning after the development

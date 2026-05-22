@@ -5,6 +5,15 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.0
+
+- Prepared the coordinated `0.2.0` pub.dev release line for all publishable
+  Cindel packages.
+- Updated public documentation, package examples, release notes, and
+  publication guidance to describe MDBX as the default backend and SQLite as
+  the explicit secondary backend.
+- Aligned package dependency constraints on the `^0.2.0` Cindel package set.
+
 ## 0.1.18
 
 - Made MDBX the default backend for new databases.
