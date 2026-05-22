@@ -1,20 +1,24 @@
 # Changelog
 
-## 0.1.17-dev.2
+## 0.1.17
 
+<!-- pub.dev prerelease: 0.1.17-dev.4 -->
+
+- Prepared the first pub.dev development preview.
+- Switched Cindel package dependencies from local paths to hosted development
+  preview constraints.
+- Declared Android and Windows as the currently available prebuilt platforms.
 - Added optional `libmdbx` dependency and Windows build probe behind the
   native `mdbx` Cargo feature.
 - Documented MDBX-01 build feasibility and LLVM/libclang requirements.
 - Updated Cindel package dependency constraints for the next development
   preview.
 - Removed dates from changelog headings so pub.dev renders version labels cleanly.
-
-## 0.1.17-dev.1
-
-- Prepared the first pub.dev development preview.
-- Switched Cindel package dependencies from local paths to hosted development
-  preview constraints.
-- Declared Android and Windows as the currently available prebuilt platforms.
+- Added the internal Rust backend selection boundary while keeping SQLite as
+  the FFI default backend.
+- Fixed an analyzer lint reported by pub.dev for an unnecessary `await`.
+- Added a package example page for pub.dev.
+- Added a library-level documentation comment for dartdoc/pub.dev analysis.
 
 ## 0.1.16
 

@@ -1,12 +1,13 @@
 # Changelog
 
-## 0.1.6-dev.2
+## 0.1.6
 
-- Removed dates from changelog headings so pub.dev renders version labels cleanly.
-
-## 0.1.6-dev.1
+<!-- pub.dev prerelease: 0.1.6-dev.3 -->
 
 - Prepared the first pub.dev development preview.
+- Removed dates from changelog headings so pub.dev renders version labels cleanly.
+- Added a package example page for pub.dev.
+- Added a library-level documentation comment for dartdoc/pub.dev analysis.
 
 ## 0.1.5
 

@@ -72,12 +72,12 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.2
-  cindel_flutter_libs: ^0.1.10-dev.2
+  cindel: ^0.1.17-dev.4
+  cindel_flutter_libs: ^0.1.10-dev.3
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.2
+  cindel_generator: ^0.1.10-dev.3
 ```
 
 For workspace development, use the local path packages instead:

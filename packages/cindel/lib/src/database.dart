@@ -751,7 +751,7 @@ class CindelDatabase {
     String collection,
     List<int> ids,
   ) async {
-    final documents = await _documentsByIdsNullable(
+    final documents = _documentsByIdsNullable(
       _checkOpen(),
       collection,
       ids,

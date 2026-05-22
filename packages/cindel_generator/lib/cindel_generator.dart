@@ -1,3 +1,4 @@
+/// Source generator entrypoints for Cindel schema and typed API generation.
 library cindel_generator;
 
 import 'package:build/build.dart';

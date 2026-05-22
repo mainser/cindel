@@ -1,15 +1,20 @@
 use crate::storage::{
-    DocumentWrite, IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine,
+    DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackend, StorageBackendKind,
+    StorageEngine,
 };
 
 pub struct CindelEngine {
-    storage: SqliteStorage,
+    storage: StorageBackend,
 }
 
 impl CindelEngine {
     pub fn open(directory: &str) -> Result<Self, String> {
+        Self::open_with_backend(directory, StorageBackendKind::Sqlite)
+    }
+
+    pub fn open_with_backend(directory: &str, backend: StorageBackendKind) -> Result<Self, String> {
         Ok(Self {
-            storage: SqliteStorage::open(directory)?,
+            storage: StorageBackend::open(backend, directory)?,
         })
     }
 
@@ -112,5 +117,52 @@ impl CindelEngine {
 
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.storage.schema_version(collection)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_sqlite_through_backend_selection_boundary() {
+        // Scenario: The Rust engine opens through the internal backend
+        // selection boundary while SQLite remains the selected backend.
+        // Covers:
+        // - [CindelEngine::open_with_backend] routing through [StorageBackend].
+        // - SQLite behavior after decoupling the engine from [SqliteStorage].
+        // Expected: Reads and writes keep working through the new boundary.
+        let directory = std::env::temp_dir().join(format!("cindel_backend_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        let mut engine = CindelEngine::open_with_backend(
+            directory.to_str().unwrap(),
+            StorageBackendKind::Sqlite,
+        )
+        .unwrap();
+
+        engine.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        let stored = engine.get("users", 1).unwrap().unwrap();
+
+        assert_eq!(stored, br#"{"name":"Ana"}"#);
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[cfg(feature = "mdbx")]
+    #[test]
+    fn keeps_mdbx_selection_unavailable_until_storage_is_implemented() {
+        // Scenario: MDBX is compiled as an optional dependency before the full
+        // storage implementation exists.
+        // Covers:
+        // - The Rust-side backend option can be selected internally.
+        // - Unsupported MDBX selection fails before any Dart API is exposed.
+        // Expected: Selecting MDBX returns a clear implementation error.
+        let result = CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx);
+
+        assert!(matches!(
+            result,
+            Err(error) if error.contains("MDBX storage backend is not implemented yet")
+        ));
     }
 }

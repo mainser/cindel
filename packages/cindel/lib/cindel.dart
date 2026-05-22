@@ -1,3 +1,5 @@
+/// Public Dart API for opening Cindel databases, defining schemas, and running
+/// generated typed collections and queries.
 library cindel;
 
 export 'package:cindel_annotations/cindel_annotations.dart';
