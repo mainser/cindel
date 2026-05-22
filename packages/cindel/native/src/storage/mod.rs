@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod contract_tests;
 #[cfg(feature = "mdbx")]
 mod mdbx;
 mod mdbx_key;

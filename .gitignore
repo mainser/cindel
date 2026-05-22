@@ -26,6 +26,7 @@ target/
 cindel_steps.txt
 docs/pubdev_publication_plan.md
 examples/cindel_todo/pubspec_overrides.yaml
+tool/benchmark/
 
 # IDE and OS files
 .idea/

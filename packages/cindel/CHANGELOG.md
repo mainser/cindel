@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.7 -->
+<!-- pub.dev prerelease: 0.1.17-dev.8 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -26,6 +26,10 @@
 - Expanded the native benchmark to cover open, schema registration, indexed
   writes, reads, indexed queries, batch writes, and deletes for the MDBX first
   adoption decision.
+- Added shared Rust `StorageEngine` contract tests for SQLite and MDBX.
+- Brought MDBX storage parity up to the non-explicit-transaction contract,
+  including schema versions, compatible migrations, unique index enforcement,
+  batch rollback, ids, revisions, and indexed reads/writes.
 
 ## 0.1.16
 

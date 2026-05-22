@@ -34,6 +34,10 @@ while the core design settles.
   preview.
 - Expanded the MDBX benchmark comparison and recorded the first adoption
   decision for continuing toward storage parity.
+- Added shared Rust `StorageEngine` contract tests for SQLite and MDBX.
+- Completed MDBX-06 storage parity for the non-explicit-transaction surface,
+  including schema versions, compatible migrations, unique index enforcement,
+  batch rollback, ids, revisions, and indexed reads/writes.
 
 ## 0.1.16
 

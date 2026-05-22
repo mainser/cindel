@@ -250,6 +250,44 @@ First decision:
   slower in this prototype, Linux numbers are still missing, and parity tests
   need to prove the full `StorageEngine` contract.
 
+## MDBX-06 Storage Parity
+
+MDBX-06 adds a shared native `StorageEngine` contract suite and runs it against
+both SQLite and MDBX.
+
+Validated parity surface:
+
+- CRUD by collection/id.
+- Ordered `get_many` results with missing ids.
+- Per-collection document id scans.
+- Per-collection revision bumps.
+- Id allocation and manual-id counter advancement.
+- Equality and range index queries.
+- Index replacement and cleanup during updates/deletes.
+- Batch indexed writes and deletes.
+- Rollback for failed batch writes.
+- Schema registration, additive versioning, explicit migration registration,
+  incompatible schema rejection, and index option metadata.
+- Unique index enforcement.
+- Case-insensitive, hash, and words index metadata acceptance. Dart still
+  normalizes those indexed values before they reach native storage.
+
+Validation command:
+
+```powershell
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+```
+
+Result:
+
+- `44 passed; 0 failed` on Windows with LLVM/libclang installed.
+
+Remaining MDBX adoption gates:
+
+- Explicit read/write transaction integration belongs to MDBX-07.
+- Linux release-mode benchmark validation is still required before making MDBX
+  the default backend.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:

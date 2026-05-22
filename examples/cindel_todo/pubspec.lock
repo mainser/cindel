@@ -119,7 +119,7 @@ packages:
       path: "../../packages/cindel"
       relative: true
     source: path
-    version: "0.1.17-dev.7"
+    version: "0.1.17-dev.8"
   cindel_annotations:
     dependency: "direct overridden"
     description:

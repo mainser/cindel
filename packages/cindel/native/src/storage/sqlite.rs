@@ -539,6 +539,7 @@ fn put_document_with_indexes(
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
     let id = sqlite_id(id)?;
+    enforce_unique_indexes(connection, collection, id, indexes)?;
     put_document(connection, collection, id, bytes)?;
     delete_index_entries(connection, collection, id)?;
     insert_index_entries(connection, collection, id, indexes)?;
@@ -583,6 +584,66 @@ fn delete_index_entries(connection: &Connection, collection: &str, id: i64) -> R
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+fn enforce_unique_indexes(
+    connection: &Connection,
+    collection: &str,
+    id: i64,
+    indexes: &[IndexEntry],
+) -> Result<(), String> {
+    let unique_indexes = unique_index_names(connection, collection)?;
+    if unique_indexes.is_empty() {
+        return Ok(());
+    }
+
+    for index in indexes {
+        if !unique_indexes.contains(index.name.as_str()) {
+            continue;
+        }
+        let existing_ids = query_index(
+            connection,
+            collection,
+            &index.name,
+            Some(&index.value),
+            Some(&index.value),
+        )?;
+        for existing_id in existing_ids {
+            let existing_id = sqlite_id(existing_id)?;
+            if existing_id != id {
+                return Err(format!(
+                    "Unique index `{}` already contains this value.",
+                    index.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn unique_index_names(
+    connection: &Connection,
+    collection: &str,
+) -> Result<std::collections::HashSet<String>, String> {
+    let schema_json = connection
+        .query_row(
+            "SELECT schema_json FROM schema_collections WHERE collection = ?1",
+            params![collection],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(schema_json) = schema_json else {
+        return Ok(std::collections::HashSet::new());
+    };
+    let schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
+        .map_err(|error| error.to_string())?;
+    Ok(schema
+        .fields
+        .into_iter()
+        .filter(|field| field.is_indexed && field.is_index_unique)
+        .map(|field| field.name)
+        .collect())
 }
 
 fn insert_index_entries(
@@ -1087,6 +1148,19 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::storage::contract_tests;
+
+    #[test]
+    fn passes_the_shared_storage_engine_contract() {
+        // Scenario: SQLite is the current default native storage backend.
+        // Covers:
+        // - The shared [StorageEngine] behavioral contract used by every
+        //   backend candidate.
+        // - CRUD, ids, indexes, unique indexes, schemas, revisions, and batch
+        //   rollback behavior.
+        // Expected: SQLite remains the reference backend for MDBX parity.
+        contract_tests::run_storage_engine_contract("sqlite", SqliteStorage::open);
+    }
 
     #[test]
     fn stores_reads_and_deletes_bytes_by_collection_and_id() {

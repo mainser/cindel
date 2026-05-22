@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -6,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use libmdbx::{
     Database, DatabaseOptions, NoWriteMap, Table, TableFlags, Transaction, WriteFlags, RO, RW,
 };
+use serde::{Deserialize, Serialize};
 
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
@@ -13,7 +15,10 @@ use super::mdbx_key::{
     DOCUMENTS_TABLE, ID_COUNTERS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE,
     SCHEMA_MIGRATIONS_TABLE, UNIQUE_INDEXES_TABLE,
 };
-use super::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageEngine};
+use super::{
+    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
+    SchemaManifest, StorageEngine,
+};
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const EMPTY_VALUE: &[u8] = &[];
@@ -177,7 +182,16 @@ impl StorageEngine for MdbxStorage {
         indexes: &[IndexEntry],
     ) -> Result<(), String> {
         self.with_write_transaction(|transaction, tables| {
-            put_document_with_indexes(transaction, &tables, collection, id, bytes, indexes)?;
+            let unique_indexes = unique_index_names(transaction, &tables, collection)?;
+            put_document_with_indexes(
+                transaction,
+                &tables,
+                collection,
+                id,
+                bytes,
+                indexes,
+                &unique_indexes,
+            )?;
             bump_collection_revision(transaction, &tables, collection)
         })
     }
@@ -188,6 +202,7 @@ impl StorageEngine for MdbxStorage {
         documents: &[DocumentWrite],
     ) -> Result<(), String> {
         self.with_write_transaction(|transaction, tables| {
+            let unique_indexes = unique_index_names(transaction, &tables, collection)?;
             for document in documents {
                 put_document_with_indexes(
                     transaction,
@@ -196,6 +211,7 @@ impl StorageEngine for MdbxStorage {
                     document.id,
                     &document.bytes,
                     &document.indexes,
+                    &unique_indexes,
                 )?;
             }
             if !documents.is_empty() {
@@ -273,18 +289,15 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        validate_schema_manifest(manifest)?;
         self.with_write_transaction(|transaction, tables| {
             for collection in &manifest.collections {
-                let schema_json =
-                    serde_json::to_vec(collection).map_err(|error| error.to_string())?;
-                transaction
-                    .put(
-                        &tables.schema_collections,
-                        encode_collection_key(&collection.name),
-                        schema_json,
-                        WriteFlags::UPSERT,
-                    )
-                    .map_err(|error| error.to_string())?;
+                register_collection_schema(
+                    transaction,
+                    &tables,
+                    collection,
+                    SchemaRegistrationMode::Compatible,
+                )?;
             }
             Ok(())
         })
@@ -294,7 +307,18 @@ impl StorageEngine for MdbxStorage {
         &mut self,
         manifest: &SchemaManifest,
     ) -> Result<(), String> {
-        self.register_schemas(manifest)
+        validate_schema_manifest(manifest)?;
+        self.with_write_transaction(|transaction, tables| {
+            for collection in &manifest.collections {
+                register_collection_schema(
+                    transaction,
+                    &tables,
+                    collection,
+                    SchemaRegistrationMode::ExplicitMigration,
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
@@ -304,8 +328,9 @@ impl StorageEngine for MdbxStorage {
                     &tables.schema_collections,
                     &encode_collection_key(collection),
                 )
-                .map_err(|error| error.to_string())
-                .map(|schema| schema.map(|_| 1))
+                .map_err(|error| error.to_string())?
+                .map(|bytes| decode_schema_record(&bytes).map(|record| record.version))
+                .transpose()
         })
     }
 }
@@ -376,6 +401,266 @@ where
     })
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct MdbxSchemaRecord {
+    version: u64,
+    schema: CollectionSchemaManifest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SchemaRegistrationMode {
+    Compatible,
+    ExplicitMigration,
+}
+
+fn register_collection_schema(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &CollectionSchemaManifest,
+    mode: SchemaRegistrationMode,
+) -> Result<(), String> {
+    let key = encode_collection_key(&collection.name);
+    let existing = transaction
+        .get::<Vec<u8>>(&tables.schema_collections, &key)
+        .map_err(|error| error.to_string())?
+        .map(|bytes| decode_schema_record(&bytes))
+        .transpose()?;
+
+    let Some(existing) = existing else {
+        let record = MdbxSchemaRecord {
+            version: 1,
+            schema: collection.clone(),
+        };
+        return put_schema_record(transaction, tables, &key, &record);
+    };
+
+    if existing.schema == *collection {
+        return Ok(());
+    }
+    if mode == SchemaRegistrationMode::Compatible {
+        validate_compatible_schema_change(&existing.schema, collection)?;
+    }
+
+    let next_version = existing
+        .version
+        .checked_add(1)
+        .ok_or_else(|| format!("schema version for `{}` overflowed", collection.name))?;
+    let record = MdbxSchemaRecord {
+        version: next_version,
+        schema: collection.clone(),
+    };
+    put_schema_record(transaction, tables, &key, &record)
+}
+
+fn put_schema_record(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    key: &[u8],
+    record: &MdbxSchemaRecord,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+    transaction
+        .put(&tables.schema_collections, key, bytes, WriteFlags::UPSERT)
+        .map_err(|error| error.to_string())
+}
+
+fn decode_schema_record(bytes: &[u8]) -> Result<MdbxSchemaRecord, String> {
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
+fn unique_index_names<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+) -> Result<HashSet<String>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let Some(bytes) = transaction
+        .get::<Vec<u8>>(
+            &tables.schema_collections,
+            &encode_collection_key(collection),
+        )
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(HashSet::new());
+    };
+    let record = decode_schema_record(&bytes)?;
+    Ok(record
+        .schema
+        .fields
+        .into_iter()
+        .filter(|field| field.is_indexed && field.is_index_unique)
+        .map(|field| field.name)
+        .collect())
+}
+
+fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
+    let mut names = HashSet::new();
+    for collection in &manifest.collections {
+        if collection.name.trim().is_empty() {
+            return Err("schema collection name must not be empty".into());
+        }
+        if !names.insert(collection.name.as_str()) {
+            return Err(format!(
+                "schema collection `{}` is duplicated",
+                collection.name
+            ));
+        }
+        validate_collection_schema(collection)?;
+    }
+    Ok(())
+}
+
+fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(), String> {
+    if collection.id_field.trim().is_empty() {
+        return Err(format!(
+            "schema collection `{}` must declare an id field",
+            collection.name
+        ));
+    }
+
+    let mut names = HashSet::new();
+    let mut id_fields = 0;
+    for field in &collection.fields {
+        if field.name.trim().is_empty() {
+            return Err(format!(
+                "schema collection `{}` contains an empty field name",
+                collection.name
+            ));
+        }
+        if field.dart_type.trim().is_empty() {
+            return Err(format!(
+                "schema field `{}.{}` must declare a Dart type",
+                collection.name, field.name
+            ));
+        }
+        if field.index_type != "value" && field.index_type != "hash" && field.index_type != "words"
+        {
+            return Err(format!(
+                "schema field `{}.{}` uses unsupported index type `{}`",
+                collection.name, field.name, field.index_type
+            ));
+        }
+        if !field.is_indexed
+            && (field.is_index_unique || !field.index_case_sensitive || field.index_type != "value")
+        {
+            return Err(format!(
+                "schema field `{}.{}` declares index options without an index",
+                collection.name, field.name
+            ));
+        }
+        let normalized_dart_type = field
+            .dart_type
+            .strip_suffix('?')
+            .unwrap_or(&field.dart_type);
+        if field.is_indexed && !field.index_case_sensitive && normalized_dart_type != "String" {
+            return Err(format!(
+                "schema field `{}.{}` case-insensitive indexes require String fields",
+                collection.name, field.name
+            ));
+        }
+        if field.is_indexed && field.index_type == "words" && normalized_dart_type != "String" {
+            return Err(format!(
+                "schema field `{}.{}` word indexes require String fields",
+                collection.name, field.name
+            ));
+        }
+        if !names.insert(field.name.as_str()) {
+            return Err(format!(
+                "schema field `{}.{}` is duplicated",
+                collection.name, field.name
+            ));
+        }
+        if field.is_id {
+            id_fields += 1;
+            if field.name != collection.id_field {
+                return Err(format!(
+                    "schema field `{}.{}` is marked as id but id_field is `{}`",
+                    collection.name, field.name, collection.id_field
+                ));
+            }
+        }
+    }
+
+    if id_fields != 1 {
+        return Err(format!(
+            "schema collection `{}` must declare exactly one id field",
+            collection.name
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_compatible_schema_change(
+    existing: &CollectionSchemaManifest,
+    next: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    if existing.name != next.name {
+        return Err("schema collection names cannot change".into());
+    }
+    if existing.id_field != next.id_field {
+        return Err(format!(
+            "schema collection `{}` cannot change id field",
+            existing.name
+        ));
+    }
+
+    let next_fields = next
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for existing_field in &existing.fields {
+        let Some(next_field) = next_fields.get(existing_field.name.as_str()) else {
+            return Err(format!(
+                "schema field `{}.{}` cannot be removed",
+                existing.name, existing_field.name
+            ));
+        };
+        validate_compatible_field(existing, existing_field, next_field)?;
+    }
+
+    Ok(())
+}
+
+fn validate_compatible_field(
+    collection: &CollectionSchemaManifest,
+    existing: &FieldSchemaManifest,
+    next: &FieldSchemaManifest,
+) -> Result<(), String> {
+    if existing.dart_type != next.dart_type {
+        return Err(format!(
+            "schema field `{}.{}` cannot change type from `{}` to `{}`",
+            collection.name, existing.name, existing.dart_type, next.dart_type
+        ));
+    }
+    if existing.is_id != next.is_id {
+        return Err(format!(
+            "schema field `{}.{}` cannot change id status",
+            collection.name, existing.name
+        ));
+    }
+    if existing.is_indexed != next.is_indexed {
+        return Err(format!(
+            "schema field `{}.{}` cannot change index status without an explicit migration",
+            collection.name, existing.name
+        ));
+    }
+    if existing.is_index_unique != next.is_index_unique
+        || existing.index_case_sensitive != next.index_case_sensitive
+        || existing.index_type != next.index_type
+    {
+        return Err(format!(
+            "schema field `{}.{}` cannot change index options without an explicit migration",
+            collection.name, existing.name
+        ));
+    }
+    Ok(())
+}
+
 fn put_document_with_indexes(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     tables: &MdbxTables<'_>,
@@ -383,7 +668,9 @@ fn put_document_with_indexes(
     id: u64,
     bytes: &[u8],
     indexes: &[IndexEntry],
+    unique_indexes: &HashSet<String>,
 ) -> Result<(), String> {
+    enforce_unique_indexes(transaction, tables, collection, id, indexes, unique_indexes)?;
     let document_key = encode_document_key(collection, id);
     transaction
         .put(&tables.documents, &document_key, bytes, WriteFlags::UPSERT)
@@ -394,15 +681,17 @@ fn put_document_with_indexes(
         transaction
             .put(&tables.indexes, key, EMPTY_VALUE, WriteFlags::UPSERT)
             .map_err(|error| error.to_string())?;
-        let unique_key = encode_unique_index_key(collection, &index.name, &index.value)?;
-        transaction
-            .put(
-                &tables.unique_indexes,
-                unique_key,
-                id.to_be_bytes(),
-                WriteFlags::UPSERT,
-            )
-            .map_err(|error| error.to_string())?;
+        if unique_indexes.contains(index.name.as_str()) {
+            let unique_key = encode_unique_index_key(collection, &index.name, &index.value)?;
+            transaction
+                .put(
+                    &tables.unique_indexes,
+                    unique_key,
+                    id.to_be_bytes(),
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
     }
     advance_id_counter(transaction, tables, collection, id)
 }
@@ -427,37 +716,80 @@ fn delete_index_entries(
     id: u64,
 ) -> Result<(), String> {
     let collection_prefix = encode_collection_key(collection);
-    let keys = {
+    let (index_keys, unique_keys) = {
         let mut cursor = transaction
             .cursor(&tables.indexes)
             .map_err(|error| error.to_string())?;
-        let mut keys = Vec::new();
+        let mut index_keys = Vec::new();
+        let mut unique_keys = Vec::new();
         for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&collection_prefix) {
             let (key, _) = row.map_err(|error| error.to_string())?;
             if !key.starts_with(&collection_prefix) {
                 break;
             }
             if decode_key_document_id(&key)? == id {
-                keys.push(key.into_owned());
+                let key = key.into_owned();
+                if key.len() >= 8 {
+                    unique_keys.push(key[..key.len() - 8].to_vec());
+                }
+                index_keys.push(key);
             }
         }
-        keys
+        (index_keys, unique_keys)
     };
 
-    for key in keys {
+    for key in index_keys {
         transaction
             .del(&tables.indexes, key, None)
+            .map_err(|error| error.to_string())?;
+    }
+    for key in unique_keys {
+        transaction
+            .del(&tables.unique_indexes, key, None)
             .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
-fn scan_ids_by_key_range(
-    transaction: &Transaction<'_, RO, NoWriteMap>,
+fn enforce_unique_indexes(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    id: u64,
+    indexes: &[IndexEntry],
+    unique_indexes: &HashSet<String>,
+) -> Result<(), String> {
+    if unique_indexes.is_empty() {
+        return Ok(());
+    }
+
+    for index in indexes {
+        if !unique_indexes.contains(index.name.as_str()) {
+            continue;
+        }
+        let prefix = encode_index_equal_prefix(collection, &index.name, &index.value)?;
+        let existing_ids = scan_ids_by_key_range(transaction, &tables.indexes, &prefix, None)?;
+        for existing_id in existing_ids {
+            if existing_id != id {
+                return Err(format!(
+                    "Unique index `{}` already contains this value.",
+                    index.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn scan_ids_by_key_range<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
     table: &Table<'_>,
     start: &[u8],
     end_inclusive: Option<&[u8]>,
-) -> Result<Vec<u64>, String> {
+) -> Result<Vec<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
     let mut cursor = transaction
         .cursor(table)
         .map_err(|error| error.to_string())?;
@@ -563,7 +895,19 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest};
+    use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
+
+    #[test]
+    fn passes_the_shared_storage_engine_contract() {
+        // Scenario: MDBX-06 promotes the prototype to a StorageEngine peer.
+        // Covers:
+        // - The shared [StorageEngine] behavioral contract used by SQLite.
+        // - CRUD, ids, indexes, unique indexes, schemas, revisions, and batch
+        //   rollback behavior without enabling explicit transactions yet.
+        // Expected: MDBX matches SQLite for the non-explicit-transaction
+        //   storage surface before MDBX-07.
+        contract_tests::run_storage_engine_contract("mdbx", MdbxStorage::open);
+    }
 
     #[test]
     fn opens_mdbx_database_directory() {
