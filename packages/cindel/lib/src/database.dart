@@ -20,12 +20,15 @@ enum _TransactionMode { read, write }
 
 /// Native storage backend used by a Cindel database.
 enum CindelStorageBackend {
-  /// SQLite is the stable default backend.
+  /// SQLite is available as the secondary compatibility backend.
   sqlite,
 
-  /// MDBX is experimental while backend adoption validation continues.
+  /// MDBX is the default backend for new Cindel databases.
   mdbx,
 }
+
+/// The storage backend used when callers do not pass an explicit backend.
+const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
 
 extension on CindelStorageBackend {
   int get _nativeId {
@@ -72,7 +75,7 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) async {
     _checkDirectory(directory);
     return _openUnchecked(
@@ -89,7 +92,7 @@ class CindelDatabase {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return _openUnchecked(
       directory: _inMemoryDirectory,
@@ -104,7 +107,7 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     required CindelMigrationCallback migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) async {
     _checkDirectory(directory);
     final database = await _openRaw(

@@ -12,7 +12,7 @@ Repository: <https://github.com/mainser/Cindel>
 ```yaml
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.3
+  cindel_generator: ^0.1.11
 ```
 
 Run the generator with:
@@ -34,4 +34,5 @@ The generator reads Cindel annotations from model classes and emits:
 ## Publishing Status
 
 This package is still pre-1.0.0. The `-dev.1` release line is intended as the
-first coordinated Cindel pub.dev development preview.
+first coordinated Cindel pub.dev development preview history; current package
+updates use normal pub.dev versions while the public API continues to settle.

@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.1.17
+## 0.1.18
 
-<!-- pub.dev prerelease: 0.1.17-dev.12 -->
+- Made MDBX the default storage backend for new Cindel databases.
+- Kept SQLite available through `backend: CindelStorageBackend.sqlite`.
+- Updated package documentation for the default backend switch.
+
+## 0.1.17
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development

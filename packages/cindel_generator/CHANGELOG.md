@@ -1,8 +1,13 @@
 # Changelog
 
-## 0.1.10
+## 0.1.11
 
-<!-- pub.dev prerelease: 0.1.10-dev.3 -->
+- Moved the package back to normal pub.dev versioning after the development
+  preview line.
+- Updated the Cindel annotations dependency to the normal `0.1.7` release
+  line.
+
+## 0.1.10
 
 - Prepared the first pub.dev development preview.
 - Switched the Cindel annotations dependency to the hosted development

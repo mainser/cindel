@@ -5,16 +5,18 @@ stable while the native storage backend remains interchangeable.
 
 ## Current Decision
 
-Cindel keeps SQLite as the MVP backend and evaluates `libmdbx` behind the Rust
-`StorageEngine` boundary before exposing any backend choice to Dart.
+Cindel now uses MDBX as the default backend for new databases. SQLite remains
+available as an explicit secondary backend through
+`backend: CindelStorageBackend.sqlite`.
 
 Reasons:
 
 - The public Dart API must not expose SQLite or MDBX concepts.
-- SQLite already validates the vertical slice: documents, indexes, watchers,
-  and schema versions.
-- The next backend needs to prove the same behavior with the same benchmark
-  harness before becoming selectable.
+- MDBX passed the shared Rust storage contracts and the Dart package behavior
+  suite.
+- Windows and Android prebuilt binaries include MDBX support.
+- SQLite remains selectable for users who need the older storage layout while
+  the explicit SQLite-to-MDBX migration helper is planned.
 
 ## Candidate: libmdbx
 
@@ -517,8 +519,8 @@ Implemented:
 
 - Kept the fast Dart format/analyze job as the first static validation lane.
 - Split backend validation into separate Ubuntu jobs:
-  - `sqlite-backend` builds and tests the default native core, then runs the
-    Dart package suite against SQLite/default.
+  - `sqlite-backend` builds and tests the SQLite-capable native core, then runs
+    the Dart package suite against explicit SQLite.
   - `mdbx-backend` installs LLVM/libclang, builds and tests the native core
     with `--features mdbx`, then runs the Dart package suite with
     `CINDEL_TEST_BACKEND=mdbx` and `CINDEL_TEST_MDBX=1`.
@@ -533,6 +535,43 @@ Validation:
 - Local workflow edit check: `git diff --check`.
 - Full validation requires pushing to GitHub Actions because the matrix depends
   on Ubuntu CI images and hosted action behavior.
+
+## MDBX-12 Default Backend Switch
+
+MDBX-12 makes MDBX the public default for new Cindel databases while preserving
+SQLite as an explicit secondary backend.
+
+Implemented:
+
+- Changed `Cindel.open`, `Cindel.openInMemory`,
+  `CindelDatabase.open`, `CindelDatabase.openInMemory`, and dry-run migration
+  helpers to default to `CindelStorageBackend.mdbx`.
+- Added `defaultCindelStorageBackend` so callers and tests can inspect the
+  current default without relying on duplicated enum values.
+- Kept `backend: CindelStorageBackend.sqlite` available.
+- Added Dart coverage proving that opening without a backend uses MDBX when
+  the loaded native library includes MDBX support.
+- Documented that existing SQLite databases are not migrated automatically.
+
+Migration decision:
+
+- Cindel will not silently migrate existing SQLite database directories during
+  the default switch.
+- Existing SQLite users can keep using
+  `backend: CindelStorageBackend.sqlite`.
+- A separate explicit SQLite-to-MDBX migration helper is planned after this
+  default switch.
+
+Validation:
+
+- Dart analyze: `No issues found`.
+- SQLite-explicit Dart package suite: `79 passed; 3 skipped`.
+- MDBX Dart package suite through the regenerated Windows prebuilt DLL:
+  `82 passed; 0 failed`.
+- Focused default-backend test:
+  `opens with MDBX as the default backend` passed.
+- Rust and Dart validation should continue to run through the MDBX-11 CI
+  backend matrix after pushing.
 
 ## Benchmark Baseline
 
@@ -561,7 +600,7 @@ Measured operations:
 
 ## Adoption Gate
 
-MDBX should only be added when it can satisfy all of these:
+MDBX was promoted to the default backend after satisfying these gates:
 
 - Same public Dart API.
 - Same `StorageEngine` behavior.
@@ -569,8 +608,7 @@ MDBX should only be added when it can satisfy all of these:
 - Benchmark harness can compare SQLite and MDBX with the same workload.
 - Schema metadata, index entries, and collection revision counters are stored
   atomically with document changes.
-- Windows native asset build remains reproducible.
+- Windows and Android native asset builds remain reproducible.
 
-Until then, SQLite remains the default backend. MDBX is compiled into the
-current Windows and Android prebuilt binaries, but callers must opt into it
-explicitly.
+SQLite remains explicitly selectable for compatibility and for future migration
+work.

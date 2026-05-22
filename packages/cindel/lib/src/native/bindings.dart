@@ -14,7 +14,7 @@ final class CindelNativeBindings {
 
   int get abiVersion => _functions.abiVersion();
 
-  Pointer<Void> open(String directory, {int backend = 0}) {
+  Pointer<Void> open(String directory, {int backend = 1}) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
       if (backend == 0) {
         return _functions.open(directoryPointer, directoryLength);

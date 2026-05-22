@@ -6,6 +6,7 @@ final CindelStorageBackend testStorageBackend = switch (Platform
     .environment['CINDEL_TEST_BACKEND']
     ?.toLowerCase()) {
   'mdbx' => CindelStorageBackend.mdbx,
+  'default' => defaultCindelStorageBackend,
   'sqlite' || null || '' => CindelStorageBackend.sqlite,
   final backend => throw UnsupportedError('Unknown test backend `$backend`.'),
 };

@@ -48,11 +48,38 @@ void main() {
       await expectLater(database.get('users', 1), throwsA(isA<StateError>()));
     });
 
-    // Scenario: A caller explicitly selects the stable SQLite backend.
+    // Scenario: A caller opens a database without selecting a backend.
+    // Covers:
+    // - [Cindel.openInMemory] default backend selection.
+    // - MDBX becoming the public API default.
+    // Expected: New database handles use MDBX unless callers request another
+    //   backend explicitly.
+    test(
+      'opens with MDBX as the default backend.',
+      () async {
+        // Arrange.
+        final database = await Cindel.openInMemory();
+        addTearDown(database.close);
+
+        // Act.
+        await database.put('users', 1, {'name': 'Ana'});
+        final storedUser = await database.get('users', 1);
+
+        // Assert.
+        expect(defaultCindelStorageBackend, CindelStorageBackend.mdbx);
+        expect(database.backend, CindelStorageBackend.mdbx);
+        expect(storedUser, {'name': 'Ana'});
+      },
+      skip: !_runMdbxBackendTests
+          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
+          : false,
+    );
+
+    // Scenario: A caller explicitly selects the secondary SQLite backend.
     // Covers:
     // - [Cindel.open] backend option.
-    // - Default-compatible FFI open path for SQLite.
-    // Expected: Explicit SQLite behaves like the default backend.
+    // - FFI open path for SQLite after MDBX became the default.
+    // Expected: Explicit SQLite remains available for compatibility.
     test('opens with an explicit SQLite backend.', () async {
       // Arrange.
       final database = await openTestDatabaseInMemory(

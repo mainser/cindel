@@ -13,7 +13,7 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return CindelDatabase.open(
       directory: directory,
@@ -30,7 +30,7 @@ abstract final class Cindel {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return CindelDatabase.openInMemory(
       schemas: schemas,
@@ -44,7 +44,7 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     required CindelMigrationCallback migration,
-    CindelStorageBackend backend = CindelStorageBackend.sqlite,
+    CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return CindelDatabase.dryRunMigration(
       directory: directory,

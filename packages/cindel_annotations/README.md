@@ -25,4 +25,5 @@ schema metadata without pulling in the native runtime.
 ## Publishing Status
 
 This package is still pre-1.0.0. The `-dev.1` release line is intended as the
-first coordinated Cindel pub.dev development preview.
+first coordinated Cindel pub.dev development preview history; current package
+updates use normal pub.dev versions while the public API continues to settle.

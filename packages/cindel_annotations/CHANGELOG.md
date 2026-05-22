@@ -1,8 +1,11 @@
 # Changelog
 
-## 0.1.6
+## 0.1.7
 
-<!-- pub.dev prerelease: 0.1.6-dev.3 -->
+- Moved the package back to normal pub.dev versioning after the development
+  preview line.
+
+## 0.1.6
 
 - Prepared the first pub.dev development preview.
 - Removed dates from changelog headings so pub.dev renders version labels cleanly.

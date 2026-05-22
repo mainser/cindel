@@ -7,8 +7,8 @@ correct Cindel native library for each supported platform so application
 developers do not need Rust or Cargo installed locally.
 
 The current Android and Windows binaries include the SQLite and MDBX storage
-backends. SQLite remains Cindel's default backend, and MDBX can be selected
-explicitly from the `cindel` package while adoption validation continues.
+backends. MDBX is Cindel's default backend, and SQLite can still be selected
+explicitly from the `cindel` package.
 
 Maintainer: Alain Ramirez <nolbertrg@gmail.com>
 
@@ -25,9 +25,9 @@ Planned binary locations:
 - macOS: `macos/libcindel_native.dylib`
 - Linux: `linux/libcindel_native.so`
 
-Only Android and Windows are advertised in the current pub.dev development
-preview. Apple and Linux binaries will be added in later package versions after
-they can be generated and validated.
+Only Android and Windows are advertised in the current pub.dev release. Apple
+and Linux binaries will be added in later package versions after they can be
+generated and validated.
 
 Maintainers can regenerate these binaries with the scripts in
 `tool/prebuilt/` from the repository root.

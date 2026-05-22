@@ -5,11 +5,11 @@ annotated Cindel models.
 
 ```yaml
 dependencies:
-  cindel_annotations: ^0.1.6-dev.3
+  cindel_annotations: ^0.1.7
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.3
+  cindel_generator: ^0.1.11
 ```
 
 Given an annotated model:

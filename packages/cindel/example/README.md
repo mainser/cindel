@@ -4,12 +4,12 @@ Add Cindel, the Flutter native libraries package, and the generator to your app:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.12
-  cindel_flutter_libs: ^0.1.10-dev.6
+  cindel: ^0.1.18
+  cindel_flutter_libs: ^0.1.11
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.3
+  cindel_generator: ^0.1.11
 ```
 
 Define a model and generate its schema:

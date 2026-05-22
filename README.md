@@ -27,7 +27,7 @@ The API is still experimental and can change before a public release.
 
 - Flutter-first Dart API.
 - Rust native core hidden behind Dart FFI.
-- SQLite default storage backend with MDBX available as an explicit backend
+- MDBX default storage backend with SQLite available as an explicit secondary
   option.
 - Generated collection schemas and serializers.
 - Generated conversion for `DateTime`, `Duration`, primitive lists, nullable
@@ -73,12 +73,12 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.12
-  cindel_flutter_libs: ^0.1.10-dev.6
+  cindel: ^0.1.18
+  cindel_flutter_libs: ^0.1.11
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.3
+  cindel_generator: ^0.1.11
 ```
 
 For workspace development, use the local path packages instead:
@@ -102,6 +102,11 @@ without compiling Rust locally. Cindel maintainers can still build the
 native asset directly with the `hooks.user_defines.cindel.build_native_assets`
 flag in the workspace `pubspec.yaml` when they need to validate the native
 assets path.
+
+MDBX is the default backend for new databases. Existing SQLite database
+directories are not migrated automatically; open them with
+`backend: CindelStorageBackend.sqlite` until the explicit migration helper is
+available.
 
 Define a collection:
 
@@ -671,6 +676,7 @@ Validated so far:
   and dry-run diagnostics.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
+- [x] MDBX default backend with SQLite as an explicit secondary backend.
 - [x] Apache-2.0 license, contribution guide, and package-style README.
 
 Next areas:
@@ -689,7 +695,6 @@ Next areas:
 - [x] Query watchers.
 - [x] Explicit migration callbacks.
 - [ ] Better native error reporting.
-- [ ] `libmdbx` prototype behind the existing storage trait.
 - [x] Example Flutter application.
 - [ ] Apple and Linux prebuilt native binaries.
 - [ ] Public package publishing polish.

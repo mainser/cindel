@@ -13,12 +13,12 @@ Repository: <https://github.com/mainser/Cindel>
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.12
-  cindel_flutter_libs: ^0.1.10-dev.6
+  cindel: ^0.1.18
+  cindel_flutter_libs: ^0.1.11
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.3
+  cindel_generator: ^0.1.11
 ```
 
 Define a collection:
@@ -60,17 +60,20 @@ For tests and short-lived work:
 final db = await Cindel.openInMemory(schemas: [UserSchema]);
 ```
 
-SQLite is the default storage backend. MDBX can be selected explicitly while
-backend adoption validation continues. The Android and Windows prebuilt
-libraries from `cindel_flutter_libs` include MDBX support:
+MDBX is the default storage backend. SQLite remains available when a caller
+needs the older storage layout explicitly:
 
 ```dart
 final db = await Cindel.open(
   directory: directory.path,
   schemas: [UserSchema],
-  backend: CindelStorageBackend.mdbx,
+  backend: CindelStorageBackend.sqlite,
 );
 ```
+
+Existing SQLite database directories are not migrated automatically by the
+default switch. Open them with `backend: CindelStorageBackend.sqlite` until an
+explicit migration helper is available.
 
 ## Features
 
@@ -86,8 +89,8 @@ final db = await Cindel.open(
 
 ## Supported Platforms
 
-The current development preview ships prebuilt native binaries for Android and
-Windows through `cindel_flutter_libs`.
+The current release ships prebuilt native binaries for Android and Windows
+through `cindel_flutter_libs`.
 
 iOS, macOS, and Linux support are planned, but they are not advertised as
 available until their native binaries are generated and validated.
@@ -95,5 +98,5 @@ available until their native binaries are generated and validated.
 ## Publishing Status
 
 Cindel is still pre-1.0.0. The `-dev.1` release line is intended as a pub.dev
-development preview so early users can test installation, generation, and
-runtime behavior before a stable preview is promoted.
+development preview history; current package updates use normal pub.dev
+versions while the public API continues to settle before 1.0.
