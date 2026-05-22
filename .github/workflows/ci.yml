@@ -15,48 +15,94 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FLUTTER_VERSION: 3.41.9
+  RUST_TOOLCHAIN: 1.90.0
+
 jobs:
-  validate:
-    name: Validate Dart and Rust
-    runs-on: windows-latest
-    timeout-minutes: 20
+  dart-static:
+    name: Dart format and analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
-          sdk: stable
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
 
-      - name: Set up Rust
-        shell: pwsh
-        run: |
-          rustup toolchain install 1.90.0 --profile minimal --target x86_64-pc-windows-msvc
-          rustup default 1.90.0-x86_64-pc-windows-msvc
-          rustup component add rustfmt --toolchain 1.90.0-x86_64-pc-windows-msvc
+      - name: Cache Dart packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock', 'examples/**/pubspec.lock', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
 
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install Dart dependencies
-        run: dart pub get
+      - name: Install Flutter workspace dependencies
+        run: flutter pub get
 
       - name: Check Dart formatting
         run: dart format --output=none --set-exit-if-changed .
 
-      - name: Analyze Dart packages
-        run: dart analyze
+      - name: Analyze Dart and Flutter packages
+        run: flutter analyze
+
+  native-tests:
+    name: Rust and Dart tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Cache Dart packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock', 'examples/**/pubspec.lock', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Set up Rust
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            packages/cindel/native -> target
+
+      - name: Install Flutter workspace dependencies
+        run: flutter pub get
 
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
+        run: cargo +${{ env.RUST_TOOLCHAIN }} fmt --manifest-path packages/cindel/native/Cargo.toml --check
 
       - name: Build Rust native core
-        run: cargo build --manifest-path packages/cindel/native/Cargo.toml
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Rust tests
-        run: cargo test --manifest-path packages/cindel/native/Cargo.toml
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Dart tests
         run: dart test packages/cindel/test -r expanded
