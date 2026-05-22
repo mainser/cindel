@@ -384,6 +384,55 @@ Remaining MDBX adoption gates:
 - Linux release-mode benchmark validation is still required before making MDBX
   the default backend.
 
+## MDBX-09 Full Dart Behavior Parity
+
+MDBX-09 parameterizes the Cindel package tests so the same Dart behavior suite
+can run against either backend.
+
+Implemented:
+
+- Added a test backend selector driven by `CINDEL_TEST_BACKEND`.
+- Added backend support to `Cindel.dryRunMigration` and
+  `CindelDatabase.dryRunMigration`.
+- Reused the existing package tests across SQLite and MDBX for manual CRUD,
+  typed CRUD, ids, batch operations, query builders, indexes, watchers,
+  transactions, migrations, and dry-run diagnostics.
+- Fixed MDBX staged write transactions so reads inside the same Dart write
+  transaction see pending puts/deletes before commit.
+- Fixed MDBX staged indexed queries so query builders can see pending writes
+  inside the same Dart write transaction.
+- Shared same-directory MDBX environments inside the process so multiple Dart
+  database handles can observe each other through watchers.
+
+Validation commands:
+
+```powershell
+dart analyze packages/cindel
+dart test packages/cindel -r expanded
+```
+
+MDBX validation used a locally built native library:
+
+```powershell
+$env:CINDEL_NATIVE_LIBRARY = (Resolve-Path "$env:TEMP\cindel_cargo_target_codex\debug\cindel_native.dll").Path
+$env:CINDEL_TEST_BACKEND = "mdbx"
+$env:CINDEL_TEST_MDBX = "1"
+dart test packages\cindel -r expanded
+```
+
+Results:
+
+- Rust with MDBX: `47 passed; 0 failed`.
+- Dart package with SQLite/default: `79 passed; 2 skipped`.
+- Dart package with MDBX: `81 passed; 0 failed`.
+
+Remaining MDBX adoption gates:
+
+- Prebuilt binaries must be rebuilt with MDBX support before consumers can use
+  the MDBX backend without a local Rust toolchain.
+- Linux release-mode benchmark validation is still required before making MDBX
+  the default backend.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:

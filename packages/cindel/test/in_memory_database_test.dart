@@ -1,5 +1,6 @@
-import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
+
+import 'backend_test_support.dart';
 
 import 'schema_generation_fixture.dart';
 
@@ -14,7 +15,7 @@ void main() {
     // Expected: Schema metadata, typed reads, and indexed queries work in memory.
     test('supports schemas, typed collections, and indexed queries.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final ana = User()
         ..id = 1
@@ -60,7 +61,9 @@ void main() {
     // Expected: The second database starts empty.
     test('does not persist state between separate opens.', () async {
       // Arrange.
-      final firstDatabase = await Cindel.openInMemory(schemas: [UserSchema]);
+      final firstDatabase = await openTestDatabaseInMemory(
+        schemas: [UserSchema],
+      );
 
       // Act.
       await firstDatabase.put('users', 1, {
@@ -72,7 +75,9 @@ void main() {
       final storedUser = await firstDatabase.get('users', 1);
       await firstDatabase.close();
 
-      final secondDatabase = await Cindel.openInMemory(schemas: [UserSchema]);
+      final secondDatabase = await openTestDatabaseInMemory(
+        schemas: [UserSchema],
+      );
       addTearDown(secondDatabase.close);
       final missingUser = await secondDatabase.get('users', 1);
       final version = await secondDatabase.schemaVersion('users');

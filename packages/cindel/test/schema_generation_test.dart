@@ -1,6 +1,8 @@
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -207,7 +209,7 @@ void main() {
     // Expected: A typed object round-trips through the native document store.
     test('round-trips expanded schema types through Cindel.', () async {
       // Arrange.
-      final db = await Cindel.openInMemory(schemas: [UserSchema]);
+      final db = await openTestDatabaseInMemory(schemas: [UserSchema]);
       final createdAt = DateTime.utc(2026, 5, 21, 13, 20);
       final primaryRecipient = Recipient()
         ..name = 'Grace'

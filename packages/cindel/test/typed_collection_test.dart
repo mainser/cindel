@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -19,7 +21,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );
@@ -57,7 +59,7 @@ void main() {
     // Expected: The object receives a real id and can be read by that id.
     test('assigns native auto-increment ids to typed objects.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final firstUser = User()
         ..name = 'Ana'
@@ -90,7 +92,7 @@ void main() {
     // Expected: Bulk typed operations round-trip generated objects.
     test('stores, reads, and deletes typed objects in batches.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final ana = User()
         ..name = 'Ana'
@@ -118,7 +120,7 @@ void main() {
     // Expected: Nothing is persisted from the invalid batch.
     test('rejects typed bulk writes with duplicate ids.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final firstUser = User()
         ..id = 7
@@ -147,7 +149,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );
@@ -199,7 +201,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
       final schema = CindelCollectionSchema<_BrokenUser>(
         name: 'brokenUsers',
@@ -234,7 +236,7 @@ void main() {
     // Expected: The typed write fails with [StateError].
     test('rejects auto-increment schemas without id setters.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
       final schema = CindelCollectionSchema<_ManualAutoUser>(
         name: 'manualAutoUsers',

@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libmdbx::{
@@ -24,10 +25,15 @@ const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const EMPTY_VALUE: &[u8] = &[];
 
 pub struct MdbxStorage {
-    database: Database<NoWriteMap>,
+    database: Arc<Database<NoWriteMap>>,
     active_transaction: Option<MdbxActiveTransaction>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
 }
+
+type SharedMdbxDatabase = Arc<Database<NoWriteMap>>;
+type WeakMdbxDatabase = Weak<Database<NoWriteMap>>;
+
+static MDBX_DATABASES: OnceLock<Mutex<HashMap<PathBuf, WeakMdbxDatabase>>> = OnceLock::new();
 
 enum MdbxActiveTransaction {
     Read,
@@ -65,6 +71,163 @@ enum MdbxWriteOperation {
     },
 }
 
+impl MdbxWriteTransaction {
+    fn staged_document(&self, collection: &str, id: u64) -> Option<Option<Vec<u8>>> {
+        for operation in self.operations.iter().rev() {
+            match operation {
+                MdbxWriteOperation::PutIndexed {
+                    collection: operation_collection,
+                    id: operation_id,
+                    bytes,
+                    ..
+                } if operation_collection == collection && *operation_id == id => {
+                    return Some(Some(bytes.clone()));
+                }
+                MdbxWriteOperation::PutManyIndexed {
+                    collection: operation_collection,
+                    documents,
+                } if operation_collection == collection => {
+                    if let Some(document) =
+                        documents.iter().rev().find(|document| document.id == id)
+                    {
+                        return Some(Some(document.bytes.clone()));
+                    }
+                }
+                MdbxWriteOperation::Delete {
+                    collection: operation_collection,
+                    id: operation_id,
+                } if operation_collection == collection && *operation_id == id => {
+                    return Some(None);
+                }
+                MdbxWriteOperation::DeleteMany {
+                    collection: operation_collection,
+                    ids,
+                } if operation_collection == collection && ids.contains(&id) => {
+                    return Some(None);
+                }
+                MdbxWriteOperation::RegisterSchemas { .. }
+                | MdbxWriteOperation::PutIndexed { .. }
+                | MdbxWriteOperation::PutManyIndexed { .. }
+                | MdbxWriteOperation::Delete { .. }
+                | MdbxWriteOperation::DeleteMany { .. } => {}
+            }
+        }
+        None
+    }
+
+    fn staged_document_ids(&self, collection: &str, base_ids: Vec<u64>) -> Vec<u64> {
+        let mut ids = base_ids.into_iter().collect::<HashSet<_>>();
+        for operation in &self.operations {
+            match operation {
+                MdbxWriteOperation::PutIndexed {
+                    collection: operation_collection,
+                    id,
+                    ..
+                } if operation_collection == collection => {
+                    ids.insert(*id);
+                }
+                MdbxWriteOperation::PutManyIndexed {
+                    collection: operation_collection,
+                    documents,
+                } if operation_collection == collection => {
+                    for document in documents {
+                        ids.insert(document.id);
+                    }
+                }
+                MdbxWriteOperation::Delete {
+                    collection: operation_collection,
+                    id,
+                } if operation_collection == collection => {
+                    ids.remove(id);
+                }
+                MdbxWriteOperation::DeleteMany {
+                    collection: operation_collection,
+                    ids: deleted_ids,
+                } if operation_collection == collection => {
+                    for id in deleted_ids {
+                        ids.remove(id);
+                    }
+                }
+                MdbxWriteOperation::RegisterSchemas { .. }
+                | MdbxWriteOperation::PutIndexed { .. }
+                | MdbxWriteOperation::PutManyIndexed { .. }
+                | MdbxWriteOperation::Delete { .. }
+                | MdbxWriteOperation::DeleteMany { .. } => {}
+            }
+        }
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn staged_index_ids(
+        &self,
+        collection: &str,
+        index: &str,
+        mut base_entries: Vec<(Vec<u8>, u64)>,
+        staged_key: impl Fn(&IndexEntry, u64) -> Result<Option<Vec<u8>>, String>,
+    ) -> Result<Vec<u64>, String> {
+        let mut changes = HashMap::<u64, Option<Vec<u8>>>::new();
+        for operation in &self.operations {
+            match operation {
+                MdbxWriteOperation::PutIndexed {
+                    collection: operation_collection,
+                    id,
+                    indexes,
+                    ..
+                } if operation_collection == collection => {
+                    changes.insert(*id, staged_index_key(indexes, index, *id, &staged_key)?);
+                }
+                MdbxWriteOperation::PutManyIndexed {
+                    collection: operation_collection,
+                    documents,
+                } if operation_collection == collection => {
+                    for document in documents {
+                        changes.insert(
+                            document.id,
+                            staged_index_key(&document.indexes, index, document.id, &staged_key)?,
+                        );
+                    }
+                }
+                MdbxWriteOperation::Delete {
+                    collection: operation_collection,
+                    id,
+                } if operation_collection == collection => {
+                    changes.insert(*id, None);
+                }
+                MdbxWriteOperation::DeleteMany {
+                    collection: operation_collection,
+                    ids,
+                } if operation_collection == collection => {
+                    for id in ids {
+                        changes.insert(*id, None);
+                    }
+                }
+                MdbxWriteOperation::RegisterSchemas { .. }
+                | MdbxWriteOperation::PutIndexed { .. }
+                | MdbxWriteOperation::PutManyIndexed { .. }
+                | MdbxWriteOperation::Delete { .. }
+                | MdbxWriteOperation::DeleteMany { .. } => {}
+            }
+        }
+        if changes.is_empty() {
+            return Ok(base_entries
+                .into_iter()
+                .map(|(_, id)| id)
+                .collect::<Vec<_>>());
+        }
+
+        base_entries.retain(|(_, id)| !changes.contains_key(id));
+        for (id, key) in changes {
+            if let Some(key) = key {
+                base_entries.push((key, id));
+            }
+        }
+        base_entries.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(base_entries.into_iter().map(|(_, id)| id).collect())
+    }
+}
+
 impl MdbxStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
         let (path, temporary_directory) = if directory == IN_MEMORY_DIRECTORY {
@@ -75,14 +238,8 @@ impl MdbxStorage {
         };
 
         fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-        let database = Database::<NoWriteMap>::open_with_options(
-            &path,
-            DatabaseOptions {
-                max_tables: Some(16),
-                ..Default::default()
-            },
-        )
-        .map_err(|error| error.to_string())?;
+        let path = path.canonicalize().map_err(|error| error.to_string())?;
+        let database = open_shared_database(&path)?;
 
         let storage = Self {
             database,
@@ -150,6 +307,13 @@ impl MdbxStorage {
 
     fn active_write_mut(&mut self) -> Option<&mut MdbxWriteTransaction> {
         match &mut self.active_transaction {
+            Some(MdbxActiveTransaction::Write(transaction)) => Some(transaction),
+            Some(MdbxActiveTransaction::Read) | None => None,
+        }
+    }
+
+    fn active_write(&self) -> Option<&MdbxWriteTransaction> {
+        match &self.active_transaction {
             Some(MdbxActiveTransaction::Write(transaction)) => Some(transaction),
             Some(MdbxActiveTransaction::Read) | None => None,
         }
@@ -261,6 +425,45 @@ impl MdbxStorage {
     }
 }
 
+fn open_shared_database(path: &PathBuf) -> Result<SharedMdbxDatabase, String> {
+    let databases = MDBX_DATABASES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut databases = databases.lock().map_err(|error| error.to_string())?;
+    if let Some(database) = databases.get(path).and_then(Weak::upgrade) {
+        return Ok(database);
+    }
+
+    let database = Arc::new(
+        Database::<NoWriteMap>::open_with_options(
+            path,
+            DatabaseOptions {
+                max_tables: Some(16),
+                accede: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    databases.insert(path.clone(), Arc::downgrade(&database));
+    Ok(database)
+}
+
+fn staged_index_key(
+    indexes: &[IndexEntry],
+    index: &str,
+    id: u64,
+    staged_key: impl Fn(&IndexEntry, u64) -> Result<Option<Vec<u8>>, String>,
+) -> Result<Option<Vec<u8>>, String> {
+    for entry in indexes {
+        if entry.name != index {
+            continue;
+        }
+        if let Some(key) = staged_key(entry, id)? {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
+}
+
 impl StorageEngine for MdbxStorage {
     fn begin_read_transaction(&mut self) -> Result<(), String> {
         if self.active_transaction.is_some() {
@@ -355,6 +558,13 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        if let Some(document) = self
+            .active_write()
+            .and_then(|transaction| transaction.staged_document(collection, id))
+        {
+            return Ok(document);
+        }
+
         self.with_read_transaction(|transaction, tables| {
             transaction
                 .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
@@ -363,21 +573,17 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
-        self.with_read_transaction(|transaction, tables| {
-            ids.iter()
-                .map(|id| {
-                    transaction
-                        .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, *id))
-                        .map_err(|error| error.to_string())
-                })
-                .collect()
-        })
+        ids.iter().map(|id| self.get(collection, *id)).collect()
     }
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
-        self.with_read_transaction(|transaction, tables| {
+        let ids = self.with_read_transaction(|transaction, tables| {
             let prefix = encode_collection_key(collection);
             scan_ids_by_key_range(transaction, &tables.documents, &prefix, None)
+        })?;
+        Ok(match self.active_write() {
+            Some(transaction) => transaction.staged_document_ids(collection, ids),
+            None => ids,
         })
     }
 
@@ -517,10 +723,22 @@ impl StorageEngine for MdbxStorage {
         index: &str,
         value: &IndexValue,
     ) -> Result<Vec<u64>, String> {
-        self.with_read_transaction(|transaction, tables| {
+        let entries = self.with_read_transaction(|transaction, tables| {
             let prefix = encode_index_equal_prefix(collection, index, value)?;
-            scan_ids_by_key_range(transaction, &tables.indexes, &prefix, None)
-        })
+            scan_entries_by_key_range(transaction, &tables.indexes, &prefix, None)
+        })?;
+        match self.active_write() {
+            Some(transaction) => {
+                transaction.staged_index_ids(collection, index, entries, |entry, id| {
+                    if entry.value == *value {
+                        encode_index_key(collection, index, value, id).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                })
+            }
+            None => Ok(entries.into_iter().map(|(_, id)| id).collect()),
+        }
     }
 
     fn query_index_range(
@@ -530,15 +748,28 @@ impl StorageEngine for MdbxStorage {
         lower: Option<&IndexValue>,
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String> {
-        self.with_read_transaction(|transaction, tables| {
-            let range = encode_index_range(collection, index, lower, upper)?;
-            scan_ids_by_key_range(
+        let range = encode_index_range(collection, index, lower, upper)?;
+        let entries = self.with_read_transaction(|transaction, tables| {
+            scan_entries_by_key_range(
                 transaction,
                 &tables.indexes,
                 &range.start,
                 Some(&range.end_inclusive),
             )
-        })
+        })?;
+        match self.active_write() {
+            Some(transaction) => {
+                transaction.staged_index_ids(collection, index, entries, |entry, id| {
+                    let key = encode_index_key(collection, index, &entry.value, id)?;
+                    if key >= range.start && key <= range.end_inclusive {
+                        Ok(Some(key))
+                    } else {
+                        Ok(None)
+                    }
+                })
+            }
+            None => Ok(entries.into_iter().map(|(_, id)| id).collect()),
+        }
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
@@ -1081,10 +1312,23 @@ fn scan_ids_by_key_range<K>(
 where
     K: libmdbx::TransactionKind,
 {
+    scan_entries_by_key_range(transaction, table, start, end_inclusive)
+        .map(|entries| entries.into_iter().map(|(_, id)| id).collect())
+}
+
+fn scan_entries_by_key_range<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+    start: &[u8],
+    end_inclusive: Option<&[u8]>,
+) -> Result<Vec<(Vec<u8>, u64)>, String>
+where
+    K: libmdbx::TransactionKind,
+{
     let mut cursor = transaction
         .cursor(table)
         .map_err(|error| error.to_string())?;
-    let mut ids = Vec::new();
+    let mut entries = Vec::new();
     for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
         let (key, _) = row.map_err(|error| error.to_string())?;
         if let Some(end_inclusive) = end_inclusive {
@@ -1094,9 +1338,10 @@ where
         } else if !key.starts_with(start) {
             break;
         }
-        ids.push(decode_key_document_id(&key)?);
+        let id = decode_key_document_id(&key)?;
+        entries.push((key.into_owned(), id));
     }
-    Ok(ids)
+    Ok(entries)
 }
 
 fn bump_collection_revision(
@@ -1252,6 +1497,25 @@ mod tests {
 
         assert!(result.is_ok(), "{:?}", result.err());
         assert!(Path::new(directory.path()).exists());
+    }
+
+    #[test]
+    fn opens_multiple_handles_to_the_same_directory() {
+        // Scenario: Dart watchers can use one handle while another handle writes.
+        // Covers:
+        // - Opening the same MDBX environment twice in one process.
+        // - Reading changes from the first handle after the second commits.
+        // Expected: MDBX supports the same multi-handle workflow as SQLite.
+        let directory = TemporaryDirectory::new("multi_handle");
+        let first = MdbxStorage::open(directory.path()).unwrap();
+        let mut second = MdbxStorage::open(directory.path()).unwrap();
+
+        second.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+
+        assert_eq!(
+            first.get("users", 1).unwrap(),
+            Some(br#"{"name":"Ana"}"#.to_vec())
+        );
     }
 
     #[test]

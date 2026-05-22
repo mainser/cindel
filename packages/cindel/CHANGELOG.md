@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.10 -->
+<!-- pub.dev prerelease: 0.1.17-dev.11 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -39,6 +39,10 @@
 - Added the public `CindelStorageBackend` option and FFI backend selector so
   callers can explicitly choose SQLite or MDBX while SQLite remains the
   default backend.
+- Added backend-parameterized Dart tests so the full Cindel package suite can
+  run against SQLite or MDBX.
+- Added MDBX read-your-writes parity for staged write transactions and shared
+  same-directory MDBX environments across multiple Dart database handles.
 
 ## 0.1.16
 

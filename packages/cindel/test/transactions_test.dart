@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -16,7 +18,7 @@ void main() {
     // Expected: Every write inside the transaction is persisted together.
     test('commits write transactions.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -32,6 +34,39 @@ void main() {
       expect(await database.get('users', 2), {'name': 'Ben'});
     });
 
+    // Scenario: Reads and index queries are performed after writes in the same
+    // write transaction.
+    // Covers:
+    // - Read-your-writes behavior for [CindelDatabase.get].
+    // - Staged document id scans.
+    // - Staged indexed query results.
+    // Expected: SQLite and MDBX expose pending writes consistently before
+    // commit.
+    test('reads pending writes inside write transactions.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+
+      // Act.
+      await database.writeTxn<void>(() async {
+        await database.users.put(_user(1, 'Ana', true));
+        await database.users.put(_user(2, 'Ben', false));
+        await database.delete('users', 2);
+
+        // Assert.
+        expect(await database.get('users', 1), containsPair('name', 'Ana'));
+        expect(await database.get('users', 2), isNull);
+        expect(await database.documentIds('users'), [1]);
+        expect(
+          await database.users
+              .where()
+              .emailEqualTo('ana@example.com')
+              .findAll(),
+          [isA<User>().having((user) => user.name, 'name', 'Ana')],
+        );
+      });
+    });
+
     // Scenario: A write transaction throws after a successful first write.
     // Covers:
     // - Native rollback through [CindelDatabase.writeTxn].
@@ -39,7 +74,7 @@ void main() {
     // Expected: No document from the failed transaction remains persisted.
     test('rolls back failed write transactions.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -60,7 +95,7 @@ void main() {
     // Expected: A later successful write can reuse the rolled-back first id.
     test('rolls back typed auto-increment writes and id allocation.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final rolledBackUser = User()
         ..name = 'Ana'
@@ -92,7 +127,7 @@ void main() {
     // Expected: Reads work and attempted writes fail before native mutation.
     test('allows reads and rejects writes inside read transactions.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
       await database.put('users', 1, {'name': 'Ana'});
 
@@ -116,7 +151,7 @@ void main() {
     // Expected: Cindel rejects nested transactions for now.
     test('rejects nested transactions.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -136,7 +171,7 @@ void main() {
     // Expected: The watcher emits the committed snapshot only after commit.
     test('notifies watchers only after successful commit.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
       final events = <List<CindelDocument>>[];
       final subscription = database
@@ -170,7 +205,7 @@ void main() {
     // Expected: The watcher never receives a snapshot for rolled-back writes.
     test('does not notify watchers after rollback.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
       final events = <List<CindelDocument>>[];
       final subscription = database
@@ -210,7 +245,7 @@ void main() {
       'supports transactions with an explicit MDBX backend.',
       () async {
         // Arrange.
-        final database = await Cindel.openInMemory(
+        final database = await openTestDatabaseInMemory(
           schemas: [UserSchema],
           backend: CindelStorageBackend.mdbx,
         );
@@ -263,4 +298,12 @@ Future<void> _waitUntil(
 
 bool get _runMdbxBackendTests {
   return Platform.environment['CINDEL_TEST_MDBX'] == '1';
+}
+
+User _user(int id, String name, bool active) {
+  return User()
+    ..id = id
+    ..name = name
+    ..email = '$name@example.com'.toLowerCase()
+    ..active = active;
 }

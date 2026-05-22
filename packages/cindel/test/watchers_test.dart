@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -18,7 +20,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
       final events = <CindelDocument?>[];
       final subscription = database
@@ -57,9 +59,13 @@ void main() {
         // Arrange.
         final directory = await _createDatabaseDirectory();
         addTearDown(() => directory.delete(recursive: true));
-        final watcherDatabase = await Cindel.open(directory: directory.path);
+        final watcherDatabase = await openTestDatabase(
+          directory: directory.path,
+        );
         addTearDown(watcherDatabase.close);
-        final writerDatabase = await Cindel.open(directory: directory.path);
+        final writerDatabase = await openTestDatabase(
+          directory: directory.path,
+        );
         addTearDown(writerDatabase.close);
         final events = <List<CindelDocument>>[];
         final subscription = watcherDatabase
@@ -99,7 +105,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
       // Act.
@@ -118,7 +124,7 @@ void main() {
     // Expected: The stream stays quiet until the document changes.
     test('supports fireImmediately false.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
       final events = <CindelDocument?>[];
       final subscription = database
@@ -150,7 +156,7 @@ void main() {
     // Expected: Lazy streams emit void events after matching changes.
     test('supports object and collection lazy watchers.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       var documentEvents = 0;
       var collectionEvents = 0;
@@ -201,7 +207,7 @@ void main() {
       'emits query watcher events only when visible results change.',
       () async {
         // Arrange.
-        final database = await Cindel.openInMemory(schemas: [UserSchema]);
+        final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
         addTearDown(database.close);
         await database.users.put(_user(1, 'Ana', true));
 

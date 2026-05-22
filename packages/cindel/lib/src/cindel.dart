@@ -44,11 +44,13 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     required CindelMigrationCallback migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) {
     return CindelDatabase.dryRunMigration(
       directory: directory,
       schemas: schemas,
       migration: migration,
+      backend: backend,
     );
   }
 

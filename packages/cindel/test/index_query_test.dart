@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
+
+import 'backend_test_support.dart';
 
 import 'schema_generation_fixture.dart';
 
@@ -17,7 +18,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );
@@ -46,7 +47,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );
@@ -79,7 +80,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );
@@ -122,7 +123,7 @@ void main() {
     // Expected: A second document with the same unique value is rejected.
     test('rejects duplicate values for unique indexes.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
 
       // Act.
@@ -156,7 +157,7 @@ void main() {
     // Expected: Different query casing still matches the stored value.
     test('supports case-insensitive string indexes.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       await database.put(
         'users',
@@ -193,7 +194,7 @@ void main() {
     // Expected: Hash indexes support equality and reject range operations.
     test('supports hash indexes for equality only.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       await database.put(
         'users',
@@ -231,7 +232,7 @@ void main() {
     // contains filters.
     test('supports case-insensitive word indexes.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(schemas: [UserSchema]);
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       await database.put(
         'users',
@@ -268,11 +269,11 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final databaseWithoutSchema = await Cindel.open(
+      final databaseWithoutSchema = await openTestDatabase(
         directory: directory.path,
       );
       addTearDown(databaseWithoutSchema.close);
-      final databaseWithSchema = await Cindel.open(
+      final databaseWithSchema = await openTestDatabase(
         directory: directory.path,
         schemas: [UserSchema],
       );

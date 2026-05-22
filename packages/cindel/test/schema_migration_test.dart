@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 void main() {
   group('Cindel schema migrations', () {
     // Scenario: A schema is registered and the database is reopened with it.
@@ -17,13 +19,13 @@ void main() {
       addTearDown(() => directory.delete(recursive: true));
 
       // Act.
-      final firstDatabase = await Cindel.open(
+      final firstDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
       final firstVersion = await firstDatabase.schemaVersion('users');
       await firstDatabase.close();
-      final reopenedDatabase = await Cindel.open(
+      final reopenedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -44,14 +46,14 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final originalDatabase = await Cindel.open(
+      final originalDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
       await originalDatabase.close();
 
       // Act.
-      final expandedDatabase = await Cindel.open(
+      final expandedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(includeActive: true)],
       );
@@ -73,7 +75,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final originalDatabase = await Cindel.open(
+      final originalDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -81,7 +83,7 @@ void main() {
       await originalDatabase.close();
 
       // Act.
-      final migratedDatabase = await Cindel.open(
+      final migratedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(includeActive: true)],
         migration: (migration) async {
@@ -112,7 +114,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final originalDatabase = await Cindel.open(
+      final originalDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -120,7 +122,7 @@ void main() {
       await originalDatabase.close();
 
       // Act.
-      final migratedDatabase = await Cindel.open(
+      final migratedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(indexedField: 'address')],
         migration: (migration) async {
@@ -158,7 +160,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final originalDatabase = await Cindel.open(
+      final originalDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -166,7 +168,7 @@ void main() {
       await originalDatabase.close();
 
       // Act.
-      final migratedDatabase = await Cindel.open(
+      final migratedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(collection: 'people')],
         migration: (migration) async {
@@ -197,7 +199,7 @@ void main() {
         // Arrange.
         final directory = await _createDatabaseDirectory();
         addTearDown(() => directory.delete(recursive: true));
-        final originalDatabase = await Cindel.open(
+        final originalDatabase = await openTestDatabase(
           directory: directory.path,
           schemas: [_userSchema()],
         );
@@ -205,7 +207,7 @@ void main() {
         await originalDatabase.close();
 
         // Act.
-        final report = await Cindel.dryRunMigration(
+        final report = await dryRunTestMigration(
           directory: directory.path,
           schemas: [_userSchema(indexedField: 'address')],
           migration: (migration) async {
@@ -213,7 +215,7 @@ void main() {
             await migration.rebuildIndexes('users');
           },
         );
-        final reopenedDatabase = await Cindel.open(
+        final reopenedDatabase = await openTestDatabase(
           directory: directory.path,
           schemas: [_userSchema()],
         );
@@ -241,14 +243,14 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
       await database.close();
 
       // Act.
-      final incompatibleOpen = Cindel.open(
+      final incompatibleOpen = openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(emailType: 'int')],
       );
@@ -257,7 +259,7 @@ void main() {
       await expectLater(incompatibleOpen, throwsA(isA<StateError>()));
 
       // Act.
-      final reopenedDatabase = await Cindel.open(
+      final reopenedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -278,14 +280,14 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(
+      final database = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
       await database.close();
 
       // Act.
-      final incompatibleOpen = Cindel.open(
+      final incompatibleOpen = openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(emailUnique: true)],
       );
@@ -294,7 +296,7 @@ void main() {
       await expectLater(incompatibleOpen, throwsA(isA<StateError>()));
 
       // Act.
-      final reopenedDatabase = await Cindel.open(
+      final reopenedDatabase = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
@@ -314,7 +316,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
       // Act.

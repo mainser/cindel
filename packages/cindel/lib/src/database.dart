@@ -104,12 +104,13 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     required CindelMigrationCallback migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) async {
     _checkDirectory(directory);
     final database = await _openRaw(
       directory: directory,
       schemas: schemas,
-      backend: CindelStorageBackend.sqlite,
+      backend: backend,
     );
     try {
       final context = await database._createMigrationContext(

@@ -1,6 +1,8 @@
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -450,7 +452,7 @@ void main() {
 }
 
 Future<CindelDatabase> _openSeededUsers() async {
-  final database = await Cindel.openInMemory(schemas: [UserSchema]);
+  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
     _user(id: 1, name: 'Ana', email: 'team@example.com'),
   );
@@ -467,7 +469,7 @@ Future<CindelDatabase> _openSeededUsers() async {
 }
 
 Future<CindelDatabase> _openUsersWithDuplicateNames() async {
-  final database = await Cindel.openInMemory(schemas: [UserSchema]);
+  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
     _user(id: 1, name: 'Ana', email: 'z@example.com', active: false),
   );
@@ -481,7 +483,7 @@ Future<CindelDatabase> _openUsersWithDuplicateNames() async {
 }
 
 Future<CindelDatabase> _openUsersForExecutionOrder() async {
-  final database = await Cindel.openInMemory(schemas: [UserSchema]);
+  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
     _user(id: 1, name: 'Bob', email: 'team-a@example.com', active: true),
   );

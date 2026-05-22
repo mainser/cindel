@@ -4,6 +4,8 @@ import 'package:cindel/cindel.dart';
 import 'package:cindel/src/native/bindings.dart';
 import 'package:test/test.dart';
 
+import 'backend_test_support.dart';
+
 void main() {
   group('Cindel native bindings', () {
     // Scenario: The Rust dynamic library is available through native assets.
@@ -34,7 +36,7 @@ void main() {
       addTearDown(() => directory.delete(recursive: true));
 
       // Act.
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
 
       // Assert.
       expect(database.directory, directory.path);
@@ -53,7 +55,7 @@ void main() {
     // Expected: Explicit SQLite behaves like the default backend.
     test('opens with an explicit SQLite backend.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory(
+      final database = await openTestDatabaseInMemory(
         backend: CindelStorageBackend.sqlite,
       );
       addTearDown(database.close);
@@ -78,7 +80,7 @@ void main() {
       'opens with an explicit MDBX backend.',
       () async {
         // Arrange.
-        final database = await Cindel.openInMemory(
+        final database = await openTestDatabaseInMemory(
           backend: CindelStorageBackend.mdbx,
         );
         addTearDown(database.close);
@@ -106,7 +108,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
       final user = <String, Object?>{'name': 'Noel', 'age': 34, 'active': true};
 
@@ -133,7 +135,7 @@ void main() {
     // Expected: Batch writes and deletes affect every requested document.
     test('persists, reads, and deletes documents in batches.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -161,7 +163,7 @@ void main() {
     // Expected: The valid document is not persisted.
     test('does not partially write invalid document batches.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -184,7 +186,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
       final document = <String, Object?>{
         'name': 'Noel',
@@ -209,7 +211,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
       // Act.
@@ -228,12 +230,12 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final firstDatabase = await Cindel.open(directory: directory.path);
+      final firstDatabase = await openTestDatabase(directory: directory.path);
 
       // Act.
       await firstDatabase.put('settings', 7, {'theme': 'dark'});
       await firstDatabase.close();
-      final secondDatabase = await Cindel.open(directory: directory.path);
+      final secondDatabase = await openTestDatabase(directory: directory.path);
       addTearDown(secondDatabase.close);
       final storedSettings = await secondDatabase.get('settings', 7);
 
@@ -250,7 +252,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final firstDatabase = await Cindel.open(directory: directory.path);
+      final firstDatabase = await openTestDatabase(directory: directory.path);
 
       // Act.
       final firstUserId = await firstDatabase.allocateId('users');
@@ -258,7 +260,7 @@ void main() {
       final firstSettingsId = await firstDatabase.allocateId('settings');
       await firstDatabase.close();
 
-      final secondDatabase = await Cindel.open(directory: directory.path);
+      final secondDatabase = await openTestDatabase(directory: directory.path);
       addTearDown(secondDatabase.close);
       final reopenedUserId = await secondDatabase.allocateId('users');
 
@@ -276,7 +278,7 @@ void main() {
     // Expected: The allocated id is greater than the manual id.
     test('advances allocated ids after manual put.', () async {
       // Arrange.
-      final database = await Cindel.openInMemory();
+      final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
 
       // Act.
@@ -294,14 +296,14 @@ void main() {
     // Expected: The second in-memory database starts empty.
     test('opens isolated in-memory databases.', () async {
       // Arrange.
-      final firstDatabase = await Cindel.openInMemory();
+      final firstDatabase = await openTestDatabaseInMemory();
 
       // Act.
       await firstDatabase.put('settings', 7, {'theme': 'dark'});
       final storedSettings = await firstDatabase.get('settings', 7);
       await firstDatabase.close();
 
-      final secondDatabase = await Cindel.openInMemory();
+      final secondDatabase = await openTestDatabaseInMemory();
       addTearDown(secondDatabase.close);
       final missingSettings = await secondDatabase.get('settings', 7);
 
@@ -320,7 +322,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
 
       // Act.
       await database.close();
@@ -339,7 +341,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       await database.close();
 
       // Act.
@@ -363,11 +365,11 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
       // Act.
-      final openWithEmptyDirectory = Cindel.open(directory: ' ');
+      final openWithEmptyDirectory = openTestDatabase(directory: ' ');
       final putWithEmptyCollection = database.put(' ', 1, {'name': 'Noel'});
       final allocateIdWithEmptyCollection = database.allocateId(' ');
       final getWithNegativeId = database.get('users', -1);
@@ -393,7 +395,7 @@ void main() {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
-      final database = await Cindel.open(directory: directory.path);
+      final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
       // Act.

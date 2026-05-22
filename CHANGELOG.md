@@ -43,6 +43,9 @@ while the core design settles.
   tests for SQLite and MDBX.
 - Added the MDBX-08 public Dart backend option and FFI backend selector while
   keeping SQLite as the default backend.
+- Completed MDBX-09 full Dart behavior parity by running the package suite
+  against MDBX and fixing staged transaction reads plus multi-handle MDBX
+  environment reuse.
 
 ## 0.1.16
 
