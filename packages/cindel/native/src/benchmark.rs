@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "mdbx")]
+use crate::storage::MdbxStorage;
 use crate::storage::{
     CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest,
     SqliteStorage, StorageEngine,
@@ -13,26 +15,61 @@ const DEFAULT_QUERY_REPEATS: u64 = 1_000;
 
 pub fn run_cli(args: impl Iterator<Item = String>) -> Result<(), String> {
     let config = BenchmarkConfig::from_args(args)?;
-    let report = run_sqlite_benchmark(&config)?;
+    let reports = run_benchmarks(&config)?;
 
     println!("backend,operation,items,total_ms,ops_per_second");
-    for measurement in report.measurements {
-        println!(
-            "{},{},{},{:.3},{:.2}",
-            report.backend,
-            measurement.operation,
-            measurement.items,
-            measurement.elapsed.as_secs_f64() * 1000.0,
-            measurement.ops_per_second()
-        );
+    for report in reports {
+        for measurement in report.measurements {
+            println!(
+                "{},{},{},{:.3},{:.2}",
+                report.backend,
+                measurement.operation,
+                measurement.items,
+                measurement.elapsed.as_secs_f64() * 1000.0,
+                measurement.ops_per_second()
+            );
+        }
     }
 
     Ok(())
 }
 
+fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkReport>, String> {
+    match config.backend {
+        BackendSelection::Sqlite => Ok(vec![run_sqlite_benchmark(config)?]),
+        BackendSelection::Mdbx => Ok(vec![run_mdbx_benchmark(config)?]),
+        BackendSelection::All => Ok(vec![
+            run_sqlite_benchmark(config)?,
+            run_mdbx_benchmark(config)?,
+        ]),
+    }
+}
+
 fn run_sqlite_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
     let directory = TemporaryDirectory::new("sqlite_bench")?;
-    let mut storage = SqliteStorage::open(directory.path())?;
+    let storage = SqliteStorage::open(directory.path())?;
+
+    run_storage_benchmark("sqlite", storage, config)
+}
+
+#[cfg(feature = "mdbx")]
+fn run_mdbx_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
+    let directory = TemporaryDirectory::new("mdbx_bench")?;
+    let storage = MdbxStorage::open(directory.path())?;
+
+    run_storage_benchmark("mdbx", storage, config)
+}
+
+#[cfg(not(feature = "mdbx"))]
+fn run_mdbx_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
+    Err("MDBX benchmark requires building with `--features mdbx`.".into())
+}
+
+fn run_storage_benchmark(
+    backend: &'static str,
+    mut storage: impl StorageEngine,
+    config: &BenchmarkConfig,
+) -> Result<BenchmarkReport, String> {
     storage.register_schemas(&schema_manifest())?;
 
     let put = measure("put_indexed", config.documents, || {
@@ -100,7 +137,7 @@ fn run_sqlite_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, Str
     })?;
 
     Ok(BenchmarkReport {
-        backend: "sqlite",
+        backend,
         measurements: vec![put, get, equality_query, range_query],
     })
 }
@@ -176,12 +213,14 @@ fn schema_manifest() -> SchemaManifest {
 struct BenchmarkConfig {
     documents: u64,
     query_repeats: u64,
+    backend: BackendSelection,
 }
 
 impl BenchmarkConfig {
     fn from_args(args: impl Iterator<Item = String>) -> Result<Self, String> {
         let mut documents = DEFAULT_DOCUMENTS;
         let mut query_repeats = DEFAULT_QUERY_REPEATS;
+        let mut backend = BackendSelection::Sqlite;
         let mut pending_flag: Option<String> = None;
 
         for arg in args {
@@ -189,13 +228,14 @@ impl BenchmarkConfig {
                 match flag.as_str() {
                     "--documents" => documents = parse_positive_u64(&flag, &arg)?,
                     "--query-repeats" => query_repeats = parse_positive_u64(&flag, &arg)?,
+                    "--backend" => backend = BackendSelection::parse(&arg)?,
                     _ => unreachable!("unexpected benchmark flag"),
                 }
                 continue;
             }
 
             match arg.as_str() {
-                "--documents" | "--query-repeats" => pending_flag = Some(arg),
+                "--backend" | "--documents" | "--query-repeats" => pending_flag = Some(arg),
                 "--help" | "-h" => {
                     print_help();
                     std::process::exit(0);
@@ -214,7 +254,28 @@ impl BenchmarkConfig {
         Ok(Self {
             documents,
             query_repeats,
+            backend,
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BackendSelection {
+    Sqlite,
+    Mdbx,
+    All,
+}
+
+impl BackendSelection {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "sqlite" => Ok(Self::Sqlite),
+            "mdbx" => Ok(Self::Mdbx),
+            "all" => Ok(Self::All),
+            _ => Err(format!(
+                "`--backend` must be one of `sqlite`, `mdbx`, or `all`; got `{value}`"
+            )),
+        }
     }
 }
 
@@ -227,7 +288,7 @@ fn parse_positive_u64(flag: &str, value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--documents N] [--query-repeats N]"
+        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|all] [--documents N] [--query-repeats N]"
     );
 }
 

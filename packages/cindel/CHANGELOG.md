@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.5 -->
+<!-- pub.dev prerelease: 0.1.17-dev.6 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -21,6 +21,8 @@
 - Added a library-level documentation comment for dartdoc/pub.dev analysis.
 - Added the MDBX key encoding spike for document, index, unique index, and
   range-bound keys without changing the default SQLite backend.
+- Added the feature-gated minimal `MdbxStorage` prototype and benchmark
+  backend selection for SQLite, MDBX, or both.
 
 ## 0.1.16
 

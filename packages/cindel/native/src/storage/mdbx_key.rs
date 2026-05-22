@@ -97,6 +97,16 @@ pub(crate) fn encode_index_range(
     })
 }
 
+pub(crate) fn decode_key_document_id(key: &[u8]) -> Result<u64, String> {
+    let id_bytes = key
+        .get(key.len().saturating_sub(8)..)
+        .ok_or_else(|| "MDBX key is too short to contain a document id".to_string())?;
+    let id_bytes = id_bytes
+        .try_into()
+        .map_err(|_| "MDBX document id must be 8 bytes".to_string())?;
+    Ok(u64::from_be_bytes(id_bytes))
+}
+
 fn encode_index_prefix(collection: &str, index_name: &str) -> Vec<u8> {
     let mut key = Vec::new();
     push_text_segment(&mut key, collection);

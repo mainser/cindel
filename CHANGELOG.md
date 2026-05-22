@@ -29,6 +29,9 @@ while the core design settles.
   index, unique index, and range-bound keys.
 - Updated Cindel Flutter libs example constraints for the current development
   preview.
+- Added the MDBX-04 minimal storage prototype and benchmark backend selector.
+- Updated Cindel Flutter libs example constraints for the MDBX-04 development
+  preview.
 
 ## 0.1.16
 

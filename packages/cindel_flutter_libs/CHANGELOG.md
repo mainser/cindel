@@ -2,7 +2,7 @@
 
 ## 0.1.10
 
-<!-- pub.dev prerelease: 0.1.10-dev.4 -->
+<!-- pub.dev prerelease: 0.1.10-dev.5 -->
 
 - Prepared the first pub.dev development preview.
 - Limited published Flutter plugin support to Android and Windows until Apple
@@ -12,6 +12,8 @@
 - Added a library-level documentation comment for dartdoc/pub.dev analysis.
 - Updated the package example dependency constraints for the current Cindel
   development preview.
+- Updated the package example to reference the MDBX-04 Cindel development
+  preview.
 
 ## 0.1.9
 

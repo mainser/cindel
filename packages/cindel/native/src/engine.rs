@@ -151,18 +151,20 @@ mod tests {
 
     #[cfg(feature = "mdbx")]
     #[test]
-    fn keeps_mdbx_selection_unavailable_until_storage_is_implemented() {
-        // Scenario: MDBX is compiled as an optional dependency before the full
-        // storage implementation exists.
+    fn opens_mdbx_through_backend_selection_boundary() {
+        // Scenario: MDBX is compiled as an optional dependency and has a
+        // minimal storage prototype.
         // Covers:
         // - The Rust-side backend option can be selected internally.
-        // - Unsupported MDBX selection fails before any Dart API is exposed.
-        // Expected: Selecting MDBX returns a clear implementation error.
-        let result = CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx);
+        // - Basic read/write behavior through the [StorageBackend] enum.
+        // Expected: Selecting MDBX succeeds without changing the default
+        //   SQLite FFI backend.
+        let mut engine =
+            CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx).unwrap();
 
-        assert!(matches!(
-            result,
-            Err(error) if error.contains("MDBX storage backend is not implemented yet")
-        ));
+        engine.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        let stored = engine.get("users", 1).unwrap().unwrap();
+
+        assert_eq!(stored, br#"{"name":"Ana"}"#);
     }
 }
