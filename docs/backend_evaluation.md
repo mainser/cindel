@@ -181,6 +181,75 @@ These numbers are a smoke-test sample only. MDBX-05 will run the formal
 comparison and decide whether the win is meaningful enough for default-backend
 adoption.
 
+## MDBX-05 Benchmark Parity and First Decision
+
+MDBX-05 expands the benchmark so both SQLite and MDBX measure the same core
+operations:
+
+- Database open.
+- Schema registration.
+- Indexed single-document writes.
+- Point reads.
+- Indexed equality queries.
+- Indexed range queries.
+- Indexed batch writes.
+- Batch deletes.
+
+Windows validation command:
+
+```powershell
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
+```
+
+Windows result:
+
+```text
+backend,operation,items,total_ms,ops_per_second
+sqlite,open,1,40.916,24.44
+sqlite,register_schemas,1,2.354,424.72
+sqlite,put_indexed,10000,38624.093,258.91
+sqlite,get,10000,92.725,107845.32
+sqlite,query_equal,1000,1554.399,643.34
+sqlite,query_range,1000,1495.375,668.73
+sqlite,put_many_indexed,10000,35423.763,282.30
+sqlite,delete_many,10000,36868.461,271.23
+mdbx,open,1,8.711,114.79
+mdbx,register_schemas,1,1.132,883.16
+mdbx,put_indexed,10000,20015.174,499.62
+mdbx,get,10000,50.285,198868.04
+mdbx,query_equal,1000,5.753,173831.42
+mdbx,query_range,1000,53.473,18701.13
+mdbx,put_many_indexed,10000,43676.842,228.95
+mdbx,delete_many,10000,39023.506,256.26
+```
+
+Observed Windows ratios:
+
+- Open: MDBX about 4.7x faster.
+- Schema registration: MDBX about 2.1x faster.
+- Indexed single writes: MDBX about 1.9x faster.
+- Point reads: MDBX about 1.8x faster.
+- Equality index queries: MDBX about 270x faster.
+- Range index queries: MDBX about 28x faster.
+- Batch indexed writes: SQLite about 1.2x faster.
+- Batch deletes: SQLite about 1.1x faster.
+
+Linux validation:
+
+- Local WSL validation was attempted with `wsl.exe --status`, but the machine
+  returned `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`.
+- Linux release-mode benchmark remains required before making MDBX the default
+  backend.
+
+First decision:
+
+- Continue to MDBX-06 storage parity. MDBX clearly exceeds the adoption
+  threshold on indexed queries and is close to the indexed write threshold on
+  Windows.
+- Do not switch the default backend yet. Batch writes and deletes are still
+  slower in this prototype, Linux numbers are still missing, and parity tests
+  need to prove the full `StorageEngine` contract.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:

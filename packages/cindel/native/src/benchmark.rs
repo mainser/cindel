@@ -6,8 +6,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "mdbx")]
 use crate::storage::MdbxStorage;
 use crate::storage::{
-    CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest,
-    SqliteStorage, StorageEngine,
+    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
+    SchemaManifest, SqliteStorage, StorageEngine,
 };
 
 const DEFAULT_DOCUMENTS: u64 = 10_000;
@@ -47,17 +47,17 @@ fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkReport>, Stri
 
 fn run_sqlite_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
     let directory = TemporaryDirectory::new("sqlite_bench")?;
-    let storage = SqliteStorage::open(directory.path())?;
+    let (storage, open) = measure_value("open", 1, || SqliteStorage::open(directory.path()))?;
 
-    run_storage_benchmark("sqlite", storage, config)
+    run_storage_benchmark("sqlite", storage, open, config)
 }
 
 #[cfg(feature = "mdbx")]
 fn run_mdbx_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
     let directory = TemporaryDirectory::new("mdbx_bench")?;
-    let storage = MdbxStorage::open(directory.path())?;
+    let (storage, open) = measure_value("open", 1, || MdbxStorage::open(directory.path()))?;
 
-    run_storage_benchmark("mdbx", storage, config)
+    run_storage_benchmark("mdbx", storage, open, config)
 }
 
 #[cfg(not(feature = "mdbx"))]
@@ -68,9 +68,12 @@ fn run_mdbx_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, Stri
 fn run_storage_benchmark(
     backend: &'static str,
     mut storage: impl StorageEngine,
+    open: Measurement,
     config: &BenchmarkConfig,
 ) -> Result<BenchmarkReport, String> {
-    storage.register_schemas(&schema_manifest())?;
+    let register_schemas = measure("register_schemas", 1, || {
+        storage.register_schemas(&schema_manifest())
+    })?;
 
     let put = measure("put_indexed", config.documents, || {
         for id in 0..config.documents {
@@ -78,16 +81,7 @@ fn run_storage_benchmark(
                 "users",
                 id,
                 document_bytes(id).as_bytes(),
-                &[
-                    IndexEntry {
-                        name: "email".to_string(),
-                        value: IndexValue::String(format!("user-{id}@example.com")),
-                    },
-                    IndexEntry {
-                        name: "score".to_string(),
-                        value: IndexValue::Int((id % 1_000) as i64),
-                    },
-                ],
+                &benchmark_indexes(id),
             )?;
         }
         Ok(())
@@ -136,9 +130,38 @@ fn run_storage_benchmark(
         Ok(())
     })?;
 
+    let batch_start_id = config.documents;
+    let batch_documents = (0..config.documents)
+        .map(|offset| {
+            let id = batch_start_id + offset;
+            DocumentWrite {
+                id,
+                bytes: document_bytes(id).into_bytes(),
+                indexes: benchmark_indexes(id),
+            }
+        })
+        .collect::<Vec<_>>();
+    let batch_put = measure("put_many_indexed", config.documents, || {
+        storage.put_many_indexed("users", &batch_documents)
+    })?;
+
+    let batch_ids = (batch_start_id..batch_start_id + config.documents).collect::<Vec<_>>();
+    let delete_many = measure("delete_many", config.documents, || {
+        storage.delete_many("users", &batch_ids)
+    })?;
+
     Ok(BenchmarkReport {
         backend,
-        measurements: vec![put, get, equality_query, range_query],
+        measurements: vec![
+            open,
+            register_schemas,
+            put,
+            get,
+            equality_query,
+            range_query,
+            batch_put,
+            delete_many,
+        ],
     })
 }
 
@@ -156,11 +179,41 @@ fn measure(
     })
 }
 
+fn measure_value<T>(
+    operation: &'static str,
+    items: u64,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<(T, Measurement), String> {
+    let started_at = Instant::now();
+    let value = action()?;
+    Ok((
+        value,
+        Measurement {
+            operation,
+            items,
+            elapsed: started_at.elapsed(),
+        },
+    ))
+}
+
 fn document_bytes(id: u64) -> String {
     format!(
         r#"{{"id":{id},"name":"User {id}","email":"user-{id}@example.com","score":{}}}"#,
         id % 1_000
     )
+}
+
+fn benchmark_indexes(id: u64) -> Vec<IndexEntry> {
+    vec![
+        IndexEntry {
+            name: "email".to_string(),
+            value: IndexValue::String(format!("user-{id}@example.com")),
+        },
+        IndexEntry {
+            name: "score".to_string(),
+            value: IndexValue::Int((id % 1_000) as i64),
+        },
+    ]
 }
 
 fn schema_manifest() -> SchemaManifest {

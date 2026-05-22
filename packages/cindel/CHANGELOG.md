@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.6 -->
+<!-- pub.dev prerelease: 0.1.17-dev.7 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -23,6 +23,9 @@
   range-bound keys without changing the default SQLite backend.
 - Added the feature-gated minimal `MdbxStorage` prototype and benchmark
   backend selection for SQLite, MDBX, or both.
+- Expanded the native benchmark to cover open, schema registration, indexed
+  writes, reads, indexed queries, batch writes, and deletes for the MDBX first
+  adoption decision.
 
 ## 0.1.16
 

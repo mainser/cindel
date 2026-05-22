@@ -32,6 +32,8 @@ while the core design settles.
 - Added the MDBX-04 minimal storage prototype and benchmark backend selector.
 - Updated Cindel Flutter libs example constraints for the MDBX-04 development
   preview.
+- Expanded the MDBX benchmark comparison and recorded the first adoption
+  decision for continuing toward storage parity.
 
 ## 0.1.16
 
