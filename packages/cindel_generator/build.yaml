@@ -7,7 +7,7 @@ targets:
 builders:
   cindel_generator:
     import: "package:cindel_generator/cindel_generator.dart"
-    builder_factories: []
+    builder_factories: ["cindelBuilder"]
     build_extensions: {".dart": [".cindel.g.part"]}
     auto_apply: dependents
     build_to: cache

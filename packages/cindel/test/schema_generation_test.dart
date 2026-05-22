@@ -1,0 +1,292 @@
+import 'package:cindel/cindel.dart';
+import 'package:test/test.dart';
+
+import 'schema_generation_fixture.dart';
+
+void main() {
+  group('Cindel schema generation', () {
+    // Scenario: A class annotated with @Collection has generated metadata.
+    // Covers:
+    // - Collection name configured by annotation.
+    // - Field discovery, id detection, and index metadata.
+    // Expected: The generated schema exposes stable collection metadata.
+    test('generates collection and field metadata.', () {
+      // Arrange.
+      final schema = UserSchema;
+
+      // Act.
+      final fields = schema.fields;
+      final indexedFields = fields.where((field) => field.isIndexed).toList();
+      final username = fields.singleWhere((field) => field.name == 'username');
+      final displayName = fields.singleWhere(
+        (field) => field.name == 'displayName',
+      );
+      final accessToken = fields.singleWhere(
+        (field) => field.name == 'accessToken',
+      );
+      final bio = fields.singleWhere((field) => field.name == 'bio');
+      final createdAt = fields.singleWhere(
+        (field) => field.name == 'createdAt',
+      );
+      final plan = fields.singleWhere((field) => field.name == 'plan');
+      final primaryRecipient = fields.singleWhere(
+        (field) => field.name == 'primaryRecipient',
+      );
+      final recipients = fields.singleWhere(
+        (field) => field.name == 'recipients',
+      );
+
+      // Assert.
+      expect(schema.name, 'users');
+      expect(schema.dartName, 'User');
+      expect(schema.idField, 'id');
+      expect(fields.map((field) => field.name), [
+        'id',
+        'name',
+        'email',
+        'username',
+        'displayName',
+        'accessToken',
+        'bio',
+        'active',
+        'createdAt',
+        'sessionLength',
+        'tags',
+        'scores',
+        'role',
+        'status',
+        'plan',
+        'primaryRecipient',
+        'recipients',
+      ]);
+      expect(indexedFields.map((field) => field.name), [
+        'email',
+        'username',
+        'displayName',
+        'accessToken',
+        'bio',
+        'createdAt',
+        'status',
+      ]);
+      expect(username.isIndexUnique, isTrue);
+      expect(displayName.indexCaseSensitive, isFalse);
+      expect(accessToken.indexType, CindelIndexType.hash);
+      expect(bio.indexType, CindelIndexType.words);
+      expect(bio.indexCaseSensitive, isFalse);
+      expect(createdAt.dartType, 'DateTime');
+      expect(plan.dartType, 'UserPlan');
+      expect(primaryRecipient.dartType, 'Recipient?');
+      expect(recipients.dartType, 'List<Recipient>?');
+      expect(fields.any((field) => field.name == 'transientNote'), isFalse);
+    });
+
+    // Scenario: A generated serializer is used with a typed object.
+    // Covers:
+    // - Generated toDocument function.
+    // - Generated fromDocument function.
+    // Expected: The typed object round-trips through a Cindel document map.
+    test('generates serializers for typed objects.', () {
+      // Arrange.
+      final createdAt = DateTime.utc(2026, 5, 21, 12, 30, 45, 123, 456);
+      final recipient = Recipient()
+        ..name = 'Ada'
+        ..address = 'ada@example.com'
+        ..metadata = (RecipientMetadata()..label = 'primary');
+      final secondaryRecipient = Recipient()
+        ..name = 'Ben'
+        ..address = 'ben@example.com';
+      final user = User()
+        ..id = 7
+        ..name = 'Noel'
+        ..email = 'demo@example.com'
+        ..username = 'noel'
+        ..displayName = 'Noel Alvarez'
+        ..accessToken = 'secret-token'
+        ..bio = 'Builds local databases'
+        ..active = true
+        ..createdAt = createdAt
+        ..sessionLength = const Duration(minutes: 3, microseconds: 45)
+        ..tags = ['local', 'database']
+        ..scores = [10, 20]
+        ..role = UserRole.owner
+        ..status = UserStatus.active
+        ..plan = UserPlan.pro
+        ..primaryRecipient = recipient
+        ..recipients = [recipient, secondaryRecipient]
+        ..transientNote = 'not persisted';
+
+      // Act.
+      final document = UserSchema.toDocument(user);
+      final restored = UserSchema.fromDocument(document);
+
+      // Assert.
+      expect(document, {
+        'id': 7,
+        'name': 'Noel',
+        'email': 'demo@example.com',
+        'username': 'noel',
+        'displayName': 'Noel Alvarez',
+        'accessToken': 'secret-token',
+        'bio': 'Builds local databases',
+        'active': true,
+        'createdAt': createdAt.microsecondsSinceEpoch,
+        'sessionLength': const Duration(
+          minutes: 3,
+          microseconds: 45,
+        ).inMicroseconds,
+        'tags': ['local', 'database'],
+        'scores': [10, 20],
+        'role': 'owner',
+        'status': 1,
+        'plan': 'pro',
+        'primaryRecipient': {
+          'name': 'Ada',
+          'address': 'ada@example.com',
+          'metadata': {'label': 'primary'},
+        },
+        'recipients': [
+          {
+            'name': 'Ada',
+            'address': 'ada@example.com',
+            'metadata': {'label': 'primary'},
+          },
+          {'name': 'Ben', 'address': 'ben@example.com', 'metadata': null},
+        ],
+      });
+      expect(restored.id, 7);
+      expect(restored.name, 'Noel');
+      expect(restored.email, 'demo@example.com');
+      expect(restored.username, 'noel');
+      expect(restored.displayName, 'Noel Alvarez');
+      expect(restored.accessToken, 'secret-token');
+      expect(restored.bio, 'Builds local databases');
+      expect(restored.active, isTrue);
+      expect(restored.createdAt, createdAt);
+      expect(
+        restored.sessionLength,
+        const Duration(minutes: 3, microseconds: 45),
+      );
+      expect(restored.tags, ['local', 'database']);
+      expect(restored.scores, [10, 20]);
+      expect(restored.role, UserRole.owner);
+      expect(restored.status, UserStatus.active);
+      expect(restored.plan, UserPlan.pro);
+      expect(restored.primaryRecipient?.name, 'Ada');
+      expect(restored.primaryRecipient?.address, 'ada@example.com');
+      expect(restored.primaryRecipient?.metadata?.label, 'primary');
+      expect(restored.recipients?.map((recipient) => recipient.name), [
+        'Ada',
+        'Ben',
+      ]);
+      expect(restored.transientNote, '');
+    });
+
+    // Scenario: A generated schema assigns an auto-increment id.
+    // Covers:
+    // - Generated setId function.
+    // - Schema metadata used by typed auto-increment writes.
+    // Expected: The generated setter mutates the id field on the typed object.
+    test('generates an id setter for auto-increment writes.', () {
+      // Arrange.
+      final user = User()
+        ..name = 'Noel'
+        ..email = 'demo@example.com';
+
+      // Act.
+      UserSchema.setId!(user, 42);
+
+      // Assert.
+      expect(user.id, 42);
+    });
+
+    // Scenario: A generated schema persists expanded Dart field shapes.
+    // Covers:
+    // - Native in-memory persistence of encoded DateTime and Duration values.
+    // - Primitive list JSON storage.
+    // - Enum persistence by name, ordinal, and custom value.
+    // Expected: A typed object round-trips through the native document store.
+    test('round-trips expanded schema types through Cindel.', () async {
+      // Arrange.
+      final db = await Cindel.openInMemory(schemas: [UserSchema]);
+      final createdAt = DateTime.utc(2026, 5, 21, 13, 20);
+      final primaryRecipient = Recipient()
+        ..name = 'Grace'
+        ..address = 'grace@example.com'
+        ..metadata = (RecipientMetadata()..label = 'lead');
+      final secondaryRecipient = Recipient()
+        ..name = 'Mary'
+        ..address = 'mary@example.com';
+      final user = User()
+        ..name = 'Ada'
+        ..email = 'ada@example.com'
+        ..username = null
+        ..displayName = null
+        ..accessToken = null
+        ..bio = null
+        ..active = null
+        ..createdAt = createdAt
+        ..sessionLength = null
+        ..tags = ['compiler', 'math']
+        ..scores = null
+        ..role = UserRole.member
+        ..status = UserStatus.blocked
+        ..plan = UserPlan.enterprise
+        ..primaryRecipient = primaryRecipient
+        ..recipients = [primaryRecipient, secondaryRecipient];
+
+      addTearDown(db.close);
+
+      // Act.
+      await db.users.put(user);
+      final restored = await db.users.get(user.id);
+      final createdAtMatches = await db.users
+          .where()
+          .createdAtBetween(createdAt, createdAt)
+          .findAll();
+      final statusMatches = await db.users
+          .where()
+          .statusEqualTo(UserStatus.blocked)
+          .findAll();
+      final createdAtValues = await db.users
+          .all()
+          .createdAtProperty()
+          .findAll();
+      final statusValues = await db.users.all().statusProperty().findAll();
+      final planValues = await db.users.all().planProperty().findAll();
+      final primaryRecipientValues = await db.users
+          .all()
+          .primaryRecipientProperty()
+          .findAll();
+      final recipientValues = await db.users
+          .all()
+          .recipientsProperty()
+          .findAll();
+
+      // Assert.
+      expect(restored, isNotNull);
+      expect(restored!.createdAt, createdAt);
+      expect(restored.sessionLength, isNull);
+      expect(restored.tags, ['compiler', 'math']);
+      expect(restored.scores, isNull);
+      expect(restored.role, UserRole.member);
+      expect(restored.status, UserStatus.blocked);
+      expect(restored.plan, UserPlan.enterprise);
+      expect(restored.primaryRecipient?.name, 'Grace');
+      expect(restored.primaryRecipient?.metadata?.label, 'lead');
+      expect(restored.recipients?.map((recipient) => recipient.address), [
+        'grace@example.com',
+        'mary@example.com',
+      ]);
+      expect(createdAtMatches.map((user) => user.email), ['ada@example.com']);
+      expect(statusMatches.map((user) => user.email), ['ada@example.com']);
+      expect(createdAtValues, [createdAt]);
+      expect(statusValues, [UserStatus.blocked]);
+      expect(planValues, [UserPlan.enterprise]);
+      expect(primaryRecipientValues.single?.name, 'Grace');
+      expect(recipientValues.single?.map((recipient) => recipient.name), [
+        'Grace',
+        'Mary',
+      ]);
+    });
+  });
+}

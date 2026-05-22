@@ -1,6 +1,6 @@
 # Cindel Architecture Notes
 
-See `ROADMAP.md` for the detailed starting guide.
+See `ROADMAP.md` for the current project direction.
 
 Short version:
 
@@ -22,3 +22,6 @@ Rust Core
    v
 Storage backend: SQLite first, libmdbx later
 ```
+
+Phase 8 benchmark and backend adoption notes live in
+`docs/backend_evaluation.md`.

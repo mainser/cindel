@@ -7,4 +7,10 @@ environment:
 workspace:
   - packages/cindel
   - packages/cindel_annotations
+  - packages/cindel_flutter_libs
   - packages/cindel_generator
+
+hooks:
+  user_defines:
+    cindel:
+      build_native_assets: false

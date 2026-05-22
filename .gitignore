@@ -14,6 +14,18 @@ target/
 *.so
 *.a
 *.lib
+!packages/cindel_flutter_libs/android/src/main/jniLibs/**/*.so
+!packages/cindel_flutter_libs/ios/**/*.a
+!packages/cindel_flutter_libs/ios/**/*.framework/**
+!packages/cindel_flutter_libs/ios/**/*.xcframework/**
+!packages/cindel_flutter_libs/macos/**/*.dylib
+!packages/cindel_flutter_libs/windows/*.dll
+!packages/cindel_flutter_libs/linux/*.so
+
+# Local planning scratchpad
+cindel_steps.txt
+docs/pubdev_publication_plan.md
+examples/cindel_todo/pubspec_overrides.yaml
 
 # IDE and OS files
 .idea/

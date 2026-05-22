@@ -1,7 +1,52 @@
 import 'database.dart';
+import 'migration.dart';
+import 'schema.dart';
+import 'text.dart';
 
+/// Entry point for opening Cindel databases.
 abstract final class Cindel {
-  static Future<CindelDatabase> open({required String directory}) {
-    return CindelDatabase.open(directory: directory);
+  /// Opens a database stored under [directory].
+  ///
+  /// Throws an [ArgumentError] when [directory] is empty and a [StateError] when
+  /// the native engine cannot be opened.
+  static Future<CindelDatabase> open({
+    required String directory,
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+    CindelMigrationCallback? migration,
+  }) {
+    return CindelDatabase.open(
+      directory: directory,
+      schemas: schemas,
+      migration: migration,
+    );
+  }
+
+  /// Opens an in-memory database.
+  ///
+  /// This is useful for tests and short-lived isolates. Data is discarded when
+  /// the returned database is closed.
+  static Future<CindelDatabase> openInMemory({
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+    CindelMigrationCallback? migration,
+  }) {
+    return CindelDatabase.openInMemory(schemas: schemas, migration: migration);
+  }
+
+  /// Runs [migration] in dry-run mode against an existing database.
+  static Future<CindelMigrationReport> dryRunMigration({
+    required String directory,
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+    required CindelMigrationCallback migration,
+  }) {
+    return CindelDatabase.dryRunMigration(
+      directory: directory,
+      schemas: schemas,
+      migration: migration,
+    );
+  }
+
+  /// Splits text the same way Cindel word indexes do.
+  static List<String> splitWords(String text, {bool caseSensitive = false}) {
+    return cindelSplitWords(text, caseSensitive: caseSensitive);
   }
 }
