@@ -5,12 +5,29 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
-## 0.1.16 - 2026-05-21
+## 0.1.17-dev.2
+
+- Added optional `libmdbx` dependency and Windows build probe behind the native
+  `mdbx` Cargo feature.
+- Documented MDBX-01 build feasibility and LLVM/libclang requirements.
+- Updated package versions and hosted dependency constraints for the next
+  development preview.
+- Removed dates from changelog headings so pub.dev renders version labels
+  cleanly.
+
+## 0.1.17-dev.1
+
+- Prepared the first pub.dev development preview.
+- Switched package dependencies from local paths to hosted development preview
+  constraints.
+- Declared Android and Windows as the currently available prebuilt platforms.
+
+## 0.1.16
 
 - Added `CindelDatabase.putMany` and `CindelTypedCollection.putMany` as public
   aliases for atomic bulk writes.
 
-## 0.1.15 - 2026-05-21
+## 0.1.15
 
 - Added pub.dev-oriented metadata to the publishable Cindel packages.
 - Added package-level README and CHANGELOG files for the public packages.
@@ -19,9 +36,7 @@ while the core design settles.
   local database built on its own Rust native core.
 - Added real repository and maintainer information for publication materials.
 
-## 0.1.14 - 2026-05-21
-
-- Added a native batch document read path so collection reads, indexed queries,
+## 0.1.14`r`n`r`n- Added a native batch document read path so collection reads, indexed queries,
   watchers, migrations, and `getAll` avoid one FFI call per document.
 - Replaced watcher snapshot stringification with allocation-light deep
   comparison.
@@ -29,9 +44,7 @@ while the core design settles.
   libraries.
 - Added Rust coverage for ordered batch reads with missing documents.
 
-## 0.1.13 - 2026-05-21
-
-- Added explicit migration callbacks to `Cindel.open` and
+## 0.1.13`r`n`r`n- Added explicit migration callbacks to `Cindel.open` and
   `Cindel.openInMemory`.
 - Added `CindelMigration` helpers for field renames, collection renames,
   document backfills, and index rebuilds.
@@ -43,9 +56,7 @@ while the core design settles.
 - Expanded schema migration tests with versioned fixtures for backfills, field
   renames, collection renames, dry-run diagnostics, and rebuilt indexes.
 
-## 0.1.12 - 2026-05-21
-
-- Added `fireImmediately` to document, collection, object, and query watchers.
+## 0.1.12`r`n`r`n- Added `fireImmediately` to document, collection, object, and query watchers.
 - Added document, collection, object, and query lazy watchers.
 - Added typed `CindelQuery.watch` and `CindelQuery.watchLazy`.
 - Suppressed watcher emissions when the visible document, collection, or query
@@ -53,9 +64,7 @@ while the core design settles.
 - Added Dart watcher tests for lazy streams, delayed initial emission, and
   query watchers that ignore writes outside the visible query result.
 
-## 0.1.11 - 2026-05-21
-
-- Added `@Embedded` for generated nested value-object persistence.
+## 0.1.11`r`n`r`n- Added `@Embedded` for generated nested value-object persistence.
 - Added generated serialization and deserialization for one embedded object.
 - Added generated serialization and deserialization for lists of embedded
   objects.
@@ -64,9 +73,7 @@ while the core design settles.
 - Expanded schema generation tests to round-trip embedded objects and embedded
   object lists through an in-memory database.
 
-## 0.1.10 - 2026-05-21
-
-- Added generated serialization for `DateTime` and `Duration`.
+## 0.1.10`r`n`r`n- Added generated serialization for `DateTime` and `Duration`.
 - Added generated primitive list persistence.
 - Added `@ignore` for transient fields.
 - Added `@Enumerated` with `CindelEnumType.name`, `ordinal`, and custom
@@ -77,9 +84,7 @@ while the core design settles.
 - Expanded schema generation tests to round-trip dates, durations, lists,
   nullable fields, enums, and ignored fields through an in-memory database.
 
-## 0.1.9 - 2026-05-21
-
-- Added `CindelIndexType.words` for simple full-text-style word indexes over
+## 0.1.9`r`n`r`n- Added `CindelIndexType.words` for simple full-text-style word indexes over
   `String` fields.
 - Added `Cindel.splitWords` and `cindelSplitWords` for Unicode-aware word
   tokenization.
@@ -91,9 +96,7 @@ while the core design settles.
 - Added Dart and Rust tests for tokenization, word indexes, and word-index
   schema metadata.
 
-## 0.1.8 - 2026-05-21
-
-- Added index variants through `@Index(unique:)`, `@Index(caseSensitive:)`,
+## 0.1.8`r`n`r`n- Added index variants through `@Index(unique:)`, `@Index(caseSensitive:)`,
   and `@Index(type:)`.
 - Added `CindelIndexType.value` and `CindelIndexType.hash`.
 - Added generated schema metadata for index uniqueness, case sensitivity, and
@@ -106,9 +109,7 @@ while the core design settles.
   incompatible index option changes until explicit migrations exist.
 - Added Dart and Rust tests for index variants and schema compatibility.
 
-## 0.1.7 - 2026-05-21
-
-- Added typed query sorting with generated `sortBy*`, `sortBy*Desc`,
+## 0.1.7`r`n`r`n- Added typed query sorting with generated `sortBy*`, `sortBy*Desc`,
   `thenBy*`, and `thenBy*Desc` helpers.
 - Added query `offset` and `limit` pagination.
 - Added `distinctBy` and `distinctByFields` support, plus generated
@@ -122,9 +123,7 @@ while the core design settles.
 - Added Dart tests for sorting, secondary sorting, pagination, distinct,
   projections, and combined execution order.
 
-## 0.1.6 - 2026-05-21
-
-- Added typed filter builders generated for collection fields.
+## 0.1.6`r`n`r`n- Added typed filter builders generated for collection fields.
 - Added `CindelQuery.all`, `whereMatches`, and `CindelFilter` predicate
   composition.
 - Supported bool equality, numeric comparisons, string equality, contains,
@@ -136,9 +135,7 @@ while the core design settles.
 - Added Dart tests for full collection filters, where-plus-filter queries,
   string filters, numeric filters, and grouped predicates.
 
-## 0.1.5 - 2026-05-21
-
-- Added native explicit read and write transactions.
+## 0.1.5`r`n`r`n- Added native explicit read and write transactions.
 - Added public `CindelDatabase.readTxn` and `writeTxn` wrappers.
 - Routed manual, typed, bulk, and query-delete writes through active native
   write transactions.
@@ -150,9 +147,7 @@ while the core design settles.
 - Added Rust and Dart tests for commit, rollback, read transactions, nested
   transaction rejection, id-counter rollback, and transaction-aware watchers.
 
-## 0.1.4 - 2026-05-21
-
-- Added atomic native batch writes and deletes.
+## 0.1.4`r`n`r`n- Added atomic native batch writes and deletes.
 - Added manual `CindelDatabase.putAll`, `getAll`, and `deleteAll`.
 - Added typed collection `putAll`, `getAll`, and `deleteAll`.
 - Added query `deleteFirst` and `deleteAll` operations.
@@ -161,9 +156,7 @@ while the core design settles.
 - Added Rust and Dart tests for bulk writes, query deletes, and rollback
   behavior.
 
-## 0.1.3 - 2026-05-21
-
-- Added typed `CindelQuery<T>` with `findAll`, `findFirst`, and `count`.
+## 0.1.3`r`n`r`n- Added typed `CindelQuery<T>` with `findAll`, `findFirst`, and `count`.
 - Updated generated collection accessors to emit `where()` helpers for indexed
   fields.
 - Added generated indexed equality, string prefix, and inclusive range query
@@ -173,9 +166,7 @@ while the core design settles.
 - Added Dart tests for typed equality, prefix, range, first, and count query
   builder behavior.
 
-## 0.1.2 - 2026-05-21
-
-- Added native per-collection auto-increment id allocation.
+## 0.1.2`r`n`r`n- Added native per-collection auto-increment id allocation.
 - Persisted native id counters across reopened databases.
 - Advanced native id counters after manual `put` calls to avoid collisions.
 - Exposed id allocation through Dart FFI and `CindelDatabase.allocateId`.
@@ -186,9 +177,7 @@ while the core design settles.
 - Expanded Rust, Dart, and Todo tests for monotonic allocated ids, reopened
   databases, generated id setters, and in-memory typed writes.
 
-## 0.1.1 - 2026-05-21
-
-- Added `Cindel.openInMemory` for tests and short-lived databases.
+## 0.1.1`r`n`r`n- Added `Cindel.openInMemory` for tests and short-lived databases.
 - Added SQLite in-memory storage support in the native Rust core.
 - Added prebuilt native library loading before native-assets fallback.
 - Added `cindel_flutter_libs` as the Flutter prebuilt binary package.
@@ -200,9 +189,7 @@ while the core design settles.
 - Expanded Dart, Flutter, and Rust tests for in-memory databases and Todo
   repository behavior.
 
-## 0.1.0 - 2026-05-21
-
-- Established the first explicit development version baseline.
+## 0.1.0`r`n`r`n- Established the first explicit development version baseline.
 - Added generated typed collection accessors.
 - Added typed collection CRUD and watcher tests.
 - Added the Cindel Todo example with CRUD, watchers, indexed title search,
@@ -210,9 +197,7 @@ while the core design settles.
   validation.
 - Added public documentation for supported platforms and project roadmap.
 
-## 0.0.1 - 2026-05-19
-
-- Created the initial Cindel workspace.
+## 0.0.1`r`n`r`n- Created the initial Cindel workspace.
 - Added the Dart API package, annotations package, and generator package.
 - Added the Rust native core behind Dart FFI.
 - Added SQLite-backed document persistence.

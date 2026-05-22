@@ -28,6 +28,12 @@ Sources checked on 2026-05-20:
 - https://docs.rs/libmdbx
 - https://docs.rs/crate/libmdbx/latest
 
+Sources checked on 2026-05-22 for MDBX-01:
+
+- https://docs.rs/crate/libmdbx/latest
+- https://docs.rs/crate/mdbx-sys/latest/source/Cargo.toml.orig
+- https://rust-lang.github.io/rust-bindgen/requirements.html
+
 Open questions before integration:
 
 - Windows build reliability with the same toolchain used by Flutter native
@@ -38,6 +44,51 @@ Open questions before integration:
 - Whether typed table APIs or raw key-value tables are the cleaner fit for
   generated schemas.
 - Binary size and compile-time impact versus SQLite bundled mode.
+
+## MDBX-01 - Dependency and Build Feasibility
+
+Status: passed on Windows after installing LLVM/libclang.
+
+Implemented:
+
+- Added an optional native Cargo feature named `mdbx`.
+- Added `libmdbx = 0.6.6` as an optional dependency behind that feature.
+- Added a small MDBX build probe that opens an MDBX database directory only
+  when the `mdbx` feature is enabled.
+- Kept SQLite as the default and only runtime backend.
+
+Validation:
+
+```powershell
+cargo test --manifest-path packages/cindel/native/Cargo.toml
+```
+
+Result: passed. The default native build remains SQLite-only.
+
+```powershell
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx mdbx
+```
+
+Initial result: blocked on Windows because `mdbx-sys` runs `bindgen`, and
+`bindgen` requires `libclang`. The local machine did not have `clang.dll` or
+`libclang.dll` available, and `LIBCLANG_PATH` was not set.
+
+Final Windows result after installing LLVM:
+
+```powershell
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx mdbx
+```
+
+Result: passed. `libmdbx` and `mdbx-sys` compile, and the probe opens an MDBX
+database directory.
+
+Next requirement before MDBX-02:
+
+- Keep LLVM/libclang available in every native build environment that enables
+  the `mdbx` feature.
+- Start MDBX-02 with a storage layout design and a minimal `StorageEngine`
+  implementation behind the same feature gate.
 
 ## Benchmark Baseline
 

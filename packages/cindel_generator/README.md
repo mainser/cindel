@@ -12,7 +12,7 @@ Repository: <https://github.com/mainser/Cindel>
 ```yaml
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.10-dev.1
+  cindel_generator: ^0.1.10-dev.2
 ```
 
 Run the generator with:
