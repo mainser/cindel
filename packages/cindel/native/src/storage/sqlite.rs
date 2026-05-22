@@ -1163,6 +1163,17 @@ mod tests {
     }
 
     #[test]
+    fn passes_the_shared_storage_transaction_contract() {
+        // Scenario: SQLite is the reference transaction implementation.
+        // Covers:
+        // - The shared [StorageEngine] explicit transaction contract.
+        // - Commit, rollback, read transaction write rejection, nested
+        //   transaction rejection, and id allocation rollback.
+        // Expected: SQLite keeps defining the behavior MDBX must match.
+        contract_tests::run_storage_transaction_contract("sqlite", SqliteStorage::open);
+    }
+
+    #[test]
     fn stores_reads_and_deletes_bytes_by_collection_and_id() {
         // Scenario: Bytes are written, read, and deleted in one collection.
         // Covers:

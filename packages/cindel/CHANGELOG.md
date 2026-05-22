@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.8 -->
+<!-- pub.dev prerelease: 0.1.17-dev.9 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -30,6 +30,12 @@
 - Brought MDBX storage parity up to the non-explicit-transaction contract,
   including schema versions, compatible migrations, unique index enforcement,
   batch rollback, ids, revisions, and indexed reads/writes.
+- Added MDBX explicit transaction integration through an internal write log
+  that commits staged writes inside one MDBX transaction without storing
+  self-referential transaction handles.
+- Added shared Rust transaction contract tests for SQLite and MDBX covering
+  commit, rollback, read transaction write rejection, nested transaction
+  rejection, and id allocation rollback.
 
 ## 0.1.16
 

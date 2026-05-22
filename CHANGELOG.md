@@ -38,6 +38,9 @@ while the core design settles.
 - Completed MDBX-06 storage parity for the non-explicit-transaction surface,
   including schema versions, compatible migrations, unique index enforcement,
   batch rollback, ids, revisions, and indexed reads/writes.
+- Added MDBX-07 explicit transaction integration using an internal write log
+  committed through one MDBX transaction, plus shared Rust transaction contract
+  tests for SQLite and MDBX.
 
 ## 0.1.16
 

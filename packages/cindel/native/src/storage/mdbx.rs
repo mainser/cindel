@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,7 +25,44 @@ const EMPTY_VALUE: &[u8] = &[];
 
 pub struct MdbxStorage {
     database: Database<NoWriteMap>,
+    active_transaction: Option<MdbxActiveTransaction>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
+}
+
+enum MdbxActiveTransaction {
+    Read,
+    Write(MdbxWriteTransaction),
+}
+
+#[derive(Default)]
+struct MdbxWriteTransaction {
+    operations: Vec<MdbxWriteOperation>,
+    next_ids: HashMap<String, u64>,
+}
+
+enum MdbxWriteOperation {
+    PutIndexed {
+        collection: String,
+        id: u64,
+        bytes: Vec<u8>,
+        indexes: Vec<IndexEntry>,
+    },
+    PutManyIndexed {
+        collection: String,
+        documents: Vec<DocumentWrite>,
+    },
+    Delete {
+        collection: String,
+        id: u64,
+    },
+    DeleteMany {
+        collection: String,
+        ids: Vec<u64>,
+    },
+    RegisterSchemas {
+        manifest: SchemaManifest,
+        mode: SchemaRegistrationMode,
+    },
 }
 
 impl MdbxStorage {
@@ -49,6 +86,7 @@ impl MdbxStorage {
 
         let storage = Self {
             database,
+            active_transaction: None,
             _temporary_directory: temporary_directory,
         };
         storage.initialize()?;
@@ -100,26 +138,199 @@ impl MdbxStorage {
         transaction.commit().map_err(|error| error.to_string())?;
         Ok(result)
     }
+
+    fn ensure_can_write(&self) -> Result<(), String> {
+        match self.active_transaction {
+            Some(MdbxActiveTransaction::Read) => {
+                Err("write attempted inside read transaction".into())
+            }
+            Some(MdbxActiveTransaction::Write(_)) | None => Ok(()),
+        }
+    }
+
+    fn active_write_mut(&mut self) -> Option<&mut MdbxWriteTransaction> {
+        match &mut self.active_transaction {
+            Some(MdbxActiveTransaction::Write(transaction)) => Some(transaction),
+            Some(MdbxActiveTransaction::Read) | None => None,
+        }
+    }
+
+    fn current_next_id(&self, collection: &str) -> Result<u64, String> {
+        self.with_read_transaction(|transaction, tables| {
+            transaction
+                .get::<Vec<u8>>(&tables.id_counters, &encode_collection_key(collection))
+                .map_err(|error| error.to_string())?
+                .map(|bytes| decode_u64(&bytes))
+                .transpose()
+                .map(|value| value.unwrap_or(1))
+        })
+    }
+
+    fn advance_staged_id_counter(
+        &mut self,
+        collection: &str,
+        id: u64,
+        fallback_next_id: Option<u64>,
+    ) -> Result<(), String> {
+        let Some(transaction) = self.active_write_mut() else {
+            return Ok(());
+        };
+        let next_id = id.saturating_add(1);
+        let current = match transaction.next_ids.get(collection).copied() {
+            Some(current) => current,
+            None => fallback_next_id.unwrap_or(1),
+        };
+        if current < next_id {
+            transaction.next_ids.insert(collection.to_string(), next_id);
+        } else {
+            transaction.next_ids.insert(collection.to_string(), current);
+        }
+        Ok(())
+    }
+
+    fn commit_staged_write(&self, staged: MdbxWriteTransaction) -> Result<(), String> {
+        self.with_write_transaction(|transaction, tables| {
+            for operation in staged.operations {
+                match operation {
+                    MdbxWriteOperation::PutIndexed {
+                        collection,
+                        id,
+                        bytes,
+                        indexes,
+                    } => {
+                        let unique_indexes = unique_index_names(transaction, &tables, &collection)?;
+                        put_document_with_indexes(
+                            transaction,
+                            &tables,
+                            &collection,
+                            id,
+                            &bytes,
+                            &indexes,
+                            &unique_indexes,
+                        )?;
+                        bump_collection_revision(transaction, &tables, &collection)?;
+                    }
+                    MdbxWriteOperation::PutManyIndexed {
+                        collection,
+                        documents,
+                    } => {
+                        let unique_indexes = unique_index_names(transaction, &tables, &collection)?;
+                        for document in &documents {
+                            put_document_with_indexes(
+                                transaction,
+                                &tables,
+                                &collection,
+                                document.id,
+                                &document.bytes,
+                                &document.indexes,
+                                &unique_indexes,
+                            )?;
+                        }
+                        if !documents.is_empty() {
+                            bump_collection_revision(transaction, &tables, &collection)?;
+                        }
+                    }
+                    MdbxWriteOperation::Delete { collection, id } => {
+                        let deleted = delete_document(transaction, &tables, &collection, id)?;
+                        if deleted {
+                            bump_collection_revision(transaction, &tables, &collection)?;
+                        }
+                    }
+                    MdbxWriteOperation::DeleteMany { collection, ids } => {
+                        let mut deleted_any = false;
+                        for id in ids {
+                            deleted_any |= delete_document(transaction, &tables, &collection, id)?;
+                        }
+                        if deleted_any {
+                            bump_collection_revision(transaction, &tables, &collection)?;
+                        }
+                    }
+                    MdbxWriteOperation::RegisterSchemas { manifest, mode } => {
+                        for collection in &manifest.collections {
+                            register_collection_schema(transaction, &tables, collection, mode)?;
+                        }
+                    }
+                }
+            }
+
+            for (collection, next_id) in staged.next_ids {
+                set_id_counter_at_least(transaction, &tables, &collection, next_id)?;
+            }
+            Ok(())
+        })
+    }
 }
 
 impl StorageEngine for MdbxStorage {
     fn begin_read_transaction(&mut self) -> Result<(), String> {
-        Err("MDBX explicit transactions are not implemented yet.".into())
+        if self.active_transaction.is_some() {
+            return Err("a transaction is already active".into());
+        }
+        self.active_transaction = Some(MdbxActiveTransaction::Read);
+        Ok(())
     }
 
     fn begin_write_transaction(&mut self) -> Result<(), String> {
-        Err("MDBX explicit transactions are not implemented yet.".into())
+        if self.active_transaction.is_some() {
+            return Err("a transaction is already active".into());
+        }
+        self.active_transaction =
+            Some(MdbxActiveTransaction::Write(MdbxWriteTransaction::default()));
+        Ok(())
     }
 
     fn commit_transaction(&mut self) -> Result<(), String> {
-        Err("MDBX explicit transactions are not implemented yet.".into())
+        let Some(active_transaction) = self.active_transaction.take() else {
+            return Err("no active transaction to commit".into());
+        };
+
+        match active_transaction {
+            MdbxActiveTransaction::Read => Ok(()),
+            MdbxActiveTransaction::Write(staged) => match self.commit_staged_write(staged) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.active_transaction =
+                        Some(MdbxActiveTransaction::Write(MdbxWriteTransaction::default()));
+                    Err(error)
+                }
+            },
+        }
     }
 
     fn rollback_transaction(&mut self) -> Result<(), String> {
-        Err("MDBX explicit transactions are not implemented yet.".into())
+        if self.active_transaction.is_none() {
+            return Err("no active transaction to rollback".into());
+        }
+        self.active_transaction = None;
+        Ok(())
     }
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        self.ensure_can_write()?;
+        if let Some(MdbxActiveTransaction::Write(transaction)) = &self.active_transaction {
+            if let Some(next_id) = transaction.next_ids.get(collection).copied() {
+                let following = next_id.checked_add(1).ok_or_else(|| {
+                    format!("id counter for collection `{collection}` overflowed")
+                })?;
+                self.active_write_mut()
+                    .expect("write transaction must still be active")
+                    .next_ids
+                    .insert(collection.to_string(), following);
+                return Ok(next_id);
+            }
+        }
+        if self.active_write_mut().is_some() {
+            let next_id = self.current_next_id(collection)?;
+            let following = next_id
+                .checked_add(1)
+                .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .next_ids
+                .insert(collection.to_string(), following);
+            return Ok(next_id);
+        }
+
         self.with_write_transaction(|transaction, tables| {
             let key = encode_collection_key(collection);
             let next_id = transaction
@@ -181,6 +392,22 @@ impl StorageEngine for MdbxStorage {
         bytes: &[u8],
         indexes: &[IndexEntry],
     ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            let fallback_next_id = self.current_next_id(collection)?;
+            self.advance_staged_id_counter(collection, id, Some(fallback_next_id))?;
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::PutIndexed {
+                    collection: collection.to_string(),
+                    id,
+                    bytes: bytes.to_vec(),
+                    indexes: indexes.to_vec(),
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             let unique_indexes = unique_index_names(transaction, &tables, collection)?;
             put_document_with_indexes(
@@ -201,6 +428,22 @@ impl StorageEngine for MdbxStorage {
         collection: &str,
         documents: &[DocumentWrite],
     ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            let fallback_next_id = self.current_next_id(collection)?;
+            for document in documents {
+                self.advance_staged_id_counter(collection, document.id, Some(fallback_next_id))?;
+            }
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::PutManyIndexed {
+                    collection: collection.to_string(),
+                    documents: documents.to_vec(),
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             let unique_indexes = unique_index_names(transaction, &tables, collection)?;
             for document in documents {
@@ -222,6 +465,18 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::Delete {
+                    collection: collection.to_string(),
+                    id,
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             let deleted = delete_document(transaction, &tables, collection, id)?;
             if deleted {
@@ -232,6 +487,18 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::DeleteMany {
+                    collection: collection.to_string(),
+                    ids: ids.to_vec(),
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             let mut deleted_any = false;
             for id in ids {
@@ -290,6 +557,18 @@ impl StorageEngine for MdbxStorage {
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
         validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::RegisterSchemas {
+                    manifest: manifest.clone(),
+                    mode: SchemaRegistrationMode::Compatible,
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             for collection in &manifest.collections {
                 register_collection_schema(
@@ -308,6 +587,18 @@ impl StorageEngine for MdbxStorage {
         manifest: &SchemaManifest,
     ) -> Result<(), String> {
         validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::RegisterSchemas {
+                    manifest: manifest.clone(),
+                    mode: SchemaRegistrationMode::ExplicitMigration,
+                });
+            return Ok(());
+        }
+
         self.with_write_transaction(|transaction, tables| {
             for collection in &manifest.collections {
                 register_collection_schema(
@@ -860,6 +1151,32 @@ fn advance_id_counter(
         .map_err(|error| error.to_string())
 }
 
+fn set_id_counter_at_least(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    next_id: u64,
+) -> Result<(), String> {
+    let key = encode_collection_key(collection);
+    let current = transaction
+        .get::<Vec<u8>>(&tables.id_counters, &key)
+        .map_err(|error| error.to_string())?
+        .map(|bytes| decode_u64(&bytes))
+        .transpose()?
+        .unwrap_or(1);
+    if current >= next_id {
+        return Ok(());
+    }
+    transaction
+        .put(
+            &tables.id_counters,
+            &key,
+            next_id.to_be_bytes(),
+            WriteFlags::UPSERT,
+        )
+        .map_err(|error| error.to_string())
+}
+
 fn decode_u64(bytes: &[u8]) -> Result<u64, String> {
     let bytes = bytes
         .try_into()
@@ -907,6 +1224,18 @@ mod tests {
         // Expected: MDBX matches SQLite for the non-explicit-transaction
         //   storage surface before MDBX-07.
         contract_tests::run_storage_engine_contract("mdbx", MdbxStorage::open);
+    }
+
+    #[test]
+    fn passes_the_shared_storage_transaction_contract() {
+        // Scenario: MDBX-07 integrates Cindel's explicit transaction model.
+        // Covers:
+        // - The shared [StorageEngine] explicit transaction contract.
+        // - Commit, rollback, read transaction write rejection, nested
+        //   transaction rejection, and id allocation rollback.
+        // Expected: MDBX matches SQLite's transaction behavior without storing
+        //   self-referential MDBX transaction handles.
+        contract_tests::run_storage_transaction_contract("mdbx", MdbxStorage::open);
     }
 
     #[test]

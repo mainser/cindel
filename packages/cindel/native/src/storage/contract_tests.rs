@@ -31,6 +31,20 @@ pub(super) fn run_storage_engine_contract<S>(
     bulk_deletes_documents_atomically_and_cleans_indexes(backend, &open);
 }
 
+pub(super) fn run_storage_transaction_contract<S>(
+    backend: &str,
+    open: impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    commits_explicit_write_transactions(backend, &open);
+    rolls_back_explicit_write_transactions(backend, &open);
+    rejects_writes_inside_read_transactions(backend, &open);
+    rejects_nested_explicit_transactions(backend, &open);
+    rolls_back_allocated_ids(backend, &open);
+    rolls_back_failed_write_transaction_commits(backend, &open);
+}
+
 fn stores_reads_and_deletes_bytes_by_collection_and_id<S>(
     backend: &str,
     open: &impl Fn(&str) -> Result<S, String>,
@@ -514,6 +528,164 @@ fn bulk_deletes_documents_atomically_and_cleans_indexes<S>(
         Vec::<u64>::new()
     );
     assert_eq!(storage.collection_revision("users").unwrap(), 2);
+}
+
+fn commits_explicit_write_transactions<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_commit");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.begin_write_transaction().unwrap();
+    storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+    storage
+        .put_indexed(
+            "users",
+            2,
+            br#"{"email":"ben@example.com"}"#,
+            &[index("email", IndexValue::String("ben@example.com".into()))],
+        )
+        .unwrap();
+    storage.commit_transaction().unwrap();
+
+    assert_eq!(storage.document_ids("users").unwrap(), vec![1, 2]);
+    assert_eq!(
+        storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("ben@example.com".into())
+            )
+            .unwrap(),
+        vec![2]
+    );
+    assert_eq!(storage.collection_revision("users").unwrap(), 2);
+}
+
+fn rolls_back_explicit_write_transactions<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_rollback");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.begin_write_transaction().unwrap();
+    storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+    storage
+        .put_indexed(
+            "users",
+            2,
+            br#"{"email":"ben@example.com"}"#,
+            &[index("email", IndexValue::String("ben@example.com".into()))],
+        )
+        .unwrap();
+    storage.rollback_transaction().unwrap();
+
+    assert_eq!(storage.document_ids("users").unwrap(), Vec::<u64>::new());
+    assert_eq!(
+        storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("ben@example.com".into())
+            )
+            .unwrap(),
+        Vec::<u64>::new()
+    );
+    assert_eq!(storage.collection_revision("users").unwrap(), 0);
+    assert_eq!(storage.allocate_id("users").unwrap(), 1);
+}
+
+fn rejects_writes_inside_read_transactions<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_read_write");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.begin_read_transaction().unwrap();
+    let result = storage.put("users", 1, br#"{"name":"Ana"}"#);
+    storage.rollback_transaction().unwrap();
+
+    assert!(result.unwrap_err().contains("read transaction"));
+    assert_eq!(storage.get("users", 1).unwrap(), None);
+}
+
+fn rejects_nested_explicit_transactions<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_nested");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.begin_write_transaction().unwrap();
+    let nested = storage.begin_read_transaction();
+    storage.rollback_transaction().unwrap();
+
+    assert!(nested.unwrap_err().contains("already active"));
+}
+
+fn rolls_back_allocated_ids<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_allocate_rollback");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.begin_write_transaction().unwrap();
+    assert_eq!(storage.allocate_id("users").unwrap(), 1);
+    assert_eq!(storage.allocate_id("users").unwrap(), 2);
+    storage.put("users", 10, br#"{"name":"Manual"}"#).unwrap();
+    storage.rollback_transaction().unwrap();
+
+    assert_eq!(storage.allocate_id("users").unwrap(), 1);
+}
+
+fn rolls_back_failed_write_transaction_commits<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "txn_failed_commit");
+    let mut storage = open(directory.path()).unwrap();
+    let mut email = field("email", "String", false, true);
+    email.is_index_unique = true;
+    storage
+        .register_schemas(&schema_manifest(vec![user_schema(vec![email])]))
+        .unwrap();
+
+    storage.begin_write_transaction().unwrap();
+    storage
+        .put_indexed(
+            "users",
+            1,
+            br#"{"email":"a@example.com"}"#,
+            &[index("email", IndexValue::String("a@example.com".into()))],
+        )
+        .unwrap();
+    let duplicate = storage.put_indexed(
+        "users",
+        2,
+        br#"{"email":"a@example.com"}"#,
+        &[index("email", IndexValue::String("a@example.com".into()))],
+    );
+    let result = if duplicate.is_ok() {
+        storage.commit_transaction()
+    } else {
+        duplicate
+    };
+    storage.rollback_transaction().unwrap();
+
+    assert!(result.unwrap_err().contains("Unique index `email`"));
+    assert_eq!(storage.document_ids("users").unwrap(), Vec::<u64>::new());
+    assert_eq!(storage.collection_revision("users").unwrap(), 0);
+    assert_eq!(storage.allocate_id("users").unwrap(), 1);
 }
 
 fn index(name: &str, value: IndexValue) -> IndexEntry {

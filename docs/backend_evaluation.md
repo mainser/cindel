@@ -284,7 +284,48 @@ Result:
 
 Remaining MDBX adoption gates:
 
-- Explicit read/write transaction integration belongs to MDBX-07.
+- Linux release-mode benchmark validation is still required before making MDBX
+  the default backend.
+
+## MDBX-07 Transaction Model Integration
+
+MDBX-07 adds explicit transaction support to `MdbxStorage` without storing
+self-referential MDBX transaction handles.
+
+Internal representation:
+
+- Read transactions use an active read marker to reject nested transactions and
+  writes.
+- Write transactions use an internal write log.
+- `commit_transaction` applies the staged operations inside one MDBX write
+  transaction.
+- `rollback_transaction` discards the staged operations.
+
+Validated transaction surface:
+
+- Explicit write transaction commit.
+- Explicit write transaction rollback.
+- Writes inside read transactions are rejected.
+- Nested transactions are rejected.
+- Id allocations inside rolled-back write transactions do not advance persisted
+  counters.
+- Staged writes, indexes, counters, and revisions are only persisted after a
+  successful commit.
+
+Validation command:
+
+```powershell
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+```
+
+Result:
+
+- `46 passed; 0 failed` on Windows with LLVM/libclang installed.
+
+Remaining MDBX adoption gates:
+
+- Dart-level MDBX transaction testing is blocked until MDBX-08 exposes backend
+  selection through FFI/Dart.
 - Linux release-mode benchmark validation is still required before making MDBX
   the default backend.
 
