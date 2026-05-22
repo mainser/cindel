@@ -433,6 +433,81 @@ Remaining MDBX adoption gates:
 - Linux release-mode benchmark validation is still required before making MDBX
   the default backend.
 
+## MDBX-10 Prebuilt Binary and Platform Packaging
+
+MDBX-10 rebuilds the consumer prebuilt binaries for the platforms currently
+available in this workspace: Windows and Android.
+
+Implemented:
+
+- Updated the Windows prebuilt script to build `cindel_native.dll` with the
+  native `mdbx` Cargo feature enabled.
+- Updated the Android prebuilt script to build `arm64-v8a`, `armeabi-v7a`, and
+  `x86_64` libraries with the native `mdbx` Cargo feature enabled.
+- Switched the Android script to a direct NDK clang/cargo build path so bindgen
+  and the linker receive explicit Android target, sysroot, and include paths on
+  Windows hosts.
+- Added a local `mdbx-sys` patch for Windows-hosted Android cross-compiles:
+  Android bindgen value layout is forced to libmdbx's `size_t`-based value
+  struct, host Windows system libraries are linked only for Windows targets,
+  and Android x86_64 disables builtin CPU detection that references
+  unavailable PIC symbols.
+- Regenerated the checked-in Windows and Android binaries in
+  `packages/cindel_flutter_libs`.
+
+Validation commands:
+
+```powershell
+.\tool\prebuilt\build_windows.ps1
+.\tool\prebuilt\build_android.ps1
+cargo test --manifest-path packages/cindel/native/Cargo.toml
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+dart analyze packages/cindel
+dart test packages/cindel -r expanded
+```
+
+MDBX Dart validation used the regenerated Windows prebuilt DLL:
+
+```powershell
+$env:CINDEL_NATIVE_LIBRARY = (Resolve-Path "packages\cindel_flutter_libs\windows\cindel_native.dll").Path
+$env:CINDEL_TEST_BACKEND = "mdbx"
+$env:CINDEL_TEST_MDBX = "1"
+dart test packages\cindel -r expanded
+```
+
+Consumer packaging validation:
+
+```powershell
+cd examples\cindel_todo
+flutter build windows --release
+flutter build apk --release
+```
+
+Results:
+
+- Windows prebuilt generation: succeeded.
+- Android prebuilt generation: succeeded for `arm64-v8a`, `armeabi-v7a`, and
+  `x86_64`.
+- Rust default: `40 passed; 0 failed`.
+- Rust with MDBX: `47 passed; 0 failed`.
+- Dart analyze: `No issues found`.
+- Dart package default: `79 passed; 2 skipped`.
+- Dart package with MDBX through the regenerated Windows prebuilt DLL:
+  `81 passed; 0 failed`.
+- Windows consumer build: produced
+  `examples/cindel_todo/build/windows/x64/runner/Release/cindel_todo.exe`.
+- Android consumer build: produced
+  `examples/cindel_todo/build/app/outputs/flutter-apk/app-release.apk`.
+- Linux, iOS, and macOS: not attempted in this stage because those build
+  machines are not available.
+
+Binary size deltas compared with the previous SQLite-only checked-in binaries:
+
+- Windows `cindel_native.dll`: `+358,912` bytes.
+- Android `arm64-v8a/libcindel_native.so`: `+367,048` bytes.
+- Android `armeabi-v7a/libcindel_native.so`: `+310,636` bytes.
+- Android `x86_64/libcindel_native.so`: `+398,776` bytes.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:
@@ -470,4 +545,6 @@ MDBX should only be added when it can satisfy all of these:
   atomically with document changes.
 - Windows native asset build remains reproducible.
 
-Until then, SQLite remains the default and only compiled backend.
+Until then, SQLite remains the default backend. MDBX is compiled into the
+current Windows and Android prebuilt binaries, but callers must opt into it
+explicitly.

@@ -2,7 +2,7 @@
 
 ## 0.1.10
 
-<!-- pub.dev prerelease: 0.1.10-dev.5 -->
+<!-- pub.dev prerelease: 0.1.10-dev.6 -->
 
 - Prepared the first pub.dev development preview.
 - Limited published Flutter plugin support to Android and Windows until Apple
@@ -14,6 +14,9 @@
   development preview.
 - Updated the package example to reference the MDBX-04 Cindel development
   preview.
+- Bundled Windows and Android native libraries built with MDBX support.
+- Updated the Windows and Android prebuilt build scripts to enable the native
+  `mdbx` Cargo feature.
 
 ## 0.1.9
 

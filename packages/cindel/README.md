@@ -13,8 +13,8 @@ Repository: <https://github.com/mainser/Cindel>
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.11
-  cindel_flutter_libs: ^0.1.10-dev.5
+  cindel: ^0.1.17-dev.12
+  cindel_flutter_libs: ^0.1.10-dev.6
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -61,8 +61,8 @@ final db = await Cindel.openInMemory(schemas: [UserSchema]);
 ```
 
 SQLite is the default storage backend. MDBX can be selected explicitly while
-backend adoption validation continues, but it requires a native library built
-with Cindel's native `mdbx` Cargo feature:
+backend adoption validation continues. The Android and Windows prebuilt
+libraries from `cindel_flutter_libs` include MDBX support:
 
 ```dart
 final db = await Cindel.open(

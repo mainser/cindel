@@ -46,6 +46,9 @@ while the core design settles.
 - Completed MDBX-09 full Dart behavior parity by running the package suite
   against MDBX and fixing staged transaction reads plus multi-handle MDBX
   environment reuse.
+- Completed MDBX-10 packaging for Windows and Android by regenerating prebuilt
+  native libraries with MDBX support and documenting the remaining Linux and
+  Apple validation gap.
 
 ## 0.1.16
 

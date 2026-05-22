@@ -9,8 +9,19 @@ $targetDir = if ($env:CARGO_TARGET_DIR) {
   Join-Path $nativeDir 'target'
 }
 
+if (-not $env:LIBCLANG_PATH) {
+  $defaultLibclangPath = 'C:\Program Files\LLVM\bin'
+  if (Test-Path (Join-Path $defaultLibclangPath 'libclang.dll')) {
+    $env:LIBCLANG_PATH = $defaultLibclangPath
+  }
+}
+
 Set-Location $repoRoot
-cargo build --release --manifest-path (Join-Path $nativeDir 'Cargo.toml') --target x86_64-pc-windows-msvc
+cargo build `
+  --release `
+  --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
+  --target x86_64-pc-windows-msvc `
+  --features mdbx
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 Copy-Item `

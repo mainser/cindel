@@ -276,8 +276,6 @@ dependencies = [
 [[package]]
 name = "mdbx-sys"
 version = "13.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4002b9ffed3dd01364ab005bca653a99b8f550ca4cd755470a9d3a31a44f466"
 dependencies = [
  "bindgen",
  "cc",

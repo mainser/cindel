@@ -6,6 +6,10 @@ This package does not expose a Dart API. It only makes Flutter bundle the
 correct Cindel native library for each supported platform so application
 developers do not need Rust or Cargo installed locally.
 
+The current Android and Windows binaries include the SQLite and MDBX storage
+backends. SQLite remains Cindel's default backend, and MDBX can be selected
+explicitly from the `cindel` package while adoption validation continues.
+
 Maintainer: Alain Ramirez <nolbertrg@gmail.com>
 
 Repository: <https://github.com/mainser/Cindel>

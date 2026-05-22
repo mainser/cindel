@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.11 -->
+<!-- pub.dev prerelease: 0.1.17-dev.12 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -43,6 +43,8 @@
   run against SQLite or MDBX.
 - Added MDBX read-your-writes parity for staged write transactions and shared
   same-directory MDBX environments across multiple Dart database handles.
+- Updated package installation snippets for the MDBX-enabled Android and
+  Windows prebuilt binaries.
 
 ## 0.1.16
 

@@ -27,7 +27,8 @@ The API is still experimental and can change before a public release.
 
 - Flutter-first Dart API.
 - Rust native core hidden behind Dart FFI.
-- SQLite storage backend for the MVP.
+- SQLite default storage backend with MDBX available as an explicit backend
+  option.
 - Generated collection schemas and serializers.
 - Generated conversion for `DateTime`, `Duration`, primitive lists, nullable
   fields, enum strategies, and ignored transient fields.
@@ -50,7 +51,7 @@ The API is still experimental and can change before a public release.
   dry-run diagnostics.
 - Prebuilt native library package for Flutter consumers.
 - Benchmark baseline for backend evaluation.
-- Future backend candidate: `libmdbx`.
+- MDBX backend adoption path in progress.
 
 ## Packages
 
@@ -72,8 +73,8 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.11
-  cindel_flutter_libs: ^0.1.10-dev.5
+  cindel: ^0.1.17-dev.12
+  cindel_flutter_libs: ^0.1.10-dev.6
 
 dev_dependencies:
   build_runner: ^2.15.0
