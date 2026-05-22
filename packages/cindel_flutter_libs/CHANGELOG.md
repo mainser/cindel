@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10-dev.1 - 2026-05-22
+
+- Prepared the first pub.dev development preview.
+- Limited published Flutter plugin support to Android and Windows until Apple
+  and Linux binaries are generated and validated.
+
 ## 0.1.9 - 2026-05-21
 
 - Added pub.dev-oriented package metadata and maintainer information.

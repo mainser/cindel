@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6-dev.1 - 2026-05-22
+
+- Prepared the first pub.dev development preview.
+
 ## 0.1.5 - 2026-05-21
 
 - Added pub.dev-oriented package metadata and documentation.

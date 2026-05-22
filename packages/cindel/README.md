@@ -13,12 +13,12 @@ Repository: <https://github.com/mainser/Cindel>
 
 ```yaml
 dependencies:
-  cindel: ^0.1.15
-  cindel_flutter_libs: ^0.1.9
+  cindel: ^0.1.17-dev.1
+  cindel_flutter_libs: ^0.1.10-dev.1
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.9
+  cindel_generator: ^0.1.10-dev.1
 ```
 
 Define a collection:
@@ -72,8 +72,16 @@ final db = await Cindel.openInMemory(schemas: [UserSchema]);
 - Embedded objects and embedded object lists.
 - Schema versions, additive migrations, and explicit migration callbacks.
 
+## Supported Platforms
+
+The current development preview ships prebuilt native binaries for Android and
+Windows through `cindel_flutter_libs`.
+
+iOS, macOS, and Linux support are planned, but they are not advertised as
+available until their native binaries are generated and validated.
+
 ## Publishing Status
 
-Cindel is still pre-1.0.0. The package keeps `publish_to: none` until the first
-pub.dev release is intentionally prepared with hosted dependencies and a clean
-`dart pub publish --dry-run`.
+Cindel is still pre-1.0.0. The `-dev.1` release line is intended as a pub.dev
+development preview so early users can test installation, generation, and
+runtime behavior before a stable preview is promoted.

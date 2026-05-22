@@ -24,5 +24,5 @@ schema metadata without pulling in the native runtime.
 
 ## Publishing Status
 
-This package is still pre-1.0.0 and keeps `publish_to: none` until the first
-coordinated Cindel pub.dev release.
+This package is still pre-1.0.0. The `-dev.1` release line is intended as the
+first coordinated Cindel pub.dev development preview.

@@ -54,7 +54,15 @@ jobs:
       - name: Check Dart formatting
         run: dart format --output=none --set-exit-if-changed .
 
-      - name: Analyze Dart and Flutter packages
+      - name: Analyze publishable packages
+        run: flutter analyze packages/cindel packages/cindel_annotations packages/cindel_generator packages/cindel_flutter_libs
+
+      - name: Install Todo example dependencies
+        working-directory: examples/cindel_todo
+        run: flutter pub get
+
+      - name: Analyze Todo example
+        working-directory: examples/cindel_todo
         run: flutter analyze
 
   native-tests:

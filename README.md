@@ -21,7 +21,7 @@ The API is still experimental and can change before a public release.
 
 | Platform | Android | iOS | Web | Linux | Windows | macOS |
 | --- | --- | --- | --- | --- | --- | --- |
-| Status | Yes | Yes | No | No | Yes | No |
+| Status | Yes | Planned | No | Planned | Yes | Planned |
 
 ## Features
 
@@ -72,12 +72,12 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.15
-  cindel_flutter_libs: ^0.1.9
+  cindel: ^0.1.17-dev.1
+  cindel_flutter_libs: ^0.1.10-dev.1
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.1.9
+  cindel_generator: ^0.1.10-dev.1
 ```
 
 For workspace development, use the local path packages instead:
@@ -96,8 +96,8 @@ dev_dependencies:
 ```
 
 `cindel_flutter_libs` is the Flutter-only binary package. App developers should
-depend on it so Android, iOS, and desktop builds can use bundled native
-libraries without compiling Rust locally. Cindel maintainers can still build the
+depend on it so Android and Windows builds can use bundled native libraries
+without compiling Rust locally. Cindel maintainers can still build the
 native asset directly with the `hooks.user_defines.cindel.build_native_assets`
 flag in the workspace `pubspec.yaml` when they need to validate the native
 assets path.
