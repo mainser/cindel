@@ -25,6 +25,10 @@ while the core design settles.
   publishable packages.
 - Added library-level documentation comments to public package entrypoints for
   dartdoc/pub.dev analysis.
+- Added the MDBX-03 key encoding spike for deterministic MDBX document,
+  index, unique index, and range-bound keys.
+- Updated Cindel Flutter libs example constraints for the current development
+  preview.
 
 ## 0.1.16
 

@@ -1,5 +1,6 @@
 #[cfg(feature = "mdbx")]
 mod mdbx;
+mod mdbx_key;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};

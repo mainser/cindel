@@ -90,6 +90,42 @@ Next requirement before MDBX-02:
 - Start MDBX-02 with a storage layout design and a minimal `StorageEngine`
   implementation behind the same feature gate.
 
+## MDBX-03 Key Layout Spike
+
+The MDBX key layout spike is implemented as pure Rust key encoding under the
+native storage module. It does not open MDBX and does not change the default
+SQLite backend.
+
+Planned MDBX tables:
+
+- `documents`: `(collection, document_id)` -> raw document bytes.
+- `indexes`: `(collection, index_name, encoded_index_value, document_id)` ->
+  empty bytes.
+- `unique_indexes`: `(collection, index_name, encoded_index_value)` ->
+  document id bytes.
+- `id_counters`: `collection` -> next id.
+- `collection_revisions`: `collection` -> revision.
+- `schema_collections`: `collection` -> schema metadata JSON.
+- `schema_migrations`: append-only migration records.
+
+The key spike proves:
+
+- Signed integers sort lexicographically in numeric order by flipping the sign
+  bit before big-endian encoding.
+- Finite doubles sort lexicographically in numeric order by using sortable IEEE
+  754 bytes. Non-finite doubles remain rejected, matching the current SQLite
+  path.
+- String segments preserve UTF-8 lexicographic ordering and escape NUL bytes so
+  compound key boundaries remain unambiguous.
+- Index value kind tags keep bool, int, double, and string values from
+  colliding.
+- Equality prefixes and inclusive range boundaries can support
+  `query_index_equal` and `query_index_range`.
+
+String case-insensitive and word-index normalization remains in the existing
+Dart index-entry path, so MDBX will receive the same normalized `IndexValue`
+entries SQLite receives today.
+
 ## Benchmark Baseline
 
 The phase 8 baseline benchmark is implemented as an internal Rust binary:

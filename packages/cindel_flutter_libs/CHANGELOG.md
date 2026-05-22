@@ -2,7 +2,7 @@
 
 ## 0.1.10
 
-<!-- pub.dev prerelease: 0.1.10-dev.3 -->
+<!-- pub.dev prerelease: 0.1.10-dev.4 -->
 
 - Prepared the first pub.dev development preview.
 - Limited published Flutter plugin support to Android and Windows until Apple
@@ -10,6 +10,8 @@
 - Removed dates from changelog headings so pub.dev renders version labels cleanly.
 - Added a package example page for pub.dev.
 - Added a library-level documentation comment for dartdoc/pub.dev analysis.
+- Updated the package example dependency constraints for the current Cindel
+  development preview.
 
 ## 0.1.9
 
