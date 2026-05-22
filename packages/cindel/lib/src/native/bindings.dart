@@ -14,9 +14,22 @@ final class CindelNativeBindings {
 
   int get abiVersion => _functions.abiVersion();
 
-  Pointer<Void> open(String directory) {
+  Pointer<Void> open(String directory, {int backend = 0}) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
-      return _functions.open(directoryPointer, directoryLength);
+      if (backend == 0) {
+        return _functions.open(directoryPointer, directoryLength);
+      }
+      try {
+        return _functions.openWithBackend(
+          directoryPointer,
+          directoryLength,
+          backend,
+        );
+      } on ArgumentError {
+        return nullptr;
+      } on OSError {
+        return nullptr;
+      }
     });
   }
 
@@ -392,6 +405,12 @@ abstract interface class _CindelNativeFunctions {
   int Function() get abiVersion;
 
   Pointer<Void> Function(Pointer<Uint8>, int) get open;
+
+  Pointer<Void> openWithBackend(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+  );
 
   void Function(Pointer<Void>) get close;
 
@@ -773,13 +792,31 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
             void Function(Pointer<Uint8>, int)
-          >('cindel_free_buffer');
+          >('cindel_free_buffer'),
+      _library = library;
 
   @override
   final int Function() abiVersion;
 
   @override
   final Pointer<Void> Function(Pointer<Uint8>, int) open;
+
+  final DynamicLibrary _library;
+
+  late final Pointer<Void> Function(Pointer<Uint8>, int, int) _openWithBackend =
+      _library.lookupFunction<
+        Pointer<Void> Function(Pointer<Uint8>, Size, Uint32),
+        Pointer<Void> Function(Pointer<Uint8>, int, int)
+      >('cindel_open_with_backend');
+
+  @override
+  Pointer<Void> openWithBackend(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+  ) {
+    return _openWithBackend(directory, length, backend);
+  }
 
   @override
   final void Function(Pointer<Void>) close;
@@ -926,6 +963,15 @@ final class _NativeAssetCindelNativeFunctions
 
   @override
   Pointer<Void> Function(Pointer<Uint8>, int) get open => _cindelOpen;
+
+  @override
+  Pointer<Void> openWithBackend(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+  ) {
+    return _cindelOpenWithBackend(directory, length, backend);
+  }
 
   @override
   void Function(Pointer<Void>) get close => _cindelClose;
@@ -1139,6 +1185,16 @@ external int _cindelAbiVersion();
   assetId: _assetId,
 )
 external Pointer<Void> _cindelOpen(Pointer<Uint8> directory, int directoryLen);
+
+@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Uint32)>(
+  symbol: 'cindel_open_with_backend',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelOpenWithBackend(
+  Pointer<Uint8> directory,
+  int directoryLen,
+  int backend,
+);
 
 @Native<Void Function(Pointer<Void>)>(
   symbol: 'cindel_close',

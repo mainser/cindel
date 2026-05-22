@@ -322,10 +322,65 @@ Result:
 
 - `46 passed; 0 failed` on Windows with LLVM/libclang installed.
 
+Next step:
+
+- MDBX-08 exposes backend selection so Dart-level MDBX tests can run through
+  the public API.
+
+## MDBX-08 FFI and Dart Backend Option
+
+MDBX-08 exposes backend selection through the public Dart API while keeping
+SQLite as the default.
+
+Public API:
+
+- `CindelStorageBackend.sqlite`
+- `CindelStorageBackend.mdbx`
+- `backend:` on `Cindel.open`
+- `backend:` on `Cindel.openInMemory`
+- `backend:` on `CindelDatabase.open`
+- `backend:` on `CindelDatabase.openInMemory`
+
+FFI:
+
+- Existing `cindel_open` remains the SQLite/default open path.
+- Added `cindel_open_with_backend(directory, len, backend)`.
+- Backend ids:
+  - `0 = sqlite`
+  - `1 = mdbx`
+- Unsupported or unavailable backends return a null handle and surface as a
+  Dart `StateError`.
+
+Validation commands:
+
+```powershell
+cargo test --manifest-path packages/cindel/native/Cargo.toml
+cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+cargo build --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+dart analyze packages/cindel
+dart test packages/cindel
+```
+
+MDBX-specific Dart validation used a locally built native library:
+
+```powershell
+$env:CINDEL_NATIVE_LIBRARY = (Resolve-Path "$env:TEMP\cindel_cargo_target_codex\debug\cindel_native.dll").Path
+$env:CINDEL_TEST_MDBX = "1"
+dart test packages\cindel\test\native_bindings_test.dart packages\cindel\test\transactions_test.dart -r expanded
+```
+
+Results:
+
+- Rust default: `40 passed; 0 failed`.
+- Rust with MDBX: `46 passed; 0 failed`.
+- Dart analyze: `No issues found`.
+- Dart package default: `78 passed; 2 skipped`.
+- Dart MDBX targeted: `25 passed; 0 failed`.
+
 Remaining MDBX adoption gates:
 
-- Dart-level MDBX transaction testing is blocked until MDBX-08 exposes backend
-  selection through FFI/Dart.
+- Full Dart behavior parity across the broader feature matrix belongs to
+  MDBX-09.
 - Linux release-mode benchmark validation is still required before making MDBX
   the default backend.
 

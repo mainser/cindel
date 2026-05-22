@@ -46,6 +46,56 @@ void main() {
       await expectLater(database.get('users', 1), throwsA(isA<StateError>()));
     });
 
+    // Scenario: A caller explicitly selects the stable SQLite backend.
+    // Covers:
+    // - [Cindel.open] backend option.
+    // - Default-compatible FFI open path for SQLite.
+    // Expected: Explicit SQLite behaves like the default backend.
+    test('opens with an explicit SQLite backend.', () async {
+      // Arrange.
+      final database = await Cindel.openInMemory(
+        backend: CindelStorageBackend.sqlite,
+      );
+      addTearDown(database.close);
+
+      // Act.
+      await database.put('users', 1, {'name': 'Ana'});
+      final storedUser = await database.get('users', 1);
+
+      // Assert.
+      expect(database.backend, CindelStorageBackend.sqlite);
+      expect(storedUser, {'name': 'Ana'});
+    });
+
+    // Scenario: MDBX is selected explicitly for an in-memory test database.
+    // Covers:
+    // - [Cindel.openInMemory] backend option.
+    // - `cindel_open_with_backend` FFI routing.
+    // - Basic read/write behavior through MDBX.
+    // Expected: MDBX works when the loaded native library was built with the
+    //   native `mdbx` Cargo feature.
+    test(
+      'opens with an explicit MDBX backend.',
+      () async {
+        // Arrange.
+        final database = await Cindel.openInMemory(
+          backend: CindelStorageBackend.mdbx,
+        );
+        addTearDown(database.close);
+
+        // Act.
+        await database.put('users', 1, {'name': 'Ana'});
+        final storedUser = await database.get('users', 1);
+
+        // Assert.
+        expect(database.backend, CindelStorageBackend.mdbx);
+        expect(storedUser, {'name': 'Ana'});
+      },
+      skip: !_runMdbxBackendTests
+          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
+          : false,
+    );
+
     // Scenario: A document is written, read, and deleted from SQLite storage.
     // Covers:
     // - [CindelDatabase.put] serializing Dart maps into native bytes.
@@ -367,4 +417,8 @@ void main() {
 /// Creates an isolated directory for tests that open a [Cindel] database.
 Future<Directory> _createDatabaseDirectory() {
   return Directory.systemTemp.createTemp('cindel_');
+}
+
+bool get _runMdbxBackendTests {
+  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }

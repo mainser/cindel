@@ -4,7 +4,7 @@ Add Cindel, the Flutter native libraries package, and the generator to your app:
 
 ```yaml
 dependencies:
-  cindel: ^0.1.17-dev.7
+  cindel: ^0.1.17-dev.10
   cindel_flutter_libs: ^0.1.10-dev.5
 
 dev_dependencies:

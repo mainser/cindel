@@ -1,5 +1,5 @@
 use crate::engine::CindelEngine;
-use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest};
+use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackendKind};
 
 use serde::Deserialize;
 
@@ -18,6 +18,25 @@ pub unsafe extern "C" fn cindel_open(
     };
 
     match CindelEngine::open(directory) {
+        Ok(engine) => Box::into_raw(Box::new(engine)),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_open_with_backend(
+    directory_ptr: *const u8,
+    directory_len: usize,
+    backend: u32,
+) -> *mut CindelEngine {
+    let Some(directory) = read_str(directory_ptr, directory_len) else {
+        return std::ptr::null_mut();
+    };
+    let Some(backend) = decode_backend(backend) else {
+        return std::ptr::null_mut();
+    };
+
+    match CindelEngine::open_with_backend(directory, backend) {
         Ok(engine) => Box::into_raw(Box::new(engine)),
         Err(_) => std::ptr::null_mut(),
     }
@@ -522,6 +541,15 @@ pub unsafe extern "C" fn cindel_free_buffer(ptr: *mut u8, len: usize) {
 
 unsafe fn read_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     std::str::from_utf8(read_bytes(ptr, len)?).ok()
+}
+
+fn decode_backend(value: u32) -> Option<StorageBackendKind> {
+    match value {
+        0 => Some(StorageBackendKind::Sqlite),
+        #[cfg(feature = "mdbx")]
+        1 => Some(StorageBackendKind::Mdbx),
+        _ => None,
+    }
 }
 
 unsafe fn read_bytes<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {

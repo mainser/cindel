@@ -18,6 +18,24 @@ const _inMemoryDirectory = ':memory:';
 
 enum _TransactionMode { read, write }
 
+/// Native storage backend used by a Cindel database.
+enum CindelStorageBackend {
+  /// SQLite is the stable default backend.
+  sqlite,
+
+  /// MDBX is experimental while backend adoption validation continues.
+  mdbx,
+}
+
+extension on CindelStorageBackend {
+  int get _nativeId {
+    return switch (this) {
+      CindelStorageBackend.sqlite => 0,
+      CindelStorageBackend.mdbx => 1,
+    };
+  }
+}
+
 /// Default polling interval used by Cindel watchers.
 const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 
@@ -28,12 +46,17 @@ class CindelDatabase {
     required CindelNativeBindings bindings,
     required Pointer<Void> handle,
     required Map<String, CindelCollectionSchema<dynamic>> schemas,
+    required this.backend,
   }) : _bindings = bindings,
        _handle = handle,
        _schemas = schemas;
 
   /// The directory where the database files are stored.
   final String directory;
+
+  /// The native storage backend selected for this database handle.
+  final CindelStorageBackend backend;
+
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
@@ -49,12 +72,14 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) async {
     _checkDirectory(directory);
     return _openUnchecked(
       directory: directory,
       schemas: schemas,
       migration: migration,
+      backend: backend,
     );
   }
 
@@ -64,11 +89,13 @@ class CindelDatabase {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) {
     return _openUnchecked(
       directory: _inMemoryDirectory,
       schemas: schemas,
       migration: migration,
+      backend: backend,
     );
   }
 
@@ -79,7 +106,11 @@ class CindelDatabase {
     required CindelMigrationCallback migration,
   }) async {
     _checkDirectory(directory);
-    final database = await _openRaw(directory: directory, schemas: schemas);
+    final database = await _openRaw(
+      directory: directory,
+      schemas: schemas,
+      backend: CindelStorageBackend.sqlite,
+    );
     try {
       final context = await database._createMigrationContext(
         schemas,
@@ -96,8 +127,13 @@ class CindelDatabase {
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
     required CindelMigrationCallback? migration,
+    required CindelStorageBackend backend,
   }) async {
-    final database = await _openRaw(directory: directory, schemas: schemas);
+    final database = await _openRaw(
+      directory: directory,
+      schemas: schemas,
+      backend: backend,
+    );
     final schemasByCollection = database._schemas;
     final schemaManifest = schemasByCollection.isEmpty
         ? null
@@ -131,16 +167,20 @@ class CindelDatabase {
   static Future<CindelDatabase> _openRaw({
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
+    required CindelStorageBackend backend,
   }) async {
     final schemasByCollection = _schemasByCollection(schemas);
 
     final bindings = CindelNativeBindings();
-    final handle = bindings.open(directory);
+    final handle = bindings.open(directory, backend: backend._nativeId);
     if (handle == nullptr) {
-      throw StateError('Failed to open Cindel native engine.');
+      throw StateError(
+        'Failed to open Cindel native engine with backend `${backend.name}`.',
+      );
     }
     return CindelDatabase._(
       directory: directory,
+      backend: backend,
       bindings: bindings,
       handle: handle,
       schemas: schemasByCollection,
@@ -751,11 +791,7 @@ class CindelDatabase {
     String collection,
     List<int> ids,
   ) async {
-    final documents = _documentsByIdsNullable(
-      _checkOpen(),
-      collection,
-      ids,
-    );
+    final documents = _documentsByIdsNullable(_checkOpen(), collection, ids);
     return [
       for (final document in documents)
         if (document != null) document,

@@ -13,11 +13,13 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) {
     return CindelDatabase.open(
       directory: directory,
       schemas: schemas,
       migration: migration,
+      backend: backend,
     );
   }
 
@@ -28,8 +30,13 @@ abstract final class Cindel {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelMigrationCallback? migration,
+    CindelStorageBackend backend = CindelStorageBackend.sqlite,
   }) {
-    return CindelDatabase.openInMemory(schemas: schemas, migration: migration);
+    return CindelDatabase.openInMemory(
+      schemas: schemas,
+      migration: migration,
+      backend: backend,
+    );
   }
 
   /// Runs [migration] in dry-run mode against an existing database.

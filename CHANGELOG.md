@@ -41,6 +41,8 @@ while the core design settles.
 - Added MDBX-07 explicit transaction integration using an internal write log
   committed through one MDBX transaction, plus shared Rust transaction contract
   tests for SQLite and MDBX.
+- Added the MDBX-08 public Dart backend option and FFI backend selector while
+  keeping SQLite as the default backend.
 
 ## 0.1.16
 

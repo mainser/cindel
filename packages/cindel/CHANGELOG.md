@@ -2,7 +2,7 @@
 
 ## 0.1.17
 
-<!-- pub.dev prerelease: 0.1.17-dev.9 -->
+<!-- pub.dev prerelease: 0.1.17-dev.10 -->
 
 - Prepared the first pub.dev development preview.
 - Switched Cindel package dependencies from local paths to hosted development
@@ -36,6 +36,9 @@
 - Added shared Rust transaction contract tests for SQLite and MDBX covering
   commit, rollback, read transaction write rejection, nested transaction
   rejection, and id allocation rollback.
+- Added the public `CindelStorageBackend` option and FFI backend selector so
+  callers can explicitly choose SQLite or MDBX while SQLite remains the
+  default backend.
 
 ## 0.1.16
 

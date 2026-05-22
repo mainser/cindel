@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
@@ -196,6 +197,54 @@ void main() {
       expect(events.single, isEmpty);
       expect(await database.get('users', 1), isNull);
     });
+
+    // Scenario: MDBX is selected explicitly and used through public
+    // transaction wrappers.
+    // Covers:
+    // - [CindelStorageBackend.mdbx] through FFI.
+    // - [CindelDatabase.writeTxn] commit and rollback on MDBX.
+    // - Native id counter rollback through the selected backend.
+    // Expected: MDBX matches the public transaction behavior currently
+    //   provided by SQLite.
+    test(
+      'supports transactions with an explicit MDBX backend.',
+      () async {
+        // Arrange.
+        final database = await Cindel.openInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.mdbx,
+        );
+        addTearDown(database.close);
+
+        // Act.
+        await database.writeTxn<void>(() async {
+          await database.put('users', 1, {'name': 'Ana'});
+        });
+        await expectLater(
+          database.writeTxn<void>(() async {
+            await database.users.put(
+              User()
+                ..name = 'Ben'
+                ..email = 'ben@example.com',
+            );
+            throw StateError('stop');
+          }),
+          throwsA(isA<StateError>()),
+        );
+        final savedUser = User()
+          ..name = 'Cid'
+          ..email = 'cid@example.com';
+        await database.users.put(savedUser);
+
+        // Assert.
+        expect(await database.get('users', 1), {'name': 'Ana'});
+        expect(savedUser.id, 2);
+        expect(await database.users.get(savedUser.id), isNotNull);
+      },
+      skip: !_runMdbxBackendTests
+          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
+          : false,
+    );
   });
 }
 
@@ -210,4 +259,8 @@ Future<void> _waitUntil(
     }
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
+}
+
+bool get _runMdbxBackendTests {
+  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }
