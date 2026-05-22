@@ -21,15 +21,19 @@ part 'todos_di.g.dart';
 @riverpod
 Future<CindelDatabase> todoDatabase(Ref ref) async {
   final supportDirectory = await _applicationSupportDirectory();
-  final databaseDirectory = Directory(
-    '${supportDirectory.path}${Platform.pathSeparator}cindel_todo',
-  );
+  final databaseDirectory = cindelTodoDatabaseDirectory(supportDirectory);
   final database = await Cindel.open(
     directory: databaseDirectory.path,
     schemas: [TodoModelSchema],
   );
   ref.onDispose(database.close);
   return database;
+}
+
+Directory cindelTodoDatabaseDirectory(Directory supportDirectory) {
+  return Directory(
+    '${supportDirectory.path}${Platform.pathSeparator}cindel_todo',
+  );
 }
 
 @riverpod
@@ -87,8 +91,5 @@ Future<Directory> _applicationSupportDirectory() async {
   if (appDataPath == null || appDataPath.trim().isEmpty) {
     throw StateError('Windows application data directory is unavailable.');
   }
-  return Directory(
-    '$appDataPath${Platform.pathSeparator}Cindel${Platform.pathSeparator}'
-    'cindel_todo',
-  );
+  return Directory('$appDataPath${Platform.pathSeparator}Cindel');
 }
