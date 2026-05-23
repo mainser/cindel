@@ -18,9 +18,8 @@ use crate::native_filter::NativeFilter;
 
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
-    encode_index_key, encode_index_range, encode_unique_index_key, COLLECTION_REVISIONS_TABLE,
-    DOCUMENTS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE, STORAGE_METADATA_TABLE,
-    UNIQUE_INDEXES_TABLE,
+    encode_index_range, COLLECTION_REVISIONS_TABLE, SCHEMA_COLLECTIONS_TABLE,
+    STORAGE_METADATA_TABLE,
 };
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
@@ -29,7 +28,7 @@ use super::{
 use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
-const EMPTY_VALUE: &[u8] = &[];
+const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
 
 pub struct MdbxStorage {
     state: SharedMdbxState,
@@ -176,10 +175,10 @@ impl MdbxWriteTransaction {
         &self,
         collection: &str,
         index: &str,
-        mut base_entries: Vec<(Vec<u8>, u64)>,
-        staged_key: impl Fn(&IndexEntry, u64) -> Result<Option<Vec<u8>>, String>,
+        mut base_ids: Vec<u64>,
+        staged_matches: impl Fn(&IndexEntry) -> Result<bool, String>,
     ) -> Result<Vec<u64>, String> {
-        let mut changes = HashMap::<u64, Option<Vec<u8>>>::new();
+        let mut changes = HashMap::<u64, bool>::new();
         for operation in &self.operations {
             match operation {
                 MdbxWriteOperation::PutIndexed {
@@ -188,7 +187,7 @@ impl MdbxWriteTransaction {
                     indexes,
                     ..
                 } if operation_collection == collection => {
-                    changes.insert(*id, staged_index_key(indexes, index, *id, &staged_key)?);
+                    changes.insert(*id, staged_index_match(indexes, index, &staged_matches)?);
                 }
                 MdbxWriteOperation::PutManyIndexed {
                     collection: operation_collection,
@@ -197,7 +196,7 @@ impl MdbxWriteTransaction {
                     for document in documents {
                         changes.insert(
                             document.id,
-                            staged_index_key(&document.indexes, index, document.id, &staged_key)?,
+                            staged_index_match(&document.indexes, index, &staged_matches)?,
                         );
                     }
                 }
@@ -205,14 +204,14 @@ impl MdbxWriteTransaction {
                     collection: operation_collection,
                     id,
                 } if operation_collection == collection => {
-                    changes.insert(*id, None);
+                    changes.insert(*id, false);
                 }
                 MdbxWriteOperation::DeleteMany {
                     collection: operation_collection,
                     ids,
                 } if operation_collection == collection => {
                     for id in ids {
-                        changes.insert(*id, None);
+                        changes.insert(*id, false);
                     }
                 }
                 MdbxWriteOperation::RegisterSchemas { .. }
@@ -223,20 +222,17 @@ impl MdbxWriteTransaction {
             }
         }
         if changes.is_empty() {
-            return Ok(base_entries
-                .into_iter()
-                .map(|(_, id)| id)
-                .collect::<Vec<_>>());
+            return Ok(base_ids);
         }
 
-        base_entries.retain(|(_, id)| !changes.contains_key(id));
-        for (id, key) in changes {
-            if let Some(key) = key {
-                base_entries.push((key, id));
+        base_ids.retain(|id| !changes.contains_key(id));
+        for (id, matches) in changes {
+            if matches {
+                base_ids.push(id);
             }
         }
-        base_entries.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(base_entries.into_iter().map(|(_, id)| id).collect())
+        base_ids.sort_unstable();
+        Ok(base_ids)
     }
 }
 
@@ -273,7 +269,7 @@ impl MdbxStorage {
         ensure_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV1,
+            StorageLayoutVersion::MdbxV2,
             DocumentFormatVersion::BinaryV1,
         )?;
         transaction
@@ -404,12 +400,13 @@ impl MdbxStorage {
 
     fn next_id_from_documents(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
-            let prefix = encode_collection_key(collection);
-            Ok(
-                max_id_by_key_range(transaction, &tables.documents, &prefix, None)?
-                    .and_then(|id| id.checked_add(1))
-                    .unwrap_or(1),
-            )
+            let _ = tables;
+            let Ok(documents) = open_documents_table(transaction, collection) else {
+                return Ok(1);
+            };
+            Ok(max_document_id(transaction, &documents)?
+                .and_then(|id| id.checked_add(1))
+                .unwrap_or(1))
         })
     }
 
@@ -530,7 +527,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
         Database::<NoWriteMap>::open_with_options(
             path,
             DatabaseOptions {
-                max_tables: Some(16),
+                max_tables: Some(2048),
                 accede: true,
                 ..Default::default()
             },
@@ -545,21 +542,20 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
     Ok(state)
 }
 
-fn staged_index_key(
+fn staged_index_match(
     indexes: &[IndexEntry],
     index: &str,
-    id: u64,
-    staged_key: impl Fn(&IndexEntry, u64) -> Result<Option<Vec<u8>>, String>,
-) -> Result<Option<Vec<u8>>, String> {
+    staged_matches: impl Fn(&IndexEntry) -> Result<bool, String>,
+) -> Result<bool, String> {
     for entry in indexes {
         if entry.name != index {
             continue;
         }
-        if let Some(key) = staged_key(entry, id)? {
-            return Ok(Some(key));
+        if staged_matches(entry)? {
+            return Ok(true);
         }
     }
-    Ok(None)
+    Ok(false)
 }
 
 impl StorageEngine for MdbxStorage {
@@ -650,9 +646,12 @@ impl StorageEngine for MdbxStorage {
 
         self.with_read_transaction(|transaction, tables| {
             let schema = collection_schema(transaction, &tables, collection)?;
-            let Some(bytes) = transaction
-                .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
-                .map_err(|error| error.to_string())?
+            let Ok(documents_table) = open_documents_table(transaction, collection) else {
+                return Ok(None);
+            };
+            let Some(bytes) = ignore_not_found(
+                transaction.get::<Vec<u8>>(&documents_table, &document_id_key(id)),
+            )?
             else {
                 return Ok(None);
             };
@@ -667,17 +666,15 @@ impl StorageEngine for MdbxStorage {
 
         self.with_read_transaction(|transaction, tables| {
             let schema = collection_schema(transaction, &tables, collection)?;
-            let mut key = encode_collection_key(collection);
-            let key_prefix_length = key.len();
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(vec![None; ids.len()]),
+            };
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
-                key.truncate(key_prefix_length);
-                key.extend_from_slice(&id.to_be_bytes());
-                let bytes = transaction
-                    .get::<Vec<u8>>(&tables.documents, &key)
-                    .map_err(|error| error.to_string())?;
+                let bytes = transaction.get::<Vec<u8>>(&documents_table, &document_id_key(*id));
                 documents.push(
-                    bytes
+                    ignore_not_found(bytes)?
                         .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
                         .transpose()?,
                 );
@@ -695,9 +692,11 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_read_transaction(|transaction, tables| {
-            transaction
-                .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
-                .map_err(|error| error.to_string())
+            let _ = tables;
+            let Ok(documents_table) = open_documents_table(transaction, collection) else {
+                return Ok(None);
+            };
+            ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_id_key(id)))
         })
     }
 
@@ -714,17 +713,16 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_read_transaction(|transaction, tables| {
-            let mut key = encode_collection_key(collection);
-            let key_prefix_length = key.len();
+            let _ = tables;
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(vec![None; ids.len()]),
+            };
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
-                key.truncate(key_prefix_length);
-                key.extend_from_slice(&id.to_be_bytes());
-                documents.push(
-                    transaction
-                        .get::<Vec<u8>>(&tables.documents, &key)
-                        .map_err(|error| error.to_string())?,
-                );
+                documents.push(ignore_not_found(
+                    transaction.get::<Vec<u8>>(&documents_table, &document_id_key(*id)),
+                )?);
             }
             Ok(documents)
         })
@@ -732,8 +730,11 @@ impl StorageEngine for MdbxStorage {
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
         let ids = self.with_read_transaction(|transaction, tables| {
-            let prefix = encode_collection_key(collection);
-            scan_ids_by_key_range(transaction, &tables.documents, &prefix, None)
+            let _ = tables;
+            let Ok(documents_table) = open_documents_table(transaction, collection) else {
+                return Ok(Vec::new());
+            };
+            scan_document_ids(transaction, &documents_table)
         })?;
         Ok(match self.active_write() {
             Some(transaction) => transaction.staged_document_ids(collection, ids),
@@ -900,21 +901,18 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<Vec<u64>, String> {
         match self.active_write() {
             Some(transaction) => {
-                let entries = self.with_read_transaction(|transaction, tables| {
-                    let prefix = encode_index_equal_prefix(collection, index, value)?;
-                    scan_entries_by_key_range(transaction, &tables.indexes, &prefix, None)
+                let ids = self.with_read_transaction(|transaction, tables| {
+                    let _ = tables;
+                    let key = index_value_key(value)?;
+                    scan_index_equal_ids(transaction, collection, index, &key)
                 })?;
-                transaction.staged_index_ids(collection, index, entries, |entry, id| {
-                    if entry.value == *value {
-                        encode_index_key(collection, index, value, id).map(Some)
-                    } else {
-                        Ok(None)
-                    }
-                })
+                transaction
+                    .staged_index_ids(collection, index, ids, |entry| Ok(entry.value == *value))
             }
             None => self.with_read_transaction(|transaction, tables| {
-                let prefix = encode_index_equal_prefix(collection, index, value)?;
-                scan_ids_by_key_range(transaction, &tables.indexes, &prefix, None)
+                let _ = tables;
+                let key = index_value_key(value)?;
+                scan_index_equal_ids(transaction, collection, index, &key)
             }),
         }
     }
@@ -926,32 +924,36 @@ impl StorageEngine for MdbxStorage {
         lower: Option<&IndexValue>,
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String> {
-        let range = encode_index_range(collection, index, lower, upper)?;
+        let range = encode_index_range("", "", lower, upper)?;
         match self.active_write() {
             Some(transaction) => {
-                let entries = self.with_read_transaction(|transaction, tables| {
-                    scan_entries_by_key_range(
+                let ids = self.with_read_transaction(|transaction, tables| {
+                    let _ = tables;
+                    scan_index_range_ids(
                         transaction,
-                        &tables.indexes,
+                        collection,
+                        index,
                         &range.start,
-                        Some(&range.end_inclusive),
+                        &range.end_inclusive,
                     )
                 })?;
-                transaction.staged_index_ids(collection, index, entries, |entry, id| {
-                    let key = encode_index_key(collection, index, &entry.value, id)?;
+                transaction.staged_index_ids(collection, index, ids, |entry| {
+                    let key = index_value_key(&entry.value)?;
                     if key >= range.start && key <= range.end_inclusive {
-                        Ok(Some(key))
+                        Ok(true)
                     } else {
-                        Ok(None)
+                        Ok(false)
                     }
                 })
             }
             None => self.with_read_transaction(|transaction, tables| {
-                scan_ids_by_key_range(
+                let _ = tables;
+                scan_index_range_ids(
                     transaction,
-                    &tables.indexes,
+                    collection,
+                    index,
                     &range.start,
-                    Some(&range.end_inclusive),
+                    &range.end_inclusive,
                 )
             }),
         }
@@ -1026,7 +1028,15 @@ impl StorageEngine for MdbxStorage {
                     &tables.collection_revisions,
                     &encode_collection_key(collection),
                 )
-                .map_err(|error| error.to_string())?
+                .or_else(|error| {
+                    let message = error.to_string();
+                    if message.contains("NOTFOUND") || message.contains("No matching key/data pair")
+                    {
+                        Ok(None)
+                    } else {
+                        Err(message)
+                    }
+                })?
                 .map(|bytes| decode_u64(&bytes))
                 .transpose()
                 .map(Option::unwrap_or_default)
@@ -1099,9 +1109,7 @@ impl StorageEngine for MdbxStorage {
 }
 
 struct MdbxTables<'txn> {
-    documents: Table<'txn>,
-    indexes: Table<'txn>,
-    unique_indexes: Table<'txn>,
+    document_indexes: Table<'txn>,
     collection_revisions: Table<'txn>,
     schema_collections: Table<'txn>,
     storage_metadata: Table<'txn>,
@@ -1109,13 +1117,7 @@ struct MdbxTables<'txn> {
 
 fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Result<(), String> {
     transaction
-        .create_table(Some(DOCUMENTS_TABLE), TableFlags::default())
-        .map_err(|error| error.to_string())?;
-    transaction
-        .create_table(Some(INDEXES_TABLE), TableFlags::default())
-        .map_err(|error| error.to_string())?;
-    transaction
-        .create_table(Some(UNIQUE_INDEXES_TABLE), TableFlags::default())
+        .create_table(Some(DOCUMENT_INDEXES_TABLE), TableFlags::default())
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(COLLECTION_REVISIONS_TABLE), TableFlags::default())
@@ -1136,14 +1138,8 @@ where
     K: libmdbx::TransactionKind,
 {
     Ok(MdbxTables {
-        documents: transaction
-            .open_table(Some(DOCUMENTS_TABLE))
-            .map_err(|error| error.to_string())?,
-        indexes: transaction
-            .open_table(Some(INDEXES_TABLE))
-            .map_err(|error| error.to_string())?,
-        unique_indexes: transaction
-            .open_table(Some(UNIQUE_INDEXES_TABLE))
+        document_indexes: transaction
+            .open_table(Some(DOCUMENT_INDEXES_TABLE))
             .map_err(|error| error.to_string())?,
         collection_revisions: transaction
             .open_table(Some(COLLECTION_REVISIONS_TABLE))
@@ -1155,6 +1151,112 @@ where
             .open_table(Some(STORAGE_METADATA_TABLE))
             .map_err(|error| error.to_string())?,
     })
+}
+
+fn create_documents_table<'txn>(
+    transaction: &'txn Transaction<'_, RW, NoWriteMap>,
+    collection: &str,
+) -> Result<Table<'txn>, String> {
+    open_or_create_table(
+        transaction,
+        &documents_table_name(collection),
+        TableFlags::default(),
+    )
+}
+
+fn open_documents_table<'txn, K>(
+    transaction: &'txn Transaction<'_, K, NoWriteMap>,
+    collection: &str,
+) -> Result<Table<'txn>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    transaction
+        .open_table(Some(&documents_table_name(collection)))
+        .map_err(|error| error.to_string())
+}
+
+fn create_index_table<'txn>(
+    transaction: &'txn Transaction<'_, RW, NoWriteMap>,
+    collection: &str,
+    index: &str,
+) -> Result<Table<'txn>, String> {
+    open_or_create_table(
+        transaction,
+        &index_table_name(collection, index),
+        TableFlags::DUP_SORT,
+    )
+}
+
+fn open_index_table<'txn, K>(
+    transaction: &'txn Transaction<'_, K, NoWriteMap>,
+    collection: &str,
+    index: &str,
+) -> Result<Table<'txn>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    transaction
+        .open_table(Some(&index_table_name(collection, index)))
+        .map_err(|error| error.to_string())
+}
+
+fn create_unique_table<'txn>(
+    transaction: &'txn Transaction<'_, RW, NoWriteMap>,
+    collection: &str,
+    index: &str,
+) -> Result<Table<'txn>, String> {
+    open_or_create_table(
+        transaction,
+        &unique_table_name(collection, index),
+        TableFlags::default(),
+    )
+}
+
+fn open_unique_table<'txn, K>(
+    transaction: &'txn Transaction<'_, K, NoWriteMap>,
+    collection: &str,
+    index: &str,
+) -> Result<Table<'txn>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    transaction
+        .open_table(Some(&unique_table_name(collection, index)))
+        .map_err(|error| error.to_string())
+}
+
+fn documents_table_name(collection: &str) -> String {
+    format!("v2:documents:{collection}")
+}
+
+fn index_table_name(collection: &str, index: &str) -> String {
+    format!("v2:index:{collection}:{index}")
+}
+
+fn unique_table_name(collection: &str, index: &str) -> String {
+    format!("v2:unique:{collection}:{index}")
+}
+
+fn open_or_create_table<'txn>(
+    transaction: &'txn Transaction<'_, RW, NoWriteMap>,
+    name: &str,
+    flags: TableFlags,
+) -> Result<Table<'txn>, String> {
+    match transaction.open_table(Some(name)) {
+        Ok(table) => Ok(table),
+        Err(_) => transaction
+            .create_table(Some(name), flags)
+            .map_err(|error| error.to_string()),
+    }
+}
+
+fn index_value_key(value: &IndexValue) -> Result<Vec<u8>, String> {
+    encode_index_equal_prefix("", "", value)
+}
+
+fn document_id_key(id: u64) -> [u8; 8] {
+    id.to_be_bytes()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1182,6 +1284,21 @@ fn register_collection_schema(
         .transpose()?;
 
     let Some(existing) = existing else {
+        create_documents_table(transaction, &collection.name)?;
+        for field in &collection.fields {
+            if field.is_indexed {
+                create_index_table(transaction, &collection.name, &field.name)?;
+                if field.is_index_unique {
+                    create_unique_table(transaction, &collection.name, &field.name)?;
+                }
+            }
+        }
+        for index in &collection.composite_indexes {
+            create_index_table(transaction, &collection.name, &index.name)?;
+            if index.is_unique {
+                create_unique_table(transaction, &collection.name, &index.name)?;
+            }
+        }
         let record = MdbxSchemaRecord {
             version: 1,
             schema: collection.clone(),
@@ -1194,6 +1311,21 @@ fn register_collection_schema(
     }
     if mode == SchemaRegistrationMode::Compatible {
         validate_compatible_schema_change(&existing.schema, collection)?;
+    }
+    create_documents_table(transaction, &collection.name)?;
+    for field in &collection.fields {
+        if field.is_indexed {
+            create_index_table(transaction, &collection.name, &field.name)?;
+            if field.is_index_unique {
+                create_unique_table(transaction, &collection.name, &field.name)?;
+            }
+        }
+    }
+    for index in &collection.composite_indexes {
+        create_index_table(transaction, &collection.name, &index.name)?;
+        if index.is_unique {
+            create_unique_table(transaction, &collection.name, &index.name)?;
+        }
     }
 
     let next_version = existing
@@ -1500,11 +1632,11 @@ fn put_document_with_indexes(
         &effective_indexes,
         &unique_indexes,
     )?;
-    let document_key = encode_document_key(collection, id);
+    let documents_table = create_documents_table(transaction, collection)?;
     transaction
         .put(
-            &tables.documents,
-            &document_key,
+            &documents_table,
+            document_id_key(id),
             &stored_bytes,
             WriteFlags::UPSERT,
         )
@@ -1516,7 +1648,8 @@ fn put_document_with_indexes(
         id,
         &effective_indexes,
         &unique_indexes,
-    )
+    )?;
+    Ok(())
 }
 
 fn encode_document_for_storage(
@@ -1557,7 +1690,11 @@ fn delete_document(
     id: u64,
 ) -> Result<bool, String> {
     let deleted = transaction
-        .del(&tables.documents, encode_document_key(collection, id), None)
+        .del(
+            &create_documents_table(transaction, collection)?,
+            document_id_key(id),
+            None,
+        )
         .map_err(|error| error.to_string())?;
     MdbxIndex::delete_document(transaction, tables, collection, id)?;
     Ok(deleted)
@@ -1600,7 +1737,7 @@ fn rebuild_indexes_in_transaction(
 #[allow(dead_code)]
 fn ensure_document_exists<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
-    tables: &MdbxTables<'_>,
+    _tables: &MdbxTables<'_>,
     collection: &str,
     id: u64,
 ) -> Result<(), String>
@@ -1608,7 +1745,10 @@ where
     K: libmdbx::TransactionKind,
 {
     let exists = transaction
-        .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
+        .get::<Vec<u8>>(
+            &open_documents_table(transaction, collection)?,
+            &document_id_key(id),
+        )
         .map_err(|error| error.to_string())?
         .is_some();
     if exists {
@@ -1718,34 +1858,33 @@ struct MdbxIndexStats {
 
 impl MdbxIndex {
     fn entry_key(
-        collection: &str,
-        index_name: &str,
+        _collection: &str,
+        _index_name: &str,
         value: &IndexValue,
-        document_id: u64,
     ) -> Result<Vec<u8>, String> {
-        encode_index_key(collection, index_name, value, document_id)
+        index_value_key(value)
     }
 
     fn unique_key(
-        collection: &str,
-        index_name: &str,
+        _collection: &str,
+        _index_name: &str,
         value: &IndexValue,
     ) -> Result<Vec<u8>, String> {
-        encode_unique_index_key(collection, index_name, value)
+        index_value_key(value)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     fn equal_prefix(
-        collection: &str,
-        index_name: &str,
+        _collection: &str,
+        _index_name: &str,
         value: &IndexValue,
     ) -> Result<Vec<u8>, String> {
-        encode_index_equal_prefix(collection, index_name, value)
+        index_value_key(value)
     }
 
     fn validate_unique(
         transaction: &Transaction<'_, RW, NoWriteMap>,
-        tables: &MdbxTables<'_>,
+        _tables: &MdbxTables<'_>,
         collection: &str,
         document_id: u64,
         indexes: &[IndexEntry],
@@ -1760,9 +1899,9 @@ impl MdbxIndex {
                 continue;
             }
             let key = Self::unique_key(collection, &index.name, &index.value)?;
-            if let Some(existing_id) = transaction
-                .get::<Vec<u8>>(&tables.unique_indexes, &key)
-                .map_err(|error| error.to_string())?
+            let unique_table = create_unique_table(transaction, collection, &index.name)?;
+            if let Some(existing_id) =
+                ignore_not_found(transaction.get::<Vec<u8>>(&unique_table, &key))?
             {
                 let existing_id = decode_u64(&existing_id)?;
                 if existing_id != document_id {
@@ -1795,26 +1934,43 @@ impl MdbxIndex {
                 unique_indexes.contains(index.name.as_str()),
             )?;
         }
+        let document_indexes = &tables.document_indexes;
+        let key = encode_document_key(collection, document_id);
+        if new_indexes.is_empty() {
+            ignore_not_found(transaction.del(document_indexes, key, None))?;
+        } else {
+            transaction
+                .put(
+                    document_indexes,
+                    key,
+                    serde_json::to_vec(new_indexes).map_err(|error| error.to_string())?,
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
     fn insert_entry(
         transaction: &Transaction<'_, RW, NoWriteMap>,
-        tables: &MdbxTables<'_>,
+        _tables: &MdbxTables<'_>,
         collection: &str,
         document_id: u64,
         index: &IndexEntry,
         is_unique: bool,
     ) -> Result<(), String> {
-        let key = Self::entry_key(collection, &index.name, &index.value, document_id)?;
+        let key = Self::entry_key(collection, &index.name, &index.value)?;
+        let index_table = create_index_table(transaction, collection, &index.name)?;
+        let document_id_bytes = document_id_key(document_id);
         transaction
-            .put(&tables.indexes, key, EMPTY_VALUE, WriteFlags::UPSERT)
+            .put(&index_table, key, document_id_bytes, WriteFlags::UPSERT)
             .map_err(|error| error.to_string())?;
         if is_unique {
             let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
+            let unique_table = create_unique_table(transaction, collection, &index.name)?;
             transaction
                 .put(
-                    &tables.unique_indexes,
+                    &unique_table,
                     unique_key,
                     document_id.to_be_bytes(),
                     WriteFlags::UPSERT,
@@ -1830,20 +1986,26 @@ impl MdbxIndex {
         collection: &str,
         document_id: u64,
     ) -> Result<(), String> {
-        let collection_prefix = encode_collection_key(collection);
-        let (index_keys, unique_keys) =
-            Self::document_keys(transaction, tables, &collection_prefix, document_id)?;
-
-        for key in index_keys {
-            transaction
-                .del(&tables.indexes, key, None)
-                .map_err(|error| error.to_string())?;
+        let document_index_key = encode_document_key(collection, document_id);
+        let Some(indexes) = ignore_not_found(
+            transaction.get::<Vec<u8>>(&tables.document_indexes, &document_index_key),
+        )?
+        else {
+            return Ok(());
+        };
+        let indexes = serde_json::from_slice::<Vec<IndexEntry>>(&indexes)
+            .map_err(|error| error.to_string())?;
+        for index in indexes {
+            let key = Self::entry_key(collection, &index.name, &index.value)?;
+            let index_table = create_index_table(transaction, collection, &index.name)?;
+            let document_id_bytes = document_id_key(document_id);
+            ignore_not_found(transaction.del(&index_table, key, Some(&document_id_bytes)))?;
+            let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
+            if let Ok(unique_table) = open_unique_table(transaction, collection, &index.name) {
+                ignore_not_found(transaction.del(&unique_table, unique_key, None))?;
+            }
         }
-        for key in unique_keys {
-            transaction
-                .del(&tables.unique_indexes, key, None)
-                .map_err(|error| error.to_string())?;
-        }
+        ignore_not_found(transaction.del(&tables.document_indexes, document_index_key, None))?;
         Ok(())
     }
 
@@ -1854,23 +2016,15 @@ impl MdbxIndex {
         collection: &str,
     ) -> Result<MdbxIndexStats, String> {
         let collection_prefix = encode_collection_key(collection);
-        let index_keys = scan_keys_by_prefix(transaction, &tables.indexes, &collection_prefix)?;
-        let unique_keys =
-            scan_keys_by_prefix(transaction, &tables.unique_indexes, &collection_prefix)?;
-        let stats = MdbxIndexStats {
-            entries: index_keys.len(),
-            unique_entries: unique_keys.len(),
-        };
-
-        for key in index_keys {
-            transaction
-                .del(&tables.indexes, key, None)
-                .map_err(|error| error.to_string())?;
-        }
-        for key in unique_keys {
-            transaction
-                .del(&tables.unique_indexes, key, None)
-                .map_err(|error| error.to_string())?;
+        let document_keys =
+            scan_keys_by_prefix(transaction, &tables.document_indexes, &collection_prefix)?;
+        let stats = Self::stats(transaction, tables, collection)?;
+        let ids = document_keys
+            .iter()
+            .map(|key| decode_key_document_id(key))
+            .collect::<Result<Vec<_>, _>>()?;
+        for id in ids {
+            Self::delete_document(transaction, tables, collection, id)?;
         }
         Ok(stats)
     }
@@ -1885,49 +2039,41 @@ impl MdbxIndex {
         K: libmdbx::TransactionKind,
     {
         let collection_prefix = encode_collection_key(collection);
-        Ok(MdbxIndexStats {
-            entries: count_keys_by_prefix(transaction, &tables.indexes, &collection_prefix)?,
-            unique_entries: count_keys_by_prefix(
-                transaction,
-                &tables.unique_indexes,
-                &collection_prefix,
-            )?,
-        })
-    }
-
-    fn document_keys(
-        transaction: &Transaction<'_, RW, NoWriteMap>,
-        tables: &MdbxTables<'_>,
-        collection_prefix: &[u8],
-        document_id: u64,
-    ) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), String> {
-        let mut index_keys = Vec::new();
-        let mut unique_keys = Vec::new();
-        let mut cursor = transaction
-            .cursor(&tables.indexes)
-            .map_err(|error| error.to_string())?;
-        for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(collection_prefix) {
-            let (key, _) = row.map_err(|error| error.to_string())?;
-            if !key.starts_with(collection_prefix) {
-                break;
-            }
-            if decode_key_document_id(&key)? == document_id {
-                let key = key.into_owned();
-                if key.len() >= 8 {
-                    unique_keys.push(key[..key.len() - 8].to_vec());
+        let document_keys =
+            scan_keys_by_prefix(transaction, &tables.document_indexes, &collection_prefix)?;
+        let mut entries = 0;
+        let mut unique_entries = 0;
+        for key in document_keys {
+            let Some(indexes) =
+                ignore_not_found(transaction.get::<Vec<u8>>(&tables.document_indexes, &key))?
+            else {
+                continue;
+            };
+            let indexes = serde_json::from_slice::<Vec<IndexEntry>>(&indexes)
+                .map_err(|error| error.to_string())?;
+            entries += indexes.len();
+            for index in indexes {
+                let Ok(unique_table) = open_unique_table(transaction, collection, &index.name)
+                else {
+                    continue;
+                };
+                let key = Self::unique_key(collection, &index.name, &index.value)?;
+                if ignore_not_found(transaction.get::<Vec<u8>>(&unique_table, &key))?.is_some() {
+                    unique_entries += 1;
                 }
-                index_keys.push(key);
             }
         }
-        Ok((index_keys, unique_keys))
+        let stats = MdbxIndexStats {
+            entries,
+            unique_entries,
+        };
+        Ok(stats)
     }
 }
 
-fn scan_ids_by_key_range<K>(
+fn scan_document_ids<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
     table: &Table<'_>,
-    start: &[u8],
-    end_inclusive: Option<&[u8]>,
 ) -> Result<Vec<u64>, String>
 where
     K: libmdbx::TransactionKind,
@@ -1936,74 +2082,75 @@ where
         .cursor(table)
         .map_err(|error| error.to_string())?;
     let mut ids = Vec::new();
-    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
+    for row in cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
         let (key, _) = row.map_err(|error| error.to_string())?;
-        if let Some(end_inclusive) = end_inclusive {
-            if key.as_ref() > end_inclusive {
-                break;
-            }
-        } else if !key.starts_with(start) {
-            break;
-        }
-        ids.push(decode_key_document_id(&key)?);
+        ids.push(decode_u64(&key)?);
     }
     Ok(ids)
 }
 
-fn max_id_by_key_range<K>(
+fn max_document_id<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
     table: &Table<'_>,
-    start: &[u8],
-    end_inclusive: Option<&[u8]>,
 ) -> Result<Option<u64>, String>
 where
     K: libmdbx::TransactionKind,
 {
-    let mut cursor = transaction
-        .cursor(table)
-        .map_err(|error| error.to_string())?;
-    let mut max_id: Option<u64> = None;
-    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
-        let (key, _) = row.map_err(|error| error.to_string())?;
-        if let Some(end_inclusive) = end_inclusive {
-            if key.as_ref() > end_inclusive {
-                break;
-            }
-        } else if !key.starts_with(start) {
-            break;
-        }
-        let id = decode_key_document_id(&key)?;
-        max_id = Some(max_id.map_or(id, |current| current.max(id)));
-    }
-    Ok(max_id)
+    let ids = scan_document_ids(transaction, table)?;
+    Ok(ids.into_iter().max())
 }
 
-fn scan_entries_by_key_range<K>(
+fn scan_index_equal_ids<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
-    table: &Table<'_>,
-    start: &[u8],
-    end_inclusive: Option<&[u8]>,
-) -> Result<Vec<(Vec<u8>, u64)>, String>
+    collection: &str,
+    index: &str,
+    key: &[u8],
+) -> Result<Vec<u64>, String>
 where
     K: libmdbx::TransactionKind,
 {
+    let Ok(index_table) = open_index_table(transaction, collection, index) else {
+        return Ok(Vec::new());
+    };
     let mut cursor = transaction
-        .cursor(table)
+        .cursor(&index_table)
         .map_err(|error| error.to_string())?;
-    let mut entries = Vec::new();
-    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
-        let (key, _) = row.map_err(|error| error.to_string())?;
-        if let Some(end_inclusive) = end_inclusive {
-            if key.as_ref() > end_inclusive {
-                break;
-            }
-        } else if !key.starts_with(start) {
+    let mut ids = Vec::new();
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key) {
+        let (entry_key, value) = row.map_err(|error| error.to_string())?;
+        if entry_key.as_ref() != key {
             break;
         }
-        let id = decode_key_document_id(&key)?;
-        entries.push((key.into_owned(), id));
+        ids.push(decode_u64(&value)?);
     }
-    Ok(entries)
+    Ok(ids)
+}
+
+fn scan_index_range_ids<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    collection: &str,
+    index: &str,
+    start: &[u8],
+    end_inclusive: &[u8],
+) -> Result<Vec<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let Ok(index_table) = open_index_table(transaction, collection, index) else {
+        return Ok(Vec::new());
+    };
+    let mut cursor = transaction
+        .cursor(&index_table)
+        .map_err(|error| error.to_string())?;
+    let mut ids = Vec::new();
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
+        let (key, value) = row.map_err(|error| error.to_string())?;
+        if key.as_ref() > end_inclusive {
+            break;
+        }
+        ids.push(decode_u64(&value)?);
+    }
+    Ok(ids)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -2027,29 +2174,6 @@ where
         keys.push(key.into_owned());
     }
     Ok(keys)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn count_keys_by_prefix<K>(
-    transaction: &Transaction<'_, K, NoWriteMap>,
-    table: &Table<'_>,
-    prefix: &[u8],
-) -> Result<usize, String>
-where
-    K: libmdbx::TransactionKind,
-{
-    let mut cursor = transaction
-        .cursor(table)
-        .map_err(|error| error.to_string())?;
-    let mut count = 0;
-    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(prefix) {
-        let (key, _) = row.map_err(|error| error.to_string())?;
-        if !key.starts_with(prefix) {
-            break;
-        }
-        count += 1;
-    }
-    Ok(count)
 }
 
 fn bump_collection_revision(
@@ -2082,6 +2206,20 @@ fn decode_u64(bytes: &[u8]) -> Result<u64, String> {
         .try_into()
         .map_err(|_| "MDBX stored integer must be 8 bytes".to_string())?;
     Ok(u64::from_be_bytes(bytes))
+}
+
+fn ignore_not_found<T: Default, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, String> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("NOTFOUND") || message.contains("No matching key/data pair") {
+                Ok(T::default())
+            } else {
+                Err(message)
+            }
+        }
+    }
 }
 
 fn temporary_mdbx_directory() -> Result<PathBuf, String> {
@@ -2293,8 +2431,12 @@ mod tests {
         );
         storage
             .with_read_transaction(|transaction, tables| {
+                let _ = tables;
                 let raw = transaction
-                    .get::<Vec<u8>>(&tables.documents, &encode_document_key("users", 1))
+                    .get::<Vec<u8>>(
+                        &open_documents_table(transaction, "users")?,
+                        &document_id_key(1),
+                    )
                     .map_err(|error| error.to_string())?
                     .expect("document must exist");
                 BinaryDocument::parse(&raw).map(|_| ())
@@ -2351,6 +2493,22 @@ mod tests {
         let unique_indexes = HashSet::from(["email".to_string()]);
 
         storage
+            .with_write_transaction(|transaction, _tables| {
+                create_index_table(transaction, "users", "email")?;
+                create_index_table(transaction, "users", "score")?;
+                create_unique_table(transaction, "users", "email")?;
+                Ok(())
+            })
+            .unwrap();
+
+        let old_email_prefix = MdbxIndex::equal_prefix(
+            "users",
+            "email",
+            &IndexValue::String("old@example.com".into()),
+        )
+        .unwrap();
+
+        storage
             .with_write_transaction(|transaction, tables| {
                 let tables = &tables;
                 MdbxIndex::replace_document(
@@ -2371,17 +2529,17 @@ mod tests {
                         unique_entries: 1,
                     }
                 );
-
-                let old_email_prefix = MdbxIndex::equal_prefix(
-                    "users",
-                    "email",
-                    &IndexValue::String("old@example.com".into()),
-                )?;
                 assert_eq!(
-                    scan_ids_by_key_range(transaction, &tables.indexes, &old_email_prefix, None)?,
+                    scan_index_equal_ids(transaction, "users", "email", &old_email_prefix,)?,
                     vec![1]
                 );
+                Ok(())
+            })
+            .unwrap();
 
+        storage
+            .with_write_transaction(|transaction, tables| {
+                let tables = &tables;
                 MdbxIndex::replace_document(
                     transaction,
                     tables,
@@ -2394,7 +2552,7 @@ mod tests {
                     &unique_indexes,
                 )?;
                 assert_eq!(
-                    scan_ids_by_key_range(transaction, &tables.indexes, &old_email_prefix, None)?,
+                    scan_index_equal_ids(transaction, "users", "email", &old_email_prefix,)?,
                     Vec::<u64>::new()
                 );
                 let duplicate = MdbxIndex::validate_unique(
@@ -2406,7 +2564,13 @@ mod tests {
                     &unique_indexes,
                 );
                 assert!(duplicate.unwrap_err().contains("Unique index `email`"));
+                Ok(())
+            })
+            .unwrap();
 
+        storage
+            .with_write_transaction(|transaction, tables| {
+                let tables = &tables;
                 MdbxIndex::delete_document(transaction, tables, "users", 1)?;
                 assert_eq!(
                     MdbxIndex::stats(transaction, tables, "users")?,
@@ -2415,7 +2579,13 @@ mod tests {
                         unique_entries: 0,
                     }
                 );
+                Ok(())
+            })
+            .unwrap();
 
+        storage
+            .with_write_transaction(|transaction, tables| {
+                let tables = &tables;
                 MdbxIndex::replace_document(
                     transaction,
                     tables,
@@ -2432,6 +2602,13 @@ mod tests {
                     &[index("email", IndexValue::String("b@example.com".into()))],
                     &unique_indexes,
                 )?;
+                Ok(())
+            })
+            .unwrap();
+
+        storage
+            .with_write_transaction(|transaction, tables| {
+                let tables = &tables;
                 assert_eq!(
                     MdbxIndex::clear_collection(transaction, tables, "users")?,
                     MdbxIndexStats {

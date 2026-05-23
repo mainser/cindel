@@ -40,6 +40,10 @@ fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkReport>, Stri
         BackendSelection::All => Ok(vec![
             run_sqlite_benchmark(config)?,
             run_mdbx_benchmark(config)?,
+        ]),
+        BackendSelection::AllWithSpike => Ok(vec![
+            run_sqlite_benchmark(config)?,
+            run_mdbx_benchmark(config)?,
             run_mdbx_v2_benchmark(config)?,
         ]),
     }
@@ -728,6 +732,7 @@ enum BackendSelection {
     Mdbx,
     MdbxV2,
     All,
+    AllWithSpike,
 }
 
 impl BackendSelection {
@@ -737,8 +742,9 @@ impl BackendSelection {
             "mdbx" => Ok(Self::Mdbx),
             "mdbx-v2" | "mdbx-v2-spike" => Ok(Self::MdbxV2),
             "all" => Ok(Self::All),
+            "all-with-spike" | "all-experimental" => Ok(Self::AllWithSpike),
             _ => Err(format!(
-                "`--backend` must be one of `sqlite`, `mdbx`, `mdbx-v2`, or `all`; got `{value}`"
+                "`--backend` must be one of `sqlite`, `mdbx`, `mdbx-v2`, `all`, or `all-with-spike`; got `{value}`"
             )),
         }
     }
@@ -749,6 +755,7 @@ impl BackendSelection {
             Self::Mdbx => "mdbx",
             Self::MdbxV2 => "mdbx-v2",
             Self::All => "all",
+            Self::AllWithSpike => "all-with-spike",
         }
     }
 }
@@ -762,7 +769,7 @@ fn parse_positive_u64(flag: &str, value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|mdbx-v2|all] [--documents N] [--query-repeats N] [--format csv|json] [--output PATH]"
+        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|mdbx-v2|all|all-with-spike] [--documents N] [--query-repeats N] [--format csv|json] [--output PATH]"
     );
 }
 

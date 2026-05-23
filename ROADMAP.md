@@ -374,13 +374,16 @@ Guiding rules:
 - [x] PERF-12: Allocation, buffer, and cursor reuse.
   - Reuse transaction buffers, key buffers, and query result buffers.
   - Only move lower-level MDBX cursor access if benchmarks prove it is needed.
-- [ ] PERF-13: MDBX layout convergence.
+- [x] PERF-13: MDBX layout convergence.
   - Promote the winning `mdbx-v2-spike` table layout ideas into the real MDBX
     backend instead of keeping a parallel benchmark-only backend.
   - Keep binary documents and in-memory auto-increment counters in the final
     MDBX path.
-  - Remove or isolate the spike once the real backend has absorbed the faster
-    layout and passed parity tests.
+  - The real MDBX backend now uses per-collection document tables and
+    per-index duplicate-sorted tables while preserving transactions and index
+    parity.
+  - The spike remains only as a temporary benchmark fixture until the remaining
+    `get/get_many` differences are understood.
 - [ ] PERF-14: Native watcher change sets.
   - Track changed collections, document ids, and affected index keys during
     native write transactions.

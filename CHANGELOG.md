@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.12
+
+- Promoted the faster MDBX v2 table layout into the real MDBX backend path.
+- MDBX now uses per-collection document tables and per-index duplicate-sorted
+  tables while preserving binary documents, explicit transactions, unique
+  indexes, composite indexes, multi-entry indexes, and in-memory id counters.
+- Kept the Rust-only `mdbx-v2-spike` backend as a temporary benchmark fixture
+  behind the explicit `--backend all-with-spike` benchmark option.
+- Regenerated Windows, Android, and Linux prebuilt native libraries.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.12`.
+
 ## 0.2.11
 
 - Reduced MDBX allocations in id scans, range/equality query scans, collection

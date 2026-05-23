@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.12
+
+- Regenerated Windows, Android, and Linux native runtime libraries with the
+  converged MDBX v2 table layout in the real default backend.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.11
 
 - Regenerated Windows, Android, and Linux native runtime libraries with the

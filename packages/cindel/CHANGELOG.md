@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.12
+
+- Promoted the faster MDBX v2 table layout into the real MDBX backend path.
+- MDBX now stores documents in per-collection tables and indexes in per-index
+  duplicate-sorted tables while preserving the existing public Dart API.
+- Kept binary documents, explicit transactions, unique/composite/multi-entry
+  indexes, and optimized auto-increment counters on the converged backend.
+- Left the Rust-only `mdbx-v2-spike` path as a temporary benchmark fixture
+  behind the explicit `--backend all-with-spike` option.
+
 ## 0.2.11
 
 - Reduced MDBX allocations in id scans, range/equality query scans, collection
