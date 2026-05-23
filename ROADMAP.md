@@ -352,10 +352,15 @@ Guiding rules:
   - Encode generated filter ASTs through FFI and evaluate predicates over
     native binary object readers.
   - Move common filter operations out of Dart-side map scans.
-- [ ] PERF-09: Native query planner and iterators.
-  - Execute sort, distinct, offset, limit, count, and projections natively when
-    possible.
-  - Add plan summaries for debugging and benchmarks.
+- [x] PERF-09: Native query planner and iterators.
+  - Added the first native planner path for MDBX binary-document queries.
+  - `count()` and simple windowed list queries can operate on native candidate
+    ids before document hydration when Dart-side sort/distinct handling is not
+    required.
+  - One-field property projections can read native binary document fields
+    without hydrating full Dart objects.
+  - Full native sort/distinct planning remains tied to composite and multi-entry
+    index work in the next stages.
 - [ ] PERF-10: Composite and multi-entry indexes.
   - Add composite index metadata, generated helpers, list multi-entry indexes,
     key-order tests, and index rebuild support.

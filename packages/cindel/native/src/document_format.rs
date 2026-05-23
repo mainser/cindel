@@ -554,6 +554,29 @@ pub(crate) fn read_json_document(
     serde_json::to_vec(&Value::Object(map)).map_err(|error| error.to_string())
 }
 
+pub(crate) fn read_json_field(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    field: &str,
+) -> Result<Value, String> {
+    let document = BinaryDocument::parse(bytes)?;
+    let Some(index) = schema
+        .fields
+        .iter()
+        .position(|schema_field| schema_field.name == field)
+    else {
+        return Err(format!(
+            "field `{field}` is not declared in schema `{}`",
+            schema.name
+        ));
+    };
+    if index >= document.field_count() {
+        return Ok(Value::Null);
+    }
+    let value = document.field_value(index)?;
+    binary_to_json(value.as_ref())
+}
+
 pub(crate) fn index_entries_from_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
@@ -973,6 +996,59 @@ mod tests {
         let document = BinaryDocument::parse(&bytes).unwrap();
         assert_eq!(document.field_value(0).unwrap(), Some(BinaryValue::Int(99)));
         assert!(document.field_value(1).is_err());
+    }
+
+    #[test]
+    fn projects_one_json_field_without_building_a_document_map() {
+        // Scenario: PERF-09 native projections need one field from a binary
+        // document without materializing the full JSON document.
+        // Covers: Schema field lookup and binary value conversion to JSON.
+        // Expected: The requested field is returned and null fields stay null.
+        let schema = CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields: vec![
+                FieldSchemaManifest {
+                    name: "id".to_string(),
+                    dart_type: "int".to_string(),
+                    is_id: true,
+                    is_indexed: false,
+                    is_index_unique: false,
+                    index_case_sensitive: true,
+                    index_type: "value".to_string(),
+                },
+                FieldSchemaManifest {
+                    name: "name".to_string(),
+                    dart_type: "String".to_string(),
+                    is_id: false,
+                    is_indexed: false,
+                    is_index_unique: false,
+                    index_case_sensitive: true,
+                    index_type: "value".to_string(),
+                },
+                FieldSchemaManifest {
+                    name: "nickname".to_string(),
+                    dart_type: "String?".to_string(),
+                    is_id: false,
+                    is_indexed: false,
+                    is_index_unique: false,
+                    index_case_sensitive: true,
+                    index_type: "value".to_string(),
+                },
+            ],
+        };
+        let bytes = write_document(&[
+            Some(BinaryValue::Int(7)),
+            Some(BinaryValue::String("Ana".to_string())),
+            None,
+        ])
+        .unwrap();
+
+        assert_eq!(read_json_field(&schema, &bytes, "name").unwrap(), "Ana");
+        assert_eq!(
+            read_json_field(&schema, &bytes, "nickname").unwrap(),
+            Value::Null
+        );
     }
 
     #[test]

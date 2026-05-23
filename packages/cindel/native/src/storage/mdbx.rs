@@ -10,6 +10,7 @@ use libmdbx::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::document_format::read_json_field;
 use crate::document_format::{
     index_entries_from_binary_document, read_json_document, write_json_document, BinaryDocument,
 };
@@ -854,6 +855,40 @@ impl StorageEngine for MdbxStorage {
             }
         }
         Ok(ids)
+    }
+
+    fn query_project(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.with_read_transaction(|transaction, tables| {
+            collection_schema(transaction, &tables, collection)
+        })?;
+        let Some(schema) = schema else {
+            return Err(format!(
+                "collection `{collection}` has no registered schema"
+            ));
+        };
+        if !schema
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == field)
+        {
+            return Err(format!(
+                "field `{field}` is not declared in schema `{collection}`"
+            ));
+        }
+        let documents = self.get_many_stored(collection, candidate_ids)?;
+        let mut values = Vec::new();
+        for document in documents {
+            let Some(document) = document else {
+                continue;
+            };
+            values.push(read_json_field(&schema, &document, field)?);
+        }
+        serde_json::to_vec(&values).map_err(|error| error.to_string())
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {

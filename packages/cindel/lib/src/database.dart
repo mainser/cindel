@@ -693,6 +693,36 @@ class CindelDatabase {
     );
   }
 
+  /// Projects [field] from native binary documents under [candidateIds].
+  Future<List<Object?>> queryNativeProjection(
+    String collection,
+    Iterable<int> candidateIds,
+    String field,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final idList = candidateIds.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return const <Object?>[];
+    }
+    final bytes = _bindings.queryProject(
+      handle,
+      collection,
+      _encodeIds(idList),
+      field,
+    );
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! List) {
+      throw StateError('Native Cindel returned a non-list projection.');
+    }
+    return decoded.cast<Object?>();
+  }
+
   /// Returns the persisted schema version for [collection], or `null`.
   ///
   /// A schema starts at version `1` when first registered. Compatible additive

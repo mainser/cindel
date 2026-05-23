@@ -484,6 +484,10 @@ final class CindelQuery<T> {
 
   /// Returns the number of objects matching this query.
   Future<int> count() async {
+    final nativeIds = await _nativePlannedIds();
+    if (nativeIds != null) {
+      return nativeIds.length;
+    }
     final documents = await _matchingDocuments();
     return documents.length;
   }
@@ -521,6 +525,11 @@ final class CindelQuery<T> {
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
+    final nativeIds = await _nativePlannedIds();
+    if (nativeIds != null) {
+      return _database.documentsByIds(_schema.name, nativeIds);
+    }
+
     var matchingDocuments = await _readFilteredDocuments();
     if (_sortKeys.isNotEmpty) {
       matchingDocuments = _sortDocuments(matchingDocuments, _sortKeys);
@@ -535,6 +544,27 @@ final class CindelQuery<T> {
       matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
     }
     return matchingDocuments;
+  }
+
+  Future<List<int>?> _nativePlannedIds() async {
+    final nativeFilter = _nativeFilter;
+    final filter = _filter;
+    final readIds = _readIds;
+    if (!_canUseNativePlanner ||
+        readIds == null ||
+        (filter != null && nativeFilter == null)) {
+      return null;
+    }
+
+    var ids = await readIds();
+    if (nativeFilter != null) {
+      ids = await _database.queryNativeFilterIds(
+        _schema.name,
+        ids,
+        nativeFilter,
+      );
+    }
+    return _windowIds(ids, _offset, _limit);
   }
 
   Future<List<CindelDocument>> _readFilteredDocuments() async {
@@ -571,6 +601,15 @@ final class CindelQuery<T> {
         _schema.toBinaryDocument != null &&
         _schema.fromBinaryDocument != null;
   }
+
+  bool get _canUseNativePlanner {
+    return _canUseNativeFilter &&
+        _sourceFilter == null &&
+        _sortKeys.isEmpty &&
+        _distinctFields.isEmpty;
+  }
+
+  bool get _canUseNativeProjection => _canUseNativePlanner;
 
   Stream<List<CindelDocument>> _watchMatchingDocuments({
     required Duration pollInterval,
@@ -777,6 +816,20 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns every projected value.
   Future<List<R>> findAll() async {
+    final nativeIds = await _query._nativePlannedIds();
+    if (nativeIds != null && _query._canUseNativeProjection) {
+      final values = await _query._database.queryNativeProjection(
+        _query._schema.name,
+        nativeIds,
+        _field,
+      );
+      final decode = _decode;
+      return [
+        for (final value in values)
+          if (decode == null) value as R else decode(value),
+      ];
+    }
+
     final documents = await _query._matchingDocuments();
     final decode = _decode;
     return [
@@ -973,6 +1026,19 @@ List<CindelDocument> _windowDocuments(
       ? documents.length
       : (offset + limit).clamp(0, documents.length);
   return documents.sublist(offset, end);
+}
+
+List<int> _windowIds(List<int> ids, int offset, int? limit) {
+  if (offset == 0 && limit == null) {
+    return ids;
+  }
+  if (offset >= ids.length) {
+    return <int>[];
+  }
+  final end = limit == null
+      ? ids.length
+      : (offset + limit).clamp(0, ids.length);
+  return ids.sublist(offset, end);
 }
 
 enum _FilterOperation {

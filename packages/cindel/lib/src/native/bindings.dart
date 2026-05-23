@@ -495,6 +495,40 @@ final class CindelNativeBindings {
       'query filter',
     );
   }
+
+  Uint8List queryProject(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List ids,
+    String field,
+  ) {
+    return _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _withNativeUtf8Bytes(field, (fieldPointer, fieldLength) {
+          return _queryBytes(
+            (outPointer, outLength) {
+              return _functions.queryProject(
+                handle,
+                collectionPointer,
+                collectionLength,
+                idsPointer,
+                idsLength,
+                fieldPointer,
+                fieldLength,
+                outPointer,
+                outLength,
+              );
+            },
+            _functions.freeBuffer,
+            'query project',
+          );
+        });
+      });
+    });
+  }
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -654,6 +688,19 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get queryFilter;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryProject;
 
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }
@@ -1003,6 +1050,31 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_query_filter'),
+      queryProject = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_project'),
       freeBuffer = library
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
@@ -1203,6 +1275,20 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   queryFilter;
 
   @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryProject;
+
+  @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }
 
@@ -1391,6 +1477,20 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get queryFilter => _cindelQueryFilter;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryProject => _cindelQueryProject;
 
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
@@ -1817,6 +1917,31 @@ external int _cindelQueryFilter(
   int idsLen,
   Pointer<Uint8> filter,
   int filterLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_project', assetId: _assetId)
+external int _cindelQueryProject(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+  Pointer<Uint8> field,
+  int fieldLen,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
 );

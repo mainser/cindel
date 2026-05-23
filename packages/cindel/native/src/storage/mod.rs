@@ -155,6 +155,15 @@ pub trait StorageEngine {
         let _ = (collection, candidate_ids, filter);
         Err("native filters are not supported by this storage backend".into())
     }
+    fn query_project(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let _ = (collection, candidate_ids, field);
+        Err("native projections are not supported by this storage backend".into())
+    }
     fn collection_revision(&self, collection: &str) -> Result<u64, String>;
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
@@ -346,6 +355,19 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.query_filter(collection, candidate_ids, filter),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.query_filter(collection, candidate_ids, filter),
+        }
+    }
+
+    fn query_project(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_project(collection, candidate_ids, field),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_project(collection, candidate_ids, field),
         }
     }
 

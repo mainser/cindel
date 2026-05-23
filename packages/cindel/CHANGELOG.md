@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.8
+
+- Added a first native query planner path for MDBX binary-document queries.
+- Count and simple windowed list queries now use native candidate ids before
+  document hydration when sort/distinct processing is not required.
+- Added native single-field projection over binary document bytes.
+- Added FFI bindings for native projection queries and bumped the native ABI to
+  8.
+
 ## 0.2.7
 
 - Added native MDBX filtering for generated Cindel filter predicates over

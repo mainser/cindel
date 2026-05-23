@@ -5,6 +5,18 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.8
+
+- Added a first native query planner path for MDBX binary-document queries.
+- Count and simple windowed list queries can now operate on native candidate
+  ids before hydrating documents.
+- Added native single-field projection over binary document bytes for
+  projection queries that do not require Dart-side sort or distinct handling.
+- Added FFI bindings for native projection queries and bumped the native ABI
+  to 8.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 8.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.8`.
+
 ## 0.2.7
 
 - Added a native MDBX filter compiler for generated Cindel predicates over

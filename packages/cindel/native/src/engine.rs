@@ -128,6 +128,15 @@ impl CindelEngine {
         self.storage.query_filter(collection, candidate_ids, filter)
     }
 
+    pub fn query_project(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        self.storage.query_project(collection, candidate_ids, field)
+    }
+
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
     }

@@ -274,6 +274,34 @@ void main() {
       expect(between.map((user) => user.name), ['Ben', 'Cid']);
     });
 
+    // Scenario: A filter-only query counts and projects without requiring sort
+    // or distinct processing.
+    // Covers:
+    // - Native planner id-window path for [CindelQuery.count].
+    // - Native single-field projection path for [CindelPropertyQuery.findAll].
+    // Expected: Count and property results preserve id-order filter semantics.
+    test('counts and projects filter-only queries.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final activeCount = await database.users
+          .filter()
+          .activeEqualTo(true)
+          .limit(2)
+          .count();
+      final activeNames = await database.users
+          .filter()
+          .activeEqualTo(true)
+          .nameProperty()
+          .findAll();
+
+      // Assert.
+      expect(activeCount, 2);
+      expect(activeNames, ['Ana', 'Ben', 'Dee']);
+    });
+
     // Scenario: Filters are composed manually with boolean groups.
     // Covers:
     // - [CindelFilter.all], [CindelFilter.any], and [CindelFilter.not].
