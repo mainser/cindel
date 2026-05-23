@@ -169,6 +169,8 @@ final UserSchema = CindelCollectionSchema<User>(
   ],
   toDocument: _$UserToCindelDocument,
   fromDocument: _$UserFromCindelDocument,
+  toBinaryDocument: _$UserToCindelBinaryDocument,
+  fromBinaryDocument: _$UserFromCindelBinaryDocument,
   setId: _$UserSetCindelId,
 );
 
@@ -1206,6 +1208,80 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
               ),
             )
             .toList(growable: false);
+  return object;
+}
+
+CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
+  return cindelEncodeBinaryDocument(<Object?>[
+    object.accessToken,
+    object.active,
+    object.bio,
+    object.createdAt.microsecondsSinceEpoch,
+    object.displayName,
+    object.email,
+    object.id,
+    object.name,
+    object.plan.code,
+    object.primaryRecipient == null
+        ? null
+        : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient),
+    object.recipients
+        ?.map((value) => _$RecipientToCindelEmbedded(value))
+        .toList(growable: false),
+    object.role.name,
+    object.scores?.map((value) => value).toList(growable: false),
+    object.sessionLength?.inMicroseconds,
+    object.status.index,
+    object.tags.map((value) => value).toList(growable: false),
+    object.username,
+  ]);
+}
+
+User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
+  final fields = cindelDecodeBinaryDocument(bytes);
+  final object = User();
+  object.accessToken = fields[0] == null ? null : fields[0] as String?;
+  object.active = fields[1] == null ? null : fields[1] as bool?;
+  object.bio = fields[2] == null ? null : fields[2] as String?;
+  object.createdAt = DateTime.fromMicrosecondsSinceEpoch(
+    fields[3] as int,
+    isUtc: true,
+  );
+  object.displayName = fields[4] == null ? null : fields[4] as String?;
+  object.email = fields[5] as String;
+  object.id = fields[6] as int;
+  object.name = fields[7] as String;
+  object.plan = UserPlan.values.firstWhere(
+    (enumValue) => enumValue.code == fields[8],
+  );
+  object.primaryRecipient = fields[9] == null
+      ? null
+      : _$RecipientFromCindelEmbedded(
+          (fields[9] as Map).cast<String, Object?>(),
+        );
+  object.recipients = fields[10] == null
+      ? null
+      : (fields[10] as List<Object?>)
+            .map(
+              (value) => _$RecipientFromCindelEmbedded(
+                (value as Map).cast<String, Object?>(),
+              ),
+            )
+            .toList(growable: false);
+  object.role = UserRole.values.byName(fields[11] as String);
+  object.scores = fields[12] == null
+      ? null
+      : (fields[12] as List<Object?>)
+            .map((value) => value as int)
+            .toList(growable: false);
+  object.sessionLength = fields[13] == null
+      ? null
+      : Duration(microseconds: fields[13] as int);
+  object.status = UserStatus.values[fields[14] as int];
+  object.tags = (fields[15] as List<Object?>)
+      .map((value) => value as String)
+      .toList(growable: false);
+  object.username = fields[16] == null ? null : fields[16] as String?;
   return object;
 }
 

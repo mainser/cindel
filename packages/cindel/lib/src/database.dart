@@ -251,6 +251,49 @@ class CindelDatabase {
     _markCollectionChanged(collection);
   }
 
+  /// Stores one generated binary document.
+  ///
+  /// This is intended for generated typed collections when the selected
+  /// backend can index and read Cindel's binary document format directly.
+  Future<void> putBinaryDocument(
+    String collection,
+    int id,
+    Uint8List bytes,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkId(id);
+
+    _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
+    _markCollectionChanged(collection);
+  }
+
+  /// Stores generated binary documents atomically.
+  Future<void> putAllBinaryDocuments(
+    String collection,
+    Map<int, Uint8List> values,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    if (values.isEmpty) {
+      return;
+    }
+    for (final id in values.keys) {
+      _checkId(id);
+    }
+
+    _bindings.putManyStored(
+      handle,
+      collection,
+      _encodeBinaryBatchPutEntries(values),
+    );
+    _markCollectionChanged(collection);
+  }
+
   /// Stores many documents atomically.
   ///
   /// Alias for [putAll], provided for APIs that prefer `many` naming.
@@ -291,6 +334,16 @@ class CindelDatabase {
     return decoded.cast<String, Object?>();
   }
 
+  /// Returns raw generated binary document bytes, or `null`.
+  Future<Uint8List?> getBinaryDocument(String collection, int id) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkId(id);
+
+    return _bindings.getStored(handle, collection, id);
+  }
+
   /// Returns the documents stored under [ids], preserving input order.
   ///
   /// Missing documents are returned as `null`.
@@ -306,6 +359,30 @@ class CindelDatabase {
     }
 
     return _documentsByIdsNullable(handle, collection, idList);
+  }
+
+  /// Returns raw generated binary document bytes, preserving input order.
+  Future<List<Uint8List?>> getAllBinaryDocuments(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return const <Uint8List?>[];
+    }
+
+    final bytes = _bindings.getManyStored(
+      handle,
+      collection,
+      _encodeIds(idList),
+    );
+    return _decodeBinaryDocumentBatch(bytes);
   }
 
   /// Returns every document in [collection], ordered by id.
@@ -735,6 +812,14 @@ class CindelDatabase {
     throw StateError('Field `$field` is not indexed for `$collection`.');
   }
 
+  void _checkBinaryBackend() {
+    if (backend != CindelStorageBackend.mdbx) {
+      throw StateError(
+        'Cindel binary documents require the MDBX storage backend.',
+      );
+    }
+  }
+
   CindelFieldSchema? _fieldSchema(String collection, String field) {
     final schema = _schemas[collection];
     if (schema == null) {
@@ -881,6 +966,52 @@ Uint8List _encodeIds(Iterable<int> ids) {
   return Uint8List.fromList(utf8.encode(jsonEncode(ids.toList())));
 }
 
+List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {
+  final data = bytes.buffer.asByteData(
+    bytes.offsetInBytes,
+    bytes.lengthInBytes,
+  );
+  var offset = 0;
+  int readUint8() {
+    if (offset + 1 > bytes.length) {
+      throw StateError('Native Cindel returned a truncated binary batch.');
+    }
+    return bytes[offset++];
+  }
+
+  int readUint32() {
+    if (offset + 4 > bytes.length) {
+      throw StateError('Native Cindel returned a truncated binary batch.');
+    }
+    final value = data.getUint32(offset, Endian.little);
+    offset += 4;
+    return value;
+  }
+
+  final count = readUint32();
+  final documents = <Uint8List?>[];
+  for (var index = 0; index < count; index += 1) {
+    final present = readUint8();
+    final length = readUint32();
+    if (present == 0) {
+      if (length != 0) {
+        throw StateError('Native Cindel returned an invalid binary batch.');
+      }
+      documents.add(null);
+      continue;
+    }
+    if (present != 1 || offset + length > bytes.length) {
+      throw StateError('Native Cindel returned an invalid binary batch.');
+    }
+    documents.add(Uint8List.sublistView(bytes, offset, offset + length));
+    offset += length;
+  }
+  if (offset != bytes.length) {
+    throw StateError('Native Cindel returned trailing binary batch bytes.');
+  }
+  return documents;
+}
+
 void _checkDirectory(String directory) {
   if (directory.trim().isEmpty) {
     throw ArgumentError.value(directory, 'directory', 'Must not be empty.');
@@ -998,6 +1129,29 @@ Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
       ]),
     ),
   );
+}
+
+Uint8List _encodeBinaryBatchPutEntries(Map<int, Uint8List> entries) {
+  final length =
+      4 +
+      entries.entries.fold<int>(
+        0,
+        (total, entry) => total + 8 + 4 + entry.value.length,
+      );
+  final bytes = Uint8List(length);
+  final data = bytes.buffer.asByteData();
+  var offset = 0;
+  data.setUint32(offset, entries.length, Endian.little);
+  offset += 4;
+  for (final entry in entries.entries) {
+    data.setUint64(offset, entry.key, Endian.little);
+    offset += 8;
+    data.setUint32(offset, entry.value.length, Endian.little);
+    offset += 4;
+    bytes.setRange(offset, offset + entry.value.length, entry.value);
+    offset += entry.value.length;
+  }
+  return bytes;
 }
 
 Uint8List _encodeSchemaManifest(

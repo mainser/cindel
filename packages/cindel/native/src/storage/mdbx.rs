@@ -570,7 +570,12 @@ impl StorageEngine for MdbxStorage {
             .active_write()
             .and_then(|transaction| transaction.staged_document(collection, id))
         {
-            return Ok(document);
+            let schema = self.with_read_transaction(|transaction, tables| {
+                collection_schema(transaction, &tables, collection)
+            })?;
+            return document
+                .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
+                .transpose();
         }
 
         self.with_read_transaction(|transaction, tables| {
@@ -587,6 +592,31 @@ impl StorageEngine for MdbxStorage {
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
         ids.iter().map(|id| self.get(collection, *id)).collect()
+    }
+
+    fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        if let Some(document) = self
+            .active_write()
+            .and_then(|transaction| transaction.staged_document(collection, id))
+        {
+            return Ok(document);
+        }
+
+        self.with_read_transaction(|transaction, tables| {
+            transaction
+                .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        ids.iter()
+            .map(|id| self.get_stored(collection, *id))
+            .collect()
     }
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
@@ -613,6 +643,11 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<(), String> {
         self.ensure_can_write()?;
         if self.active_write_mut().is_some() {
+            let schema = self.with_read_transaction(|transaction, tables| {
+                collection_schema(transaction, &tables, collection)
+            })?;
+            let (stored_bytes, effective_indexes) =
+                encode_document_for_storage(schema.as_ref(), bytes, indexes)?;
             let fallback_next_id = self.current_next_id(collection)?;
             self.advance_staged_id_counter(collection, id, Some(fallback_next_id))?;
             self.active_write_mut()
@@ -621,8 +656,8 @@ impl StorageEngine for MdbxStorage {
                 .push(MdbxWriteOperation::PutIndexed {
                     collection: collection.to_string(),
                     id,
-                    bytes: bytes.to_vec(),
-                    indexes: indexes.to_vec(),
+                    bytes: stored_bytes,
+                    indexes: effective_indexes,
                 });
             return Ok(());
         }
@@ -640,6 +675,24 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<(), String> {
         self.ensure_can_write()?;
         if self.active_write_mut().is_some() {
+            let schema = self.with_read_transaction(|transaction, tables| {
+                collection_schema(transaction, &tables, collection)
+            })?;
+            let staged_documents = documents
+                .iter()
+                .map(|document| {
+                    let (stored_bytes, effective_indexes) = encode_document_for_storage(
+                        schema.as_ref(),
+                        &document.bytes,
+                        &document.indexes,
+                    )?;
+                    Ok(DocumentWrite {
+                        id: document.id,
+                        bytes: stored_bytes,
+                        indexes: effective_indexes,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let fallback_next_id = self.current_next_id(collection)?;
             for document in documents {
                 self.advance_staged_id_counter(collection, document.id, Some(fallback_next_id))?;
@@ -649,7 +702,7 @@ impl StorageEngine for MdbxStorage {
                 .operations
                 .push(MdbxWriteOperation::PutManyIndexed {
                     collection: collection.to_string(),
-                    documents: documents.to_vec(),
+                    documents: staged_documents,
                 });
             return Ok(());
         }

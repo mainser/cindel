@@ -343,10 +343,11 @@ Guiding rules:
   - Reject unknown schema-backed fields instead of carrying JSON fallback
     behavior into the optimized path.
   - Keep MDBX in the default native build while SQLite remains selectable.
-- [ ] PERF-07: Dart FFI typed writer and reader handles.
-  - Add native writer/reader handles and generated FFI calls for typed fields.
-  - Reduce per-document JSON payloads and allocation overhead in `putAll` and
-    `getAll`.
+- [x] PERF-07: Dart FFI typed writer and reader paths.
+  - Added generated binary serializers for typed fields.
+  - Added FFI paths for raw stored document reads and binary batch writes.
+  - Reduced per-document JSON payloads in MDBX typed `put`, `putAll`, `get`,
+    and `getAll` while keeping SQLite on the JSON compatibility path.
 - [ ] PERF-08: Native filter compiler.
   - Encode generated filter ASTs through FFI and evaluate predicates over
     native binary object readers.

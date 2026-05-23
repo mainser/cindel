@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.6
+
+- Added generated binary document callbacks to collection schemas.
+- Added MDBX typed collection write and read paths that use Cindel binary
+  document bytes instead of JSON map decoding.
+- Added FFI bindings for raw stored document reads and bumped the native ABI to
+  6.
+- Kept SQLite available on the existing JSON document path.
+- Updated the development generator dependency constraint to the `0.2.2`
+  release line.
+
 ## 0.2.5
 
 - Switched MDBX schema-backed document storage to Cindel's native binary

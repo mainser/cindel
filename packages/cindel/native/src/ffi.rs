@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    5
+    6
 }
 
 #[no_mangle]
@@ -228,6 +228,30 @@ pub unsafe extern "C" fn cindel_put_many_indexed(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_put_many_stored(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    documents_ptr: *const u8,
+    documents_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(documents) = read_binary_document_writes(documents_ptr, documents_len) else {
+        return -1;
+    };
+
+    match engine.put_many_indexed(collection, &documents) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_get(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
@@ -291,6 +315,74 @@ pub unsafe extern "C" fn cindel_get_many(
 
     match engine.get_many(collection, &ids) {
         Ok(documents) => write_json_documents(documents, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_get_stored(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    id: u64,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+
+    match engine.get_stored(collection, id) {
+        Ok(Some(bytes)) => {
+            let (ptr, len) = into_raw_bytes(bytes);
+            *out_ptr = ptr;
+            *out_len = len;
+            0
+        }
+        Ok(None) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_get_many_stored(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+
+    match engine.get_many_stored(collection, &ids) {
+        Ok(documents) => write_binary_documents(documents, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -593,6 +685,38 @@ fn write_json_documents(
     0
 }
 
+fn write_binary_documents(
+    documents: Vec<Option<Vec<u8>>>,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&(documents.len() as u32).to_le_bytes());
+    for document in documents {
+        match document {
+            Some(document) => {
+                let Ok(length) = u32::try_from(document.len()) else {
+                    return -1;
+                };
+                bytes.push(1);
+                bytes.extend_from_slice(&length.to_le_bytes());
+                bytes.extend_from_slice(&document);
+            }
+            None => {
+                bytes.push(0);
+                bytes.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+    }
+
+    let (ptr, len) = into_raw_bytes(bytes);
+    unsafe {
+        *out_ptr = ptr;
+        *out_len = len;
+    }
+    0
+}
+
 unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntry>, ()> {
     if len == 0 {
         return Ok(Vec::new());
@@ -609,6 +733,39 @@ unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<Documen
     let bytes = read_bytes(ptr, len).ok_or(())?;
     let documents = serde_json::from_slice::<Vec<WireDocumentWrite>>(bytes).map_err(|_| ())?;
     documents.into_iter().map(TryInto::try_into).collect()
+}
+
+unsafe fn read_binary_document_writes(
+    ptr: *const u8,
+    len: usize,
+) -> Result<Vec<DocumentWrite>, ()> {
+    let bytes = read_bytes(ptr, len).ok_or(())?;
+    if bytes.len() < 4 {
+        return Err(());
+    }
+    let count = read_u32_le(bytes, 0)? as usize;
+    let mut offset = 4;
+    let mut documents = Vec::with_capacity(count);
+    for _ in 0..count {
+        let id = read_u64_le(bytes, offset)?;
+        offset += 8;
+        let document_len = read_u32_le(bytes, offset)? as usize;
+        offset += 4;
+        let end = offset.checked_add(document_len).ok_or(())?;
+        if end > bytes.len() {
+            return Err(());
+        }
+        documents.push(DocumentWrite {
+            id,
+            bytes: bytes[offset..end].to_vec(),
+            indexes: Vec::new(),
+        });
+        offset = end;
+    }
+    if offset != bytes.len() {
+        return Err(());
+    }
+    Ok(documents)
 }
 
 unsafe fn read_json_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
@@ -632,6 +789,18 @@ unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option
         .map_err(|_| ())?
         .try_into()
         .map(Some)
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ()> {
+    let end = offset.checked_add(4).ok_or(())?;
+    let slice = bytes.get(offset..end).ok_or(())?;
+    Ok(u32::from_le_bytes(slice.try_into().map_err(|_| ())?))
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64, ()> {
+    let end = offset.checked_add(8).ok_or(())?;
+    let slice = bytes.get(offset..end).ok_or(())?;
+    Ok(u64::from_le_bytes(slice.try_into().map_err(|_| ())?))
 }
 
 #[derive(Deserialize)]

@@ -5,6 +5,24 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.6
+
+- Added generated binary serializers for typed Cindel models.
+- Added native FFI read paths for raw stored document bytes so typed MDBX reads
+  can avoid JSON map decoding.
+- Updated typed collection writes and reads to use Cindel binary documents when
+  MDBX is the selected backend, while keeping SQLite on the JSON compatibility
+  path.
+- Kept MDBX transaction queries consistent by deriving staged index entries
+  from binary document bytes.
+- Bumped the native ABI to 6 for the new stored-byte FFI symbols.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 6.
+- Updated `cindel_generator` to `0.2.2`, `cindel` to `0.2.6`, and
+  `cindel_flutter_libs` to `0.2.6`.
+- Relaxed the generator `analyzer` constraint to keep the Todo example
+  compatible with Riverpod while still supporting current pub.dev analyzer
+  scoring.
+
 ## 0.2.5
 
 - Switched MDBX schema-backed document storage to Cindel's native binary

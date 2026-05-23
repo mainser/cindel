@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2
+
+- Generated binary document serializers alongside the existing JSON document
+  serializers.
+- Emitted binary fields in the same sorted order used by the native schema
+  manifest, so MDBX can index and read generated objects directly.
+- Relaxed the `analyzer` constraint to support both the Riverpod-compatible
+  analyzer 9 line and the current analyzer 10+ pub.dev scoring line.
+
 ## 0.2.1
 
 - Expanded the `analyzer` dependency constraint to support the current stable

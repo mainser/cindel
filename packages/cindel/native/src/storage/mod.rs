@@ -107,6 +107,16 @@ pub trait StorageEngine {
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String>;
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String>;
+    fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        self.get(collection, id)
+    }
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        self.get_many(collection, ids)
+    }
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
     fn put_indexed(
@@ -209,6 +219,26 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.get_many(collection, ids),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.get_many(collection, ids),
+        }
+    }
+
+    fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.get_stored(collection, id),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.get_stored(collection, id),
+        }
+    }
+
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.get_many_stored(collection, ids),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.get_many_stored(collection, ids),
         }
     }
 

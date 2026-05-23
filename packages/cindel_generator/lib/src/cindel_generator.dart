@@ -86,6 +86,13 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  ],')
     ..writeln('  toDocument: _\$${collection.dartName}ToCindelDocument,')
     ..writeln('  fromDocument: _\$${collection.dartName}FromCindelDocument,')
+    ..writeln(
+      '  toBinaryDocument: _\$${collection.dartName}ToCindelBinaryDocument,',
+    )
+    ..writeln(
+      '  fromBinaryDocument: '
+      '_\$${collection.dartName}FromCindelBinaryDocument,',
+    )
     ..writeln('  setId: _\$${collection.dartName}SetCindelId,')
     ..writeln(');')
     ..writeln()
@@ -195,6 +202,40 @@ String _emitCollection(_CollectionInfo collection) {
     buffer.writeln(
       '  object.${field.name} = '
       '${field.fromDocumentExpression(_stringLiteral(field.name))};',
+    );
+  }
+
+  buffer
+    ..writeln('  return object;')
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      'CindelBinaryDocumentBytes '
+      '_\$${collection.dartName}ToCindelBinaryDocument('
+      '${collection.dartName} object) {',
+    )
+    ..writeln('  return cindelEncodeBinaryDocument(<Object?>[');
+
+  for (final field in collection.binaryFields) {
+    buffer.writeln('    ${field.toDocumentExpression},');
+  }
+
+  buffer
+    ..writeln('  ]);')
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      '${collection.dartName} _\$${collection.dartName}'
+      'FromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {',
+    )
+    ..writeln('  final fields = cindelDecodeBinaryDocument(bytes);')
+    ..writeln('  final object = ${collection.dartName}();');
+
+  for (var index = 0; index < collection.binaryFields.length; index += 1) {
+    final field = collection.binaryFields[index];
+    buffer.writeln(
+      '  object.${field.name} = '
+      '${field.fromStoredValueExpression('fields[$index]')};',
     );
   }
 
@@ -384,6 +425,11 @@ final class _CollectionInfo {
   Iterable<_FieldInfo> get indexedFields {
     return fields.where((field) => field.isIndexed);
   }
+
+  List<_FieldInfo> get binaryFields {
+    return fields.toList(growable: false)
+      ..sort((left, right) => left.name.compareTo(right.name));
+  }
 }
 
 void _emitFilterMethods(
@@ -567,6 +613,10 @@ final class _FieldInfo {
 
   String fromDocumentExpression(String fieldLiteral) {
     return type.fromStoredExpression('document[$fieldLiteral]');
+  }
+
+  String fromStoredValueExpression(String expression) {
+    return type.fromStoredExpression(expression);
   }
 
   String toStoredValueExpression(

@@ -1,10 +1,23 @@
+import 'dart:typed_data';
+
 import 'package:cindel_annotations/cindel_annotations.dart';
+
+/// Raw bytes encoded with Cindel's generated binary document format.
+typedef CindelBinaryDocumentBytes = Uint8List;
 
 /// Converts a typed object into a Cindel document.
 typedef CindelToDocument<T> = Map<String, Object?> Function(T object);
 
 /// Converts a Cindel document into a typed object.
 typedef CindelFromDocument<T> = T Function(Map<String, Object?> document);
+
+/// Converts a typed object into Cindel's binary document format.
+typedef CindelToBinaryDocument<T> =
+    CindelBinaryDocumentBytes Function(T object);
+
+/// Converts Cindel binary document bytes into a typed object.
+typedef CindelFromBinaryDocument<T> =
+    T Function(CindelBinaryDocumentBytes bytes);
 
 /// Assigns a generated id to a typed object before it is persisted.
 typedef CindelSetId<T> = void Function(T object, int id);
@@ -19,6 +32,8 @@ final class CindelCollectionSchema<T> {
     required Iterable<CindelFieldSchema> fields,
     required this.toDocument,
     required this.fromDocument,
+    this.toBinaryDocument,
+    this.fromBinaryDocument,
     this.setId,
   }) : fields = List.unmodifiable(fields);
 
@@ -39,6 +54,12 @@ final class CindelCollectionSchema<T> {
 
   /// Deserializes Cindel documents into typed objects.
   final CindelFromDocument<T> fromDocument;
+
+  /// Serializes typed objects into Cindel binary documents.
+  final CindelToBinaryDocument<T>? toBinaryDocument;
+
+  /// Deserializes Cindel binary documents into typed objects.
+  final CindelFromBinaryDocument<T>? fromBinaryDocument;
 
   /// Assigns native auto-increment ids to typed objects.
   final CindelSetId<T>? setId;
