@@ -5,6 +5,15 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.1
+
+- Added an MDBX index abstraction boundary in the Cindel native core.
+- Kept the storage format, public Dart API, and prebuilt binary symbols
+  unchanged.
+- Expanded the Cindel generator `analyzer` dependency constraint to support
+  the current stable analyzer release line reported by pub.dev.
+- Replaced deprecated analyzer field-origin checks in the generator.
+
 ## 0.2.0
 
 - Prepared the coordinated `0.2.0` pub.dev release line for all publishable

@@ -322,7 +322,7 @@ final class _CollectionInfo {
   ) {
     final dartName = element.name ?? element.displayName;
     final fields = element.fields
-        .where((field) => !field.isSynthetic && !field.isStatic)
+        .where(_isPersistedFieldCandidate)
         .map(_FieldInfo.from)
         .whereType<_FieldInfo>()
         .toList(growable: false);
@@ -660,7 +660,7 @@ final class _EmbeddedInfo {
     return _EmbeddedInfo(
       dartName: element.name ?? element.displayName,
       fields: element.fields
-          .where((field) => !field.isSynthetic && !field.isStatic)
+          .where(_isPersistedFieldCandidate)
           .map(_EmbeddedFieldInfo.from)
           .whereType<_EmbeddedFieldInfo>()
           .toList(growable: false),
@@ -1121,6 +1121,11 @@ ClassElement? _embeddedElement(DartType type) {
   }
   final element = type.element as ClassElement;
   return _embeddedChecker.hasAnnotationOf(element) ? element : null;
+}
+
+bool _isPersistedFieldCandidate(FieldElement field) {
+  return !field.isStatic &&
+      (field.isOriginDeclaration || field.isOriginDeclaringFormalParameter);
 }
 
 List<_EmbeddedInfo> _collectEmbeddedTypes(List<_FieldInfo> fields) {

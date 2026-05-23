@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Expanded the `analyzer` dependency constraint to support the current stable
+  analyzer release line reported by pub.dev.
+- Replaced deprecated analyzer field-origin checks used by the generator.
+
 ## 0.2.0
 
 - Prepared the generator package for the coordinated `0.2.0` Cindel release

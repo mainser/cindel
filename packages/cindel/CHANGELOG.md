@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- Added an internal MDBX index abstraction boundary for key creation, unique
+  checks, index replacement, deletion, collection clearing, and index stats.
+- Kept the existing MDBX storage layout and public Dart API unchanged.
+- Updated the development generator dependency constraint to the `0.2.1`
+  release line.
+
 ## 0.2.0
 
 - Prepared the Cindel API package for the coordinated `0.2.0` release line.

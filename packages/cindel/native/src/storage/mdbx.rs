@@ -1192,29 +1192,12 @@ fn put_document_with_indexes(
     indexes: &[IndexEntry],
     unique_indexes: &HashSet<String>,
 ) -> Result<(), String> {
-    enforce_unique_indexes(transaction, tables, collection, id, indexes, unique_indexes)?;
+    MdbxIndex::validate_unique(transaction, tables, collection, id, indexes, unique_indexes)?;
     let document_key = encode_document_key(collection, id);
     transaction
         .put(&tables.documents, &document_key, bytes, WriteFlags::UPSERT)
         .map_err(|error| error.to_string())?;
-    delete_index_entries(transaction, tables, collection, id)?;
-    for index in indexes {
-        let key = encode_index_key(collection, &index.name, &index.value, id)?;
-        transaction
-            .put(&tables.indexes, key, EMPTY_VALUE, WriteFlags::UPSERT)
-            .map_err(|error| error.to_string())?;
-        if unique_indexes.contains(index.name.as_str()) {
-            let unique_key = encode_unique_index_key(collection, &index.name, &index.value)?;
-            transaction
-                .put(
-                    &tables.unique_indexes,
-                    unique_key,
-                    id.to_be_bytes(),
-                    WriteFlags::UPSERT,
-                )
-                .map_err(|error| error.to_string())?;
-        }
-    }
+    MdbxIndex::replace_document(transaction, tables, collection, id, indexes, unique_indexes)?;
     advance_id_counter(transaction, tables, collection, id)
 }
 
@@ -1227,29 +1210,215 @@ fn delete_document(
     let deleted = transaction
         .del(&tables.documents, encode_document_key(collection, id), None)
         .map_err(|error| error.to_string())?;
-    delete_index_entries(transaction, tables, collection, id)?;
+    MdbxIndex::delete_document(transaction, tables, collection, id)?;
     Ok(deleted)
 }
 
-fn delete_index_entries(
-    transaction: &Transaction<'_, RW, NoWriteMap>,
-    tables: &MdbxTables<'_>,
-    collection: &str,
-    id: u64,
-) -> Result<(), String> {
-    let collection_prefix = encode_collection_key(collection);
-    let (index_keys, unique_keys) = {
+struct MdbxIndex;
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Eq, PartialEq)]
+struct MdbxIndexStats {
+    entries: usize,
+    unique_entries: usize,
+}
+
+impl MdbxIndex {
+    fn entry_key(
+        collection: &str,
+        index_name: &str,
+        value: &IndexValue,
+        document_id: u64,
+    ) -> Result<Vec<u8>, String> {
+        encode_index_key(collection, index_name, value, document_id)
+    }
+
+    fn unique_key(
+        collection: &str,
+        index_name: &str,
+        value: &IndexValue,
+    ) -> Result<Vec<u8>, String> {
+        encode_unique_index_key(collection, index_name, value)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn equal_prefix(
+        collection: &str,
+        index_name: &str,
+        value: &IndexValue,
+    ) -> Result<Vec<u8>, String> {
+        encode_index_equal_prefix(collection, index_name, value)
+    }
+
+    fn validate_unique(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+        document_id: u64,
+        indexes: &[IndexEntry],
+        unique_indexes: &HashSet<String>,
+    ) -> Result<(), String> {
+        if unique_indexes.is_empty() {
+            return Ok(());
+        }
+
+        for index in indexes {
+            if !unique_indexes.contains(index.name.as_str()) {
+                continue;
+            }
+            let key = Self::unique_key(collection, &index.name, &index.value)?;
+            if let Some(existing_id) = transaction
+                .get::<Vec<u8>>(&tables.unique_indexes, &key)
+                .map_err(|error| error.to_string())?
+            {
+                let existing_id = decode_u64(&existing_id)?;
+                if existing_id != document_id {
+                    return Err(format!(
+                        "Unique index `{}` already contains this value.",
+                        index.name
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn replace_document(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+        document_id: u64,
+        new_indexes: &[IndexEntry],
+        unique_indexes: &HashSet<String>,
+    ) -> Result<(), String> {
+        Self::delete_document(transaction, tables, collection, document_id)?;
+        for index in new_indexes {
+            Self::insert_entry(
+                transaction,
+                tables,
+                collection,
+                document_id,
+                index,
+                unique_indexes.contains(index.name.as_str()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn insert_entry(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+        document_id: u64,
+        index: &IndexEntry,
+        is_unique: bool,
+    ) -> Result<(), String> {
+        let key = Self::entry_key(collection, &index.name, &index.value, document_id)?;
+        transaction
+            .put(&tables.indexes, key, EMPTY_VALUE, WriteFlags::UPSERT)
+            .map_err(|error| error.to_string())?;
+        if is_unique {
+            let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
+            transaction
+                .put(
+                    &tables.unique_indexes,
+                    unique_key,
+                    document_id.to_be_bytes(),
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn delete_document(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+        document_id: u64,
+    ) -> Result<(), String> {
+        let collection_prefix = encode_collection_key(collection);
+        let (index_keys, unique_keys) =
+            Self::document_keys(transaction, tables, &collection_prefix, document_id)?;
+
+        for key in index_keys {
+            transaction
+                .del(&tables.indexes, key, None)
+                .map_err(|error| error.to_string())?;
+        }
+        for key in unique_keys {
+            transaction
+                .del(&tables.unique_indexes, key, None)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn clear_collection(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+    ) -> Result<MdbxIndexStats, String> {
+        let collection_prefix = encode_collection_key(collection);
+        let index_keys = scan_keys_by_prefix(transaction, &tables.indexes, &collection_prefix)?;
+        let unique_keys =
+            scan_keys_by_prefix(transaction, &tables.unique_indexes, &collection_prefix)?;
+        let stats = MdbxIndexStats {
+            entries: index_keys.len(),
+            unique_entries: unique_keys.len(),
+        };
+
+        for key in index_keys {
+            transaction
+                .del(&tables.indexes, key, None)
+                .map_err(|error| error.to_string())?;
+        }
+        for key in unique_keys {
+            transaction
+                .del(&tables.unique_indexes, key, None)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(stats)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn stats<K>(
+        transaction: &Transaction<'_, K, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+    ) -> Result<MdbxIndexStats, String>
+    where
+        K: libmdbx::TransactionKind,
+    {
+        let collection_prefix = encode_collection_key(collection);
+        Ok(MdbxIndexStats {
+            entries: count_keys_by_prefix(transaction, &tables.indexes, &collection_prefix)?,
+            unique_entries: count_keys_by_prefix(
+                transaction,
+                &tables.unique_indexes,
+                &collection_prefix,
+            )?,
+        })
+    }
+
+    fn document_keys(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection_prefix: &[u8],
+        document_id: u64,
+    ) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), String> {
+        let mut index_keys = Vec::new();
+        let mut unique_keys = Vec::new();
         let mut cursor = transaction
             .cursor(&tables.indexes)
             .map_err(|error| error.to_string())?;
-        let mut index_keys = Vec::new();
-        let mut unique_keys = Vec::new();
-        for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&collection_prefix) {
+        for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(collection_prefix) {
             let (key, _) = row.map_err(|error| error.to_string())?;
-            if !key.starts_with(&collection_prefix) {
+            if !key.starts_with(collection_prefix) {
                 break;
             }
-            if decode_key_document_id(&key)? == id {
+            if decode_key_document_id(&key)? == document_id {
                 let key = key.into_owned();
                 if key.len() >= 8 {
                     unique_keys.push(key[..key.len() - 8].to_vec());
@@ -1257,50 +1426,8 @@ fn delete_index_entries(
                 index_keys.push(key);
             }
         }
-        (index_keys, unique_keys)
-    };
-
-    for key in index_keys {
-        transaction
-            .del(&tables.indexes, key, None)
-            .map_err(|error| error.to_string())?;
+        Ok((index_keys, unique_keys))
     }
-    for key in unique_keys {
-        transaction
-            .del(&tables.unique_indexes, key, None)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn enforce_unique_indexes(
-    transaction: &Transaction<'_, RW, NoWriteMap>,
-    tables: &MdbxTables<'_>,
-    collection: &str,
-    id: u64,
-    indexes: &[IndexEntry],
-    unique_indexes: &HashSet<String>,
-) -> Result<(), String> {
-    if unique_indexes.is_empty() {
-        return Ok(());
-    }
-
-    for index in indexes {
-        if !unique_indexes.contains(index.name.as_str()) {
-            continue;
-        }
-        let prefix = encode_index_equal_prefix(collection, &index.name, &index.value)?;
-        let existing_ids = scan_ids_by_key_range(transaction, &tables.indexes, &prefix, None)?;
-        for existing_id in existing_ids {
-            if existing_id != id {
-                return Err(format!(
-                    "Unique index `{}` already contains this value.",
-                    index.name
-                ));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn scan_ids_by_key_range<K>(
@@ -1342,6 +1469,41 @@ where
         entries.push((key.into_owned(), id));
     }
     Ok(entries)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn scan_keys_by_prefix<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+    prefix: &[u8],
+) -> Result<Vec<Vec<u8>>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let mut keys = Vec::new();
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(prefix) {
+        let (key, _) = row.map_err(|error| error.to_string())?;
+        if !key.starts_with(prefix) {
+            break;
+        }
+        keys.push(key.into_owned());
+    }
+    Ok(keys)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn count_keys_by_prefix<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+    prefix: &[u8],
+) -> Result<usize, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    scan_keys_by_prefix(transaction, table, prefix).map(|keys| keys.len())
 }
 
 fn bump_collection_revision(
@@ -1599,6 +1761,121 @@ mod tests {
     }
 
     #[test]
+    fn mdbx_index_boundary_replaces_deletes_clears_and_counts_entries() {
+        // Scenario: PERF-02 moves MDBX index responsibilities behind an
+        // internal boundary before changing the table layout.
+        // Covers:
+        // - Index key creation and equality prefixes.
+        // - Unique index validation through the unique index table.
+        // - Replacing, deleting, clearing, and counting index entries.
+        // Expected: The boundary preserves current global-table behavior while
+        //   giving later stages one place to change index maintenance.
+        let directory = TemporaryDirectory::new("index_boundary");
+        let storage = MdbxStorage::open(directory.path()).unwrap();
+        let unique_indexes = HashSet::from(["email".to_string()]);
+
+        storage
+            .with_write_transaction(|transaction, tables| {
+                let tables = &tables;
+                MdbxIndex::replace_document(
+                    transaction,
+                    tables,
+                    "users",
+                    1,
+                    &[
+                        index("email", IndexValue::String("old@example.com".into())),
+                        index("score", IndexValue::Int(10)),
+                    ],
+                    &unique_indexes,
+                )?;
+                assert_eq!(
+                    MdbxIndex::stats(transaction, tables, "users")?,
+                    MdbxIndexStats {
+                        entries: 2,
+                        unique_entries: 1,
+                    }
+                );
+
+                let old_email_prefix = MdbxIndex::equal_prefix(
+                    "users",
+                    "email",
+                    &IndexValue::String("old@example.com".into()),
+                )?;
+                assert_eq!(
+                    scan_ids_by_key_range(transaction, &tables.indexes, &old_email_prefix, None)?,
+                    vec![1]
+                );
+
+                MdbxIndex::replace_document(
+                    transaction,
+                    tables,
+                    "users",
+                    1,
+                    &[
+                        index("email", IndexValue::String("new@example.com".into())),
+                        index("score", IndexValue::Int(20)),
+                    ],
+                    &unique_indexes,
+                )?;
+                assert_eq!(
+                    scan_ids_by_key_range(transaction, &tables.indexes, &old_email_prefix, None)?,
+                    Vec::<u64>::new()
+                );
+                let duplicate = MdbxIndex::validate_unique(
+                    transaction,
+                    tables,
+                    "users",
+                    2,
+                    &[index("email", IndexValue::String("new@example.com".into()))],
+                    &unique_indexes,
+                );
+                assert!(duplicate.unwrap_err().contains("Unique index `email`"));
+
+                MdbxIndex::delete_document(transaction, tables, "users", 1)?;
+                assert_eq!(
+                    MdbxIndex::stats(transaction, tables, "users")?,
+                    MdbxIndexStats {
+                        entries: 0,
+                        unique_entries: 0,
+                    }
+                );
+
+                MdbxIndex::replace_document(
+                    transaction,
+                    tables,
+                    "users",
+                    1,
+                    &[index("email", IndexValue::String("a@example.com".into()))],
+                    &unique_indexes,
+                )?;
+                MdbxIndex::replace_document(
+                    transaction,
+                    tables,
+                    "users",
+                    2,
+                    &[index("email", IndexValue::String("b@example.com".into()))],
+                    &unique_indexes,
+                )?;
+                assert_eq!(
+                    MdbxIndex::clear_collection(transaction, tables, "users")?,
+                    MdbxIndexStats {
+                        entries: 2,
+                        unique_entries: 2,
+                    }
+                );
+                assert_eq!(
+                    MdbxIndex::stats(transaction, tables, "users")?,
+                    MdbxIndexStats {
+                        entries: 0,
+                        unique_entries: 0,
+                    }
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn opens_test_only_in_memory_directory() {
         // Scenario: The storage trait supports an in-memory directory sentinel.
         // Covers:
@@ -1634,6 +1911,13 @@ mod tests {
                     index_type: "value".to_string(),
                 }],
             }],
+        }
+    }
+
+    fn index(name: &str, value: IndexValue) -> IndexEntry {
+        IndexEntry {
+            name: name.to_string(),
+            value,
         }
     }
 

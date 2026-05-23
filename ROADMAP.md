@@ -81,8 +81,10 @@ next layer is added.
   - indexed prefix-title search,
   - schema version display.
 - [x] Android release APK build and physical-device install.
+- [x] Linux prebuilt native library generation through WSL.
 - [x] Rust native targets declared for:
   - Windows,
+  - Linux `x86_64-unknown-linux-gnu`,
   - Android `armeabi-v7a`,
   - Android `arm64-v8a`,
   - Android `x86_64`,
@@ -262,8 +264,8 @@ next layer is added.
   - [x] Package Android `.so` files under `jniLibs` for supported ABIs.
   - [ ] Package iOS native output as a vendored `.xcframework`.
   - [x] Package the Windows native library through platform plugin bundling.
-  - [ ] Package macOS and Linux native libraries through platform plugin
-    bundling.
+  - [ ] Package the macOS native library through platform plugin bundling.
+  - [x] Package the Linux native library through platform plugin bundling.
   - [x] Update Dart native loading so Flutter app consumers do not need
     Rust/Cargo when bundled binaries are available.
   - [x] Keep the Rust hook path available for Cindel core development.
@@ -272,7 +274,7 @@ next layer is added.
 - [x] Validate Android release build on a repeatable local script.
 - [x] Validate Windows desktop example build.
 - [ ] Add macOS desktop target once native linking is understood.
-- [ ] Add Linux desktop target once native linking is understood.
+- [x] Add Linux native library output for desktop consumers.
 - [x] Document Rust, NDK, Xcode, and signing requirements for maintainers.
 - [x] Document consumer build requirements without Rust/Cargo after prebuilt
   binaries are available.
@@ -294,6 +296,97 @@ next layer is added.
 - [x] Make MDBX the default backend while keeping SQLite explicitly
   selectable.
 - [ ] Add an explicit SQLite-to-MDBX migration helper.
+
+## Performance Roadmap
+
+Cindel's next performance direction is to keep the public Dart API stable while
+moving expensive JSON, allocation, filtering, and query-planning work into the
+native MDBX path. These stages come from the internal Isar-inspired research,
+but Cindel will continue using Dart FFI rather than recreating Isar's older
+custom bridge.
+
+Guiding rules:
+
+- Benchmark before and after every performance stage.
+- Optimize MDBX first while keeping SQLite as the correctness fallback.
+- Do not silently rewrite user data; storage format changes require explicit
+  versions, migration tests, and rollback/backup guidance.
+- Defer web, compaction, encryption, and broad platform extras until the core
+  native performance path is mature.
+
+- [x] PERF-01: Benchmark and profiling baseline.
+  - Separate Dart encode/decode, FFI, native storage, native index query, and
+    Dart query-processing costs.
+  - Produce JSON output and local HTML visualization for SQLite vs MDBX.
+  - Keep the benchmark reusable after every later stage.
+- [x] PERF-02: Native index abstraction boundary.
+  - Move MDBX index key creation, unique checks, insert/delete, clear, and
+    accounting into a dedicated native abstraction.
+  - Keep behavior unchanged while making later layout changes safer.
+- [ ] PERF-03: MDBX layout v2 spike.
+  - Prototype per-collection and per-index MDBX databases.
+  - Compare the current global-table layout against the v2 layout for writes,
+    reads, indexed queries, deletes, and database size.
+- [ ] PERF-04: Versioned binary document format design.
+  - Design a generated binary object format with field offsets, null encoding,
+    dynamic sections, and support for current Cindel field types.
+  - Prove one-field reads without full document decode.
+- [ ] PERF-05: Storage version and migration framework.
+  - Add layout/document format metadata, dry-run planning, explicit migration,
+    index rebuild, and migration verification helpers.
+  - Refuse unsafe automatic rewrites.
+- [ ] PERF-06: Binary document storage behind MDBX.
+  - Store generated typed models as binary documents.
+  - Derive index entries from native binary document bytes.
+  - Keep manual map-style APIs compatible while the final path is decided.
+- [ ] PERF-07: Dart FFI typed writer and reader handles.
+  - Add native writer/reader handles and generated FFI calls for typed fields.
+  - Reduce per-document JSON payloads and allocation overhead in `putAll` and
+    `getAll`.
+- [ ] PERF-08: Native filter compiler.
+  - Encode generated filter ASTs through FFI and evaluate predicates over
+    native binary object readers.
+  - Move common filter operations out of Dart-side map scans.
+- [ ] PERF-09: Native query planner and iterators.
+  - Execute sort, distinct, offset, limit, count, and projections natively when
+    possible.
+  - Add plan summaries for debugging and benchmarks.
+- [ ] PERF-10: Composite and multi-entry indexes.
+  - Add composite index metadata, generated helpers, list multi-entry indexes,
+    key-order tests, and index rebuild support.
+  - Keep SQLite semantics compatible even if slower.
+- [ ] PERF-11: Auto-increment optimization.
+  - Initialize counters from the last document id and use in-memory counters
+    where transaction semantics allow it.
+  - Preserve rollback and explicit-id advancement behavior.
+- [ ] PERF-12: Allocation, buffer, and cursor reuse.
+  - Reuse transaction buffers, key buffers, and query result buffers.
+  - Only move lower-level MDBX cursor access if benchmarks prove it is needed.
+- [ ] PERF-13: Native watcher change sets.
+  - Track changed collections, document ids, and affected index keys during
+    native write transactions.
+  - Reduce broad Dart-level watcher polling.
+- [ ] PERF-14: Native aggregations.
+  - Add native count, min, max, sum, and average paths that avoid full document
+    hydration.
+- [ ] PERF-15: Public migration from JSON/layout v1 to binary/layout v2.
+  - Add an explicit migration path for existing users.
+  - Rebuild indexes and verify counts, schemas, revisions, and selected
+    queries.
+- [ ] PERF-16: Release hardening for optimized storage.
+  - Run full Dart and focused SQLite compatibility suites.
+  - Regenerate Windows, Android, and Linux prebuilt binaries if native symbols
+    change.
+  - Validate Windows, Android, and Linux smoke/prebuilt flows before making the
+    optimized path the default.
+- [ ] Deferred PERF-17: Compaction and database maintenance.
+  - Add database stats and explicit compact operations after the optimized
+    layout is stable.
+- [ ] Deferred PERF-18: Web backend exploration.
+  - Explore web after native desktop/mobile performance is mature.
+- [ ] Deferred PERF-19: Encryption.
+  - Evaluate encryption strategy and performance impact after storage design is
+    stable.
 
 ## Errors, Diagnostics, and Tooling
 
@@ -345,13 +438,13 @@ next layer is added.
 
 ## Current Focus
 
-The current implementation focus is release validation for the `0.2.0` package
+The current implementation focus is release validation for the `0.2.x` package
 line. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
 query/lazy watchers, explicit migration callbacks, and MDBX as the default
 backend with SQLite as an explicit fallback.
 
-Platform hardening continues in parallel: Apple and Linux prebuilt binaries are
-still pending collaborator machines. macOS should produce
-`ios/cindel.xcframework` and `macos/libcindel_native.dylib`, and Linux should
-produce `linux/libcindel_native.so`.
+Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
+binaries are available. Apple binaries are still pending collaborator machines:
+macOS should produce `ios/cindel.xcframework` and
+`macos/libcindel_native.dylib`.
