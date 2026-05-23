@@ -405,12 +405,11 @@ impl MdbxStorage {
     fn next_id_from_documents(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
             let prefix = encode_collection_key(collection);
-            let ids = scan_ids_by_key_range(transaction, &tables.documents, &prefix, None)?;
-            Ok(ids
-                .into_iter()
-                .max()
-                .and_then(|id| id.checked_add(1))
-                .unwrap_or(1))
+            Ok(
+                max_id_by_key_range(transaction, &tables.documents, &prefix, None)?
+                    .and_then(|id| id.checked_add(1))
+                    .unwrap_or(1),
+            )
         })
     }
 
@@ -668,16 +667,22 @@ impl StorageEngine for MdbxStorage {
 
         self.with_read_transaction(|transaction, tables| {
             let schema = collection_schema(transaction, &tables, collection)?;
-            ids.iter()
-                .map(|id| {
-                    let bytes = transaction
-                        .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, *id))
-                        .map_err(|error| error.to_string())?;
+            let mut key = encode_collection_key(collection);
+            let key_prefix_length = key.len();
+            let mut documents = Vec::with_capacity(ids.len());
+            for id in ids {
+                key.truncate(key_prefix_length);
+                key.extend_from_slice(&id.to_be_bytes());
+                let bytes = transaction
+                    .get::<Vec<u8>>(&tables.documents, &key)
+                    .map_err(|error| error.to_string())?;
+                documents.push(
                     bytes
                         .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
-                        .transpose()
-                })
-                .collect()
+                        .transpose()?,
+                );
+            }
+            Ok(documents)
         })
     }
 
@@ -701,9 +706,28 @@ impl StorageEngine for MdbxStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<Vec<Option<Vec<u8>>>, String> {
-        ids.iter()
-            .map(|id| self.get_stored(collection, *id))
-            .collect()
+        if self.active_write().is_some() {
+            return ids
+                .iter()
+                .map(|id| self.get_stored(collection, *id))
+                .collect();
+        }
+
+        self.with_read_transaction(|transaction, tables| {
+            let mut key = encode_collection_key(collection);
+            let key_prefix_length = key.len();
+            let mut documents = Vec::with_capacity(ids.len());
+            for id in ids {
+                key.truncate(key_prefix_length);
+                key.extend_from_slice(&id.to_be_bytes());
+                documents.push(
+                    transaction
+                        .get::<Vec<u8>>(&tables.documents, &key)
+                        .map_err(|error| error.to_string())?,
+                );
+            }
+            Ok(documents)
+        })
     }
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
@@ -874,12 +898,12 @@ impl StorageEngine for MdbxStorage {
         index: &str,
         value: &IndexValue,
     ) -> Result<Vec<u64>, String> {
-        let entries = self.with_read_transaction(|transaction, tables| {
-            let prefix = encode_index_equal_prefix(collection, index, value)?;
-            scan_entries_by_key_range(transaction, &tables.indexes, &prefix, None)
-        })?;
         match self.active_write() {
             Some(transaction) => {
+                let entries = self.with_read_transaction(|transaction, tables| {
+                    let prefix = encode_index_equal_prefix(collection, index, value)?;
+                    scan_entries_by_key_range(transaction, &tables.indexes, &prefix, None)
+                })?;
                 transaction.staged_index_ids(collection, index, entries, |entry, id| {
                     if entry.value == *value {
                         encode_index_key(collection, index, value, id).map(Some)
@@ -888,7 +912,10 @@ impl StorageEngine for MdbxStorage {
                     }
                 })
             }
-            None => Ok(entries.into_iter().map(|(_, id)| id).collect()),
+            None => self.with_read_transaction(|transaction, tables| {
+                let prefix = encode_index_equal_prefix(collection, index, value)?;
+                scan_ids_by_key_range(transaction, &tables.indexes, &prefix, None)
+            }),
         }
     }
 
@@ -900,16 +927,16 @@ impl StorageEngine for MdbxStorage {
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String> {
         let range = encode_index_range(collection, index, lower, upper)?;
-        let entries = self.with_read_transaction(|transaction, tables| {
-            scan_entries_by_key_range(
-                transaction,
-                &tables.indexes,
-                &range.start,
-                Some(&range.end_inclusive),
-            )
-        })?;
         match self.active_write() {
             Some(transaction) => {
+                let entries = self.with_read_transaction(|transaction, tables| {
+                    scan_entries_by_key_range(
+                        transaction,
+                        &tables.indexes,
+                        &range.start,
+                        Some(&range.end_inclusive),
+                    )
+                })?;
                 transaction.staged_index_ids(collection, index, entries, |entry, id| {
                     let key = encode_index_key(collection, index, &entry.value, id)?;
                     if key >= range.start && key <= range.end_inclusive {
@@ -919,7 +946,14 @@ impl StorageEngine for MdbxStorage {
                     }
                 })
             }
-            None => Ok(entries.into_iter().map(|(_, id)| id).collect()),
+            None => self.with_read_transaction(|transaction, tables| {
+                scan_ids_by_key_range(
+                    transaction,
+                    &tables.indexes,
+                    &range.start,
+                    Some(&range.end_inclusive),
+                )
+            }),
         }
     }
 
@@ -1898,8 +1932,50 @@ fn scan_ids_by_key_range<K>(
 where
     K: libmdbx::TransactionKind,
 {
-    scan_entries_by_key_range(transaction, table, start, end_inclusive)
-        .map(|entries| entries.into_iter().map(|(_, id)| id).collect())
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    let mut ids = Vec::new();
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
+        let (key, _) = row.map_err(|error| error.to_string())?;
+        if let Some(end_inclusive) = end_inclusive {
+            if key.as_ref() > end_inclusive {
+                break;
+            }
+        } else if !key.starts_with(start) {
+            break;
+        }
+        ids.push(decode_key_document_id(&key)?);
+    }
+    Ok(ids)
+}
+
+fn max_id_by_key_range<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+    start: &[u8],
+    end_inclusive: Option<&[u8]>,
+) -> Result<Option<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    let mut max_id: Option<u64> = None;
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(start) {
+        let (key, _) = row.map_err(|error| error.to_string())?;
+        if let Some(end_inclusive) = end_inclusive {
+            if key.as_ref() > end_inclusive {
+                break;
+            }
+        } else if !key.starts_with(start) {
+            break;
+        }
+        let id = decode_key_document_id(&key)?;
+        max_id = Some(max_id.map_or(id, |current| current.max(id)));
+    }
+    Ok(max_id)
 }
 
 fn scan_entries_by_key_range<K>(
@@ -1962,7 +2038,18 @@ fn count_keys_by_prefix<K>(
 where
     K: libmdbx::TransactionKind,
 {
-    scan_keys_by_prefix(transaction, table, prefix).map(|keys| keys.len())
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    let mut count = 0;
+    for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(prefix) {
+        let (key, _) = row.map_err(|error| error.to_string())?;
+        if !key.starts_with(prefix) {
+            break;
+        }
+        count += 1;
+    }
+    Ok(count)
 }
 
 fn bump_collection_revision(

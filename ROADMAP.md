@@ -371,33 +371,40 @@ Guiding rules:
   - Initialize counters from the last document id and use in-memory counters
     where transaction semantics allow it.
   - Preserve rollback and explicit-id advancement behavior.
-- [ ] PERF-12: Allocation, buffer, and cursor reuse.
+- [x] PERF-12: Allocation, buffer, and cursor reuse.
   - Reuse transaction buffers, key buffers, and query result buffers.
   - Only move lower-level MDBX cursor access if benchmarks prove it is needed.
-- [ ] PERF-13: Native watcher change sets.
+- [ ] PERF-13: MDBX layout convergence.
+  - Promote the winning `mdbx-v2-spike` table layout ideas into the real MDBX
+    backend instead of keeping a parallel benchmark-only backend.
+  - Keep binary documents and in-memory auto-increment counters in the final
+    MDBX path.
+  - Remove or isolate the spike once the real backend has absorbed the faster
+    layout and passed parity tests.
+- [ ] PERF-14: Native watcher change sets.
   - Track changed collections, document ids, and affected index keys during
     native write transactions.
   - Reduce broad Dart-level watcher polling.
-- [ ] PERF-14: Native aggregations.
+- [ ] PERF-15: Native aggregations.
   - Add native count, min, max, sum, and average paths that avoid full document
     hydration.
-- [ ] PERF-15: Public migration tooling for 1.0 stabilization.
+- [ ] PERF-16: Public migration tooling for 1.0 stabilization.
   - Add explicit migration/export tooling only when the storage format is close
     enough to 1.0 to preserve external user data.
   - Rebuild indexes and verify counts, schemas, revisions, and selected
     queries.
-- [ ] PERF-16: Release hardening for optimized storage.
+- [ ] PERF-17: Release hardening for optimized storage.
   - Run full Dart and focused SQLite compatibility suites.
   - Regenerate Windows, Android, and Linux prebuilt binaries if native symbols
     change.
   - Validate Windows, Android, and Linux smoke/prebuilt flows before making the
     optimized path the default.
-- [ ] Deferred PERF-17: Compaction and database maintenance.
+- [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
-- [ ] Deferred PERF-18: Web backend exploration.
+- [ ] Deferred PERF-19: Web backend exploration.
   - Explore web after native desktop/mobile performance is mature.
-- [ ] Deferred PERF-19: Encryption.
+- [ ] Deferred PERF-20: Encryption.
   - Evaluate encryption strategy and performance impact after storage design is
     stable.
 

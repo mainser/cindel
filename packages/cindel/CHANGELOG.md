@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.11
+
+- Reduced MDBX allocations in id scans, range/equality query scans, collection
+  stats, and multi-document reads.
+- Reused MDBX document-key buffers for `get_many` paths outside active write
+  transactions.
+- Kept the existing safe MDBX cursor API; lower-level cursor work remains
+  deferred until benchmarks prove it is needed.
+
 ## 0.2.10
 
 - Optimized MDBX auto-increment id allocation with shared in-memory counters

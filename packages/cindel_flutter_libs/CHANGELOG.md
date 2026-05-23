@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.11
+
+- Regenerated Windows, Android, and Linux native runtime libraries with the
+  MDBX allocation and key-buffer reuse optimizations.
+
 ## 0.2.10
 
 - Regenerated Windows, Android, and Linux native runtime libraries with the

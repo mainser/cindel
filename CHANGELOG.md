@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.11
+
+- Reduced MDBX allocations in id scans, range/equality query scans, collection
+  stats, and multi-document reads.
+- Reused document-key buffers for MDBX `get_many` paths outside active write
+  transactions.
+- Kept lower-level MDBX cursor access deferred because the high-level cursor
+  API is still sufficient after the allocation cleanup.
+- Regenerated Windows, Android, and Linux prebuilt native libraries.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.11`.
+
 ## 0.2.10
 
 - Optimized MDBX auto-increment id allocation with shared in-memory counters

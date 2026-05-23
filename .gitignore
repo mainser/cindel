@@ -34,4 +34,3 @@ tool/benchmark/
 *.iml
 .DS_Store
 Thumbs.db
-tool/benchmark/run_benchmark.ps1
