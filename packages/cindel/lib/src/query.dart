@@ -210,6 +210,23 @@ final class CindelQuery<T> {
     );
   }
 
+  /// Creates a typed equality query for a composite index.
+  factory CindelQuery.compositeEqual({
+    required CindelDatabase database,
+    required CindelCollectionSchema<T> schema,
+    required String index,
+    required List<Object> values,
+  }) {
+    return CindelQuery._(
+      database: database,
+      schema: schema,
+      readDocuments: () =>
+          database.queryCompositeEqual(schema.name, index, values),
+      readIds: () async =>
+          database.queryCompositeEqualIds(schema.name, index, values),
+    );
+  }
+
   /// Creates a typed inclusive range query for an indexed field.
   factory CindelQuery.range({
     required CindelDatabase database,

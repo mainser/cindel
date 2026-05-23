@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Added `CompositeIndex` metadata for collection-level composite indexes.
+- Added `CindelIndexType.multiEntry` for primitive list membership indexes.
+
 ## 0.2.0
 
 - Prepared the annotations package for the coordinated `0.2.0` Cindel release

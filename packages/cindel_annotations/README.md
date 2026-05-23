@@ -8,6 +8,8 @@ lightweight NoSQL local database for Flutter and Dart apps.
 - `@Collection` for persisted root models.
 - `@Embedded` for nested value objects.
 - `@Index` and `@index` for indexed fields.
+- `CompositeIndex` for collection-level composite indexes.
+- `CindelIndexType.multiEntry` for primitive list membership indexes.
 - `@Enumerated` for enum persistence strategies.
 - `@ignore` for transient fields.
 - `Id` and `autoIncrement` for generated native IDs.

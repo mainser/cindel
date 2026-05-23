@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -665,12 +666,22 @@ fn unique_index_names(
     };
     let schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
         .map_err(|error| error.to_string())?;
-    Ok(schema
-        .fields
-        .into_iter()
-        .filter(|field| field.is_indexed && field.is_index_unique)
-        .map(|field| field.name)
-        .collect())
+    let mut names = std::collections::HashSet::new();
+    names.extend(
+        schema
+            .fields
+            .into_iter()
+            .filter(|field| field.is_indexed && field.is_index_unique)
+            .map(|field| field.name),
+    );
+    names.extend(
+        schema
+            .composite_indexes
+            .into_iter()
+            .filter(|index| index.is_unique)
+            .map(|index| index.name),
+    );
+    Ok(names)
 }
 
 fn insert_index_entries(
@@ -830,7 +841,10 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
                 collection.name, field.name
             ));
         }
-        if field.index_type != "value" && field.index_type != "hash" && field.index_type != "words"
+        if field.index_type != "value"
+            && field.index_type != "hash"
+            && field.index_type != "words"
+            && field.index_type != "multiEntry"
         {
             return Err(format!(
                 "schema field `{}.{}` uses unsupported index type `{}`",
@@ -849,7 +863,11 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             .dart_type
             .strip_suffix('?')
             .unwrap_or(&field.dart_type);
-        if field.is_indexed && !field.index_case_sensitive && normalized_dart_type != "String" {
+        if field.is_indexed
+            && !field.index_case_sensitive
+            && normalized_dart_type != "String"
+            && !(field.index_type == "multiEntry" && normalized_dart_type == "List<String>")
+        {
             return Err(format!(
                 "schema field `{}.{}` case-insensitive indexes require String fields",
                 collection.name, field.name
@@ -858,6 +876,15 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         if field.is_indexed && field.index_type == "words" && normalized_dart_type != "String" {
             return Err(format!(
                 "schema field `{}.{}` word indexes require String fields",
+                collection.name, field.name
+            ));
+        }
+        if field.is_indexed
+            && field.index_type == "multiEntry"
+            && !normalized_dart_type.starts_with("List<")
+        {
+            return Err(format!(
+                "schema field `{}.{}` multi-entry indexes require List fields",
                 collection.name, field.name
             ));
         }
@@ -883,6 +910,36 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             "schema collection `{}` must declare exactly one id field",
             collection.name
         ));
+    }
+
+    let mut composite_names = HashSet::new();
+    for index in &collection.composite_indexes {
+        if index.name.trim().is_empty() {
+            return Err(format!(
+                "schema collection `{}` contains an empty composite index name",
+                collection.name
+            ));
+        }
+        if !composite_names.insert(index.name.as_str()) || names.contains(index.name.as_str()) {
+            return Err(format!(
+                "schema composite index `{}.{}` conflicts with another index",
+                collection.name, index.name
+            ));
+        }
+        if index.fields.len() < 2 {
+            return Err(format!(
+                "schema composite index `{}.{}` must contain at least two fields",
+                collection.name, index.name
+            ));
+        }
+        for field_name in &index.fields {
+            if !names.contains(field_name.as_str()) {
+                return Err(format!(
+                    "schema composite index `{}.{}` references missing field `{}`",
+                    collection.name, index.name, field_name
+                ));
+            }
+        }
     }
 
     Ok(())
@@ -985,6 +1042,12 @@ fn validate_compatible_schema_change(
         };
         validate_compatible_field(existing, existing_field, next_field)?;
     }
+    if existing.composite_indexes != next.composite_indexes {
+        return Err(format!(
+            "schema collection `{}` cannot change composite indexes until public migration tooling exists",
+            existing.name
+        ));
+    }
 
     Ok(())
 }
@@ -1058,10 +1121,11 @@ fn query_index(
             lower.as_ref().and_then(|key| key.real_value),
             upper.as_ref().and_then(|key| key.real_value),
         ),
-        INDEX_KIND_STRING => query_text_index(
+        INDEX_KIND_STRING | INDEX_KIND_LIST => query_text_index(
             connection,
             collection,
             index,
+            kind,
             lower.as_ref().and_then(|key| key.text_value.as_deref()),
             upper.as_ref().and_then(|key| key.text_value.as_deref()),
         ),
@@ -1124,6 +1188,7 @@ fn query_text_index(
     connection: &Connection,
     collection: &str,
     index: &str,
+    kind: i64,
     lower: Option<&str>,
     upper: Option<&str>,
 ) -> Result<Vec<u64>, String> {
@@ -1139,7 +1204,7 @@ fn query_text_index(
           AND (?5 IS NULL OR text_value <= ?5)
         ORDER BY text_value, document_id
         "#,
-        params![collection, index, INDEX_KIND_STRING, lower, upper],
+        params![collection, index, kind, lower, upper],
     )
 }
 
@@ -1163,6 +1228,7 @@ const INDEX_KIND_BOOL: i64 = 1;
 const INDEX_KIND_INT: i64 = 2;
 const INDEX_KIND_DOUBLE: i64 = 3;
 const INDEX_KIND_STRING: i64 = 4;
+const INDEX_KIND_LIST: i64 = 5;
 
 struct SqliteIndexKey {
     kind: i64,
@@ -1199,8 +1265,38 @@ impl SqliteIndexKey {
                 real_value: None,
                 text_value: Some(value.clone()),
             }),
+            IndexValue::List(values) => Ok(Self {
+                kind: INDEX_KIND_LIST,
+                int_value: None,
+                real_value: None,
+                text_value: Some(stable_index_list_json(values)?),
+            }),
         }
     }
+}
+
+fn stable_index_list_json(values: &[IndexValue]) -> Result<String, String> {
+    fn json_value(value: &IndexValue) -> Result<serde_json::Value, String> {
+        Ok(match value {
+            IndexValue::Bool(value) => serde_json::json!({"type": "bool", "value": value}),
+            IndexValue::Int(value) => serde_json::json!({"type": "int", "value": value}),
+            IndexValue::Double(value) if value.is_finite() => {
+                serde_json::json!({"type": "double", "value": value})
+            }
+            IndexValue::Double(_) => return Err("index double values must be finite".into()),
+            IndexValue::String(value) => serde_json::json!({"type": "string", "value": value}),
+            IndexValue::List(values) => serde_json::json!({
+                "type": "list",
+                "value": values
+                    .iter()
+                    .map(json_value)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+        })
+    }
+
+    serde_json::to_string(&json_value(&IndexValue::List(values.to_vec()))?)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -2096,6 +2192,7 @@ mod tests {
             name: "users".to_string(),
             id_field: "id".to_string(),
             fields,
+            composite_indexes: Vec::new(),
         }
     }
 

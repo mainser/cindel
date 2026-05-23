@@ -294,6 +294,7 @@ mod tests {
                     index_type: "value".to_string(),
                 },
             ],
+            composite_indexes: Vec::new(),
         }
     }
 

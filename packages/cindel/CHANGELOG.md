@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.9
+
+- Added collection-level composite index schema metadata and generated equality
+  query helpers.
+- Added multi-entry primitive list indexes for generated membership queries.
+- Added native composite index key encoding and SQLite compatibility handling.
+- Updated the annotations dependency to `0.2.1` and the generator dependency to
+  `0.2.3`.
+
 ## 0.2.8
 
 - Added a first native query planner path for MDBX binary-document queries.

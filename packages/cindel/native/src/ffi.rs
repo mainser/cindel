@@ -937,6 +937,8 @@ enum WireIndexValue {
     Double(f64),
     #[serde(rename = "string")]
     String(String),
+    #[serde(rename = "list")]
+    List(Vec<WireIndexValue>),
 }
 
 impl TryFrom<WireIndexValue> for IndexValue {
@@ -949,6 +951,11 @@ impl TryFrom<WireIndexValue> for IndexValue {
             WireIndexValue::Double(value) if value.is_finite() => Ok(IndexValue::Double(value)),
             WireIndexValue::Double(_) => Err(()),
             WireIndexValue::String(value) => Ok(IndexValue::String(value)),
+            WireIndexValue::List(values) => values
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()
+                .map(IndexValue::List),
         }
     }
 }

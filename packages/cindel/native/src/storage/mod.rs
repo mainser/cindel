@@ -55,6 +55,7 @@ pub enum IndexValue {
     Int(i64),
     Double(f64),
     String(String),
+    List(Vec<IndexValue>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +75,18 @@ pub struct CollectionSchemaManifest {
     pub name: String,
     pub id_field: String,
     pub fields: Vec<FieldSchemaManifest>,
+    #[serde(default)]
+    pub composite_indexes: Vec<CompositeIndexSchemaManifest>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompositeIndexSchemaManifest {
+    pub name: String,
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub is_unique: bool,
+    #[serde(default = "default_index_case_sensitive")]
+    pub case_sensitive: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]

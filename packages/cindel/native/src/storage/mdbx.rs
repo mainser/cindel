@@ -593,7 +593,23 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
-        ids.iter().map(|id| self.get(collection, *id)).collect()
+        if self.active_write().is_some() {
+            return ids.iter().map(|id| self.get(collection, *id)).collect();
+        }
+
+        self.with_read_transaction(|transaction, tables| {
+            let schema = collection_schema(transaction, &tables, collection)?;
+            ids.iter()
+                .map(|id| {
+                    let bytes = transaction
+                        .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, *id))
+                        .map_err(|error| error.to_string())?;
+                    bytes
+                        .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
+                        .transpose()
+                })
+                .collect()
+        })
     }
 
     fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
@@ -1121,12 +1137,24 @@ where
 }
 
 fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> HashSet<String> {
-    schema
-        .into_iter()
-        .flat_map(|schema| schema.fields.iter())
-        .filter(|field| field.is_indexed && field.is_index_unique)
-        .map(|field| field.name.clone())
-        .collect()
+    let mut names = HashSet::new();
+    if let Some(schema) = schema {
+        names.extend(
+            schema
+                .fields
+                .iter()
+                .filter(|field| field.is_indexed && field.is_index_unique)
+                .map(|field| field.name.clone()),
+        );
+        names.extend(
+            schema
+                .composite_indexes
+                .iter()
+                .filter(|index| index.is_unique)
+                .map(|index| index.name.clone()),
+        );
+    }
+    names
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
@@ -1169,7 +1197,10 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
                 collection.name, field.name
             ));
         }
-        if field.index_type != "value" && field.index_type != "hash" && field.index_type != "words"
+        if field.index_type != "value"
+            && field.index_type != "hash"
+            && field.index_type != "words"
+            && field.index_type != "multiEntry"
         {
             return Err(format!(
                 "schema field `{}.{}` uses unsupported index type `{}`",
@@ -1188,7 +1219,11 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             .dart_type
             .strip_suffix('?')
             .unwrap_or(&field.dart_type);
-        if field.is_indexed && !field.index_case_sensitive && normalized_dart_type != "String" {
+        if field.is_indexed
+            && !field.index_case_sensitive
+            && normalized_dart_type != "String"
+            && !(field.index_type == "multiEntry" && normalized_dart_type == "List<String>")
+        {
             return Err(format!(
                 "schema field `{}.{}` case-insensitive indexes require String fields",
                 collection.name, field.name
@@ -1197,6 +1232,15 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         if field.is_indexed && field.index_type == "words" && normalized_dart_type != "String" {
             return Err(format!(
                 "schema field `{}.{}` word indexes require String fields",
+                collection.name, field.name
+            ));
+        }
+        if field.is_indexed
+            && field.index_type == "multiEntry"
+            && !normalized_dart_type.starts_with("List<")
+        {
+            return Err(format!(
+                "schema field `{}.{}` multi-entry indexes require List fields",
                 collection.name, field.name
             ));
         }
@@ -1222,6 +1266,36 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             "schema collection `{}` must declare exactly one id field",
             collection.name
         ));
+    }
+
+    let mut composite_names = HashSet::new();
+    for index in &collection.composite_indexes {
+        if index.name.trim().is_empty() {
+            return Err(format!(
+                "schema collection `{}` contains an empty composite index name",
+                collection.name
+            ));
+        }
+        if !composite_names.insert(index.name.as_str()) || names.contains(index.name.as_str()) {
+            return Err(format!(
+                "schema composite index `{}.{}` conflicts with another index",
+                collection.name, index.name
+            ));
+        }
+        if index.fields.len() < 2 {
+            return Err(format!(
+                "schema composite index `{}.{}` must contain at least two fields",
+                collection.name, index.name
+            ));
+        }
+        for field_name in &index.fields {
+            if !names.contains(field_name.as_str()) {
+                return Err(format!(
+                    "schema composite index `{}.{}` references missing field `{}`",
+                    collection.name, index.name, field_name
+                ));
+            }
+        }
     }
 
     Ok(())
@@ -1255,6 +1329,12 @@ fn validate_compatible_schema_change(
             ));
         };
         validate_compatible_field(existing, existing_field, next_field)?;
+    }
+    if existing.composite_indexes != next.composite_indexes {
+        return Err(format!(
+            "schema collection `{}` cannot change composite indexes until public migration tooling exists",
+            existing.name
+        ));
     }
 
     Ok(())
@@ -2241,6 +2321,7 @@ mod tests {
                     test_field("name", "String", false, false),
                     test_field("score", "int", false, true),
                 ],
+                composite_indexes: Vec::new(),
             }],
         }
     }

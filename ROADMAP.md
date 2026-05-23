@@ -361,10 +361,12 @@ Guiding rules:
     without hydrating full Dart objects.
   - Full native sort/distinct planning remains tied to composite and multi-entry
     index work in the next stages.
-- [ ] PERF-10: Composite and multi-entry indexes.
-  - Add composite index metadata, generated helpers, list multi-entry indexes,
-    key-order tests, and index rebuild support.
-  - Keep SQLite semantics compatible even if slower.
+- [x] PERF-10: Composite and multi-entry indexes.
+  - Added `CompositeIndex` metadata and generated full-value equality helpers.
+  - Added `CindelIndexType.multiEntry` for primitive list membership indexes.
+  - Added native tuple key encoding for MDBX and SQLite compatibility storage.
+  - Deferred automatic index rebuild tooling to the future public migration
+    layer.
 - [ ] PERF-11: Auto-increment optimization.
   - Initialize counters from the last document id and use in-memory counters
     where transaction semantics allow it.

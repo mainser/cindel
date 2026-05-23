@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.9
+
+- Regenerated Windows, Android, and Linux native runtime libraries with
+  composite and multi-entry index support.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.8
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

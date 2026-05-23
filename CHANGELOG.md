@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.9
+
+- Added `CompositeIndex` collection metadata and generated composite equality
+  query helpers.
+- Added `CindelIndexType.multiEntry` for primitive list membership indexes.
+- Added native tuple key encoding for composite indexes and SQLite secondary
+  backend compatibility for composite values.
+- Regenerated Windows, Android, and Linux prebuilt native libraries.
+- Updated `cindel_annotations` to `0.2.1`, `cindel_generator` to `0.2.3`,
+  and `cindel` plus `cindel_flutter_libs` to `0.2.9`.
+
 ## 0.2.8
 
 - Added a first native query planner path for MDBX binary-document queries.

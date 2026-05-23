@@ -22,7 +22,8 @@ The generator reads Cindel annotations from model classes and emits:
 - Schema manifests for the native runtime.
 - JSON-compatible serializers and deserializers.
 - Typed collection accessors.
-- Indexed query builders.
+- Indexed query builders, including composite equality and primitive list
+  membership helpers.
 - Filter builders.
 - Sorting, pagination, distinct, and projection helpers.
 - Watcher and lazy watcher helpers.

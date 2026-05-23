@@ -74,8 +74,8 @@ explicit migration helper exists in a later release.
 
 - Typed collection CRUD and bulk writes.
 - Native auto-increment IDs.
-- Indexed equality, range, prefix, hash, case-insensitive, unique, and word
-  token queries.
+- Indexed equality, range, prefix, hash, case-insensitive, unique, word token,
+  composite, and primitive list membership queries.
 - Filter builders, sorting, pagination, distinct, and primitive projections.
 - Explicit read and write transactions.
 - Document, collection, object, query, and lazy watchers.

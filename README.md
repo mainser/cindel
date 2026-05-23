@@ -9,7 +9,7 @@ scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
-Cindel is in early pre-1.0 development. The current `0.2.0` line has the core
+Cindel is in early pre-1.0 development. The current `0.2.9` line has the core
 local database slice working end to end:
 
 ```text
@@ -39,8 +39,8 @@ The API is still experimental and can change before 1.0.
 - Native auto-increment ids through `autoIncrement`.
 - Atomic bulk writes and deletes.
 - Simple indexed queries by equality and inclusive range.
-- Generated typed query builders for indexed equality, string prefix, and range
-  queries.
+- Generated typed query builders for indexed equality, string prefix, range,
+  composite equality, and primitive list membership queries.
 - Generated filter builders for non-indexed predicates.
 - Sorting, pagination, distinct, and primitive property projections.
 - Explicit read and write transactions.
@@ -67,12 +67,12 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.2.0
-  cindel_flutter_libs: ^0.2.0
+  cindel: ^0.2.9
+  cindel_flutter_libs: ^0.2.9
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.2.0
+  cindel_generator: ^0.2.3
 ```
 
 For workspace development, use the local path packages instead:
@@ -332,11 +332,22 @@ final users = await db.users
 ```
 
 Indexes can declare uniqueness, case-insensitive string lookup, compact hash
-storage, or word-token search:
+storage, word-token search, primitive list membership, or collection-level
+composite keys:
 
 ```dart
+@Collection(
+  indexes: [
+    CompositeIndex(['email', 'active']),
+  ],
+)
 class User {
   Id id = autoIncrement;
+
+  @index
+  late String email;
+
+  bool active = true;
 
   @Index(unique: true)
   late String username;
@@ -349,6 +360,9 @@ class User {
 
   @Index(type: CindelIndexType.words, caseSensitive: false)
   late String bio;
+
+  @Index(type: CindelIndexType.multiEntry, caseSensitive: false)
+  List<String> tags = const [];
 }
 ```
 
@@ -362,6 +376,8 @@ store them as multiple index entries per document:
 final dbUsers = await db.users.where().bioWordEqualTo('database').findAll();
 final prefix = await db.users.where().bioWordStartsWith('dat').findAll();
 final tokens = Cindel.splitWords('Café rapido, cafe!');
+final team = await db.users.where().emailActiveEqualTo(email, true).findAll();
+final tagged = await db.users.where().tagsContains('flutter').findAll();
 ```
 
 Queries can return all results, the first result, or a count:
@@ -619,6 +635,7 @@ Validated so far:
 - [x] Sorting, pagination, distinct, and primitive property projections.
 - [x] Unique, case-insensitive, value, and hash index variants.
 - [x] Word-token indexes for simple full-text-style search.
+- [x] Composite indexes and primitive list membership indexes.
 - [x] Schema type expansion for dates, durations, primitive lists, enums,
   nullable fields, and ignored fields.
 - [x] Embedded objects and embedded object lists.

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::storage::{
-    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
-    SchemaManifest, SqliteStorage, StorageEngine,
+    CollectionSchemaManifest, CompositeIndexSchemaManifest, DocumentWrite, FieldSchemaManifest,
+    IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxLayoutV2Storage, MdbxStorage};
@@ -196,6 +196,31 @@ fn run_storage_benchmark(
             Ok(())
         })?;
 
+    let composite_query =
+        measure_iterations("query_composite_equal", config.query_repeats, |repeat| {
+            let id = repeat % config.documents;
+            let ids = storage.query_index_equal(
+                "users",
+                "email_active",
+                &IndexValue::List(vec![
+                    IndexValue::String(format!("user-{id}@example.com")),
+                    IndexValue::Bool(id % 2 == 0),
+                ]),
+            )?;
+            if ids != vec![id] {
+                return Err(format!("unexpected composite result for {id}: {ids:?}"));
+            }
+            Ok(())
+        })?;
+
+    let multi_entry_query = measure_iterations("query_multi_entry", config.query_repeats, |_| {
+        let ids = storage.query_index_equal("users", "tags", &IndexValue::String("even".into()))?;
+        if ids.is_empty() {
+            return Err("multi-entry query returned no ids".into());
+        }
+        Ok(())
+    })?;
+
     let collection_revision =
         measure_iterations("collection_revision", config.query_repeats, |_| {
             let revision = storage.collection_revision("users")?;
@@ -257,6 +282,8 @@ fn run_storage_benchmark(
             equality_query_with_get,
             range_query,
             range_query_with_get,
+            composite_query,
+            multi_entry_query,
             collection_revision,
             batch_put,
             delete_many,
@@ -341,8 +368,11 @@ fn directory_size_bytes(path: &Path) -> Result<u64, String> {
 
 fn document_bytes(id: u64) -> String {
     format!(
-        r#"{{"id":{id},"name":"User {id}","email":"user-{id}@example.com","score":{}}}"#,
-        id % 1_000
+        r#"{{"id":{id},"name":"User {id}","email":"user-{id}@example.com","score":{},"active":{},"tags":["{}","user-{}"]}}"#,
+        id % 1_000,
+        id % 2 == 0,
+        if id % 2 == 0 { "even" } else { "odd" },
+        id % 100,
     )
 }
 
@@ -355,6 +385,21 @@ fn benchmark_indexes(id: u64) -> Vec<IndexEntry> {
         IndexEntry {
             name: "score".to_string(),
             value: IndexValue::Int((id % 1_000) as i64),
+        },
+        IndexEntry {
+            name: "email_active".to_string(),
+            value: IndexValue::List(vec![
+                IndexValue::String(format!("user-{id}@example.com")),
+                IndexValue::Bool(id % 2 == 0),
+            ]),
+        },
+        IndexEntry {
+            name: "tags".to_string(),
+            value: IndexValue::String(if id % 2 == 0 { "even" } else { "odd" }.to_string()),
+        },
+        IndexEntry {
+            name: "tags".to_string(),
+            value: IndexValue::String(format!("user-{}", id % 100)),
         },
     ]
 }
@@ -401,7 +446,31 @@ fn schema_manifest() -> SchemaManifest {
                     index_case_sensitive: true,
                     index_type: "value".to_string(),
                 },
+                FieldSchemaManifest {
+                    name: "active".to_string(),
+                    dart_type: "bool".to_string(),
+                    is_id: false,
+                    is_indexed: false,
+                    is_index_unique: false,
+                    index_case_sensitive: true,
+                    index_type: "value".to_string(),
+                },
+                FieldSchemaManifest {
+                    name: "tags".to_string(),
+                    dart_type: "List<String>".to_string(),
+                    is_id: false,
+                    is_indexed: true,
+                    is_index_unique: false,
+                    index_case_sensitive: true,
+                    index_type: "multiEntry".to_string(),
+                },
             ],
+            composite_indexes: vec![CompositeIndexSchemaManifest {
+                name: "email_active".to_string(),
+                fields: vec!["email".to_string(), "active".to_string()],
+                is_unique: false,
+                case_sensitive: true,
+            }],
         }],
     }
 }

@@ -4,10 +4,13 @@ class Collection {
   ///
   /// When [name] is omitted, the generator uses the class name with a lower
   /// camel-case first letter.
-  const Collection({this.name});
+  const Collection({this.name, this.indexes = const []});
 
   /// The storage collection name.
   final String? name;
+
+  /// Composite indexes declared for this collection.
+  final List<CompositeIndex> indexes;
 }
 
 /// Marks a Dart class as a Cindel collection.
@@ -24,6 +27,25 @@ class Embedded {
 
 /// Marks a Dart class as an embedded value object.
 const embedded = Embedded();
+
+/// Declares a collection-level composite index.
+class CompositeIndex {
+  /// Creates a composite index over [fields].
+  const CompositeIndex(
+    this.fields, {
+    this.unique = false,
+    this.caseSensitive = true,
+  });
+
+  /// Field names included in the composite key, in index order.
+  final List<String> fields;
+
+  /// Whether the full composite value must be unique.
+  final bool unique;
+
+  /// Whether string values keep case-sensitive lookup semantics.
+  final bool caseSensitive;
+}
 
 /// Marks a field as indexed.
 class Index {
@@ -98,4 +120,9 @@ enum CindelIndexType {
   ///
   /// Word indexes support exact token lookup and token-prefix lookup.
   words,
+
+  /// Adds one index entry for each primitive list item.
+  ///
+  /// Multi-entry indexes support list membership queries.
+  multiEntry,
 }

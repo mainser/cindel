@@ -608,6 +608,21 @@ pub(crate) fn index_entries_from_binary_document(
             }
             continue;
         }
+        if field.index_type == "multiEntry" {
+            let BinaryValue::List(values) = value else {
+                return Err(format!(
+                    "multi-entry index `{}.{}` requires a list value",
+                    schema.name, field.name
+                ));
+            };
+            for value in values.into_iter().flatten() {
+                entries.push(IndexEntry {
+                    name: field.name.clone(),
+                    value: binary_to_index_value(field, &value)?,
+                });
+            }
+            continue;
+        }
         let mut index_value = binary_to_index_value(field, &value)?;
         if field.index_type == "hash" {
             index_value = IndexValue::Int(stable_hash(&stable_index_json(&index_value)?));
@@ -616,6 +631,39 @@ pub(crate) fn index_entries_from_binary_document(
             name: field.name.clone(),
             value: index_value,
         });
+    }
+    for composite in &schema.composite_indexes {
+        let mut values = Vec::new();
+        for field_name in &composite.fields {
+            let Some((field_index, field)) = schema
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| &field.name == field_name)
+            else {
+                return Err(format!(
+                    "composite index `{}` references missing field `{}`",
+                    composite.name, field_name
+                ));
+            };
+            if field_index >= document.field_count() {
+                values.clear();
+                break;
+            }
+            let Some(value) = document.field_value(field_index)? else {
+                values.clear();
+                break;
+            };
+            let mut indexed_field = field.clone();
+            indexed_field.index_case_sensitive = composite.case_sensitive;
+            values.push(binary_to_index_value(&indexed_field, &value)?);
+        }
+        if values.len() == composite.fields.len() {
+            entries.push(IndexEntry {
+                name: composite.name.clone(),
+                value: IndexValue::List(values),
+            });
+        }
     }
     Ok(entries)
 }
@@ -824,6 +872,17 @@ fn stable_index_json(value: &IndexValue) -> Result<String, String> {
         }
         IndexValue::Double(_) => return Err("hash index double values must be finite".into()),
         IndexValue::String(value) => serde_json::json!({"type": "string", "value": value}),
+        IndexValue::List(values) => serde_json::json!({
+            "type": "list",
+            "value": values
+                .iter()
+                .map(|value| {
+                    let json = stable_index_json(value)?;
+                    serde_json::from_str::<serde_json::Value>(&json)
+                        .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     };
     serde_json::to_string(&json).map_err(|error| error.to_string())
 }
@@ -1036,6 +1095,7 @@ mod tests {
                     index_type: "value".to_string(),
                 },
             ],
+            composite_indexes: Vec::new(),
         };
         let bytes = write_document(&[
             Some(BinaryValue::Int(7)),

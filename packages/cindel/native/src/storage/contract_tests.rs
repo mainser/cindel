@@ -25,6 +25,7 @@ pub(super) fn run_storage_engine_contract<S>(
     rejects_incompatible_index_option_changes(backend, &open);
     allocates_monotonic_ids_and_advances_after_manual_put(backend, &open);
     queries_documents_by_index_equality_and_range(backend, &open);
+    queries_composite_and_multi_entry_indexes(backend, &open);
     replaces_and_deletes_index_entries_with_documents(backend, &open);
     rejects_duplicate_unique_index_values(backend, &open);
     bulk_puts_documents_atomically_and_updates_indexes(backend, &open);
@@ -309,6 +310,72 @@ fn queries_documents_by_index_equality_and_range<S>(
             )
             .unwrap(),
         vec![3, 2]
+    );
+}
+
+fn queries_composite_and_multi_entry_indexes<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "composite_multi_entry");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage
+        .put_indexed(
+            "users",
+            1,
+            br#"{"email":"team@example.com","active":true,"tags":["flutter","db"]}"#,
+            &[
+                index(
+                    "email_active",
+                    IndexValue::List(vec![
+                        IndexValue::String("team@example.com".into()),
+                        IndexValue::Bool(true),
+                    ]),
+                ),
+                index("tags", IndexValue::String("flutter".into())),
+                index("tags", IndexValue::String("db".into())),
+            ],
+        )
+        .unwrap();
+    storage
+        .put_indexed(
+            "users",
+            2,
+            br#"{"email":"team@example.com","active":false,"tags":["rust"]}"#,
+            &[
+                index(
+                    "email_active",
+                    IndexValue::List(vec![
+                        IndexValue::String("team@example.com".into()),
+                        IndexValue::Bool(false),
+                    ]),
+                ),
+                index("tags", IndexValue::String("rust".into())),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(
+        storage
+            .query_index_equal(
+                "users",
+                "email_active",
+                &IndexValue::List(vec![
+                    IndexValue::String("team@example.com".into()),
+                    IndexValue::Bool(true),
+                ]),
+            )
+            .unwrap(),
+        vec![1]
+    );
+    assert_eq!(
+        storage
+            .query_index_equal("users", "tags", &IndexValue::String("rust".into()))
+            .unwrap(),
+        vec![2]
     );
 }
 
@@ -850,6 +917,7 @@ fn user_schema(mut fields: Vec<FieldSchemaManifest>) -> CollectionSchemaManifest
         name: "users".to_string(),
         id_field: "id".to_string(),
         fields,
+        composite_indexes: Vec::new(),
     }
 }
 

@@ -75,6 +75,53 @@ void main() {
       ]);
     });
 
+    // Scenario: A generated where helper queries a collection-level composite
+    // index by its full value.
+    // Covers:
+    // - Generated [UserQueryWhere.emailActiveEqualTo].
+    // - Native composite index key lookup.
+    // Expected: Only documents matching every composite component are returned.
+    test('finds typed objects by composite indexed equality.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final activeUsers = await database.users
+          .where()
+          .emailActiveEqualTo('team@example.com', true)
+          .findAll();
+      final inactiveUsers = await database.users
+          .where()
+          .emailActiveEqualTo('team@example.com', false)
+          .findAll();
+
+      // Assert.
+      expect(activeUsers.map((user) => user.name), ['Ana']);
+      expect(inactiveUsers.map((user) => user.name), ['Cid']);
+    });
+
+    // Scenario: A generated where helper queries a primitive list membership
+    // through a multi-entry index.
+    // Covers:
+    // - Generated [UserQueryWhere.tagsContains].
+    // - Case-insensitive multi-entry index values.
+    // Expected: Documents containing the requested list item are returned.
+    test('finds typed objects by multi-entry list membership.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final users = await database.users
+          .where()
+          .tagsContains('FLUTTER')
+          .findAll();
+
+      // Assert.
+      expect(users.map((user) => user.name), ['Ana', 'Dee']);
+    });
+
     // Scenario: A query requests just the first matching object.
     // Covers:
     // - [CindelQuery.findFirst].
@@ -482,7 +529,12 @@ void main() {
 Future<CindelDatabase> _openSeededUsers() async {
   final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
-    _user(id: 1, name: 'Ana', email: 'team@example.com'),
+    _user(
+      id: 1,
+      name: 'Ana',
+      email: 'team@example.com',
+      tags: ['flutter', 'database'],
+    ),
   );
   await database.users.put(
     _user(id: 2, name: 'Ben', email: 'solo@example.com'),
@@ -491,7 +543,12 @@ Future<CindelDatabase> _openSeededUsers() async {
     _user(id: 3, name: 'Cid', email: 'team@example.com', active: false),
   );
   await database.users.put(
-    _user(id: 4, name: 'Dee', email: 'team-alpha@example.com'),
+    _user(
+      id: 4,
+      name: 'Dee',
+      email: 'team-alpha@example.com',
+      tags: ['Flutter', 'todo'],
+    ),
   );
   return database;
 }
@@ -538,10 +595,12 @@ User _user({
   required String name,
   required String email,
   bool active = true,
+  List<String> tags = const [],
 }) {
   return User()
     ..id = id
     ..name = name
     ..email = email
-    ..active = active;
+    ..active = active
+    ..tags = tags;
 }

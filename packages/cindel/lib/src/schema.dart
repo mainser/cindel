@@ -30,12 +30,14 @@ final class CindelCollectionSchema<T> {
     required this.dartName,
     required this.idField,
     required Iterable<CindelFieldSchema> fields,
+    Iterable<CindelCompositeIndexSchema> compositeIndexes = const [],
     required this.toDocument,
     required this.fromDocument,
     this.toBinaryDocument,
     this.fromBinaryDocument,
     this.setId,
-  }) : fields = List.unmodifiable(fields);
+  }) : fields = List.unmodifiable(fields),
+       compositeIndexes = List.unmodifiable(compositeIndexes);
 
   /// The storage collection name.
   final String name;
@@ -48,6 +50,9 @@ final class CindelCollectionSchema<T> {
 
   /// Generated metadata for fields persisted by this schema.
   final List<CindelFieldSchema> fields;
+
+  /// Generated metadata for composite indexes persisted by this schema.
+  final List<CindelCompositeIndexSchema> compositeIndexes;
 
   /// Serializes typed objects into Cindel documents.
   final CindelToDocument<T> toDocument;
@@ -98,4 +103,27 @@ final class CindelFieldSchema {
 
   /// Storage strategy used for this index.
   final CindelIndexType indexType;
+}
+
+/// Generated metadata for a collection-level composite index.
+final class CindelCompositeIndexSchema {
+  /// Creates generated metadata for a composite index.
+  CindelCompositeIndexSchema({
+    required this.name,
+    required Iterable<String> fields,
+    this.isUnique = false,
+    this.caseSensitive = true,
+  }) : fields = List.unmodifiable(fields);
+
+  /// Stable native index name.
+  final String name;
+
+  /// Indexed field names in index order.
+  final List<String> fields;
+
+  /// Whether the full composite value must be unique.
+  final bool isUnique;
+
+  /// Whether string values keep case-sensitive lookup semantics.
+  final bool caseSensitive;
 }

@@ -831,6 +831,7 @@ mod tests {
                     field("email", "String", false, true, false),
                     field("score", "int", false, true, false),
                 ],
+                composite_indexes: Vec::new(),
             }],
         }
     }

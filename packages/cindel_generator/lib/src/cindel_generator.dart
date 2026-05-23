@@ -84,6 +84,24 @@ String _emitCollection(_CollectionInfo collection) {
 
   buffer
     ..writeln('  ],')
+    ..writeln('  compositeIndexes: <CindelCompositeIndexSchema>[');
+
+  for (final index in collection.compositeIndexes) {
+    buffer
+      ..writeln('    CindelCompositeIndexSchema(')
+      ..writeln('      name: ${_stringLiteral(index.name)},')
+      ..writeln('      fields: <String>[')
+      ..writeln(
+        '        ${index.fields.map((field) => _stringLiteral(field.name)).join(', ')},',
+      )
+      ..writeln('      ],')
+      ..writeln('      isUnique: ${index.isUnique},')
+      ..writeln('      caseSensitive: ${index.caseSensitive},')
+      ..writeln('    ),');
+  }
+
+  buffer
+    ..writeln('  ],')
     ..writeln('  toDocument: _\$${collection.dartName}ToCindelDocument,')
     ..writeln('  fromDocument: _\$${collection.dartName}FromCindelDocument,')
     ..writeln(
@@ -158,6 +176,9 @@ String _emitCollection(_CollectionInfo collection) {
 
   for (final field in collection.indexedFields) {
     _emitIndexedWhereMethods(buffer, collection, field);
+  }
+  for (final index in collection.compositeIndexes) {
+    _emitCompositeWhereMethod(buffer, collection, index);
   }
 
   buffer
@@ -354,6 +375,7 @@ final class _CollectionInfo {
     required this.schemaName,
     required this.idField,
     required this.fields,
+    required this.compositeIndexes,
     required this.embeddedTypes,
   });
 
@@ -398,6 +420,11 @@ final class _CollectionInfo {
     final collectionName = configuredName == null || configuredName.isEmpty
         ? _lowerFirst(dartName)
         : configuredName;
+    final compositeIndexes = _CompositeIndexInfo.fromAnnotation(
+      annotation,
+      fields,
+      element,
+    );
 
     return _CollectionInfo(
       dartName: dartName,
@@ -406,6 +433,7 @@ final class _CollectionInfo {
       schemaName: '${dartName}Schema',
       idField: idFields.single,
       fields: fields,
+      compositeIndexes: compositeIndexes,
       embeddedTypes: _collectEmbeddedTypes(fields),
     );
   }
@@ -416,6 +444,7 @@ final class _CollectionInfo {
   final String schemaName;
   final _FieldInfo idField;
   final List<_FieldInfo> fields;
+  final List<_CompositeIndexInfo> compositeIndexes;
   final List<_EmbeddedInfo> embeddedTypes;
 
   String get queryWhereName => '${dartName}QueryWhere';
@@ -556,15 +585,27 @@ final class _FieldInfo {
     final type = _PersistedType.from(element, name, dartType);
 
     final index = _IndexInfo.from(element);
-    if (index != null && type.isList) {
+    if (index != null &&
+        type.isList &&
+        index.type != CindelIndexType.multiEntry) {
       throw InvalidGenerationSourceError(
-        'Field `$name` uses @Index, but list indexes are not supported yet. '
-        'Primitive lists can be persisted without an index.',
+        'Field `$name` uses @Index, but list fields require '
+        'CindelIndexType.multiEntry.',
+        element: element,
+      );
+    }
+    if (index?.type == CindelIndexType.multiEntry &&
+        !type.supportsMultiEntryIndex) {
+      throw InvalidGenerationSourceError(
+        'Field `$name` uses a multi-entry index, but multi-entry indexes '
+        'require primitive list fields.',
         element: element,
       );
     }
     if (index != null &&
         !type.supportsCaseInsensitiveIndex &&
+        !(index.type == CindelIndexType.multiEntry &&
+            type.supportsCaseInsensitiveMultiEntryIndex) &&
         !index.caseSensitive) {
       throw InvalidGenerationSourceError(
         'Field `$name` uses caseSensitive: false, but only String indexes '
@@ -670,6 +711,7 @@ final class _IndexInfo {
     final type = switch (typeIndex) {
       1 => CindelIndexType.hash,
       2 => CindelIndexType.words,
+      3 => CindelIndexType.multiEntry,
       _ => CindelIndexType.value,
     };
     final caseSensitive = reader.peek('caseSensitive')?.boolValue ?? true;
@@ -683,6 +725,90 @@ final class _IndexInfo {
   final bool unique;
   final bool caseSensitive;
   final CindelIndexType type;
+}
+
+final class _CompositeIndexInfo {
+  const _CompositeIndexInfo({
+    required this.name,
+    required this.fields,
+    required this.isUnique,
+    required this.caseSensitive,
+  });
+
+  static List<_CompositeIndexInfo> fromAnnotation(
+    ConstantReader annotation,
+    List<_FieldInfo> fields,
+    ClassElement element,
+  ) {
+    final values =
+        annotation.peek('indexes')?.listValue ?? const <DartObject>[];
+    final byName = {for (final field in fields) field.name: field};
+    final indexes = <_CompositeIndexInfo>[];
+    final names = <String>{};
+    for (final value in values) {
+      final reader = ConstantReader(value);
+      final fieldNames = reader
+          .peek('fields')
+          ?.listValue
+          .map((value) => value.toStringValue())
+          .whereType<String>()
+          .toList(growable: false);
+      if (fieldNames == null || fieldNames.length < 2) {
+        throw InvalidGenerationSourceError(
+          'Composite indexes require at least two fields.',
+          element: element,
+        );
+      }
+      final indexFields = <_FieldInfo>[];
+      for (final fieldName in fieldNames) {
+        final field = byName[fieldName];
+        if (field == null) {
+          throw InvalidGenerationSourceError(
+            'Composite index references unknown field `$fieldName`.',
+            element: element,
+          );
+        }
+        if (field.type.isList) {
+          throw InvalidGenerationSourceError(
+            'Composite index field `$fieldName` cannot be a list.',
+            element: element,
+          );
+        }
+        indexFields.add(field);
+      }
+      final name = fieldNames.join('_');
+      if (!names.add(name)) {
+        throw InvalidGenerationSourceError(
+          'Composite index `$name` is duplicated.',
+          element: element,
+        );
+      }
+      indexes.add(
+        _CompositeIndexInfo(
+          name: name,
+          fields: indexFields,
+          isUnique: reader.peek('unique')?.boolValue ?? false,
+          caseSensitive: reader.peek('caseSensitive')?.boolValue ?? true,
+        ),
+      );
+    }
+    return indexes;
+  }
+
+  final String name;
+  final List<_FieldInfo> fields;
+  final bool isUnique;
+  final bool caseSensitive;
+
+  String get methodPrefix {
+    return fields
+        .map((field) => _upperFirst(field.name))
+        .join()
+        .replaceFirstMapped(
+          RegExp(r'^[A-Z]'),
+          (match) => match[0]!.toLowerCase(),
+        );
+  }
 }
 
 final class _EmbeddedInfo {
@@ -875,6 +1001,40 @@ final class _PersistedType {
   final _PersistedType? elementType;
 
   bool get isList => kind == _PersistedTypeKind.list;
+
+  bool get supportsMultiEntryIndex {
+    final element = elementType;
+    if (kind != _PersistedTypeKind.list || element == null) {
+      return false;
+    }
+    return element.kind == _PersistedTypeKind.primitive ||
+        element.kind == _PersistedTypeKind.dateTime ||
+        element.kind == _PersistedTypeKind.duration ||
+        element.kind == _PersistedTypeKind.enumeration;
+  }
+
+  bool get supportsCaseInsensitiveMultiEntryIndex {
+    final element = elementType;
+    return kind == _PersistedTypeKind.list &&
+        element?.kind == _PersistedTypeKind.primitive &&
+        _normalizeDartType(element!.dartType) == 'String';
+  }
+
+  String get listElementDartType {
+    final element = elementType;
+    if (element == null) {
+      throw StateError('Not a list type.');
+    }
+    return element.dartType;
+  }
+
+  String listElementToStoredExpression(String expression) {
+    final element = elementType;
+    if (element == null) {
+      throw StateError('Not a list type.');
+    }
+    return element.toStoredExpression(expression);
+  }
 
   bool get supportsCaseInsensitiveIndex {
     return kind == _PersistedTypeKind.primitive &&
@@ -1222,6 +1382,23 @@ void _emitIndexedWhereMethods(
   final valueType = field.nonNullableDartType;
   final fieldLiteral = _stringLiteral(field.name);
 
+  if (field.indexType == CindelIndexType.multiEntry) {
+    final elementType = field.type.listElementDartType;
+    buffer
+      ..writeln()
+      ..writeln('  $queryType ${field.name}Contains($elementType value) {')
+      ..writeln('    return CindelQuery.equal(')
+      ..writeln('      database: _collection.database,')
+      ..writeln('      schema: ${collection.schemaName},')
+      ..writeln('      field: $fieldLiteral,')
+      ..writeln(
+        '      value: ${field.type.listElementToStoredExpression('value')},',
+      )
+      ..writeln('    );')
+      ..writeln('  }');
+    return;
+  }
+
   if (field.indexType == CindelIndexType.words) {
     buffer
       ..writeln()
@@ -1306,6 +1483,30 @@ void _emitIndexedWhereMethods(
       ..writeln('    );')
       ..writeln('  }');
   }
+}
+
+void _emitCompositeWhereMethod(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _CompositeIndexInfo index,
+) {
+  final queryType = 'CindelQuery<${collection.dartName}>';
+  final parameters = index.fields
+      .map((field) => '${field.nonNullableDartType} ${field.name}')
+      .join(', ');
+  final values = index.fields
+      .map((field) => field.toStoredValueExpression(field.name))
+      .join(', ');
+  buffer
+    ..writeln()
+    ..writeln('  $queryType ${index.methodPrefix}EqualTo($parameters) {')
+    ..writeln('    return CindelQuery.compositeEqual(')
+    ..writeln('      database: _collection.database,')
+    ..writeln('      schema: ${collection.schemaName},')
+    ..writeln('      index: ${_stringLiteral(index.name)},')
+    ..writeln('      values: <Object>[$values],')
+    ..writeln('    );')
+    ..writeln('  }');
 }
 
 String _lowerFirst(String value) {

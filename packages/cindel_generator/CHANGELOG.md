@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+
+- Generated collection-level composite index metadata and equality where
+  helpers.
+- Generated multi-entry list membership where helpers for primitive list
+  indexes.
+
 ## 0.2.2
 
 - Generated binary document serializers alongside the existing JSON document

@@ -189,6 +189,13 @@ fn push_index_value(key: &mut Vec<u8>, value: &IndexValue) -> Result<(), String>
             key.push(IndexValueKind::String.tag());
             push_text_segment(key, value);
         }
+        IndexValue::List(values) => {
+            key.push(IndexValueKind::List.tag());
+            push_u64(key, values.len() as u64);
+            for value in values {
+                push_index_value(key, value)?;
+            }
+        }
     }
     Ok(())
 }
@@ -199,6 +206,7 @@ fn push_kind_lower_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
         IndexValueKind::Bool => key.push(0),
         IndexValueKind::Int | IndexValueKind::Double => key.extend_from_slice(&[0; 8]),
         IndexValueKind::String => {}
+        IndexValueKind::List => {}
     }
 }
 
@@ -214,6 +222,7 @@ fn push_kind_upper_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
             push_u64(key, u64::MAX);
         }
         IndexValueKind::String => key.push(0xff),
+        IndexValueKind::List => key.push(0xff),
     }
 }
 
@@ -266,6 +275,7 @@ enum IndexValueKind {
     Int,
     Double,
     String,
+    List,
 }
 
 impl IndexValueKind {
@@ -275,6 +285,7 @@ impl IndexValueKind {
             Self::Int => 2,
             Self::Double => 3,
             Self::String => 4,
+            Self::List => 5,
         }
     }
 }
@@ -286,6 +297,7 @@ impl From<&IndexValue> for IndexValueKind {
             IndexValue::Int(_) => Self::Int,
             IndexValue::Double(_) => Self::Double,
             IndexValue::String(_) => Self::String,
+            IndexValue::List(_) => Self::List,
         }
     }
 }
@@ -409,6 +421,48 @@ mod tests {
         encoded.dedup();
 
         assert_eq!(encoded.len(), 4);
+    }
+
+    #[test]
+    fn composite_index_components_preserve_tuple_order() {
+        // Scenario: Composite indexes encode multiple field values into one
+        // ordered key.
+        // Covers: List index value encoding and tuple component ordering.
+        // Expected: The first component sorts before the second component, and
+        // ties continue to the next component.
+        let ana_false = encode_index_key(
+            "users",
+            "email_active",
+            &IndexValue::List(vec![
+                IndexValue::String("ana@example.com".into()),
+                IndexValue::Bool(false),
+            ]),
+            1,
+        )
+        .unwrap();
+        let ana_true = encode_index_key(
+            "users",
+            "email_active",
+            &IndexValue::List(vec![
+                IndexValue::String("ana@example.com".into()),
+                IndexValue::Bool(true),
+            ]),
+            2,
+        )
+        .unwrap();
+        let ben_false = encode_index_key(
+            "users",
+            "email_active",
+            &IndexValue::List(vec![
+                IndexValue::String("ben@example.com".into()),
+                IndexValue::Bool(false),
+            ]),
+            3,
+        )
+        .unwrap();
+
+        assert!(ana_false < ana_true);
+        assert!(ana_true < ben_false);
     }
 
     #[test]

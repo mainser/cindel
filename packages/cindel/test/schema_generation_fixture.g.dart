@@ -107,10 +107,10 @@ final UserSchema = CindelCollectionSchema<User>(
       name: "tags",
       dartType: "List<String>",
       isId: false,
-      isIndexed: false,
+      isIndexed: true,
       isIndexUnique: false,
-      indexCaseSensitive: true,
-      indexType: CindelIndexType.value,
+      indexCaseSensitive: false,
+      indexType: CindelIndexType.multiEntry,
     ),
     CindelFieldSchema(
       name: "scores",
@@ -165,6 +165,14 @@ final UserSchema = CindelCollectionSchema<User>(
       isIndexUnique: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
+    ),
+  ],
+  compositeIndexes: <CindelCompositeIndexSchema>[
+    CindelCompositeIndexSchema(
+      name: "email_active",
+      fields: <String>["email", "active"],
+      isUnique: false,
+      caseSensitive: true,
     ),
   ],
   toDocument: _$UserToCindelDocument,
@@ -866,12 +874,30 @@ final class UserQueryWhere {
     );
   }
 
+  CindelQuery<User> tagsContains(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: UserSchema,
+      field: "tags",
+      value: value,
+    );
+  }
+
   CindelQuery<User> statusEqualTo(UserStatus value) {
     return CindelQuery.equal(
       database: _collection.database,
       schema: UserSchema,
       field: "status",
       value: value.index,
+    );
+  }
+
+  CindelQuery<User> emailActiveEqualTo(String email, bool active) {
+    return CindelQuery.compositeEqual(
+      database: _collection.database,
+      schema: UserSchema,
+      index: "email_active",
+      values: <Object>[email, active],
     );
   }
 }

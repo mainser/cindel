@@ -27,6 +27,7 @@ void main() {
         (field) => field.name == 'accessToken',
       );
       final bio = fields.singleWhere((field) => field.name == 'bio');
+      final tags = fields.singleWhere((field) => field.name == 'tags');
       final createdAt = fields.singleWhere(
         (field) => field.name == 'createdAt',
       );
@@ -68,6 +69,7 @@ void main() {
         'accessToken',
         'bio',
         'createdAt',
+        'tags',
         'status',
       ]);
       expect(username.isIndexUnique, isTrue);
@@ -75,6 +77,11 @@ void main() {
       expect(accessToken.indexType, CindelIndexType.hash);
       expect(bio.indexType, CindelIndexType.words);
       expect(bio.indexCaseSensitive, isFalse);
+      expect(tags.indexType, CindelIndexType.multiEntry);
+      expect(tags.indexCaseSensitive, isFalse);
+      expect(schema.compositeIndexes, hasLength(1));
+      expect(schema.compositeIndexes.single.name, 'email_active');
+      expect(schema.compositeIndexes.single.fields, ['email', 'active']);
       expect(createdAt.dartType, 'DateTime');
       expect(plan.dartType, 'UserPlan');
       expect(primaryRecipient.dartType, 'Recipient?');

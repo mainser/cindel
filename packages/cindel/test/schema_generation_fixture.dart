@@ -2,7 +2,12 @@ import 'package:cindel/cindel.dart';
 
 part 'schema_generation_fixture.g.dart';
 
-@Collection(name: 'users')
+@Collection(
+  name: 'users',
+  indexes: [
+    CompositeIndex(['email', 'active']),
+  ],
+)
 class User {
   Id id = autoIncrement;
 
@@ -30,6 +35,7 @@ class User {
 
   Duration? sessionLength;
 
+  @Index(type: CindelIndexType.multiEntry, caseSensitive: false)
   List<String> tags = const [];
 
   List<int>? scores;

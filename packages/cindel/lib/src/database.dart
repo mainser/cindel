@@ -830,12 +830,63 @@ class CindelDatabase {
         }
         continue;
       }
+      if (field.indexType == CindelIndexType.multiEntry) {
+        if (fieldValue is! Iterable) {
+          throw ArgumentError.value(
+            fieldValue,
+            'value.${field.name}',
+            'Multi-entry indexes require List values.',
+          );
+        }
+        for (final item in fieldValue) {
+          if (item == null) {
+            continue;
+          }
+          entries.add(
+            _IndexEntry(name: field.name, value: _indexValueJson(item, field)),
+          );
+        }
+        continue;
+      }
       entries.add(
         _IndexEntry(
           name: field.name,
           value: _indexValueJson(fieldValue, field),
         ),
       );
+    }
+    for (final index in schema.compositeIndexes) {
+      final values = <Map<String, Object>>[];
+      var hasAllValues = true;
+      for (final fieldName in index.fields) {
+        if (!value.containsKey(fieldName) || value[fieldName] == null) {
+          hasAllValues = false;
+          break;
+        }
+        final field = _fieldSchema(collection, fieldName)!;
+        values.add(
+          _indexValueJson(
+            value[fieldName]!,
+            CindelFieldSchema(
+              name: field.name,
+              dartType: field.dartType,
+              isId: field.isId,
+              isIndexed: field.isIndexed,
+              isIndexUnique: field.isIndexUnique,
+              indexCaseSensitive: index.caseSensitive,
+              indexType: field.indexType,
+            ),
+          ),
+        );
+      }
+      if (hasAllValues) {
+        entries.add(
+          _IndexEntry(
+            name: index.name,
+            value: {'type': 'list', 'value': values},
+          ),
+        );
+      }
     }
     return entries;
   }
@@ -954,6 +1005,73 @@ class CindelDatabase {
       }
     }
     return null;
+  }
+
+  /// Returns documents whose composite [indexName] equals [values].
+  Future<List<CindelDocument>> queryCompositeEqual(
+    String collection,
+    String indexName,
+    List<Object> values,
+  ) async {
+    final ids = queryCompositeEqualIds(collection, indexName, values);
+    return _documentsByIds(collection, ids);
+  }
+
+  /// Returns ids whose composite [indexName] equals [values].
+  List<int> queryCompositeEqualIds(
+    String collection,
+    String indexName,
+    List<Object> values,
+  ) {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    _checkIndexName(indexName);
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw StateError(
+        'Collection `$collection` has no registered Cindel schema.',
+      );
+    }
+    final composite = schema.compositeIndexes.firstWhere(
+      (index) => index.name == indexName,
+      orElse: () => throw StateError(
+        'Composite index `$indexName` is not registered for `$collection`.',
+      ),
+    );
+    if (values.length != composite.fields.length) {
+      throw ArgumentError.value(
+        values,
+        'values',
+        'Composite index `$indexName` expects ${composite.fields.length} values.',
+      );
+    }
+    final encodedValues = <Map<String, Object>>[];
+    for (var index = 0; index < values.length; index += 1) {
+      final field = _fieldSchema(collection, composite.fields[index])!;
+      encodedValues.add(
+        _indexValueJson(
+          values[index],
+          CindelFieldSchema(
+            name: field.name,
+            dartType: field.dartType,
+            isId: field.isId,
+            isIndexed: field.isIndexed,
+            isIndexUnique: field.isIndexUnique,
+            indexCaseSensitive: composite.caseSensitive,
+            indexType: field.indexType,
+          ),
+        ),
+      );
+    }
+    final encodedValue = Uint8List.fromList(
+      utf8.encode(jsonEncode({'type': 'list', 'value': encodedValues})),
+    );
+    return _bindings.queryIndexEqual(
+      handle,
+      collection,
+      indexName,
+      encodedValue,
+    );
   }
 
   List<int> _queryEqualRawIds(
@@ -1332,6 +1450,15 @@ Map<String, Object> _schemaJson(CindelCollectionSchema<dynamic> schema) {
           'index_type': field.indexType.name,
         },
     ],
+    'composite_indexes': [
+      for (final index in schema.compositeIndexes)
+        {
+          'name': index.name,
+          'fields': index.fields,
+          'is_unique': index.isUnique,
+          'case_sensitive': index.caseSensitive,
+        },
+    ],
   };
 }
 
@@ -1415,7 +1542,10 @@ Map<String, Object> _indexValueJson(
       'type': 'double',
       'value': value,
     },
-    (_, final String value) => {'type': 'string', 'value': value},
+    (_, final String value) =>
+      field.indexType == CindelIndexType.multiEntry
+          ? _stringIndexValueJson(value, field)
+          : {'type': 'string', 'value': value},
     (_, final double value) => throw ArgumentError.value(
       value,
       argumentName,
