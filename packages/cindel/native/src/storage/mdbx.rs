@@ -1021,6 +1021,44 @@ impl StorageEngine for MdbxStorage {
         serde_json::to_vec(&values).map_err(|error| error.to_string())
     }
 
+    fn query_aggregate(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.with_read_transaction(|transaction, tables| {
+            collection_schema(transaction, &tables, collection)
+        })?;
+        let Some(schema) = schema else {
+            return Err(format!(
+                "collection `{collection}` has no registered schema"
+            ));
+        };
+        if !schema
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == field)
+        {
+            return Err(format!(
+                "field `{field}` is not declared in schema `{collection}`"
+            ));
+        }
+
+        let documents = self.get_many_stored(collection, candidate_ids)?;
+        let mut values = Vec::new();
+        for document in documents {
+            let Some(document) = document else {
+                continue;
+            };
+            values.push(read_json_field(&schema, &document, field)?);
+        }
+
+        let result = super::aggregate_json_values(&values, operation)?;
+        serde_json::to_vec(&result).map_err(|error| error.to_string())
+    }
+
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
             transaction
@@ -2476,6 +2514,77 @@ mod tests {
         );
         assert_eq!(storage.collection_revision("users").unwrap(), 2);
         assert_eq!(storage.schema_version("users").unwrap(), Some(1));
+    }
+
+    #[test]
+    fn aggregates_binary_document_fields() {
+        // Scenario: PERF-15 keeps aggregate queries inside MDBX instead of
+        // hydrating full Dart objects.
+        // Covers:
+        // - Native count, min, max, sum, and average over binary documents.
+        // - String min/max ordering.
+        // - Missing candidate ids being ignored.
+        // Expected: Aggregates are returned as compact JSON scalars.
+        let directory = TemporaryDirectory::new("aggregates");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, name, score) in [(1, "Cid", 30), (2, "Ana", 10), (3, "Ben", 20)] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    format!(
+                        r#"{{"id":{id},"email":"user-{id}@example.com","name":"{name}","score":{score}}}"#
+                    )
+                    .as_bytes(),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3, 999], "score", "count")
+                .unwrap(),
+            b"3".to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "score", "min")
+                .unwrap(),
+            b"10".to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "score", "max")
+                .unwrap(),
+            b"30".to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "score", "sum")
+                .unwrap(),
+            b"60.0".to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "score", "average")
+                .unwrap(),
+            b"20.0".to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "name", "min")
+                .unwrap(),
+            br#""Ana""#.to_vec()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "name", "max")
+                .unwrap(),
+            br#""Cid""#.to_vec()
+        );
     }
 
     #[test]

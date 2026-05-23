@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.13
+
+- Added `CindelPropertyQuery` aggregate helpers for count, min, max, sum, and
+  average.
+- MDBX can execute supported property aggregates over native binary documents
+  without hydrating full Dart objects.
+- Kept SQLite behavior compatible through fallback aggregate evaluation.
+- Added FFI bindings for native aggregate queries and bumped the native ABI to
+  9.
+
 ## 0.2.12
 
 - Promoted the faster MDBX v2 table layout into the real MDBX backend path.

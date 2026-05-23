@@ -156,9 +156,6 @@ Before any package publication:
 - Replace local path dependencies with hosted version constraints.
 - Run `dart pub publish --dry-run` from the package directory and inspect the
   file list.
-- Keep all public GitHub URLs pointed at
-  `https://github.com/mainser/Cindel`.
-- Keep maintainer references as Alain Ramirez <nolbertrg@gmail.com>.
 
 ## Commit Messages
 

@@ -5,6 +5,16 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.13
+
+- Added native property aggregates for count, min, max, sum, and average.
+- MDBX now executes aggregate property queries over binary documents without
+  hydrating full Dart objects when native query planning is available.
+- Kept SQLite aggregate behavior compatible through the existing Dart/JSON
+  fallback paths.
+- Added native aggregate benchmark workloads and bumped the native ABI to 9.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.13`.
+
 ## 0.2.12
 
 - Promoted the faster MDBX v2 table layout into the real MDBX backend path.

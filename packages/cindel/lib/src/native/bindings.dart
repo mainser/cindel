@@ -532,6 +532,48 @@ final class CindelNativeBindings {
       });
     });
   }
+
+  Uint8List queryAggregate(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List ids,
+    String field,
+    String operation,
+  ) {
+    return _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _withNativeUtf8Bytes(field, (fieldPointer, fieldLength) {
+          return _withNativeUtf8Bytes(operation, (
+            operationPointer,
+            operationLength,
+          ) {
+            return _queryBytes(
+              (outPointer, outLength) {
+                return _functions.queryAggregate(
+                  handle,
+                  collectionPointer,
+                  collectionLength,
+                  idsPointer,
+                  idsLength,
+                  fieldPointer,
+                  fieldLength,
+                  operationPointer,
+                  operationLength,
+                  outPointer,
+                  outLength,
+                );
+              },
+              _functions.freeBuffer,
+              'query aggregate',
+            );
+          });
+        });
+      });
+    });
+  }
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -704,6 +746,21 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get queryProject;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryAggregate;
 
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }
@@ -1078,6 +1135,35 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_query_project'),
+      queryAggregate = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_aggregate'),
       freeBuffer = library
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
@@ -1292,6 +1378,22 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   queryProject;
 
   @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryAggregate;
+
+  @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }
 
@@ -1494,6 +1596,22 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get queryProject => _cindelQueryProject;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryAggregate => _cindelQueryAggregate;
 
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
@@ -1945,6 +2063,35 @@ external int _cindelQueryProject(
   int idsLen,
   Pointer<Uint8> field,
   int fieldLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_aggregate', assetId: _assetId)
+external int _cindelQueryAggregate(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+  Pointer<Uint8> field,
+  int fieldLen,
+  Pointer<Uint8> operation,
+  int operationLen,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
 );

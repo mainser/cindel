@@ -905,7 +905,164 @@ final class CindelPropertyQuery<T, R> {
     }
     return values.first;
   }
+
+  /// Returns the number of non-null projected values.
+  Future<int> count() async {
+    final native = await _tryNativeAggregate('count');
+    if (native != null) {
+      final value = native.value;
+      if (value is int) {
+        return value;
+      }
+      if (value is num) {
+        return value.toInt();
+      }
+      throw StateError('Native Cindel returned a non-numeric count.');
+    }
+
+    var count = 0;
+    for (final value in await findAll()) {
+      if (value != null) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  /// Returns the smallest projected value, ignoring null values.
+  Future<R?> min() async {
+    final native = await _tryNativeAggregate('min');
+    if (native != null) {
+      return _decodeAggregateValue(native.value);
+    }
+    return _minMax(await findAll(), _AggregateOrder.min);
+  }
+
+  /// Returns the largest projected value, ignoring null values.
+  Future<R?> max() async {
+    final native = await _tryNativeAggregate('max');
+    if (native != null) {
+      return _decodeAggregateValue(native.value);
+    }
+    return _minMax(await findAll(), _AggregateOrder.max);
+  }
+
+  /// Returns the sum of numeric projected values, ignoring null values.
+  Future<num?> sum() async {
+    final native = await _tryNativeAggregate('sum');
+    if (native != null) {
+      final value = native.value;
+      if (value == null) {
+        return null;
+      }
+      if (value is num) {
+        return value;
+      }
+      throw StateError('Native Cindel returned a non-numeric sum.');
+    }
+    return _sum(await findAll());
+  }
+
+  /// Returns the average of numeric projected values, ignoring null values.
+  Future<double?> average() async {
+    final native = await _tryNativeAggregate('average');
+    if (native != null) {
+      final value = native.value;
+      if (value == null) {
+        return null;
+      }
+      if (value is num) {
+        return value.toDouble();
+      }
+      throw StateError('Native Cindel returned a non-numeric average.');
+    }
+    return _average(await findAll());
+  }
+
+  Future<({Object? value})?> _tryNativeAggregate(String operation) async {
+    final nativeIds = await _query._nativePlannedIds();
+    if (nativeIds == null || !_query._canUseNativeProjection) {
+      return null;
+    }
+    final value = await _query._database.queryNativeAggregate(
+      _query._schema.name,
+      nativeIds,
+      _field,
+      operation,
+    );
+    return (value: value);
+  }
+
+  R? _decodeAggregateValue(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    final decode = _decode;
+    return decode == null ? value as R : decode(value);
+  }
+
+  R? _minMax(List<R> values, _AggregateOrder order) {
+    Object? best;
+    for (final value in values) {
+      if (value == null) {
+        continue;
+      }
+      if (value is! Comparable<dynamic>) {
+        throw StateError(
+          'Property aggregate `${order.name}` requires comparable values.',
+        );
+      }
+      final currentBest = best;
+      if (currentBest == null) {
+        best = value;
+        continue;
+      }
+      final comparison = value.compareTo(currentBest);
+      final shouldReplace = switch (order) {
+        _AggregateOrder.min => comparison < 0,
+        _AggregateOrder.max => comparison > 0,
+      };
+      if (shouldReplace) {
+        best = value;
+      }
+    }
+    return best as R?;
+  }
+
+  num? _sum(List<R> values) {
+    var sum = 0.0;
+    var count = 0;
+    for (final value in values) {
+      if (value == null) {
+        continue;
+      }
+      if (value is! num) {
+        throw StateError('Property sum requires numeric values.');
+      }
+      sum += value;
+      count += 1;
+    }
+    return count == 0 ? null : sum;
+  }
+
+  double? _average(List<R> values) {
+    var sum = 0.0;
+    var count = 0;
+    for (final value in values) {
+      if (value == null) {
+        continue;
+      }
+      if (value is! num) {
+        throw StateError('Property average requires numeric values.');
+      }
+      sum += value;
+      count += 1;
+    }
+    return count == 0 ? null : sum / count;
+  }
 }
+
+enum _AggregateOrder { min, max }
 
 /// A projected query over multiple fields.
 final class CindelPropertiesQuery<T> {

@@ -200,6 +200,23 @@ fn run_storage_benchmark(
             Ok(())
         })?;
 
+    let aggregate_average =
+        measure_iterations("aggregate_score_average", config.query_repeats, |_| {
+            let result = storage.query_aggregate("users", &all_ids, "score", "average")?;
+            if result.is_empty() {
+                return Err("aggregate average returned empty bytes".into());
+            }
+            Ok(())
+        })?;
+
+    let aggregate_max = measure_iterations("aggregate_name_max", config.query_repeats, |_| {
+        let result = storage.query_aggregate("users", &all_ids, "name", "max")?;
+        if result.is_empty() {
+            return Err("aggregate max returned empty bytes".into());
+        }
+        Ok(())
+    })?;
+
     let composite_query =
         measure_iterations("query_composite_equal", config.query_repeats, |repeat| {
             let id = repeat % config.documents;
@@ -301,6 +318,8 @@ fn run_storage_benchmark(
             equality_query_with_get,
             range_query,
             range_query_with_get,
+            aggregate_average,
+            aggregate_max,
             composite_query,
             multi_entry_query,
             collection_revision,

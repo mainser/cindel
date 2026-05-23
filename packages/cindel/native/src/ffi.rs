@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    8
+    9
 }
 
 #[no_mangle]
@@ -670,6 +670,54 @@ pub unsafe extern "C" fn cindel_query_project(
     };
 
     match engine.query_project(collection, &ids, field) {
+        Ok(bytes) => {
+            let (ptr, len) = into_raw_bytes(bytes);
+            *out_ptr = ptr;
+            *out_len = len;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_aggregate(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+    field_ptr: *const u8,
+    field_len: usize,
+    operation_ptr: *const u8,
+    operation_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+    let Some(field) = read_str(field_ptr, field_len) else {
+        return -1;
+    };
+    let Some(operation) = read_str(operation_ptr, operation_len) else {
+        return -1;
+    };
+
+    match engine.query_aggregate(collection, &ids, field, operation) {
         Ok(bytes) => {
             let (ptr, len) = into_raw_bytes(bytes);
             *out_ptr = ptr;

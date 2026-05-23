@@ -14,6 +14,7 @@ typedef CindelDocument = Map<String, Object?>;
 
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
 const _inMemoryDirectory = ':memory:';
+const _nativeAggregateOperations = {'count', 'min', 'max', 'sum', 'average'};
 
 enum _TransactionMode { read, write }
 
@@ -727,6 +728,41 @@ class CindelDatabase {
       throw StateError('Native Cindel returned a non-list projection.');
     }
     return decoded.cast<Object?>();
+  }
+
+  /// Aggregates [field] from native binary documents under [candidateIds].
+  Future<Object?> queryNativeAggregate(
+    String collection,
+    Iterable<int> candidateIds,
+    String field,
+    String operation,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    if (!_nativeAggregateOperations.contains(operation)) {
+      throw ArgumentError.value(
+        operation,
+        'operation',
+        'Unsupported aggregate.',
+      );
+    }
+    final idList = candidateIds.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return operation == 'count' ? 0 : null;
+    }
+    final bytes = _bindings.queryAggregate(
+      handle,
+      collection,
+      _encodeIds(idList),
+      field,
+      operation,
+    );
+    return jsonDecode(utf8.decode(bytes));
   }
 
   /// Returns the persisted schema version for [collection], or `null`.

@@ -494,6 +494,46 @@ void main() {
       ]);
     });
 
+    // Scenario: A query aggregates projected primitive values.
+    // Covers:
+    // - [CindelPropertyQuery.count], min, max, sum, and average.
+    // - Native MDBX aggregate path for filter-only binary-document queries.
+    // - Dart fallback path for SQLite and query shapes that cannot use native
+    //   planning.
+    // Expected: Aggregates ignore null values and avoid object hydration when
+    // native planning is available.
+    test('aggregates projected primitive fields.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final idCount = await database.users.all().idProperty().count();
+      final minId = await database.users.all().idProperty().min();
+      final maxId = await database.users.all().idProperty().max();
+      final activeIdSum = await database.users
+          .filter()
+          .activeEqualTo(true)
+          .idProperty()
+          .sum();
+      final activeIdAverage = await database.users
+          .filter()
+          .activeEqualTo(true)
+          .idProperty()
+          .average();
+      final firstName = await database.users.all().nameProperty().min();
+      final lastName = await database.users.all().nameProperty().max();
+
+      // Assert.
+      expect(idCount, 4);
+      expect(minId, 1);
+      expect(maxId, 4);
+      expect(activeIdSum, 7);
+      expect(activeIdAverage, closeTo(7 / 3, 0.0001));
+      expect(firstName, 'Ana');
+      expect(lastName, 'Dee');
+    });
+
     // Scenario: Query modifiers are combined in the documented order.
     // Covers:
     // - Execution order: where, filter, sort, distinct, offset, limit,

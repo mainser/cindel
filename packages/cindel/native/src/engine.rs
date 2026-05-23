@@ -137,6 +137,17 @@ impl CindelEngine {
         self.storage.query_project(collection, candidate_ids, field)
     }
 
+    pub fn query_aggregate(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        self.storage
+            .query_aggregate(collection, candidate_ids, field, operation)
+    }
+
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
     }

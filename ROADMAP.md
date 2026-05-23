@@ -390,9 +390,12 @@ Guiding rules:
   - Reduce broad Dart-level watcher polling.
   - Local write notifications now carry changed ids and written documents when
     available, so document and query watchers can skip safe local reads.
-- [ ] PERF-15: Native aggregations.
-  - Add native count, min, max, sum, and average paths that avoid full document
-    hydration.
+- [x] PERF-15: Native aggregations.
+  - Added property-query count, min, max, sum, and average helpers.
+  - MDBX executes supported aggregates over binary document fields through the
+    native query path when native planning is available.
+  - SQLite remains compatible through fallback aggregate evaluation.
+  - Native benchmark workloads now include aggregate average and max cases.
 - [ ] PERF-16: Public migration tooling for 1.0 stabilization.
   - Add explicit migration/export tooling only when the storage format is close
     enough to 1.0 to preserve external user data.

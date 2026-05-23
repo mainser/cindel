@@ -9,7 +9,7 @@ scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
-Cindel is in early pre-1.0 development. The current `0.2.12` line has the core
+Cindel is in early pre-1.0 development. The current `0.2.13` line has the core
 local database slice working end to end:
 
 ```text
@@ -67,8 +67,8 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.2.12
-  cindel_flutter_libs: ^0.2.12
+  cindel: ^0.2.13
+  cindel_flutter_libs: ^0.2.13
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -444,6 +444,16 @@ final names = await db.users
     .distinctByEmail()
     .nameProperty()
     .findAll();
+```
+
+Projected fields can also be aggregated. On the MDBX binary-document path,
+supported aggregates run natively without hydrating full Dart objects:
+
+```dart
+final activeCount = await db.users.filter().activeEqualTo(true).idProperty().count();
+final firstName = await db.users.all().nameProperty().min();
+final maxId = await db.users.all().idProperty().max();
+final averageId = await db.users.all().idProperty().average();
 ```
 
 For dynamic projections, use `properties`:

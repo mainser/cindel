@@ -8,12 +8,12 @@ transactions, watchers, and a compact Rust native runtime behind Dart FFI.
 
 ```yaml
 dependencies:
-  cindel: ^0.2.0
-  cindel_flutter_libs: ^0.2.0
+  cindel: ^0.2.13
+  cindel_flutter_libs: ^0.2.13
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.2.0
+  cindel_generator: ^0.2.3
 ```
 
 Define a collection:
@@ -76,7 +76,8 @@ explicit migration helper exists in a later release.
 - Native auto-increment IDs.
 - Indexed equality, range, prefix, hash, case-insensitive, unique, word token,
   composite, and primitive list membership queries.
-- Filter builders, sorting, pagination, distinct, and primitive projections.
+- Filter builders, sorting, pagination, distinct, primitive projections, and
+  property aggregates.
 - Explicit read and write transactions.
 - Document, collection, object, query, and lazy watchers.
 - Embedded objects and embedded object lists.
@@ -92,6 +93,6 @@ until their native binaries are generated and validated.
 
 ## Release Status
 
-Cindel is still pre-1.0.0. The `0.2.0` package line is the first normal
-release line after the development previews and ships MDBX as the default
-backend with SQLite available explicitly.
+Cindel is still pre-1.0.0. The `0.2.13` package line ships MDBX as the default
+backend, SQLite as an explicit compatibility backend, and native MDBX property
+aggregates for generated binary-document queries.
