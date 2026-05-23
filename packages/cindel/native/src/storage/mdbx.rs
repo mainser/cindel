@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::document_format::{
     index_entries_from_binary_document, read_json_document, write_json_document, BinaryDocument,
 };
+use crate::native_filter::NativeFilter;
 
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
@@ -825,6 +826,34 @@ impl StorageEngine for MdbxStorage {
             }
             None => Ok(entries.into_iter().map(|(_, id)| id).collect()),
         }
+    }
+
+    fn query_filter(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        filter: &[u8],
+    ) -> Result<Vec<u64>, String> {
+        let filter = NativeFilter::from_json(filter)?;
+        let schema = self.with_read_transaction(|transaction, tables| {
+            collection_schema(transaction, &tables, collection)
+        })?;
+        let Some(schema) = schema else {
+            return Err(format!(
+                "collection `{collection}` has no registered schema"
+            ));
+        };
+        let documents = self.get_many_stored(collection, candidate_ids)?;
+        let mut ids = Vec::new();
+        for (id, document) in candidate_ids.iter().copied().zip(documents) {
+            let Some(document) = document else {
+                continue;
+            };
+            if filter.matches(&schema, &document)? {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.7
+
+- Added native MDBX filtering for generated Cindel filter predicates over
+  binary document bytes.
+- Routed supported generated `filter()` and `where().filter()` queries through
+  native filtering on MDBX, with the existing Dart filter path retained for
+  SQLite and custom predicates.
+- Added FFI bindings for native filter queries and bumped the native ABI to 7.
+
 ## 0.2.6
 
 - Added generated binary document callbacks to collection schemas.

@@ -119,6 +119,15 @@ impl CindelEngine {
             .query_index_range(collection, index, lower, upper)
     }
 
+    pub fn query_filter(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        filter: &[u8],
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_filter(collection, candidate_ids, filter)
+    }
+
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
     }

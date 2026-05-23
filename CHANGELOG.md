@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.7
+
+- Added a native MDBX filter compiler for generated Cindel predicates over
+  binary document bytes.
+- Routed generated `filter()` and supported `where().filter()` queries through
+  native filtering when MDBX and binary documents are active, while keeping the
+  Dart filter path as the SQLite/custom-predicate fallback.
+- Added FFI bindings for native filter queries and bumped the native ABI to 7.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 7.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.7`.
+
 ## 0.2.6
 
 - Added generated binary serializers for typed Cindel models.

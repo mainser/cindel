@@ -394,6 +394,20 @@ class CindelDatabase {
     return _documentsByIds(collection, ids);
   }
 
+  /// Returns documents stored under [ids], preserving input order.
+  Future<List<CindelDocument>> documentsByIds(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    return _documentsByIds(collection, idList);
+  }
+
   /// Returns every id in [collection], ordered ascending.
   Future<List<int>> documentIds(String collection) async {
     final handle = _checkOpen();
@@ -529,18 +543,10 @@ class CindelDatabase {
     String field,
     Object value,
   ) async {
-    final handle = _checkOpen();
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
-    final encodedValue = _encodeIndexValue(value, schemaField);
-
-    final ids = _bindings.queryIndexEqual(
-      handle,
-      collection,
-      field,
-      encodedValue,
-    );
+    final ids = _queryEqualRawIds(collection, field, value, schemaField);
     final documents = await _documentsByIds(
       collection,
       schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
@@ -554,6 +560,29 @@ class CindelDatabase {
           .toList(growable: false);
     }
     return documents;
+  }
+
+  /// Returns ids whose indexed [field] equals [value].
+  ///
+  /// Hash indexes intentionally use [queryEqual] instead, because hash
+  /// collisions need document verification before the result is observable.
+  Future<List<int>> queryEqualIds(
+    String collection,
+    String field,
+    Object value,
+  ) async {
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final schemaField = _checkIndexedField(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError(
+        'Hash index `${schemaField.name}` requires document verification.',
+      );
+    }
+    final ids = _queryEqualRawIds(collection, field, value, schemaField);
+    return schemaField.indexType == CindelIndexType.words
+        ? _dedupeIds(ids)
+        : ids;
   }
 
   /// Returns documents whose indexed [field] is inside the inclusive range.
@@ -587,7 +616,7 @@ class CindelDatabase {
         : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
-    final ids = _bindings.queryIndexRange(
+    final ids = _queryRangeRawIds(
       handle,
       collection,
       field,
@@ -597,6 +626,70 @@ class CindelDatabase {
     return _documentsByIds(
       collection,
       schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
+    );
+  }
+
+  /// Returns ids whose indexed [field] is inside the inclusive range.
+  Future<List<int>> queryRangeIds(
+    String collection,
+    String field, {
+    Object? lower,
+    Object? upper,
+  }) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final schemaField = _checkIndexedField(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError(
+        'Hash index `${schemaField.name}` only supports equality queries.',
+      );
+    }
+    if (lower == null && upper == null) {
+      throw ArgumentError.value(null, 'lower/upper', 'Must provide a bound.');
+    }
+
+    final encodedLower = lower == null
+        ? null
+        : _encodeRangeIndexValue(lower, schemaField, 'lower');
+    final encodedUpper = upper == null
+        ? null
+        : _encodeRangeIndexValue(upper, schemaField, 'upper');
+    _checkMatchingRangeBounds(encodedLower, encodedUpper);
+
+    final ids = _queryRangeRawIds(
+      handle,
+      collection,
+      field,
+      encodedLower?.bytes,
+      encodedUpper?.bytes,
+    );
+    return schemaField.indexType == CindelIndexType.words
+        ? _dedupeIds(ids)
+        : ids;
+  }
+
+  /// Applies a native binary-document filter to [candidateIds].
+  Future<List<int>> queryNativeFilterIds(
+    String collection,
+    Iterable<int> candidateIds,
+    Uint8List filter,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final idList = candidateIds.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return const <int>[];
+    }
+    return _bindings.queryFilter(
+      handle,
+      collection,
+      _encodeIds(idList),
+      filter,
     );
   }
 
@@ -831,6 +924,29 @@ class CindelDatabase {
       }
     }
     return null;
+  }
+
+  List<int> _queryEqualRawIds(
+    String collection,
+    String field,
+    Object value,
+    CindelFieldSchema schemaField,
+  ) {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final encodedValue = _encodeIndexValue(value, schemaField);
+    return _bindings.queryIndexEqual(handle, collection, field, encodedValue);
+  }
+
+  List<int> _queryRangeRawIds(
+    Pointer<Void> handle,
+    String collection,
+    String field,
+    Uint8List? lower,
+    Uint8List? upper,
+  ) {
+    return _bindings.queryIndexRange(handle, collection, field, lower, upper);
   }
 
   Future<List<CindelDocument>> _documentsByIds(

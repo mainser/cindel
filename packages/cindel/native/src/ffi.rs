@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    6
+    7
 }
 
 #[no_mangle]
@@ -594,6 +594,44 @@ pub unsafe extern "C" fn cindel_query_index_range(
     };
 
     match engine.query_index_range(collection, index, lower.as_ref(), upper.as_ref()) {
+        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_filter(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+    filter_ptr: *const u8,
+    filter_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+    let Some(filter) = read_bytes(filter_ptr, filter_len) else {
+        return -1;
+    };
+
+    match engine.query_filter(collection, &ids, filter) {
         Ok(ids) => write_json_ids(ids, out_ptr, out_len),
         Err(_) => -1,
     }

@@ -348,7 +348,7 @@ Guiding rules:
   - Added FFI paths for raw stored document reads and binary batch writes.
   - Reduced per-document JSON payloads in MDBX typed `put`, `putAll`, `get`,
     and `getAll` while keeping SQLite on the JSON compatibility path.
-- [ ] PERF-08: Native filter compiler.
+- [x] PERF-08: Native filter compiler.
   - Encode generated filter ASTs through FFI and evaluate predicates over
     native binary object readers.
   - Move common filter operations out of Dart-side map scans.
