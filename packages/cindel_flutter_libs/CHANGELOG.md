@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.10
+
+- Regenerated Windows, Android, and Linux native runtime libraries with the
+  MDBX auto-increment counter optimization.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.9
 
 - Regenerated Windows, Android, and Linux native runtime libraries with

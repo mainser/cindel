@@ -16,9 +16,6 @@ final class CindelNativeBindings {
 
   Pointer<Void> open(String directory, {int backend = 1}) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
-      if (backend == 0) {
-        return _functions.open(directoryPointer, directoryLength);
-      }
       try {
         return _functions.openWithBackend(
           directoryPointer,
@@ -26,8 +23,14 @@ final class CindelNativeBindings {
           backend,
         );
       } on ArgumentError {
+        if (backend == 0) {
+          return _functions.open(directoryPointer, directoryLength);
+        }
         return nullptr;
       } on OSError {
+        if (backend == 0) {
+          return _functions.open(directoryPointer, directoryLength);
+        }
         return nullptr;
       }
     });

@@ -19,8 +19,8 @@ use crate::native_filter::NativeFilter;
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
     encode_index_key, encode_index_range, encode_unique_index_key, COLLECTION_REVISIONS_TABLE,
-    DOCUMENTS_TABLE, ID_COUNTERS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE,
-    STORAGE_METADATA_TABLE, UNIQUE_INDEXES_TABLE,
+    DOCUMENTS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE, STORAGE_METADATA_TABLE,
+    UNIQUE_INDEXES_TABLE,
 };
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
@@ -32,15 +32,20 @@ const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const EMPTY_VALUE: &[u8] = &[];
 
 pub struct MdbxStorage {
-    database: Arc<Database<NoWriteMap>>,
+    state: SharedMdbxState,
     active_transaction: Option<MdbxActiveTransaction>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
 }
 
-type SharedMdbxDatabase = Arc<Database<NoWriteMap>>;
-type WeakMdbxDatabase = Weak<Database<NoWriteMap>>;
+struct MdbxSharedState {
+    database: Arc<Database<NoWriteMap>>,
+    next_ids: Mutex<HashMap<String, u64>>,
+}
 
-static MDBX_DATABASES: OnceLock<Mutex<HashMap<PathBuf, WeakMdbxDatabase>>> = OnceLock::new();
+type SharedMdbxState = Arc<MdbxSharedState>;
+type WeakMdbxState = Weak<MdbxSharedState>;
+
+static MDBX_DATABASES: OnceLock<Mutex<HashMap<PathBuf, WeakMdbxState>>> = OnceLock::new();
 
 enum MdbxActiveTransaction {
     Read,
@@ -246,10 +251,10 @@ impl MdbxStorage {
 
         fs::create_dir_all(&path).map_err(|error| error.to_string())?;
         let path = path.canonicalize().map_err(|error| error.to_string())?;
-        let database = open_shared_database(&path)?;
+        let state = open_shared_state(&path)?;
 
         let storage = Self {
-            database,
+            state,
             active_transaction: None,
             _temporary_directory: temporary_directory,
         };
@@ -259,6 +264,7 @@ impl MdbxStorage {
 
     fn initialize(&self) -> Result<(), String> {
         let transaction = self
+            .state
             .database
             .begin_rw_txn()
             .map_err(|error| error.to_string())?;
@@ -284,6 +290,7 @@ impl MdbxStorage {
         ) -> Result<T, String>,
     ) -> Result<T, String> {
         let transaction = self
+            .state
             .database
             .begin_ro_txn()
             .map_err(|error| error.to_string())?;
@@ -301,6 +308,7 @@ impl MdbxStorage {
         ) -> Result<T, String>,
     ) -> Result<T, String> {
         let transaction = self
+            .state
             .database
             .begin_rw_txn()
             .map_err(|error| error.to_string())?;
@@ -334,14 +342,89 @@ impl MdbxStorage {
     }
 
     fn current_next_id(&self, collection: &str) -> Result<u64, String> {
+        self.cached_next_id(collection)
+    }
+
+    fn cached_next_id(&self, collection: &str) -> Result<u64, String> {
+        let cached = {
+            let next_ids = self
+                .state
+                .next_ids
+                .lock()
+                .map_err(|error| error.to_string())?;
+            next_ids.get(collection).copied()
+        };
+        if let Some(next_id) = cached {
+            return Ok(next_id);
+        }
+
+        let next_id = self.next_id_from_documents(collection)?;
+        let mut next_ids = self
+            .state
+            .next_ids
+            .lock()
+            .map_err(|error| error.to_string())?;
+        Ok(*next_ids.entry(collection.to_string()).or_insert(next_id))
+    }
+
+    fn allocate_cached_id(&self, collection: &str) -> Result<u64, String> {
+        loop {
+            let cached = {
+                let next_ids = self
+                    .state
+                    .next_ids
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                next_ids.get(collection).copied()
+            };
+            if let Some(next_id) = cached {
+                let following = next_id.checked_add(1).ok_or_else(|| {
+                    format!("id counter for collection `{collection}` overflowed")
+                })?;
+                self.set_cached_next_id_at_least(collection, following)?;
+                return Ok(next_id);
+            }
+
+            let next_id = self.next_id_from_documents(collection)?;
+            let mut next_ids = self
+                .state
+                .next_ids
+                .lock()
+                .map_err(|error| error.to_string())?;
+            if next_ids.contains_key(collection) {
+                continue;
+            }
+            let following = next_id
+                .checked_add(1)
+                .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
+            next_ids.insert(collection.to_string(), following);
+            return Ok(next_id);
+        }
+    }
+
+    fn next_id_from_documents(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
-            transaction
-                .get::<Vec<u8>>(&tables.id_counters, &encode_collection_key(collection))
-                .map_err(|error| error.to_string())?
-                .map(|bytes| decode_u64(&bytes))
-                .transpose()
-                .map(|value| value.unwrap_or(1))
+            let prefix = encode_collection_key(collection);
+            let ids = scan_ids_by_key_range(transaction, &tables.documents, &prefix, None)?;
+            Ok(ids
+                .into_iter()
+                .max()
+                .and_then(|id| id.checked_add(1))
+                .unwrap_or(1))
         })
+    }
+
+    fn set_cached_next_id_at_least(&self, collection: &str, next_id: u64) -> Result<(), String> {
+        let mut next_ids = self
+            .state
+            .next_ids
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let current = next_ids.entry(collection.to_string()).or_insert(1);
+        if *current < next_id {
+            *current = next_id;
+        }
+        Ok(())
     }
 
     fn advance_staged_id_counter(
@@ -367,6 +450,7 @@ impl MdbxStorage {
     }
 
     fn commit_staged_write(&self, staged: MdbxWriteTransaction) -> Result<(), String> {
+        let counter_updates = staged.next_ids.clone();
         self.with_write_transaction(|transaction, tables| {
             for operation in staged.operations {
                 match operation {
@@ -427,19 +511,20 @@ impl MdbxStorage {
                 }
             }
 
-            for (collection, next_id) in staged.next_ids {
-                set_id_counter_at_least(transaction, &tables, &collection, next_id)?;
-            }
             Ok(())
-        })
+        })?;
+        for (collection, next_id) in counter_updates {
+            self.set_cached_next_id_at_least(&collection, next_id)?;
+        }
+        Ok(())
     }
 }
 
-fn open_shared_database(path: &PathBuf) -> Result<SharedMdbxDatabase, String> {
+fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
     let databases = MDBX_DATABASES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut databases = databases.lock().map_err(|error| error.to_string())?;
-    if let Some(database) = databases.get(path).and_then(Weak::upgrade) {
-        return Ok(database);
+    if let Some(state) = databases.get(path).and_then(Weak::upgrade) {
+        return Ok(state);
     }
 
     let database = Arc::new(
@@ -453,8 +538,12 @@ fn open_shared_database(path: &PathBuf) -> Result<SharedMdbxDatabase, String> {
         )
         .map_err(|error| error.to_string())?,
     );
-    databases.insert(path.clone(), Arc::downgrade(&database));
-    Ok(database)
+    let state = Arc::new(MdbxSharedState {
+        database,
+        next_ids: Mutex::new(HashMap::new()),
+    });
+    databases.insert(path.clone(), Arc::downgrade(&state));
+    Ok(state)
 }
 
 fn staged_index_key(
@@ -544,27 +633,7 @@ impl StorageEngine for MdbxStorage {
             return Ok(next_id);
         }
 
-        self.with_write_transaction(|transaction, tables| {
-            let key = encode_collection_key(collection);
-            let next_id = transaction
-                .get::<Vec<u8>>(&tables.id_counters, &key)
-                .map_err(|error| error.to_string())?
-                .map(|bytes| decode_u64(&bytes))
-                .transpose()?
-                .unwrap_or(1);
-            let following = next_id
-                .checked_add(1)
-                .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
-            transaction
-                .put(
-                    &tables.id_counters,
-                    &key,
-                    following.to_be_bytes(),
-                    WriteFlags::UPSERT,
-                )
-                .map_err(|error| error.to_string())?;
-            Ok(next_id)
-        })
+        self.allocate_cached_id(collection)
     }
 
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
@@ -683,7 +752,8 @@ impl StorageEngine for MdbxStorage {
         self.with_write_transaction(|transaction, tables| {
             put_document_with_indexes(transaction, &tables, collection, id, bytes, indexes)?;
             bump_collection_revision(transaction, &tables, collection)
-        })
+        })?;
+        self.set_cached_next_id_at_least(collection, id.saturating_add(1))
     }
 
     fn put_many_indexed(
@@ -740,7 +810,15 @@ impl StorageEngine for MdbxStorage {
                 bump_collection_revision(transaction, &tables, collection)?;
             }
             Ok(())
-        })
+        })?;
+        if let Some(next_id) = documents
+            .iter()
+            .map(|document| document.id.saturating_add(1))
+            .max()
+        {
+            self.set_cached_next_id_at_least(collection, next_id)?;
+        }
+        Ok(())
     }
 
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
@@ -990,7 +1068,6 @@ struct MdbxTables<'txn> {
     documents: Table<'txn>,
     indexes: Table<'txn>,
     unique_indexes: Table<'txn>,
-    id_counters: Table<'txn>,
     collection_revisions: Table<'txn>,
     schema_collections: Table<'txn>,
     storage_metadata: Table<'txn>,
@@ -1005,9 +1082,6 @@ fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Re
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(UNIQUE_INDEXES_TABLE), TableFlags::default())
-        .map_err(|error| error.to_string())?;
-    transaction
-        .create_table(Some(ID_COUNTERS_TABLE), TableFlags::default())
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(COLLECTION_REVISIONS_TABLE), TableFlags::default())
@@ -1036,9 +1110,6 @@ where
             .map_err(|error| error.to_string())?,
         unique_indexes: transaction
             .open_table(Some(UNIQUE_INDEXES_TABLE))
-            .map_err(|error| error.to_string())?,
-        id_counters: transaction
-            .open_table(Some(ID_COUNTERS_TABLE))
             .map_err(|error| error.to_string())?,
         collection_revisions: transaction
             .open_table(Some(COLLECTION_REVISIONS_TABLE))
@@ -1411,8 +1482,7 @@ fn put_document_with_indexes(
         id,
         &effective_indexes,
         &unique_indexes,
-    )?;
-    advance_id_counter(transaction, tables, collection, id)
+    )
 }
 
 fn encode_document_for_storage(
@@ -1920,59 +1990,6 @@ fn bump_collection_revision(
         .map_err(|error| error.to_string())
 }
 
-fn advance_id_counter(
-    transaction: &Transaction<'_, RW, NoWriteMap>,
-    tables: &MdbxTables<'_>,
-    collection: &str,
-    id: u64,
-) -> Result<(), String> {
-    let key = encode_collection_key(collection);
-    let next_id = id.saturating_add(1);
-    let current = transaction
-        .get::<Vec<u8>>(&tables.id_counters, &key)
-        .map_err(|error| error.to_string())?
-        .map(|bytes| decode_u64(&bytes))
-        .transpose()?
-        .unwrap_or(1);
-    if current >= next_id {
-        return Ok(());
-    }
-    transaction
-        .put(
-            &tables.id_counters,
-            &key,
-            next_id.to_be_bytes(),
-            WriteFlags::UPSERT,
-        )
-        .map_err(|error| error.to_string())
-}
-
-fn set_id_counter_at_least(
-    transaction: &Transaction<'_, RW, NoWriteMap>,
-    tables: &MdbxTables<'_>,
-    collection: &str,
-    next_id: u64,
-) -> Result<(), String> {
-    let key = encode_collection_key(collection);
-    let current = transaction
-        .get::<Vec<u8>>(&tables.id_counters, &key)
-        .map_err(|error| error.to_string())?
-        .map(|bytes| decode_u64(&bytes))
-        .transpose()?
-        .unwrap_or(1);
-    if current >= next_id {
-        return Ok(());
-    }
-    transaction
-        .put(
-            &tables.id_counters,
-            &key,
-            next_id.to_be_bytes(),
-            WriteFlags::UPSERT,
-        )
-        .map_err(|error| error.to_string())
-}
-
 fn decode_u64(bytes: &[u8]) -> Result<u64, String> {
     let bytes = bytes
         .try_into()
@@ -2067,6 +2084,64 @@ mod tests {
             first.get("users", 1).unwrap(),
             Some(br#"{"name":"Ana"}"#.to_vec())
         );
+    }
+
+    #[test]
+    fn shares_in_memory_auto_increment_counters_between_handles() {
+        // Scenario: Multiple Dart handles point to the same MDBX environment.
+        // Covers:
+        // - In-process shared auto-increment counters.
+        // - Explicit id advancement without persisted counter-table writes.
+        // Expected: Handles allocate monotonic ids from the same shared counter.
+        let directory = TemporaryDirectory::new("multi_handle_ids");
+        let mut first = MdbxStorage::open(directory.path()).unwrap();
+        let mut second = MdbxStorage::open(directory.path()).unwrap();
+
+        assert_eq!(first.allocate_id("users").unwrap(), 1);
+        assert_eq!(second.allocate_id("users").unwrap(), 2);
+
+        second.put("users", 10, br#"{"name":"Manual"}"#).unwrap();
+
+        assert_eq!(first.allocate_id("users").unwrap(), 11);
+    }
+
+    #[test]
+    fn initializes_auto_increment_from_existing_document_ids() {
+        // Scenario: A database is reopened without relying on persisted counter
+        // rows.
+        // Covers:
+        // - Counter initialization from MDBX document primary keys.
+        // - Explicit id max advancement after all handles are dropped.
+        // Expected: Reopened storage allocates one greater than the max id.
+        let directory = TemporaryDirectory::new("reopen_ids");
+        {
+            let mut storage = MdbxStorage::open(directory.path()).unwrap();
+            storage.put("users", 41, br#"{"name":"Manual"}"#).unwrap();
+        }
+
+        let mut reopened = MdbxStorage::open(directory.path()).unwrap();
+
+        assert_eq!(reopened.allocate_id("users").unwrap(), 42);
+    }
+
+    #[test]
+    fn does_not_persist_allocate_only_ids_without_documents() {
+        // Scenario: An app allocates ids but never commits documents before the
+        // process exits.
+        // Covers:
+        // - Counter state being intentionally in-memory for MDBX.
+        // - Reopen fallback to primary-key inspection.
+        // Expected: Empty collections restart at id 1 because no document exists.
+        let directory = TemporaryDirectory::new("allocate_only_ids");
+        {
+            let mut storage = MdbxStorage::open(directory.path()).unwrap();
+            assert_eq!(storage.allocate_id("users").unwrap(), 1);
+            assert_eq!(storage.allocate_id("users").unwrap(), 2);
+        }
+
+        let mut reopened = MdbxStorage::open(directory.path()).unwrap();
+
+        assert_eq!(reopened.allocate_id("users").unwrap(), 1);
     }
 
     #[test]

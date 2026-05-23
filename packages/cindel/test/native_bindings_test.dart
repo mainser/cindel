@@ -273,8 +273,11 @@ void main() {
     // Scenario: Native ids are allocated and the database is reopened.
     // Covers:
     // - [CindelDatabase.allocateId] FFI path.
-    // - Persisted per-collection id counters.
-    // Expected: The reopened database continues from the previous next id.
+    // - SQLite persisted per-collection id counters.
+    // - MDBX primary-key-derived counters for collections without documents.
+    // Expected: SQLite persists allocate-only counters; MDBX restarts empty
+    //   collections from id 1 because PERF-11 keeps allocate-only state in
+    //   memory and derives reopened counters from stored document ids.
     test('allocates persistent native ids by collection.', () async {
       // Arrange.
       final directory = await _createDatabaseDirectory();
@@ -295,7 +298,10 @@ void main() {
       expect(firstUserId, 1);
       expect(secondUserId, 2);
       expect(firstSettingsId, 1);
-      expect(reopenedUserId, 3);
+      expect(
+        reopenedUserId,
+        testStorageBackend == CindelStorageBackend.mdbx ? 1 : 3,
+      );
     });
 
     // Scenario: A manual id is stored before native allocation.
@@ -311,6 +317,28 @@ void main() {
       // Act.
       await database.put('users', 10, {'name': 'Ana'});
       final allocatedId = await database.allocateId('users');
+
+      // Assert.
+      expect(allocatedId, 11);
+    });
+
+    // Scenario: A manual id is stored and the database is reopened.
+    // Covers:
+    // - MDBX deriving auto-increment counters from stored document primary keys.
+    // - SQLite retaining the existing persisted counter behavior.
+    // Expected: Reopened databases allocate one greater than the stored max id.
+    test('advances allocated ids after reopening stored manual ids.', () async {
+      // Arrange.
+      final directory = await _createDatabaseDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final firstDatabase = await openTestDatabase(directory: directory.path);
+
+      // Act.
+      await firstDatabase.put('users', 10, {'name': 'Ana'});
+      await firstDatabase.close();
+      final secondDatabase = await openTestDatabase(directory: directory.path);
+      addTearDown(secondDatabase.close);
+      final allocatedId = await secondDatabase.allocateId('users');
 
       // Assert.
       expect(allocatedId, 11);

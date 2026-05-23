@@ -266,6 +266,21 @@ fn run_storage_benchmark(
         storage.delete("users", delete_start_id + offset)
     })?;
 
+    let allocate_id = measure_iterations("allocate_id", config.query_repeats, |_| {
+        storage.allocate_id("users").map(|_| ())
+    })?;
+
+    let auto_increment_put =
+        measure_iterations("put_indexed_auto_increment", config.query_repeats, |_| {
+            let id = storage.allocate_id("users")?;
+            storage.put_indexed(
+                "users",
+                id,
+                document_bytes(id).as_bytes(),
+                &benchmark_indexes(id),
+            )
+        })?;
+
     let database_size_bytes = directory_size_bytes(database_path)?;
 
     Ok(BenchmarkReport {
@@ -288,6 +303,8 @@ fn run_storage_benchmark(
             batch_put,
             delete_many,
             delete,
+            allocate_id,
+            auto_increment_put,
         ],
     })
 }

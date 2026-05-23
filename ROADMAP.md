@@ -367,7 +367,7 @@ Guiding rules:
   - Added native tuple key encoding for MDBX and SQLite compatibility storage.
   - Deferred automatic index rebuild tooling to the future public migration
     layer.
-- [ ] PERF-11: Auto-increment optimization.
+- [x] PERF-11: Auto-increment optimization.
   - Initialize counters from the last document id and use in-memory counters
     where transaction semantics allow it.
   - Preserve rollback and explicit-id advancement behavior.

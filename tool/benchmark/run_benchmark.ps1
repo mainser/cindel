@@ -1,6 +1,6 @@
 param(
-  [int] $Documents = 1000,
-  [int] $QueryRepeats = 100,
+  [int] $Documents = 5000,
+  [int] $QueryRepeats = 500,
   [ValidateSet("all", "sqlite", "mdbx")]
   [string] $Backend = "all",
   [ValidateSet("both", "native", "dart")]

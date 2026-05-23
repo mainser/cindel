@@ -5,6 +5,19 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.10
+
+- Optimized MDBX auto-increment id allocation with shared in-memory counters
+  initialized from document primary keys.
+- Stopped using MDBX persisted counter table writes for the normal generated
+  auto-increment insert path.
+- Added benchmark measurements for native id allocation and auto-increment
+  indexed writes.
+- Fixed explicit SQLite backend opening so it routes through the native backend
+  selector instead of the default MDBX open symbol.
+- Regenerated Windows, Android, and Linux prebuilt native libraries.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.10`.
+
 ## 0.2.9
 
 - Added `CompositeIndex` collection metadata and generated composite equality

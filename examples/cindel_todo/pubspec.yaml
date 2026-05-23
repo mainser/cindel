@@ -7,8 +7,8 @@ environment:
   sdk: ^3.11.5
 
 dependencies:
-  cindel: ^0.2.9
-  cindel_flutter_libs: ^0.2.9
+  cindel: ^0.2.10
+  cindel_flutter_libs: ^0.2.10
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.3.1

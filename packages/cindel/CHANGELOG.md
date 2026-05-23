@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.10
+
+- Optimized MDBX auto-increment id allocation with shared in-memory counters
+  initialized from document primary keys.
+- MDBX no longer writes persisted counter rows for the normal generated
+  auto-increment insert path.
+- Added native benchmark operations for id allocation and auto-increment
+  indexed writes.
+- Fixed explicit SQLite backend opening so it routes through the native backend
+  selector instead of the default MDBX open symbol.
+
 ## 0.2.9
 
 - Added collection-level composite index schema metadata and generated equality
