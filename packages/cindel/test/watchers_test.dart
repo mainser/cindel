@@ -47,6 +47,73 @@ void main() {
       ]);
     });
 
+    // Scenario: High-frequency local writes touch other documents while a
+    // document watcher is active.
+    // Covers:
+    // - Local watcher change sets carrying changed document ids.
+    // - [CindelDatabase.watchDocument] skipping native reads for unrelated ids.
+    // Expected: Unrelated writes do not emit, while the watched id still emits.
+    test('skips document watcher reads for unrelated local changes.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory();
+      addTearDown(database.close);
+      final events = <CindelDocument?>[];
+      final subscription = database
+          .watchDocument(
+            'users',
+            1,
+            pollInterval: const Duration(milliseconds: 5),
+          )
+          .listen(events.add);
+      addTearDown(subscription.cancel);
+
+      // Act.
+      await _waitUntil(() => events.length == 1);
+      for (var id = 2; id < 12; id += 1) {
+        await database.put('users', id, {'name': 'User $id'});
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await database.put('users', 1, {'name': 'Ana'});
+      await _waitUntil(() => events.length == 2);
+
+      // Assert.
+      expect(events, [
+        null,
+        {'name': 'Ana'},
+      ]);
+    });
+
+    // Scenario: Local writes expose native-backed change set metadata.
+    // Covers:
+    // - [CindelDatabase.watchCollectionChanges] local changed ids.
+    // - Batched writes preserving document ids in one watcher signal.
+    // Expected: Consumers can see the exact ids changed by local writes.
+    test('emits local collection change sets with changed ids.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory();
+      addTearDown(database.close);
+      final changes = <Set<int>?>[];
+      final subscription = database
+          .watchCollectionChanges(
+            'users',
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen((change) => changes.add(change.documentIds));
+      addTearDown(subscription.cancel);
+
+      // Act.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await database.putAll('users', {
+        1: {'name': 'Ana'},
+        2: {'name': 'Ben'},
+      });
+      await _waitUntil(() => changes.length == 1);
+
+      // Assert.
+      expect(changes.single, {1, 2});
+    });
+
     // Scenario: A collection watcher observes writes from a separate handle.
     // Covers:
     // - [CindelDatabase.watchCollection] reading snapshots in id order.

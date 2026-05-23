@@ -62,7 +62,7 @@ class CindelDatabase {
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
-  final Set<String> _changedCollectionsInTransaction = {};
+  final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   Pointer<Void>? _handle;
   _TransactionMode? _activeTransaction;
 
@@ -159,7 +159,7 @@ class CindelDatabase {
     if (_activeTransaction != null) {
       _bindings.rollbackTransaction(handle);
       _activeTransaction = null;
-      _changedCollectionsInTransaction.clear();
+      _changesInTransaction.clear();
     }
     await _closeWatchers();
     _bindings.close(handle);
@@ -199,7 +199,7 @@ class CindelDatabase {
     final indexEntries = _indexEntriesFor(collection, value);
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
-      _markCollectionChanged(collection);
+      _markCollectionChanged(CindelChangeSet.upsert(collection, id, value));
       return;
     }
     await _checkUniqueIndexes(collection, {id: value}, indexEntries);
@@ -211,7 +211,7 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
-    _markCollectionChanged(collection);
+    _markCollectionChanged(CindelChangeSet.upsert(collection, id, value));
   }
 
   /// Stores every document in [values] atomically.
@@ -248,7 +248,7 @@ class CindelDatabase {
       collection,
       _encodeBatchPutEntries(documents),
     );
-    _markCollectionChanged(collection);
+    _markCollectionChanged(CindelChangeSet.upserts(collection, values));
   }
 
   /// Stores one generated binary document.
@@ -258,8 +258,9 @@ class CindelDatabase {
   Future<void> putBinaryDocument(
     String collection,
     int id,
-    Uint8List bytes,
-  ) async {
+    Uint8List bytes, {
+    CindelDocument? document,
+  }) async {
     final handle = _checkOpen();
     _checkCanWrite();
     _checkBinaryBackend();
@@ -267,14 +268,15 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
-    _markCollectionChanged(collection);
+    _markCollectionChanged(CindelChangeSet.upsert(collection, id, document));
   }
 
   /// Stores generated binary documents atomically.
   Future<void> putAllBinaryDocuments(
     String collection,
-    Map<int, Uint8List> values,
-  ) async {
+    Map<int, Uint8List> values, {
+    Map<int, CindelDocument>? documents,
+  }) async {
     final handle = _checkOpen();
     _checkCanWrite();
     _checkBinaryBackend();
@@ -291,7 +293,9 @@ class CindelDatabase {
       collection,
       _encodeBinaryBatchPutEntries(values),
     );
-    _markCollectionChanged(collection);
+    _markCollectionChanged(
+      CindelChangeSet.upserts(collection, documents, ids: values.keys),
+    );
   }
 
   /// Stores many documents atomically.
@@ -428,7 +432,7 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
-    _markCollectionChanged(collection);
+    _markCollectionChanged(CindelChangeSet.delete(collection, id));
   }
 
   /// Deletes every document under [ids] atomically.
@@ -445,7 +449,7 @@ class CindelDatabase {
     }
 
     _bindings.deleteMany(handle, collection, _encodeIds(idList));
-    _markCollectionChanged(collection);
+    _markCollectionChanged(CindelChangeSet.deletes(collection, idList));
   }
 
   /// Watches the current value of a document and emits after committed changes.
@@ -469,7 +473,8 @@ class CindelDatabase {
       collection,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-      readSnapshot: () => get(collection, id),
+      shouldReadChange: (change) => change.mayAffectDocument(id),
+      readSnapshot: (_) => get(collection, id),
       areSnapshotsEqual: _jsonLikeEquals,
     );
   }
@@ -509,7 +514,8 @@ class CindelDatabase {
       collection,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-      readSnapshot: () async {
+      shouldReadChange: (_) => true,
+      readSnapshot: (_) async {
         final handle = _checkOpen();
         final ids = _bindings.documentIds(handle, collection);
         return _documentsByIds(collection, ids);
@@ -756,10 +762,10 @@ class CindelDatabase {
       throw StateError('Cindel does not support nested transactions yet.');
     }
 
-    final previousChangedCollections = Set<String>.of(
-      _changedCollectionsInTransaction,
+    final previousChanges = Map<String, _CindelChangeSetBuilder>.of(
+      _changesInTransaction,
     );
-    _changedCollectionsInTransaction.clear();
+    _changesInTransaction.clear();
     if (mode == _TransactionMode.read) {
       _bindings.beginReadTransaction(handle);
     } else {
@@ -770,16 +776,16 @@ class CindelDatabase {
     try {
       final result = await action();
       _bindings.commitTransaction(handle);
-      final changedCollections = Set<String>.of(
-        _changedCollectionsInTransaction,
-      );
-      _changedCollectionsInTransaction
+      final changes = [
+        for (final builder in _changesInTransaction.values) builder.build(),
+      ];
+      _changesInTransaction
         ..clear()
-        ..addAll(previousChangedCollections);
+        ..addAll(previousChanges);
       _activeTransaction = null;
       if (mode == _TransactionMode.write) {
-        for (final collection in changedCollections) {
-          _notifyWatchers(collection);
+        for (final change in changes) {
+          _notifyWatchers(change);
         }
       }
       return result;
@@ -789,9 +795,9 @@ class CindelDatabase {
       } catch (_) {
         // Preserve the original failure from user code or commit.
       }
-      _changedCollectionsInTransaction
+      _changesInTransaction
         ..clear()
-        ..addAll(previousChangedCollections);
+        ..addAll(previousChanges);
       _activeTransaction = null;
       rethrow;
     }
@@ -1137,7 +1143,8 @@ class CindelDatabase {
     String collection, {
     required Duration pollInterval,
     required bool fireImmediately,
-    required Future<T> Function() readSnapshot,
+    required bool Function(CindelChangeSet change) shouldReadChange,
+    required Future<T> Function(CindelChangeSet? change) readSnapshot,
     bool Function(T left, T right)? areSnapshotsEqual,
   }) {
     late final _CindelWatcher<T> watcher;
@@ -1152,6 +1159,7 @@ class CindelDatabase {
         }
         return _bindings.collectionRevision(handle, collection);
       },
+      shouldReadChange: shouldReadChange,
       readSnapshot: readSnapshot,
       areSnapshotsEqual: areSnapshotsEqual,
       onListen: () => _registerWatcher(collection, watcher),
@@ -1166,22 +1174,47 @@ class CindelDatabase {
         .add(watcher);
   }
 
-  void _notifyWatchers(String collection) {
-    final watchers = _watchersByCollection[collection];
+  Stream<CindelChangeSet> watchCollectionChanges(
+    String collection, {
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
+  }) {
+    _checkOpen();
+    _checkCollection(collection);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+      shouldReadChange: (_) => true,
+      readSnapshot: (change) async =>
+          change ?? CindelChangeSet.external(collection),
+      areSnapshotsEqual: null,
+    );
+  }
+
+  void _notifyWatchers(CindelChangeSet change) {
+    final watchers = _watchersByCollection[change.collection];
     if (watchers == null) {
       return;
     }
     for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
-      unawaited(watcher.poll());
+      unawaited(watcher.poll(change: change));
     }
   }
 
-  void _markCollectionChanged(String collection) {
+  void _markCollectionChanged(CindelChangeSet change) {
     if (_activeTransaction == _TransactionMode.write) {
-      _changedCollectionsInTransaction.add(collection);
+      _changesInTransaction
+          .putIfAbsent(
+            change.collection,
+            () => _CindelChangeSetBuilder(change.collection),
+          )
+          .add(change);
       return;
     }
-    _notifyWatchers(collection);
+    _notifyWatchers(change);
   }
 
   void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
@@ -1723,8 +1756,132 @@ final class _EncodedIndexValue {
   final Uint8List bytes;
 }
 
+/// A native-backed collection change observed by Cindel watchers.
+///
+/// Local writes include changed ids and, when Dart has the value available,
+/// written documents. Changes from other database handles are reported as
+/// external changes and require reading the native collection revision.
+final class CindelChangeSet {
+  const CindelChangeSet._({
+    required this.collection,
+    required this.documentIds,
+    required this.documents,
+    required this.hasUnknownDocuments,
+    required this.isExternal,
+  });
+
+  factory CindelChangeSet.external(String collection) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: null,
+      documents: const {},
+      hasUnknownDocuments: true,
+      isExternal: true,
+    );
+  }
+
+  factory CindelChangeSet.upsert(
+    String collection,
+    int id,
+    CindelDocument? document,
+  ) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: {id},
+      documents: document == null ? const {} : {id: Map.of(document)},
+      hasUnknownDocuments: document == null,
+      isExternal: false,
+    );
+  }
+
+  factory CindelChangeSet.upserts(
+    String collection,
+    Map<int, CindelDocument>? documents, {
+    Iterable<int>? ids,
+  }) {
+    final documentCopies = {
+      for (final entry in (documents ?? const <int, CindelDocument>{}).entries)
+        entry.key: Map<String, Object?>.of(entry.value),
+    };
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: {...?ids, ...documentCopies.keys},
+      documents: documentCopies,
+      hasUnknownDocuments: documents == null,
+      isExternal: false,
+    );
+  }
+
+  factory CindelChangeSet.delete(String collection, int id) {
+    return CindelChangeSet.deletes(collection, [id]);
+  }
+
+  factory CindelChangeSet.deletes(String collection, Iterable<int> ids) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: ids.toSet(),
+      documents: const {},
+      hasUnknownDocuments: false,
+      isExternal: false,
+    );
+  }
+
+  final String collection;
+
+  /// Changed document ids, or `null` when the exact ids are unknown.
+  final Set<int>? documentIds;
+
+  /// Documents written by this handle, keyed by id when available.
+  final Map<int, CindelDocument> documents;
+
+  /// Whether this change includes local writes whose document value is not
+  /// available to Dart.
+  final bool hasUnknownDocuments;
+
+  /// Whether this change was detected from another handle through revision
+  /// polling instead of from local write metadata.
+  final bool isExternal;
+
+  bool mayAffectDocument(int id) {
+    final ids = documentIds;
+    return ids == null || ids.contains(id);
+  }
+}
+
+final class _CindelChangeSetBuilder {
+  _CindelChangeSetBuilder(this.collection);
+
+  final String collection;
+  final Set<int> _documentIds = {};
+  final Map<int, CindelDocument> _documents = {};
+  bool _unknownIds = false;
+  bool _hasUnknownDocuments = false;
+
+  void add(CindelChangeSet change) {
+    if (change.documentIds == null) {
+      _unknownIds = true;
+    } else {
+      _documentIds.addAll(change.documentIds!);
+    }
+    _hasUnknownDocuments = _hasUnknownDocuments || change.hasUnknownDocuments;
+    for (final entry in change.documents.entries) {
+      _documents[entry.key] = Map<String, Object?>.of(entry.value);
+    }
+  }
+
+  CindelChangeSet build() {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: _unknownIds ? null : Set<int>.of(_documentIds),
+      documents: Map<int, CindelDocument>.unmodifiable(_documents),
+      hasUnknownDocuments: _hasUnknownDocuments,
+      isExternal: false,
+    );
+  }
+}
+
 abstract interface class _RegisteredWatcher {
-  Future<void> poll({bool force});
+  Future<void> poll({bool force, CindelChangeSet? change});
 
   Future<void> close();
 }
@@ -1735,7 +1892,8 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     required bool fireImmediately,
     required bool Function() shouldPoll,
     required int Function() readRevision,
-    required Future<T> Function() readSnapshot,
+    required bool Function(CindelChangeSet change) shouldReadChange,
+    required Future<T> Function(CindelChangeSet? change) readSnapshot,
     required bool Function(T left, T right)? areSnapshotsEqual,
     required void Function() onListen,
     required void Function() onCancel,
@@ -1743,6 +1901,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
        _fireImmediately = fireImmediately,
        _shouldPoll = shouldPoll,
        _readRevision = readRevision,
+       _shouldReadChange = shouldReadChange,
        _readSnapshot = readSnapshot,
        _areSnapshotsEqual = areSnapshotsEqual,
        _onListen = onListen,
@@ -1768,7 +1927,8 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   final bool _fireImmediately;
   final bool Function() _shouldPoll;
   final int Function() _readRevision;
-  final Future<T> Function() _readSnapshot;
+  final bool Function(CindelChangeSet change) _shouldReadChange;
+  final Future<T> Function(CindelChangeSet? change) _readSnapshot;
   final bool Function(T left, T right)? _areSnapshotsEqual;
   final void Function() _onListen;
   final void Function() _onCancel;
@@ -1789,7 +1949,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     _isPolling = true;
     try {
       _lastRevision = _readRevision();
-      _lastSnapshot = await _readSnapshot();
+      _lastSnapshot = await _readSnapshot(null);
       _hasLastSnapshot = true;
     } catch (error, stackTrace) {
       if (!_controller.isClosed) {
@@ -1800,7 +1960,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     }
   }
 
-  Future<void> poll({bool force = false}) async {
+  Future<void> poll({bool force = false, CindelChangeSet? change}) async {
     if (_isPolling || _controller.isClosed) {
       return;
     }
@@ -1810,11 +1970,15 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     _isPolling = true;
     try {
       final revision = _readRevision();
+      if (!force && change != null && !_shouldReadChange(change)) {
+        _lastRevision = revision;
+        return;
+      }
       if (!force && revision == _lastRevision) {
         return;
       }
       _lastRevision = revision;
-      final snapshot = await _readSnapshot();
+      final snapshot = await _readSnapshot(change);
       final areSnapshotsEqual = _areSnapshotsEqual;
       if (!force && _hasLastSnapshot && areSnapshotsEqual != null) {
         final lastSnapshot = _lastSnapshot as T;

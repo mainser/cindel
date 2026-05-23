@@ -384,10 +384,12 @@ Guiding rules:
     parity.
   - The spike remains only as a temporary benchmark fixture until the remaining
     `get/get_many` differences are understood.
-- [ ] PERF-14: Native watcher change sets.
+- [x] PERF-14: Native watcher change sets.
   - Track changed collections, document ids, and affected index keys during
     native write transactions.
   - Reduce broad Dart-level watcher polling.
+  - Local write notifications now carry changed ids and written documents when
+    available, so document and query watchers can skip safe local reads.
 - [ ] PERF-15: Native aggregations.
   - Add native count, min, max, sum, and average paths that avoid full document
     hydration.

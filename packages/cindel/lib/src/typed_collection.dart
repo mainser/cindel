@@ -50,6 +50,7 @@ final class CindelTypedCollection<T> {
         schema.name,
         id,
         schema.toBinaryDocument!(object),
+        document: document,
       );
     }
     return database.put(schema.name, id, document);
@@ -64,6 +65,9 @@ final class CindelTypedCollection<T> {
 
     final binaryValues = _usesBinaryDocuments ? <int, Uint8List>{} : null;
     final values = binaryValues == null ? <int, CindelDocument>{} : null;
+    final changedDocuments = binaryValues == null
+        ? null
+        : <int, CindelDocument>{};
     final seenIds = <int>{};
     CindelSetId<T>? setId;
     for (final object in objectList) {
@@ -86,11 +90,16 @@ final class CindelTypedCollection<T> {
         values![id] = document;
       } else {
         binaryValues[id] = schema.toBinaryDocument!(object);
+        changedDocuments![id] = document;
       }
     }
 
     if (binaryValues != null) {
-      return database.putAllBinaryDocuments(schema.name, binaryValues);
+      return database.putAllBinaryDocuments(
+        schema.name,
+        binaryValues,
+        documents: changedDocuments,
+      );
     }
     return database.putAll(schema.name, values!);
   }

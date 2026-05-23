@@ -11,6 +11,10 @@ while the core design settles.
 - MDBX now uses per-collection document tables and per-index duplicate-sorted
   tables while preserving binary documents, explicit transactions, unique
   indexes, composite indexes, multi-entry indexes, and in-memory id counters.
+- Added native-backed watcher change sets so local watchers receive changed
+  document ids and written documents when available.
+- Document and query watchers can now skip safe local reads when high-frequency
+  writes do not affect their visible result.
 - Kept the Rust-only `mdbx-v2-spike` backend as a temporary benchmark fixture
   behind the explicit `--backend all-with-spike` benchmark option.
 - Regenerated Windows, Android, and Linux prebuilt native libraries.

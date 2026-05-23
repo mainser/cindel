@@ -7,6 +7,10 @@
   duplicate-sorted tables while preserving the existing public Dart API.
 - Kept binary documents, explicit transactions, unique/composite/multi-entry
   indexes, and optimized auto-increment counters on the converged backend.
+- Added watcher change sets for local writes, including changed document ids
+  and written documents when Dart has them available.
+- Document and query watchers can skip safe local reads when a write does not
+  affect the watched document or visible query result.
 - Left the Rust-only `mdbx-v2-spike` path as a temporary benchmark fixture
   behind the explicit `--backend all-with-spike` option.
 

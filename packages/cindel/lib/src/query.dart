@@ -633,13 +633,39 @@ final class CindelQuery<T> {
     required bool fireImmediately,
   }) {
     late final StreamController<List<CindelDocument>> controller;
-    StreamSubscription<void>? subscription;
+    StreamSubscription<CindelChangeSet>? subscription;
     var hasSnapshot = false;
     List<CindelDocument>? previousDocuments;
+    Set<int> previousIds = const {};
     var isReading = false;
     var needsRead = false;
 
-    Future<void> readAndMaybeEmit() async {
+    bool canSkipLocalChange(CindelChangeSet change) {
+      if (change.isExternal) {
+        return false;
+      }
+      final changedIds = change.documentIds;
+      if (changedIds == null) {
+        return false;
+      }
+      if (changedIds.any(previousIds.contains)) {
+        return false;
+      }
+      if (change.hasUnknownDocuments) {
+        return false;
+      }
+      for (final document in change.documents.values) {
+        if (_matchesBeforeWindow(document)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    Future<void> readAndMaybeEmit(CindelChangeSet change) async {
+      if (hasSnapshot && canSkipLocalChange(change)) {
+        return;
+      }
       if (isReading) {
         needsRead = true;
         return;
@@ -652,9 +678,11 @@ final class CindelQuery<T> {
           if (controller.isClosed) {
             return;
           }
+          final documentIds = documents.map(_idFromDocument).toSet();
           if (!hasSnapshot) {
             hasSnapshot = true;
             previousDocuments = documents;
+            previousIds = documentIds;
             if (fireImmediately) {
               controller.add(documents);
             }
@@ -663,9 +691,11 @@ final class CindelQuery<T> {
 
           final previous = previousDocuments;
           if (previous != null && _documentListsEqual(previous, documents)) {
+            previousIds = documentIds;
             continue;
           }
           previousDocuments = documents;
+          previousIds = documentIds;
           controller.add(documents);
         } while (needsRead && !controller.isClosed);
       } catch (error, stackTrace) {
@@ -680,13 +710,13 @@ final class CindelQuery<T> {
     controller = StreamController<List<CindelDocument>>(
       onListen: () {
         subscription = _database
-            .watchCollectionLazy(
+            .watchCollectionChanges(
               _schema.name,
               pollInterval: pollInterval,
               fireImmediately: true,
             )
             .listen(
-              (_) => unawaited(readAndMaybeEmit()),
+              (change) => unawaited(readAndMaybeEmit(change)),
               onError: controller.addError,
               onDone: controller.close,
             );
@@ -697,6 +727,18 @@ final class CindelQuery<T> {
     );
 
     return controller.stream;
+  }
+
+  bool _matchesBeforeWindow(CindelDocument document) {
+    final sourceFilter = _sourceFilter;
+    if (sourceFilter != null && !sourceFilter(document)) {
+      return false;
+    }
+    final filter = _filter;
+    if (filter != null && !filter.matches(document)) {
+      return false;
+    }
+    return true;
   }
 
   CindelQuery<T> _copyWith({
