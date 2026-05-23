@@ -14,12 +14,13 @@ use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
     encode_index_key, encode_index_range, encode_unique_index_key, COLLECTION_REVISIONS_TABLE,
     DOCUMENTS_TABLE, ID_COUNTERS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE,
-    SCHEMA_MIGRATIONS_TABLE, UNIQUE_INDEXES_TABLE,
+    SCHEMA_MIGRATIONS_TABLE, STORAGE_METADATA_TABLE, UNIQUE_INDEXES_TABLE,
 };
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
 };
+use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const EMPTY_VALUE: &[u8] = &[];
@@ -256,6 +257,13 @@ impl MdbxStorage {
             .begin_rw_txn()
             .map_err(|error| error.to_string())?;
         create_tables(&transaction)?;
+        let tables = open_tables(&transaction)?;
+        ensure_storage_metadata(
+            &transaction,
+            &tables,
+            StorageLayoutVersion::MdbxV1,
+            DocumentFormatVersion::JsonV1,
+        )?;
         transaction
             .commit()
             .map(|_| ())
@@ -855,6 +863,30 @@ impl StorageEngine for MdbxStorage {
                 .transpose()
         })
     }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        self.with_read_transaction(|transaction, tables| {
+            read_storage_metadata(transaction, &tables)
+        })
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            return Err(
+                "native index rebuild is not supported inside an active MDBX write transaction yet"
+                    .into(),
+            );
+        }
+
+        self.with_write_transaction(|transaction, tables| {
+            rebuild_indexes_in_transaction(transaction, &tables, collection, documents)
+        })
+    }
 }
 
 struct MdbxTables<'txn> {
@@ -865,6 +897,7 @@ struct MdbxTables<'txn> {
     collection_revisions: Table<'txn>,
     schema_collections: Table<'txn>,
     _schema_migrations: Table<'txn>,
+    storage_metadata: Table<'txn>,
 }
 
 fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Result<(), String> {
@@ -888,6 +921,9 @@ fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Re
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(SCHEMA_MIGRATIONS_TABLE), TableFlags::default())
+        .map_err(|error| error.to_string())?;
+    transaction
+        .create_table(Some(STORAGE_METADATA_TABLE), TableFlags::default())
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -919,6 +955,9 @@ where
             .map_err(|error| error.to_string())?,
         _schema_migrations: transaction
             .open_table(Some(SCHEMA_MIGRATIONS_TABLE))
+            .map_err(|error| error.to_string())?,
+        storage_metadata: transaction
+            .open_table(Some(STORAGE_METADATA_TABLE))
             .map_err(|error| error.to_string())?,
     })
 }
@@ -1212,6 +1251,147 @@ fn delete_document(
         .map_err(|error| error.to_string())?;
     MdbxIndex::delete_document(transaction, tables, collection, id)?;
     Ok(deleted)
+}
+
+#[allow(dead_code)]
+fn rebuild_indexes_in_transaction(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    documents: &[DocumentWrite],
+) -> Result<(), String> {
+    MdbxIndex::clear_collection(transaction, tables, collection)?;
+    let unique_indexes = unique_index_names(transaction, tables, collection)?;
+    for document in documents {
+        ensure_document_exists(transaction, tables, collection, document.id)?;
+        MdbxIndex::validate_unique(
+            transaction,
+            tables,
+            collection,
+            document.id,
+            &document.indexes,
+            &unique_indexes,
+        )?;
+        MdbxIndex::replace_document(
+            transaction,
+            tables,
+            collection,
+            document.id,
+            &document.indexes,
+            &unique_indexes,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn ensure_document_exists<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    id: u64,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let exists = transaction
+        .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
+        .map_err(|error| error.to_string())?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot rebuild indexes for missing document `{collection}`.`{id}`"
+        ))
+    }
+}
+
+fn ensure_storage_metadata(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    layout: StorageLayoutVersion,
+    document_format: DocumentFormatVersion,
+) -> Result<(), String> {
+    put_metadata_if_missing(transaction, tables, "storage_layout", layout.as_str())?;
+    put_metadata_if_missing(
+        transaction,
+        tables,
+        "document_format",
+        document_format.as_str(),
+    )
+}
+
+fn put_metadata_if_missing(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    if transaction
+        .get::<Vec<u8>>(&tables.storage_metadata, key.as_bytes())
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
+    transaction
+        .put(
+            &tables.storage_metadata,
+            key.as_bytes(),
+            value.as_bytes(),
+            WriteFlags::UPSERT,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn read_storage_metadata<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+) -> Result<StorageMetadata, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let layout = read_metadata_value(transaction, tables, "storage_layout")?
+        .unwrap_or_else(|| StorageLayoutVersion::MdbxV1.as_str().to_string());
+    let document_format = read_metadata_value(transaction, tables, "document_format")?
+        .unwrap_or_else(|| DocumentFormatVersion::JsonV1.as_str().to_string());
+    Ok(StorageMetadata {
+        layout: parse_storage_layout(&layout)?,
+        document_format: parse_document_format(&document_format)?,
+    })
+}
+
+fn read_metadata_value<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    key: &str,
+) -> Result<Option<String>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    transaction
+        .get::<Vec<u8>>(&tables.storage_metadata, key.as_bytes())
+        .map_err(|error| error.to_string())?
+        .map(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
+    match value {
+        "sqlite-v1" => Ok(StorageLayoutVersion::SqliteV1),
+        "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
+        "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
+        _ => Err(format!("unknown storage layout version `{value}`")),
+    }
+}
+
+fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
+    match value {
+        "json-v1" => Ok(DocumentFormatVersion::JsonV1),
+        "binary-v1" => Ok(DocumentFormatVersion::BinaryV1),
+        _ => Err(format!("unknown document format version `{value}`")),
+    }
 }
 
 struct MdbxIndex;

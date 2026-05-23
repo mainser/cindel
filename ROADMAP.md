@@ -331,7 +331,7 @@ Guiding rules:
   - Design a generated binary object format with field offsets, null encoding,
     dynamic sections, and support for current Cindel field types.
   - Prove one-field reads without full document decode.
-- [ ] PERF-05: Storage version and migration framework.
+- [x] PERF-05: Storage version and migration framework.
   - Add layout/document format metadata, dry-run planning, explicit migration,
     index rebuild, and migration verification helpers.
   - Refuse unsafe automatic rewrites.

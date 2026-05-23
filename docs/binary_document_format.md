@@ -102,8 +102,7 @@ The Rust prototype currently proves:
 
 Before this format can become a storage format, Cindel still needs:
 
-- storage/document format metadata,
-- explicit migration planning,
-- index rebuild validation,
+- explicit execution for storage/document migrations,
+- backup and rollback guidance,
 - generated Dart writer/reader integration,
 - a compatibility path for existing JSON documents.

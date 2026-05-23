@@ -15,6 +15,7 @@ use super::mdbx_key::{encode_document_key, encode_index_equal_prefix, encode_ind
 use super::{
     CollectionSchemaManifest, DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageEngine,
 };
+use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
 
 const COUNTERS_TABLE: &str = "__v2_id_counters";
 const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
@@ -528,6 +529,21 @@ impl StorageEngine for MdbxLayoutV2Storage {
                 .map(|bytes| decode_schema_record(&bytes).map(|record| record.version))
                 .transpose()
         })
+    }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        Ok(StorageMetadata {
+            layout: StorageLayoutVersion::MdbxV2,
+            document_format: DocumentFormatVersion::JsonV1,
+        })
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        _collection: &str,
+        _documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        Err("layout v2 spike does not implement native index rebuild".into())
     }
 }
 

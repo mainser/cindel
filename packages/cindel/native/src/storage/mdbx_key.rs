@@ -10,6 +10,7 @@ pub(crate) const ID_COUNTERS_TABLE: &str = "id_counters";
 pub(crate) const COLLECTION_REVISIONS_TABLE: &str = "collection_revisions";
 pub(crate) const SCHEMA_COLLECTIONS_TABLE: &str = "schema_collections";
 pub(crate) const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
+pub(crate) const STORAGE_METADATA_TABLE: &str = "storage_metadata";
 
 const SIGN_BIT: u64 = 0x8000_0000_0000_0000;
 const TEXT_ESCAPE: u8 = 0x00;

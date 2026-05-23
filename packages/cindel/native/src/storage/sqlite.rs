@@ -7,6 +7,7 @@ use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
 };
+use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
 
 pub struct SqliteStorage {
     connection: Connection,
@@ -85,6 +86,11 @@ impl SqliteStorage {
                     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS storage_metadata (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
                 ON index_entries (
                     collection,
@@ -97,7 +103,12 @@ impl SqliteStorage {
                 );
                 "#,
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        ensure_storage_metadata(
+            &self.connection,
+            StorageLayoutVersion::SqliteV1,
+            DocumentFormatVersion::JsonV1,
+        )
     }
 }
 
@@ -448,6 +459,28 @@ impl StorageEngine for SqliteStorage {
             .transpose()
             .map_err(|error| error.to_string())
     }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        read_storage_metadata(&self.connection)
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            return rebuild_indexes_on_connection(&self.connection, collection, documents);
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        rebuild_indexes_on_connection(&transaction, collection, documents)?;
+        transaction.commit().map_err(|error| error.to_string())
+    }
 }
 
 impl SqliteStorage {
@@ -586,6 +619,51 @@ fn delete_index_entries(connection: &Connection, collection: &str, id: i64) -> R
         .map_err(|error| error.to_string())
 }
 
+#[allow(dead_code)]
+fn rebuild_indexes_on_connection(
+    connection: &Connection,
+    collection: &str,
+    documents: &[DocumentWrite],
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM index_entries WHERE collection = ?1",
+            params![collection],
+        )
+        .map_err(|error| error.to_string())?;
+    for document in documents {
+        let id = sqlite_id(document.id)?;
+        ensure_document_exists(connection, collection, id)?;
+        enforce_unique_indexes(connection, collection, id, &document.indexes)?;
+        insert_index_entries(connection, collection, id, &document.indexes)?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn ensure_document_exists(
+    connection: &Connection,
+    collection: &str,
+    id: i64,
+) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM documents WHERE collection = ?1 AND id = ?2",
+            params![collection, id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot rebuild indexes for missing document `{collection}`.`{id}`"
+        ))
+    }
+}
+
 fn enforce_unique_indexes(
     connection: &Connection,
     collection: &str,
@@ -681,6 +759,71 @@ fn insert_index_entries(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn ensure_storage_metadata(
+    connection: &Connection,
+    layout: StorageLayoutVersion,
+    document_format: DocumentFormatVersion,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
+            params!["storage_layout", layout.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
+            params!["document_format", document_format.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, String> {
+    let layout = connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'storage_layout'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| StorageLayoutVersion::SqliteV1.as_str().to_string());
+    let document_format = connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'document_format'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| DocumentFormatVersion::JsonV1.as_str().to_string());
+    Ok(StorageMetadata {
+        layout: parse_storage_layout(&layout)?,
+        document_format: parse_document_format(&document_format)?,
+    })
+}
+
+#[allow(dead_code)]
+fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
+    match value {
+        "sqlite-v1" => Ok(StorageLayoutVersion::SqliteV1),
+        "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
+        "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
+        _ => Err(format!("unknown storage layout version `{value}`")),
+    }
+}
+
+#[allow(dead_code)]
+fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
+    match value {
+        "json-v1" => Ok(DocumentFormatVersion::JsonV1),
+        "binary-v1" => Ok(DocumentFormatVersion::BinaryV1),
+        _ => Err(format!("unknown document format version `{value}`")),
+    }
 }
 
 fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<(), String> {

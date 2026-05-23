@@ -645,6 +645,25 @@ Validated behavior:
   payloads.
 - Invalid headers and non-finite doubles are rejected.
 
+## Storage Migration Framework
+
+Cindel now records internal storage metadata for layout and document format
+versions. The current production combinations are:
+
+- SQLite: `sqlite-v1` plus `json-v1`.
+- MDBX: `mdbx-v1` plus `json-v1`.
+
+The native planner compares current metadata against a requested target and
+marks layout or document-format changes as explicit migration actions. Applying
+such a plan currently fails closed until execution, backup, rollback, and
+verification paths are complete.
+
+The storage layer also has a first-class index rebuild operation and
+verification helpers for document counts, schema versions, collection
+revisions, and selected equality/range index checks. This is the guardrail
+needed before the MDBX v2 layout or binary document format can become a shipped
+storage format.
+
 ## Benchmark Baseline
 
 The backend comparison benchmark is implemented as an internal Rust binary:

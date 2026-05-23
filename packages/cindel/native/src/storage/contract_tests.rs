@@ -2,9 +2,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::migration::MigrationAction;
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
+};
+use super::{
+    DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMigrationTarget,
 };
 
 pub(super) fn run_storage_engine_contract<S>(
@@ -29,6 +33,9 @@ pub(super) fn run_storage_engine_contract<S>(
     bulk_puts_documents_atomically_and_updates_indexes(backend, &open);
     rolls_back_bulk_put_when_one_document_has_an_invalid_index(backend, &open);
     bulk_deletes_documents_atomically_and_cleans_indexes(backend, &open);
+    exposes_storage_metadata_and_plans_migrations(backend, &open);
+    rebuilds_indexes_with_supplied_entries(backend, &open);
+    verifies_storage_after_index_rebuild(backend, &open);
 }
 
 pub(super) fn run_storage_transaction_contract<S>(
@@ -528,6 +535,166 @@ fn bulk_deletes_documents_atomically_and_cleans_indexes<S>(
         Vec::<u64>::new()
     );
     assert_eq!(storage.collection_revision("users").unwrap(), 2);
+}
+
+fn exposes_storage_metadata_and_plans_migrations<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "storage_metadata");
+    let mut storage = open(directory.path()).unwrap();
+    let metadata = storage.storage_metadata().unwrap();
+    let expected_layout = if backend == "sqlite" {
+        StorageLayoutVersion::SqliteV1
+    } else {
+        StorageLayoutVersion::MdbxV1
+    };
+
+    assert_eq!(metadata.layout, expected_layout);
+    assert_eq!(metadata.document_format, DocumentFormatVersion::JsonV1);
+    assert!(
+        !storage
+            .plan_storage_migration(metadata.into())
+            .unwrap()
+            .requires_explicit_migration
+    );
+
+    let target = StorageMigrationTarget {
+        layout: StorageLayoutVersion::MdbxV2,
+        document_format: DocumentFormatVersion::BinaryV1,
+    };
+    let plan = storage.plan_storage_migration(target).unwrap();
+    assert!(plan.requires_explicit_migration);
+    assert!(plan
+        .actions
+        .contains(&MigrationAction::RewriteStorageLayout {
+            from: metadata.layout,
+            to: StorageLayoutVersion::MdbxV2,
+        }));
+    assert!(plan
+        .actions
+        .contains(&MigrationAction::RewriteDocumentFormat {
+            from: DocumentFormatVersion::JsonV1,
+            to: DocumentFormatVersion::BinaryV1,
+        }));
+    assert!(storage.apply_storage_migration(target).is_err());
+}
+
+fn rebuilds_indexes_with_supplied_entries<S>(
+    backend: &str,
+    open: &impl Fn(&str) -> Result<S, String>,
+) where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "rebuild_indexes");
+    let mut storage = open(directory.path()).unwrap();
+    storage
+        .put_indexed(
+            "users",
+            1,
+            br#"{"email":"new@example.com"}"#,
+            &[index("email", IndexValue::String("old@example.com".into()))],
+        )
+        .unwrap();
+
+    storage
+        .rebuild_indexes(
+            "users",
+            &[document_write(
+                1,
+                br#"{"email":"new@example.com"}"#,
+                vec![index("email", IndexValue::String("new@example.com".into()))],
+            )],
+        )
+        .unwrap();
+
+    assert_eq!(
+        storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("old@example.com".into()),
+            )
+            .unwrap(),
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        storage
+            .query_index_equal(
+                "users",
+                "email",
+                &IndexValue::String("new@example.com".into()),
+            )
+            .unwrap(),
+        vec![1]
+    );
+}
+
+fn verifies_storage_after_index_rebuild<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "verify_storage");
+    let mut storage = open(directory.path()).unwrap();
+    let manifest = schema_manifest(vec![user_schema(vec![field(
+        "email", "String", false, true,
+    )])]);
+    storage.register_schemas(&manifest).unwrap();
+    storage
+        .put_many_indexed(
+            "users",
+            &[
+                document_write(
+                    1,
+                    br#"{"email":"team@example.com"}"#,
+                    vec![index(
+                        "email",
+                        IndexValue::String("team@example.com".into()),
+                    )],
+                ),
+                document_write(
+                    2,
+                    br#"{"email":"solo@example.com"}"#,
+                    vec![index(
+                        "email",
+                        IndexValue::String("solo@example.com".into()),
+                    )],
+                ),
+            ],
+        )
+        .unwrap();
+
+    let report = storage
+        .verify_storage(
+            &manifest,
+            &[IndexVerificationCheck::Equal {
+                collection: "users".to_string(),
+                index: "email".to_string(),
+                value: IndexValue::String("team@example.com".into()),
+                expected_ids: vec![1],
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(report.collections.len(), 1);
+    assert_eq!(report.collections[0].collection, "users");
+    assert_eq!(report.collections[0].document_count, 2);
+    assert_eq!(report.collections[0].schema_version, Some(1));
+    assert_eq!(report.collections[0].collection_revision, 1);
+    assert!(storage
+        .verify_storage(
+            &manifest,
+            &[IndexVerificationCheck::Equal {
+                collection: "users".to_string(),
+                index: "email".to_string(),
+                value: IndexValue::String("missing@example.com".into()),
+                expected_ids: vec![1],
+            }],
+        )
+        .unwrap_err()
+        .contains("expected [1]"));
 }
 
 fn commits_explicit_write_transactions<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)

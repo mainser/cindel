@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4
+
+- Added internal storage metadata for layout and document format versions.
+- Added native migration planning primitives that fail closed for unsafe
+  layout or document-format rewrites.
+- Added native index rebuild and storage verification helpers for future
+  explicit migrations.
+- Kept the public Dart API, production storage behavior, and native binary
+  symbols unchanged.
+
 ## 0.2.3
 
 - Added an internal native binary document format prototype.

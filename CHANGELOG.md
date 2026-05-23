@@ -5,6 +5,16 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.4
+
+- Added internal storage metadata for layout and document format versions.
+- Added native migration planning primitives that refuse unsafe layout or
+  document-format rewrites until an explicit migration is implemented.
+- Added a native index rebuild operation and storage verification helpers for
+  migration validation.
+- Kept the public Dart API, production storage behavior, and native binary
+  symbols unchanged.
+
 ## 0.2.3
 
 - Added the first native binary document format prototype.

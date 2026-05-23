@@ -29,3 +29,6 @@ Backend decision notes, benchmark evidence, and platform limits live in
 The planned generated binary document format is documented in
 `docs/binary_document_format.md`. It is not a shipped storage format yet; it is
 the design target for the native MDBX performance work.
+
+The internal storage migration metadata and verification framework is
+documented in `docs/storage_migration_framework.md`.

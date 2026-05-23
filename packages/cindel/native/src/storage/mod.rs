@@ -5,6 +5,7 @@ mod mdbx;
 mod mdbx_key;
 #[cfg(feature = "mdbx")]
 mod mdbx_layout_v2;
+mod migration;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub use mdbx::MdbxStorage;
 #[cfg(feature = "mdbx")]
 pub(crate) use mdbx_layout_v2::MdbxLayoutV2Storage;
+pub use migration::{
+    DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMetadata,
+    StorageMigrationPlan, StorageMigrationTarget, StorageVerificationReport,
+};
 pub use sqlite::SqliteStorage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +98,7 @@ fn default_index_type() -> String {
     "value".to_string()
 }
 
+#[allow(dead_code)]
 pub trait StorageEngine {
     fn begin_read_transaction(&mut self) -> Result<(), String>;
     fn begin_write_transaction(&mut self) -> Result<(), String>;
@@ -135,6 +141,42 @@ pub trait StorageEngine {
     fn register_schemas_after_migration(&mut self, manifest: &SchemaManifest)
         -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
+    fn storage_metadata(&self) -> Result<StorageMetadata, String>;
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String>;
+
+    fn plan_storage_migration(
+        &self,
+        target: StorageMigrationTarget,
+    ) -> Result<StorageMigrationPlan, String> {
+        Ok(StorageMigrationPlan::new(self.storage_metadata()?, target))
+    }
+
+    fn apply_storage_migration(
+        &mut self,
+        target: StorageMigrationTarget,
+    ) -> Result<StorageMigrationPlan, String> {
+        let plan = self.plan_storage_migration(target)?;
+        if plan.requires_explicit_migration {
+            return Err(format!(
+                "storage migration requires explicit execution before opening with layout `{}` and document format `{}`",
+                plan.target.layout.as_str(),
+                plan.target.document_format.as_str()
+            ));
+        }
+        Ok(plan)
+    }
+
+    fn verify_storage(
+        &self,
+        manifest: &SchemaManifest,
+        checks: &[IndexVerificationCheck],
+    ) -> Result<StorageVerificationReport, String> {
+        StorageVerificationReport::from_storage(self, manifest, checks)
+    }
 }
 
 impl StorageEngine for StorageBackend {
@@ -311,6 +353,26 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.schema_version(collection),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.schema_version(collection),
+        }
+    }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        match self {
+            Self::Sqlite(storage) => storage.storage_metadata(),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.storage_metadata(),
+        }
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.rebuild_indexes(collection, documents),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.rebuild_indexes(collection, documents),
         }
     }
 }
