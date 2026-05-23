@@ -62,7 +62,7 @@ fn run_mdbx_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, Strin
 
 #[cfg(not(feature = "mdbx"))]
 fn run_mdbx_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
-    Err("MDBX benchmark requires building with `--features mdbx`.".into())
+    Err("MDBX benchmark requires building with `--features benchmarks`.".into())
 }
 
 #[cfg(feature = "mdbx")]
@@ -75,7 +75,7 @@ fn run_mdbx_v2_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, St
 
 #[cfg(not(feature = "mdbx"))]
 fn run_mdbx_v2_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
-    Err("MDBX layout v2 benchmark requires building with `--features mdbx`.".into())
+    Err("MDBX layout v2 benchmark requires building with `--features benchmarks`.".into())
 }
 
 fn run_storage_benchmark(

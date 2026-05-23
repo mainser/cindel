@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
-import 'migration.dart';
 import 'native/bindings.dart';
 import 'schema.dart';
 import 'text.dart';
@@ -74,14 +73,12 @@ class CindelDatabase {
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) async {
     _checkDirectory(directory);
     return _openUnchecked(
       directory: directory,
       schemas: schemas,
-      migration: migration,
       backend: backend,
     );
   }
@@ -91,46 +88,18 @@ class CindelDatabase {
   /// Data is discarded when this database is closed.
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return _openUnchecked(
       directory: _inMemoryDirectory,
       schemas: schemas,
-      migration: migration,
       backend: backend,
     );
-  }
-
-  /// Runs a migration callback without writing through Cindel migration helpers.
-  static Future<CindelMigrationReport> dryRunMigration({
-    required String directory,
-    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    required CindelMigrationCallback migration,
-    CindelStorageBackend backend = defaultCindelStorageBackend,
-  }) async {
-    _checkDirectory(directory);
-    final database = await _openRaw(
-      directory: directory,
-      schemas: schemas,
-      backend: backend,
-    );
-    try {
-      final context = await database._createMigrationContext(
-        schemas,
-        dryRun: true,
-      );
-      await migration(context);
-      return context.toReport();
-    } finally {
-      await database.close();
-    }
   }
 
   static Future<CindelDatabase> _openUnchecked({
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
-    required CindelMigrationCallback? migration,
     required CindelStorageBackend backend,
   }) async {
     final database = await _openRaw(
@@ -143,19 +112,7 @@ class CindelDatabase {
         ? null
         : _encodeSchemaManifest(schemasByCollection.values);
     try {
-      if (migration != null) {
-        final context = await database._createMigrationContext(schemas);
-        await database.writeTxn(() async {
-          await migration(context);
-          final manifest = schemaManifest;
-          if (manifest != null) {
-            database._bindings.registerSchemasAfterMigration(
-              database._checkOpen(),
-              manifest,
-            );
-          }
-        });
-      } else if (schemaManifest != null) {
+      if (schemaManifest != null) {
         database._bindings.registerSchemas(
           database._checkOpen(),
           schemaManifest,
@@ -825,21 +782,6 @@ class CindelDatabase {
         else
           throw StateError('Native Cindel returned a non-object document.'),
     ];
-  }
-
-  Future<CindelMigration> _createMigrationContext(
-    Iterable<CindelCollectionSchema<dynamic>> schemas, {
-    bool dryRun = false,
-  }) async {
-    final versions = <String, int?>{};
-    for (final schema in schemas) {
-      versions[schema.name] = await schemaVersion(schema.name);
-    }
-    return CindelMigration(
-      database: this,
-      oldVersions: versions,
-      dryRun: dryRun,
-    );
   }
 
   Stream<T> _watch<T>(

@@ -15,8 +15,8 @@ Reasons:
 - MDBX passed the shared Rust storage contracts and the Dart package behavior
   suite.
 - Windows and Android prebuilt binaries include MDBX support.
-- SQLite remains selectable for users who need the older storage layout while
-  the explicit SQLite-to-MDBX migration helper is planned.
+- SQLite remains selectable as a secondary backend for compatibility,
+  debugging, and benchmark comparison.
 
 ## Candidate: libmdbx
 
@@ -68,7 +68,7 @@ cargo test --manifest-path packages/cindel/native/Cargo.toml
 Result: passed. The default native build remains SQLite-only.
 
 ```powershell
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml mdbx
 ```
 
 Initial result: blocked on Windows because `mdbx-sys` runs `bindgen`, and
@@ -79,7 +79,7 @@ Final Windows result after installing LLVM:
 
 ```powershell
 $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml mdbx
 ```
 
 Result: passed. `libmdbx` and `mdbx-sys` compile, and the probe opens an MDBX
@@ -108,7 +108,6 @@ Planned MDBX tables:
 - `id_counters`: `collection` -> next id.
 - `collection_revisions`: `collection` -> revision.
 - `schema_collections`: `collection` -> schema metadata JSON.
-- `schema_migrations`: append-only migration records.
 
 The key spike proves:
 
@@ -130,8 +129,9 @@ entries SQLite receives today.
 
 ## MDBX-04 Minimal Storage Prototype
 
-MDBX-04 adds a feature-gated `MdbxStorage` implementation behind the native
-`mdbx` Cargo feature. SQLite remains the default backend for the FFI path.
+MDBX-04 added the first feature-gated `MdbxStorage` implementation behind the
+native `mdbx` Cargo feature. SQLite was still the default backend at that
+stage.
 
 Implemented prototype surface:
 
@@ -148,21 +148,21 @@ Implemented prototype surface:
 Still out of scope for this prototype:
 
 - Public explicit MDBX transactions.
-- Full migration compatibility checks.
+- Public migration tooling.
 - Native unique-index enforcement.
 - Dart API backend selection.
 
 Validation:
 
 ```powershell
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml mdbx
 ```
 
 Result: passed. MDBX prototype tests can write, read, and query indexed
 documents.
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 1000 --query-repeats 100
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 1000 --query-repeats 100
 ```
 
 Sample Windows output:
@@ -200,7 +200,7 @@ operations:
 Windows validation command:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
 ```
 
 Windows result:
@@ -269,8 +269,8 @@ Validated parity surface:
 - Index replacement and cleanup during updates/deletes.
 - Batch indexed writes and deletes.
 - Rollback for failed batch writes.
-- Schema registration, additive versioning, explicit migration registration,
-  incompatible schema rejection, and index option metadata.
+- Schema registration, additive versioning, incompatible schema rejection, and
+  index option metadata.
 - Unique index enforcement.
 - Case-insensitive, hash, and words index metadata acceptance. Dart still
   normalizes those indexed values before they reach native storage.
@@ -278,7 +278,7 @@ Validated parity surface:
 Validation command:
 
 ```powershell
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml
 ```
 
 Result:
@@ -318,7 +318,7 @@ Validated transaction surface:
 Validation command:
 
 ```powershell
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml
 ```
 
 Result:
@@ -358,8 +358,8 @@ Validation commands:
 
 ```powershell
 cargo test --manifest-path packages/cindel/native/Cargo.toml
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
-cargo build --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml
+cargo build --manifest-path packages/cindel/native/Cargo.toml
 dart analyze packages/cindel
 dart test packages/cindel
 ```
@@ -395,11 +395,9 @@ can run against either backend.
 Implemented:
 
 - Added a test backend selector driven by `CINDEL_TEST_BACKEND`.
-- Added backend support to `Cindel.dryRunMigration` and
-  `CindelDatabase.dryRunMigration`.
 - Reused the existing package tests across SQLite and MDBX for manual CRUD,
   typed CRUD, ids, batch operations, query builders, indexes, watchers,
-  transactions, migrations, and dry-run diagnostics.
+  transactions, schema versions, and backend behavior.
 - Fixed MDBX staged write transactions so reads inside the same Dart write
   transaction see pending puts/deletes before commit.
 - Fixed MDBX staged indexed queries so query builders can see pending writes
@@ -464,7 +462,7 @@ Validation commands:
 .\tool\prebuilt\build_windows.ps1
 .\tool\prebuilt\build_android.ps1
 cargo test --manifest-path packages/cindel/native/Cargo.toml
-cargo test --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+cargo test --manifest-path packages/cindel/native/Cargo.toml
 dart analyze packages/cindel
 dart test packages/cindel -r expanded
 ```
@@ -523,7 +521,8 @@ Implemented:
   - `sqlite-backend` builds and tests the SQLite-capable native core, then runs
     the Dart package suite against explicit SQLite.
   - `mdbx-backend` installs LLVM/libclang, builds and tests the native core
-    with `--features mdbx`, then runs the Dart package suite with
+    with MDBX enabled by the default Cargo feature set, then runs the Dart
+    package suite with
     `CINDEL_TEST_BACKEND=mdbx` and `CINDEL_TEST_MDBX=1`.
 - Added separate Rust cache keys for SQLite, MDBX, and benchmark builds.
 - Added a manual-only `Backend Benchmark` workflow with `workflow_dispatch`
@@ -545,8 +544,8 @@ SQLite as an explicit secondary backend.
 Implemented:
 
 - Changed `Cindel.open`, `Cindel.openInMemory`,
-  `CindelDatabase.open`, `CindelDatabase.openInMemory`, and dry-run migration
-  helpers to default to `CindelStorageBackend.mdbx`.
+  `CindelDatabase.open`, and `CindelDatabase.openInMemory` to default to
+  `CindelStorageBackend.mdbx`.
 - Added `defaultCindelStorageBackend` so callers and tests can inspect the
   current default without relying on duplicated enum values.
 - Kept `backend: CindelStorageBackend.sqlite` available.
@@ -554,14 +553,14 @@ Implemented:
   the loaded native library includes MDBX support.
 - Documented that existing SQLite databases are not migrated automatically.
 
-Migration decision:
+Preview data decision:
 
 - Cindel will not silently migrate existing SQLite database directories during
   the default switch.
 - Existing SQLite users can keep using
   `backend: CindelStorageBackend.sqlite`.
-- A separate explicit SQLite-to-MDBX migration helper is planned after this
-  default switch.
+- Public migration/export tooling is deferred until Cindel approaches 1.0 or a
+  real public database format needs preservation.
 
 Validation:
 
@@ -600,7 +599,7 @@ Why this layout is promising:
 Windows release benchmark sample:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 1000 --query-repeats 100 --format json --output native-perf-layout-v2.json
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 1000 --query-repeats 100 --format json --output docs/local_benchmarks/native-perf-layout-v2.json
 ```
 
 | Backend | put indexed | get | query equal | query range | put many indexed | delete many | size |
@@ -613,9 +612,9 @@ Decision:
 
 - Continue with the next performance stages. The prototype shows a meaningful
   win for batch writes, deletes, point reads, and indexed queries.
-- Do not ship this layout yet. Cindel still needs versioned storage metadata,
-  migration planning, reopen validation, and binary document storage before a
-  format change is safe.
+- Do not ship this layout yet. Cindel still needs typed FFI integration,
+  native query execution, and release hardening before a layout change is worth
+  carrying in production.
 - No custom build patches or platform-specific hacks were added for this
   prototype.
 
@@ -645,31 +644,57 @@ Validated behavior:
   payloads.
 - Invalid headers and non-finite doubles are rejected.
 
-## Storage Migration Framework
+## Storage Metadata and Verification
 
 Cindel now records internal storage metadata for layout and document format
 versions. The current production combinations are:
 
 - SQLite: `sqlite-v1` plus `json-v1`.
-- MDBX: `mdbx-v1` plus `json-v1`.
+- MDBX: `mdbx-v1` plus `binary-v1`.
 
-The native planner compares current metadata against a requested target and
-marks layout or document-format changes as explicit migration actions. Applying
-such a plan currently fails closed until execution, backup, rollback, and
-verification paths are complete.
+The storage layer has verification helpers for document counts, schema
+versions, collection revisions, and selected equality/range index checks. The
+public migration and dry-run APIs are intentionally deferred while Cindel is
+pre-1.0 and the optimized MDBX format is still moving quickly.
 
-The storage layer also has a first-class index rebuild operation and
-verification helpers for document counts, schema versions, collection
-revisions, and selected equality/range index checks. This is the guardrail
-needed before the MDBX v2 layout or binary document format can become a shipped
-storage format.
+## MDBX Binary Document Storage
+
+MDBX now stores schema-backed documents in Cindel's native binary document
+format. This keeps generated typed models on the optimized path.
+
+The native storage layer derives index entries from the stored binary document
+bytes, including value indexes, case-insensitive strings, hash indexes, and word
+indexes. Dart still sends JSON payloads through the existing FFI functions for
+now, and MDBX converts those payloads internally before writing.
+
+Schema-backed MDBX writes reject unknown fields instead of falling back to
+JSON, because there are no external production databases to preserve before
+1.0. Public reads continue returning JSON bytes so the Dart API remains
+unchanged until the typed FFI reader/writer stage removes JSON from the hot
+path. SQLite remains the secondary backend and keeps its JSON-oriented storage
+path internally.
+
+Validation:
+
+- Rust native tests with MDBX enabled by default: `50 passed; 0 failed`.
+- Rust native tests without default features for SQLite-only validation:
+  `42 passed; 0 failed`.
+- Rust benchmark/prototype build with `--features benchmarks`:
+  `51 passed; 0 failed`.
+- Dart package suite against a locally built MDBX DLL: `77 passed; 0 failed`.
+- Dart package suite against explicit SQLite using the same local DLL:
+  `74 passed; 3 skipped`.
+- Dart package suite against the regenerated Windows prebuilt DLL:
+  `77 passed; 0 failed`.
+- Todo example tests: `9 passed`.
+- Todo example Windows release build produced `cindel_todo.exe`.
 
 ## Benchmark Baseline
 
 The backend comparison benchmark is implemented as an internal Rust binary:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
 ```
 
 The output is CSV:
@@ -709,5 +734,5 @@ MDBX was promoted to the default backend after satisfying these gates:
   atomically with document changes.
 - Windows and Android native asset builds remain reproducible.
 
-SQLite remains explicitly selectable for compatibility and for future migration
-work.
+SQLite remains explicitly selectable for compatibility, debugging, and future
+migration work if the project needs it before 1.0.

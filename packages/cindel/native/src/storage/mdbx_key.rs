@@ -9,7 +9,6 @@ pub(crate) const UNIQUE_INDEXES_TABLE: &str = "unique_indexes";
 pub(crate) const ID_COUNTERS_TABLE: &str = "id_counters";
 pub(crate) const COLLECTION_REVISIONS_TABLE: &str = "collection_revisions";
 pub(crate) const SCHEMA_COLLECTIONS_TABLE: &str = "schema_collections";
-pub(crate) const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
 pub(crate) const STORAGE_METADATA_TABLE: &str = "storage_metadata";
 
 const SIGN_BIT: u64 = 0x8000_0000_0000_0000;
@@ -502,7 +501,6 @@ mod tests {
         assert_eq!(ID_COUNTERS_TABLE, "id_counters");
         assert_eq!(COLLECTION_REVISIONS_TABLE, "collection_revisions");
         assert_eq!(SCHEMA_COLLECTIONS_TABLE, "schema_collections");
-        assert_eq!(SCHEMA_MIGRATIONS_TABLE, "schema_migrations");
         assert_eq!(
             encode_unique_index_key("users", "email", &IndexValue::String("a".into())).unwrap(),
             encode_index_equal_prefix("users", "email", &IndexValue::String("a".into())).unwrap()

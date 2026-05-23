@@ -71,7 +71,7 @@ next layer is added.
 - [x] Schema metadata registration.
 - [x] Schema version persistence.
 - [x] In-memory databases for tests and short-lived work.
-- [x] Compatible additive schema migrations.
+- [x] Compatible additive schema version updates.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark comparing SQLite and MDBX.
 - [x] Flutter Todo example application:
@@ -167,7 +167,7 @@ next layer is added.
   - Multi-entry word indexes.
   - Case-insensitive prefix search over token indexes.
 - [ ] Index lifecycle operations.
-  - Rebuild indexes after migrations.
+  - Rebuild indexes when public migration tooling is added.
   - [x] Validate index definitions during open.
   - Detect stale or incompatible index metadata.
 
@@ -234,17 +234,17 @@ next layer is added.
   - Query result comparison.
   - Tests for unchanged query results.
 
-## Migrations and Schema Evolution
+## Schema Evolution
 
-- [x] Migration callbacks.
-  - Explicit user-defined migrations.
-  - Data backfills for newly added fields.
-  - Index rebuild migrations.
-- [x] Field rename support.
-- [x] Collection rename support.
+- [x] Schema metadata persistence.
+- [x] Compatible additive schema version updates.
+- [x] Rejection of unsafe type, id, and index option changes.
+- [ ] Public migration tooling after the optimized storage format stabilizes.
+  - Explicit user-triggered data migration.
+  - Field and collection rename support.
+  - Index rebuild support.
+  - Backup, rollback, and verification guidance.
 - [ ] Enum migration safeguards.
-- [x] Migration dry-run diagnostics.
-- [x] Versioned migration test fixtures.
 
 ## Relationships
 
@@ -295,7 +295,8 @@ next layer is added.
 - [x] Keep the public Dart API independent of backend details.
 - [x] Make MDBX the default backend while keeping SQLite explicitly
   selectable.
-- [ ] Add an explicit SQLite-to-MDBX migration helper.
+- [ ] Add explicit migration/export tooling only when a public database format
+  needs preservation before 1.0.
 
 ## Performance Roadmap
 
@@ -309,8 +310,9 @@ Guiding rules:
 
 - Benchmark before and after every performance stage.
 - Optimize MDBX first while keeping SQLite as the correctness fallback.
-- Do not silently rewrite user data; storage format changes require explicit
-  versions, migration tests, and rollback/backup guidance.
+- Keep storage versions explicit. During the pre-release performance work,
+  MDBX can move forward without legacy-data migration because there are no
+  external production users yet.
 - Defer web, compaction, encryption, and broad platform extras until the core
   native performance path is mature.
 
@@ -331,14 +333,16 @@ Guiding rules:
   - Design a generated binary object format with field offsets, null encoding,
     dynamic sections, and support for current Cindel field types.
   - Prove one-field reads without full document decode.
-- [x] PERF-05: Storage version and migration framework.
-  - Add layout/document format metadata, dry-run planning, explicit migration,
-    index rebuild, and migration verification helpers.
-  - Refuse unsafe automatic rewrites.
-- [ ] PERF-06: Binary document storage behind MDBX.
+- [x] PERF-05: Storage version metadata and verification.
+  - Add layout/document format metadata and storage verification helpers.
+  - Defer public migration/dry-run APIs until the optimized format is closer
+    to 1.0.
+- [x] PERF-06: Binary document storage behind MDBX.
   - Store generated typed models as binary documents.
   - Derive index entries from native binary document bytes.
-  - Keep manual map-style APIs compatible while the final path is decided.
+  - Reject unknown schema-backed fields instead of carrying JSON fallback
+    behavior into the optimized path.
+  - Keep MDBX in the default native build while SQLite remains selectable.
 - [ ] PERF-07: Dart FFI typed writer and reader handles.
   - Add native writer/reader handles and generated FFI calls for typed fields.
   - Reduce per-document JSON payloads and allocation overhead in `putAll` and
@@ -369,8 +373,9 @@ Guiding rules:
 - [ ] PERF-14: Native aggregations.
   - Add native count, min, max, sum, and average paths that avoid full document
     hydration.
-- [ ] PERF-15: Public migration from JSON/layout v1 to binary/layout v2.
-  - Add an explicit migration path for existing users.
+- [ ] PERF-15: Public migration tooling for 1.0 stabilization.
+  - Add explicit migration/export tooling only when the storage format is close
+    enough to 1.0 to preserve external user data.
   - Rebuild indexes and verify counts, schemas, revisions, and selected
     queries.
 - [ ] PERF-16: Release hardening for optimized storage.
@@ -413,7 +418,7 @@ Guiding rules:
 
 - [ ] Keep Dart analyzer clean.
 - [ ] Keep Rust formatting clean with `cargo fmt --check`.
-- [ ] Expand Rust tests for storage semantics and migrations.
+- [ ] Expand Rust tests for storage semantics and future migration tooling.
 - [ ] Expand Dart tests for public API behavior and generated code.
 - [ ] Add widget tests for the example app's real user flows.
 - [ ] Add Android build smoke test documentation.
@@ -441,7 +446,7 @@ Guiding rules:
 The current implementation focus is release validation for the `0.2.x` package
 line. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
-query/lazy watchers, explicit migration callbacks, and MDBX as the default
+query/lazy watchers, binary MDBX document storage, and MDBX as the default
 backend with SQLite as an explicit fallback.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt

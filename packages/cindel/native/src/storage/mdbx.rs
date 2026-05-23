@@ -10,11 +10,15 @@ use libmdbx::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::document_format::{
+    index_entries_from_binary_document, read_json_document, write_json_document, BinaryDocument,
+};
+
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
     encode_index_key, encode_index_range, encode_unique_index_key, COLLECTION_REVISIONS_TABLE,
     DOCUMENTS_TABLE, ID_COUNTERS_TABLE, INDEXES_TABLE, SCHEMA_COLLECTIONS_TABLE,
-    SCHEMA_MIGRATIONS_TABLE, STORAGE_METADATA_TABLE, UNIQUE_INDEXES_TABLE,
+    STORAGE_METADATA_TABLE, UNIQUE_INDEXES_TABLE,
 };
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
@@ -262,7 +266,7 @@ impl MdbxStorage {
             &transaction,
             &tables,
             StorageLayoutVersion::MdbxV1,
-            DocumentFormatVersion::JsonV1,
+            DocumentFormatVersion::BinaryV1,
         )?;
         transaction
             .commit()
@@ -370,7 +374,6 @@ impl MdbxStorage {
                         bytes,
                         indexes,
                     } => {
-                        let unique_indexes = unique_index_names(transaction, &tables, &collection)?;
                         put_document_with_indexes(
                             transaction,
                             &tables,
@@ -378,7 +381,6 @@ impl MdbxStorage {
                             id,
                             &bytes,
                             &indexes,
-                            &unique_indexes,
                         )?;
                         bump_collection_revision(transaction, &tables, &collection)?;
                     }
@@ -386,7 +388,6 @@ impl MdbxStorage {
                         collection,
                         documents,
                     } => {
-                        let unique_indexes = unique_index_names(transaction, &tables, &collection)?;
                         for document in &documents {
                             put_document_with_indexes(
                                 transaction,
@@ -395,7 +396,6 @@ impl MdbxStorage {
                                 document.id,
                                 &document.bytes,
                                 &document.indexes,
-                                &unique_indexes,
                             )?;
                         }
                         if !documents.is_empty() {
@@ -574,9 +574,14 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_read_transaction(|transaction, tables| {
-            transaction
+            let schema = collection_schema(transaction, &tables, collection)?;
+            let Some(bytes) = transaction
                 .get::<Vec<u8>>(&tables.documents, &encode_document_key(collection, id))
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string())?
+            else {
+                return Ok(None);
+            };
+            decode_document_for_read(schema.as_ref(), &bytes).map(Some)
         })
     }
 
@@ -623,16 +628,7 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_write_transaction(|transaction, tables| {
-            let unique_indexes = unique_index_names(transaction, &tables, collection)?;
-            put_document_with_indexes(
-                transaction,
-                &tables,
-                collection,
-                id,
-                bytes,
-                indexes,
-                &unique_indexes,
-            )?;
+            put_document_with_indexes(transaction, &tables, collection, id, bytes, indexes)?;
             bump_collection_revision(transaction, &tables, collection)
         })
     }
@@ -659,7 +655,6 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_write_transaction(|transaction, tables| {
-            let unique_indexes = unique_index_names(transaction, &tables, collection)?;
             for document in documents {
                 put_document_with_indexes(
                     transaction,
@@ -668,7 +663,6 @@ impl StorageEngine for MdbxStorage {
                     document.id,
                     &document.bytes,
                     &document.indexes,
-                    &unique_indexes,
                 )?;
             }
             if !documents.is_empty() {
@@ -821,36 +815,6 @@ impl StorageEngine for MdbxStorage {
         })
     }
 
-    fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        validate_schema_manifest(manifest)?;
-        self.ensure_can_write()?;
-        if self.active_write_mut().is_some() {
-            self.active_write_mut()
-                .expect("write transaction must still be active")
-                .operations
-                .push(MdbxWriteOperation::RegisterSchemas {
-                    manifest: manifest.clone(),
-                    mode: SchemaRegistrationMode::ExplicitMigration,
-                });
-            return Ok(());
-        }
-
-        self.with_write_transaction(|transaction, tables| {
-            for collection in &manifest.collections {
-                register_collection_schema(
-                    transaction,
-                    &tables,
-                    collection,
-                    SchemaRegistrationMode::ExplicitMigration,
-                )?;
-            }
-            Ok(())
-        })
-    }
-
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.with_read_transaction(|transaction, tables| {
             transaction
@@ -896,7 +860,6 @@ struct MdbxTables<'txn> {
     id_counters: Table<'txn>,
     collection_revisions: Table<'txn>,
     schema_collections: Table<'txn>,
-    _schema_migrations: Table<'txn>,
     storage_metadata: Table<'txn>,
 }
 
@@ -918,9 +881,6 @@ fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Re
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(SCHEMA_COLLECTIONS_TABLE), TableFlags::default())
-        .map_err(|error| error.to_string())?;
-    transaction
-        .create_table(Some(SCHEMA_MIGRATIONS_TABLE), TableFlags::default())
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(STORAGE_METADATA_TABLE), TableFlags::default())
@@ -953,9 +913,6 @@ where
         schema_collections: transaction
             .open_table(Some(SCHEMA_COLLECTIONS_TABLE))
             .map_err(|error| error.to_string())?,
-        _schema_migrations: transaction
-            .open_table(Some(SCHEMA_MIGRATIONS_TABLE))
-            .map_err(|error| error.to_string())?,
         storage_metadata: transaction
             .open_table(Some(STORAGE_METADATA_TABLE))
             .map_err(|error| error.to_string())?,
@@ -971,7 +928,6 @@ struct MdbxSchemaRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SchemaRegistrationMode {
     Compatible,
-    ExplicitMigration,
 }
 
 fn register_collection_schema(
@@ -1029,31 +985,31 @@ fn decode_schema_record(bytes: &[u8]) -> Result<MdbxSchemaRecord, String> {
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
-fn unique_index_names<K>(
+fn collection_schema<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,
-) -> Result<HashSet<String>, String>
+) -> Result<Option<CollectionSchemaManifest>, String>
 where
     K: libmdbx::TransactionKind,
 {
-    let Some(bytes) = transaction
+    transaction
         .get::<Vec<u8>>(
             &tables.schema_collections,
             &encode_collection_key(collection),
         )
         .map_err(|error| error.to_string())?
-    else {
-        return Ok(HashSet::new());
-    };
-    let record = decode_schema_record(&bytes)?;
-    Ok(record
-        .schema
-        .fields
+        .map(|bytes| decode_schema_record(&bytes).map(|record| record.schema))
+        .transpose()
+}
+
+fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> HashSet<String> {
+    schema
         .into_iter()
+        .flat_map(|schema| schema.fields.iter())
         .filter(|field| field.is_indexed && field.is_index_unique)
-        .map(|field| field.name)
-        .collect())
+        .map(|field| field.name.clone())
+        .collect()
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
@@ -1206,7 +1162,7 @@ fn validate_compatible_field(
     }
     if existing.is_indexed != next.is_indexed {
         return Err(format!(
-            "schema field `{}.{}` cannot change index status without an explicit migration",
+            "schema field `{}.{}` cannot change index status until public migration tooling exists",
             collection.name, existing.name
         ));
     }
@@ -1215,7 +1171,7 @@ fn validate_compatible_field(
         || existing.index_type != next.index_type
     {
         return Err(format!(
-            "schema field `{}.{}` cannot change index options without an explicit migration",
+            "schema field `{}.{}` cannot change index options until public migration tooling exists",
             collection.name, existing.name
         ));
     }
@@ -1229,15 +1185,68 @@ fn put_document_with_indexes(
     id: u64,
     bytes: &[u8],
     indexes: &[IndexEntry],
-    unique_indexes: &HashSet<String>,
 ) -> Result<(), String> {
-    MdbxIndex::validate_unique(transaction, tables, collection, id, indexes, unique_indexes)?;
+    let schema = collection_schema(transaction, tables, collection)?;
+    let unique_indexes = unique_index_names_from_schema(schema.as_ref());
+    let (stored_bytes, effective_indexes) =
+        encode_document_for_storage(schema.as_ref(), bytes, indexes)?;
+    MdbxIndex::validate_unique(
+        transaction,
+        tables,
+        collection,
+        id,
+        &effective_indexes,
+        &unique_indexes,
+    )?;
     let document_key = encode_document_key(collection, id);
     transaction
-        .put(&tables.documents, &document_key, bytes, WriteFlags::UPSERT)
+        .put(
+            &tables.documents,
+            &document_key,
+            &stored_bytes,
+            WriteFlags::UPSERT,
+        )
         .map_err(|error| error.to_string())?;
-    MdbxIndex::replace_document(transaction, tables, collection, id, indexes, unique_indexes)?;
+    MdbxIndex::replace_document(
+        transaction,
+        tables,
+        collection,
+        id,
+        &effective_indexes,
+        &unique_indexes,
+    )?;
     advance_id_counter(transaction, tables, collection, id)
+}
+
+fn encode_document_for_storage(
+    schema: Option<&CollectionSchemaManifest>,
+    bytes: &[u8],
+    indexes: &[IndexEntry],
+) -> Result<(Vec<u8>, Vec<IndexEntry>), String> {
+    let Some(schema) = schema else {
+        return Ok((bytes.to_vec(), indexes.to_vec()));
+    };
+    let stored_bytes = if BinaryDocument::parse(bytes).is_ok() {
+        bytes.to_vec()
+    } else {
+        write_json_document(schema, bytes)?
+    };
+    let indexes = index_entries_from_binary_document(schema, &stored_bytes)?;
+    Ok((stored_bytes, indexes))
+}
+
+fn decode_document_for_read(
+    schema: Option<&CollectionSchemaManifest>,
+    bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    let Some(schema) = schema else {
+        return Ok(bytes.to_vec());
+    };
+    if BinaryDocument::parse(bytes).is_ok() {
+        read_json_document(schema, bytes)
+    } else {
+        Ok(bytes.to_vec())
+    }
 }
 
 fn delete_document(
@@ -1261,15 +1270,18 @@ fn rebuild_indexes_in_transaction(
     documents: &[DocumentWrite],
 ) -> Result<(), String> {
     MdbxIndex::clear_collection(transaction, tables, collection)?;
-    let unique_indexes = unique_index_names(transaction, tables, collection)?;
+    let schema = collection_schema(transaction, tables, collection)?;
+    let unique_indexes = unique_index_names_from_schema(schema.as_ref());
     for document in documents {
         ensure_document_exists(transaction, tables, collection, document.id)?;
+        let (_, indexes) =
+            encode_document_for_storage(schema.as_ref(), &document.bytes, &document.indexes)?;
         MdbxIndex::validate_unique(
             transaction,
             tables,
             collection,
             document.id,
-            &document.indexes,
+            &indexes,
             &unique_indexes,
         )?;
         MdbxIndex::replace_document(
@@ -1277,7 +1289,7 @@ fn rebuild_indexes_in_transaction(
             tables,
             collection,
             document.id,
-            &document.indexes,
+            &indexes,
             &unique_indexes,
         )?;
     }
@@ -1879,15 +1891,15 @@ mod tests {
             .put_indexed(
                 "users",
                 1,
-                br#"{"name":"Ana"}"#,
+                br#"{"id":1,"email":"ana@example.com","name":"Ana","score":10}"#,
                 &[
                     IndexEntry {
                         name: "email".into(),
-                        value: IndexValue::String("ana@example.com".into()),
+                        value: IndexValue::String("wrong@example.com".into()),
                     },
                     IndexEntry {
                         name: "score".into(),
-                        value: IndexValue::Int(10),
+                        value: IndexValue::Int(999),
                     },
                 ],
             )
@@ -1896,24 +1908,39 @@ mod tests {
             .put_indexed(
                 "users",
                 2,
-                br#"{"name":"Ben"}"#,
+                br#"{"id":2,"email":"ben@example.com","name":"Ben","score":30}"#,
                 &[
                     IndexEntry {
                         name: "email".into(),
-                        value: IndexValue::String("ben@example.com".into()),
+                        value: IndexValue::String("ignored@example.com".into()),
                     },
                     IndexEntry {
                         name: "score".into(),
-                        value: IndexValue::Int(30),
+                        value: IndexValue::Int(999),
                     },
                 ],
             )
             .unwrap();
 
+        let read = storage.get("users", 1).unwrap().unwrap();
         assert_eq!(
-            storage.get("users", 1).unwrap(),
-            Some(br#"{"name":"Ana"}"#.to_vec())
+            serde_json::from_slice::<serde_json::Value>(&read).unwrap(),
+            serde_json::json!({
+                "email": "ana@example.com",
+                "id": 1,
+                "name": "Ana",
+                "score": 10,
+            })
         );
+        storage
+            .with_read_transaction(|transaction, tables| {
+                let raw = transaction
+                    .get::<Vec<u8>>(&tables.documents, &encode_document_key("users", 1))
+                    .map_err(|error| error.to_string())?
+                    .expect("document must exist");
+                BinaryDocument::parse(&raw).map(|_| ())
+            })
+            .unwrap();
         assert_eq!(storage.document_ids("users").unwrap(), vec![1, 2]);
         assert_eq!(
             storage
@@ -1924,6 +1951,16 @@ mod tests {
                 )
                 .unwrap(),
             vec![1]
+        );
+        assert_eq!(
+            storage
+                .query_index_equal(
+                    "users",
+                    "email",
+                    &IndexValue::String("wrong@example.com".into())
+                )
+                .unwrap(),
+            Vec::<u64>::new()
         );
         assert_eq!(
             storage
@@ -2081,16 +2118,30 @@ mod tests {
             collections: vec![CollectionSchemaManifest {
                 name: "users".to_string(),
                 id_field: "id".to_string(),
-                fields: vec![FieldSchemaManifest {
-                    name: "id".to_string(),
-                    dart_type: "int".to_string(),
-                    is_id: true,
-                    is_indexed: false,
-                    is_index_unique: false,
-                    index_case_sensitive: true,
-                    index_type: "value".to_string(),
-                }],
+                fields: vec![
+                    test_field("email", "String", false, true),
+                    test_field("id", "int", true, false),
+                    test_field("name", "String", false, false),
+                    test_field("score", "int", false, true),
+                ],
             }],
+        }
+    }
+
+    fn test_field(
+        name: &str,
+        dart_type: &str,
+        is_id: bool,
+        is_indexed: bool,
+    ) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.to_string(),
+            dart_type: dart_type.to_string(),
+            is_id,
+            is_indexed,
+            is_index_unique: false,
+            index_case_sensitive: true,
+            index_type: "value".to_string(),
         }
     }
 

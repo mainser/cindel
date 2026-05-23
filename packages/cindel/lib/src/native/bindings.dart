@@ -103,17 +103,6 @@ final class CindelNativeBindings {
     _checkStatus(status, 'register schemas');
   }
 
-  void registerSchemasAfterMigration(Pointer<Void> handle, Uint8List schemas) {
-    final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
-      return _functions.registerSchemasAfterMigration(
-        handle,
-        schemasPointer,
-        schemasLength,
-      );
-    });
-    _checkStatus(status, 'register schemas after migration');
-  }
-
   void putIndexed(
     Pointer<Void> handle,
     String collection,
@@ -430,9 +419,6 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
 
-  int Function(Pointer<Void>, Pointer<Uint8>, int)
-  get registerSchemasAfterMigration;
-
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -590,11 +576,6 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
             int Function(Pointer<Void>, Pointer<Uint8>, int)
           >('cindel_register_schemas'),
-      registerSchemasAfterMigration = library
-          .lookupFunction<
-            Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
-            int Function(Pointer<Void>, Pointer<Uint8>, int)
-          >('cindel_register_schemas_after_migration'),
       putIndexed = library
           .lookupFunction<
             Int32 Function(
@@ -852,10 +833,6 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;
 
   @override
-  final int Function(Pointer<Void>, Pointer<Uint8>, int)
-  registerSchemasAfterMigration;
-
-  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -1002,10 +979,6 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas =>
       _cindelRegisterSchemas;
-
-  @override
-  int Function(Pointer<Void>, Pointer<Uint8>, int)
-  get registerSchemasAfterMigration => _cindelRegisterSchemasAfterMigration;
 
   @override
   int Function(
@@ -1262,16 +1235,6 @@ external int _cindelAllocateId(
   assetId: _assetId,
 )
 external int _cindelRegisterSchemas(
-  Pointer<Void> handle,
-  Pointer<Uint8> schemas,
-  int schemasLen,
-);
-
-@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
-  symbol: 'cindel_register_schemas_after_migration',
-  assetId: _assetId,
-)
-external int _cindelRegisterSchemasAfterMigration(
   Pointer<Void> handle,
   Pointer<Uint8> schemas,
   int schemasLen,

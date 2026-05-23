@@ -513,13 +513,6 @@ impl StorageEngine for MdbxLayoutV2Storage {
         Ok(())
     }
 
-    fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        self.register_schemas(manifest)
-    }
-
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.with_read_transaction(|transaction| {
             let schemas = open_schemas_table(transaction)?;

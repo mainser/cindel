@@ -3,10 +3,6 @@
 Public annotations and shared schema types for Cindel, an ultra-fast,
 lightweight NoSQL local database for Flutter and Dart apps.
 
-Maintainer: Alain Ramirez <nolbertrg@gmail.com>
-
-Repository: <https://github.com/mainser/Cindel>
-
 ## What It Provides
 
 - `@Collection` for persisted root models.

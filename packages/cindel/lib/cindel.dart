@@ -6,7 +6,6 @@ export 'package:cindel_annotations/cindel_annotations.dart';
 
 export 'src/cindel.dart';
 export 'src/database.dart';
-export 'src/migration.dart';
 export 'src/query.dart';
 export 'src/schema.dart';
 export 'src/text.dart';

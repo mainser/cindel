@@ -42,65 +42,6 @@ pub struct StorageMetadata {
     pub document_format: DocumentFormatVersion,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct StorageMigrationTarget {
-    pub layout: StorageLayoutVersion,
-    pub document_format: DocumentFormatVersion,
-}
-
-impl From<StorageMetadata> for StorageMigrationTarget {
-    fn from(value: StorageMetadata) -> Self {
-        Self {
-            layout: value.layout,
-            document_format: value.document_format,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum MigrationAction {
-    RewriteStorageLayout {
-        from: StorageLayoutVersion,
-        to: StorageLayoutVersion,
-    },
-    RewriteDocumentFormat {
-        from: DocumentFormatVersion,
-        to: DocumentFormatVersion,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct StorageMigrationPlan {
-    pub current: StorageMetadata,
-    pub target: StorageMigrationTarget,
-    pub requires_explicit_migration: bool,
-    pub actions: Vec<MigrationAction>,
-}
-
-impl StorageMigrationPlan {
-    pub fn new(current: StorageMetadata, target: StorageMigrationTarget) -> Self {
-        let mut actions = Vec::new();
-        if current.layout != target.layout {
-            actions.push(MigrationAction::RewriteStorageLayout {
-                from: current.layout,
-                to: target.layout,
-            });
-        }
-        if current.document_format != target.document_format {
-            actions.push(MigrationAction::RewriteDocumentFormat {
-                from: current.document_format,
-                to: target.document_format,
-            });
-        }
-        Self {
-            current,
-            target,
-            requires_explicit_migration: !actions.is_empty(),
-            actions,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum IndexVerificationCheck {
     Equal {
@@ -193,52 +134,5 @@ impl StorageVerificationReport {
             metadata: storage.storage_metadata()?,
             collections,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plans_noop_when_versions_match() {
-        let current = StorageMetadata {
-            layout: StorageLayoutVersion::MdbxV1,
-            document_format: DocumentFormatVersion::JsonV1,
-        };
-
-        let plan = StorageMigrationPlan::new(current, current.into());
-
-        assert!(!plan.requires_explicit_migration);
-        assert!(plan.actions.is_empty());
-    }
-
-    #[test]
-    fn plans_layout_and_document_format_rewrites() {
-        let current = StorageMetadata {
-            layout: StorageLayoutVersion::MdbxV1,
-            document_format: DocumentFormatVersion::JsonV1,
-        };
-        let target = StorageMigrationTarget {
-            layout: StorageLayoutVersion::MdbxV2,
-            document_format: DocumentFormatVersion::BinaryV1,
-        };
-
-        let plan = StorageMigrationPlan::new(current, target);
-
-        assert!(plan.requires_explicit_migration);
-        assert_eq!(
-            plan.actions,
-            vec![
-                MigrationAction::RewriteStorageLayout {
-                    from: StorageLayoutVersion::MdbxV1,
-                    to: StorageLayoutVersion::MdbxV2,
-                },
-                MigrationAction::RewriteDocumentFormat {
-                    from: DocumentFormatVersion::JsonV1,
-                    to: DocumentFormatVersion::BinaryV1,
-                },
-            ]
-        );
     }
 }

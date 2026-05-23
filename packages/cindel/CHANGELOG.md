@@ -1,12 +1,28 @@
 # Changelog
 
+## 0.2.5
+
+- Switched MDBX schema-backed document storage to Cindel's native binary
+  document format.
+- MDBX now derives index entries from binary document bytes for generated
+  schema collections.
+- Made schema-backed MDBX writes strict: unknown fields are rejected instead of
+  falling back to JSON.
+- Removed the public migration callback and dry-run APIs while Cindel remains
+  pre-1.0 and the optimized storage format is still settling.
+- Made MDBX part of the default native Cargo build while keeping SQLite
+  compiled as an explicit secondary backend.
+- Moved the native benchmark and experimental MDBX layout prototype behind the
+  `benchmarks` Cargo feature so production builds stay smaller.
+- Updated the native MDBX default path so the Rust engine opens MDBX by default
+  when the native library is compiled with MDBX support.
+- Bumped the native ABI to 5 for the migration API cleanup.
+
 ## 0.2.4
 
 - Added internal storage metadata for layout and document format versions.
-- Added native migration planning primitives that fail closed for unsafe
-  layout or document-format rewrites.
-- Added native index rebuild and storage verification helpers for future
-  explicit migrations.
+- Added native storage verification helpers for layout, document-format, and
+  index metadata.
 - Kept the public Dart API, production storage behavior, and native binary
   symbols unchanged.
 

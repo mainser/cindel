@@ -9,7 +9,14 @@ pub struct CindelEngine {
 
 impl CindelEngine {
     pub fn open(directory: &str) -> Result<Self, String> {
-        Self::open_with_backend(directory, StorageBackendKind::Sqlite)
+        #[cfg(feature = "mdbx")]
+        {
+            Self::open_with_backend(directory, StorageBackendKind::Mdbx)
+        }
+        #[cfg(not(feature = "mdbx"))]
+        {
+            Self::open_with_backend(directory, StorageBackendKind::Sqlite)
+        }
     }
 
     pub fn open_with_backend(directory: &str, backend: StorageBackendKind) -> Result<Self, String> {
@@ -108,13 +115,6 @@ impl CindelEngine {
         self.storage.register_schemas(manifest)
     }
 
-    pub fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        self.storage.register_schemas_after_migration(manifest)
-    }
-
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.storage.schema_version(collection)
     }
@@ -157,8 +157,7 @@ mod tests {
         // Covers:
         // - The Rust-side backend option can be selected internally.
         // - Basic read/write behavior through the [StorageBackend] enum.
-        // Expected: Selecting MDBX succeeds without changing the default
-        //   SQLite FFI backend.
+        // Expected: Selecting MDBX succeeds through the default native build.
         let mut engine =
             CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx).unwrap();
 

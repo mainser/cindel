@@ -26,9 +26,10 @@ Storage backend: MDBX by default, SQLite as explicit fallback
 Backend decision notes, benchmark evidence, and platform limits live in
 `docs/backend_evaluation.md`.
 
-The planned generated binary document format is documented in
-`docs/binary_document_format.md`. It is not a shipped storage format yet; it is
-the design target for the native MDBX performance work.
+The generated binary document format is documented in
+`docs/binary_document_format.md`. MDBX uses it for schema-backed documents that
+fit the registered schema, while SQLite remains on JSON and the public FFI path
+still returns JSON during the transition.
 
-The internal storage migration metadata and verification framework is
-documented in `docs/storage_migration_framework.md`.
+Storage format migration tooling is intentionally deferred until the optimized
+MDBX path settles.

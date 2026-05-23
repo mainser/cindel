@@ -22,7 +22,7 @@ The API is still experimental and can change before 1.0.
 
 | Platform | Android | iOS | Web | Linux | Windows | macOS |
 | --- | --- | --- | --- | --- | --- | --- |
-| Status | Yes | Planned | No | Planned | Yes | Planned |
+| Status | Yes | Planned | No | Yes | Yes | Planned |
 
 ## Features
 
@@ -47,9 +47,7 @@ The API is still experimental and can change before 1.0.
 - Document, collection, object, and query watchers with Dart streams.
 - Lazy watchers and `fireImmediately` control for reactive UI flows.
 - In-memory databases for tests and short-lived work.
-- Schema version registration and compatible additive migrations.
-- Explicit migration callbacks for backfills, renames, index rebuilds, and
-  dry-run diagnostics.
+- Schema metadata registration and compatible additive version bumps.
 - Prebuilt native library package for Flutter consumers.
 - Manual backend benchmark harness for SQLite versus MDBX.
 
@@ -62,10 +60,6 @@ The API is still experimental and can change before 1.0.
 - `packages/cindel_generator`: source generator for schemas and serializers.
 - `examples/cindel_todo`: Flutter example app using Cindel like a normal
   application dependency.
-
-Maintainer: Alain Ramirez <nolbertrg@gmail.com>
-
-Repository: <https://github.com/mainser/Cindel>
 
 ## Quickstart
 
@@ -103,10 +97,10 @@ native asset directly with the `hooks.user_defines.cindel.build_native_assets`
 flag in the workspace `pubspec.yaml` when they need to validate the native
 assets path.
 
-MDBX is the default backend for new databases. Existing SQLite database
-directories are not migrated automatically; open them with
-`backend: CindelStorageBackend.sqlite` until the explicit migration helper is
-available.
+MDBX is the default backend for new databases. SQLite remains available through
+`backend: CindelStorageBackend.sqlite` while it stays useful as a secondary
+compatibility backend. Cindel is still pre-1.0, so storage migrations for old
+preview databases are intentionally deferred.
 
 Define a collection:
 
@@ -522,7 +516,7 @@ Watchers emit an initial snapshot by default and then emit again after
 committed changes. Document, collection, and query watchers compare visible
 snapshots, so unchanged visible data is suppressed.
 
-## Schema Versions and Migrations
+## Schema Versions
 
 When schemas are registered during `Cindel.open`, Cindel stores schema metadata
 inside the native database.
@@ -533,53 +527,15 @@ final version = await db.schemaVersion('users');
 
 Compatible additive schema changes advance the collection version. Destructive
 changes such as removing fields, changing field types, changing the id field,
-changing index status, or changing index options are rejected until explicit
-migration support is used.
-
-Pass `migration` when opening a database to transform data before the new schema
-manifest is committed:
-
-```dart
-final db = await Cindel.open(
-  directory: dir.path,
-  schemas: [UserSchema],
-  migration: (migration) async {
-    if ((migration.oldVersion('users') ?? 0) < 2) {
-      await migration.renameField('users', from: 'email', to: 'address');
-      await migration.backfillCollection('users', (id, document) {
-        return {...document, 'active': true};
-      });
-      await migration.rebuildIndexes('users');
-    }
-  },
-);
-```
-
-Migration callbacks run inside a write transaction. If the callback or schema
-registration fails, Cindel rolls back the helper writes and keeps the previous
-schema version. The callback runs whenever it is supplied, so guard one-time
-work with `oldVersion`.
-
-Use dry-run diagnostics to inspect helper operations without applying their
-writes:
-
-```dart
-final report = await Cindel.dryRunMigration(
-  directory: dir.path,
-  schemas: [UserSchema],
-  migration: (migration) async {
-    await migration.renameCollection('old_users', 'users');
-    await migration.rebuildIndexes('users');
-  },
-);
-```
+changing index status, or changing index options are rejected for now. Explicit
+data migration support is deferred until the optimized storage path settles.
 
 ## Benchmarks
 
 Run the backend comparison benchmark:
 
 ```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
 ```
 
 The benchmark prints CSV rows for open, schema registration, indexed writes,
@@ -671,9 +627,7 @@ Validated so far:
 - [x] Native collection revision counters after committed writes.
 - [x] Schema metadata registration and version persistence.
 - [x] In-memory database support for tests and short-lived work.
-- [x] Compatible additive schema migrations.
-- [x] Explicit migration callbacks with backfills, renames, index rebuilds,
-  and dry-run diagnostics.
+- [x] Compatible additive schema version bumps.
 - [x] Rejection of incompatible schema changes.
 - [x] Internal Rust benchmark baseline for SQLite.
 - [x] MDBX default backend with SQLite as an explicit secondary backend.
@@ -693,10 +647,10 @@ Next areas:
 - [x] Full-text search primitives.
 - [x] Embedded objects.
 - [x] Query watchers.
-- [x] Explicit migration callbacks.
+- [ ] Public migration tooling after the optimized storage format stabilizes.
 - [ ] Better native error reporting.
 - [x] Example Flutter application.
-- [ ] Apple and Linux prebuilt native binaries.
+- [ ] Apple prebuilt native binaries.
 - [x] Public package publishing polish for the `0.2.0` package line.
 
 ## License

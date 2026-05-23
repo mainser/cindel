@@ -2,14 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::migration::MigrationAction;
 use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
 };
-use super::{
-    DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMigrationTarget,
-};
+use super::{DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion};
 
 pub(super) fn run_storage_engine_contract<S>(
     backend: &str,
@@ -33,7 +30,7 @@ pub(super) fn run_storage_engine_contract<S>(
     bulk_puts_documents_atomically_and_updates_indexes(backend, &open);
     rolls_back_bulk_put_when_one_document_has_an_invalid_index(backend, &open);
     bulk_deletes_documents_atomically_and_cleans_indexes(backend, &open);
-    exposes_storage_metadata_and_plans_migrations(backend, &open);
+    exposes_storage_metadata(backend, &open);
     rebuilds_indexes_with_supplied_entries(backend, &open);
     verifies_storage_after_index_rebuild(backend, &open);
 }
@@ -162,16 +159,11 @@ fn registers_and_migrates_schema_versions<S>(
         field("email", "String", false, true),
         field("active", "bool?", false, false),
     ])]);
-    let renamed = schema_manifest(vec![user_schema(vec![field(
-        "address", "String", false, true,
-    )])]);
 
     storage.register_schemas(&original).unwrap();
     assert_eq!(storage.schema_version("users").unwrap(), Some(1));
     storage.register_schemas(&expanded).unwrap();
     assert_eq!(storage.schema_version("users").unwrap(), Some(2));
-    storage.register_schemas_after_migration(&renamed).unwrap();
-    assert_eq!(storage.schema_version("users").unwrap(), Some(3));
 }
 
 fn rejects_incompatible_schema_changes<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
@@ -537,49 +529,26 @@ fn bulk_deletes_documents_atomically_and_cleans_indexes<S>(
     assert_eq!(storage.collection_revision("users").unwrap(), 2);
 }
 
-fn exposes_storage_metadata_and_plans_migrations<S>(
-    backend: &str,
-    open: &impl Fn(&str) -> Result<S, String>,
-) where
+fn exposes_storage_metadata<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
     S: StorageEngine,
 {
     let directory = TemporaryDirectory::new(backend, "storage_metadata");
-    let mut storage = open(directory.path()).unwrap();
+    let storage = open(directory.path()).unwrap();
     let metadata = storage.storage_metadata().unwrap();
     let expected_layout = if backend == "sqlite" {
         StorageLayoutVersion::SqliteV1
     } else {
         StorageLayoutVersion::MdbxV1
     };
+    let expected_document_format = if backend == "sqlite" {
+        DocumentFormatVersion::JsonV1
+    } else {
+        DocumentFormatVersion::BinaryV1
+    };
 
     assert_eq!(metadata.layout, expected_layout);
-    assert_eq!(metadata.document_format, DocumentFormatVersion::JsonV1);
-    assert!(
-        !storage
-            .plan_storage_migration(metadata.into())
-            .unwrap()
-            .requires_explicit_migration
-    );
-
-    let target = StorageMigrationTarget {
-        layout: StorageLayoutVersion::MdbxV2,
-        document_format: DocumentFormatVersion::BinaryV1,
-    };
-    let plan = storage.plan_storage_migration(target).unwrap();
-    assert!(plan.requires_explicit_migration);
-    assert!(plan
-        .actions
-        .contains(&MigrationAction::RewriteStorageLayout {
-            from: metadata.layout,
-            to: StorageLayoutVersion::MdbxV2,
-        }));
-    assert!(plan
-        .actions
-        .contains(&MigrationAction::RewriteDocumentFormat {
-            from: DocumentFormatVersion::JsonV1,
-            to: DocumentFormatVersion::BinaryV1,
-        }));
-    assert!(storage.apply_storage_migration(target).is_err());
+    assert_eq!(metadata.document_format, expected_document_format);
 }
 
 fn rebuilds_indexes_with_supplied_entries<S>(

@@ -20,8 +20,7 @@ Set-Location $repoRoot
 cargo build `
   --release `
   --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
-  --target x86_64-pc-windows-msvc `
-  --features mdbx
+  --target x86_64-pc-windows-msvc
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 Copy-Item `

@@ -161,10 +161,10 @@ jobs:
         run: flutter pub get
 
       - name: Build Rust native core with MDBX
-        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Rust tests with MDBX
-        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml --features mdbx
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
       - name: Run Dart tests with MDBX
         run: dart test packages/cindel/test -r expanded

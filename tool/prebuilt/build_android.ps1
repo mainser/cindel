@@ -102,8 +102,7 @@ foreach ($entry in $targets) {
   cargo build `
     --release `
     --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
-    --target $($entry.RustTarget) `
-    --features mdbx
+    --target $($entry.RustTarget)
   if ($LASTEXITCODE -ne 0) {
     throw "Android cargo build failed for $($entry.Abi)"
   }

@@ -2,6 +2,10 @@
 
 use std::ops::Range;
 
+use serde_json::{Map, Number, Value};
+
+use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
+
 const MAGIC: &[u8; 4] = b"CDBF";
 const FORMAT_VERSION: u16 = 1;
 const HEADER_LEN: usize = 24;
@@ -20,6 +24,7 @@ pub(crate) enum BinaryValue {
     List(Vec<Option<BinaryValue>>),
     Enum(String),
     Embedded(Vec<Option<BinaryValue>>),
+    Object(Vec<(String, Option<BinaryValue>)>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,6 +39,7 @@ enum BinaryKind {
     List = 7,
     Enum = 8,
     Embedded = 9,
+    Object = 10,
 }
 
 impl BinaryKind {
@@ -49,6 +55,7 @@ impl BinaryKind {
             7 => Ok(Self::List),
             8 => Ok(Self::Enum),
             9 => Ok(Self::Embedded),
+            10 => Ok(Self::Object),
             _ => Err(format!("unknown binary field kind `{tag}`")),
         }
     }
@@ -178,6 +185,9 @@ impl<'a> BinaryDocument<'a> {
                 let nested = BinaryDocument::parse(self.dynamic_payload(slot)?)?;
                 Ok(Some(BinaryValue::Embedded(nested.decode_all()?)))
             }
+            BinaryKind::Object => Ok(Some(BinaryValue::Object(decode_object(
+                self.dynamic_payload(slot)?,
+            )?))),
             BinaryKind::Null => Ok(None),
         }
     }
@@ -192,9 +202,11 @@ impl<'a> BinaryDocument<'a> {
             BinaryKind::Int | BinaryKind::Double | BinaryKind::DateTime | BinaryKind::Duration => {
                 Ok(Some(self.static_range(slot, 8)?))
             }
-            BinaryKind::String | BinaryKind::List | BinaryKind::Enum | BinaryKind::Embedded => {
-                Ok(Some(self.dynamic_range(slot)?))
-            }
+            BinaryKind::String
+            | BinaryKind::List
+            | BinaryKind::Enum
+            | BinaryKind::Embedded
+            | BinaryKind::Object => Ok(Some(self.dynamic_range(slot)?)),
             BinaryKind::Null => Ok(None),
         }
     }
@@ -304,6 +316,11 @@ pub(crate) fn write_document(fields: &[Option<BinaryValue>]) -> Result<Vec<u8>, 
                 let (offset, len) = push_dynamic(&mut dynamic_section, &bytes)?;
                 slots.push(dynamic_slot(kind, offset, len));
             }
+            BinaryValue::Object(entries) => {
+                let bytes = encode_object(entries)?;
+                let (offset, len) = push_dynamic(&mut dynamic_section, &bytes)?;
+                slots.push(dynamic_slot(kind, offset, len));
+            }
         }
     }
 
@@ -388,6 +405,23 @@ fn encode_list(values: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn encode_object(entries: &[(String, Option<BinaryValue>)]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    push_u32(
+        &mut bytes,
+        checked_u32(entries.len(), "object field count")?,
+    );
+    for (name, value) in entries {
+        push_u32(
+            &mut bytes,
+            checked_u32(name.len(), "object field name length")?,
+        );
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.extend_from_slice(&encode_value_record(value)?);
+    }
+    Ok(bytes)
+}
+
 fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
     let count = read_u32(bytes, 0)? as usize;
     let mut offset = 4;
@@ -399,6 +433,24 @@ fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
         return Err("binary list contains trailing bytes".into());
     }
     Ok(values)
+}
+
+fn decode_object(bytes: &[u8]) -> Result<Vec<(String, Option<BinaryValue>)>, String> {
+    let count = read_u32(bytes, 0)? as usize;
+    let mut offset = 4;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name_len = read_u32(bytes, offset)? as usize;
+        offset += 4;
+        let name = decode_utf8(read_slice(bytes, offset, name_len)?)?;
+        offset += name_len;
+        let value = decode_value_record(bytes, &mut offset)?;
+        entries.push((name, value));
+    }
+    if offset != bytes.len() {
+        return Err("binary object contains trailing bytes".into());
+    }
+    Ok(entries)
 }
 
 fn value_payload(value: &BinaryValue) -> Result<Vec<u8>, String> {
@@ -416,6 +468,7 @@ fn value_payload(value: &BinaryValue) -> Result<Vec<u8>, String> {
         BinaryValue::String(value) | BinaryValue::Enum(value) => Ok(value.as_bytes().to_vec()),
         BinaryValue::List(values) => encode_list(values),
         BinaryValue::Embedded(fields) => write_document(fields),
+        BinaryValue::Object(entries) => encode_object(entries),
     }
 }
 
@@ -433,6 +486,7 @@ fn decode_payload(kind: BinaryKind, payload: &[u8]) -> Result<BinaryValue, Strin
             let nested = BinaryDocument::parse(payload)?;
             Ok(BinaryValue::Embedded(nested.decode_all()?))
         }
+        BinaryKind::Object => Ok(BinaryValue::Object(decode_object(payload)?)),
         BinaryKind::Null => Err("null payload cannot be decoded as a value".into()),
     }
 }
@@ -448,7 +502,319 @@ fn value_kind(value: &BinaryValue) -> BinaryKind {
         BinaryValue::List(_) => BinaryKind::List,
         BinaryValue::Enum(_) => BinaryKind::Enum,
         BinaryValue::Embedded(_) => BinaryKind::Embedded,
+        BinaryValue::Object(_) => BinaryKind::Object,
     }
+}
+
+pub(crate) fn write_json_document(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    let value = serde_json::from_slice::<Value>(bytes).map_err(|error| error.to_string())?;
+    let Value::Object(document) = value else {
+        return Err("binary document storage requires JSON object input".into());
+    };
+    let schema_fields = schema
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if let Some(unknown) = document
+        .keys()
+        .find(|key| !schema_fields.contains(key.as_str()))
+    {
+        return Err(format!(
+            "binary document field `{}` is not declared in schema `{}`",
+            unknown, schema.name
+        ));
+    }
+    let fields = schema
+        .fields
+        .iter()
+        .map(|field| json_field_to_binary(field, document.get(&field.name)))
+        .collect::<Result<Vec<_>, _>>()?;
+    write_document(&fields)
+}
+
+pub(crate) fn read_json_document(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    let document = BinaryDocument::parse(bytes)?;
+    let mut map = Map::new();
+    for (index, field) in schema.fields.iter().enumerate() {
+        if index >= document.field_count() {
+            continue;
+        }
+        let Some(value) = document.field_value(index)? else {
+            continue;
+        };
+        map.insert(field.name.clone(), binary_to_json(Some(&value))?);
+    }
+    serde_json::to_vec(&Value::Object(map)).map_err(|error| error.to_string())
+}
+
+pub(crate) fn index_entries_from_binary_document(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+) -> Result<Vec<IndexEntry>, String> {
+    let document = BinaryDocument::parse(bytes)?;
+    let mut entries = Vec::new();
+    for (index, field) in schema.fields.iter().enumerate() {
+        if !field.is_indexed {
+            continue;
+        }
+        if index >= document.field_count() {
+            continue;
+        }
+        let Some(value) = document.field_value(index)? else {
+            continue;
+        };
+        if field.index_type == "words" {
+            let BinaryValue::String(text) = value else {
+                return Err(format!(
+                    "word index `{}.{}` requires a string value",
+                    schema.name, field.name
+                ));
+            };
+            for token in split_words(&text, field.index_case_sensitive) {
+                entries.push(IndexEntry {
+                    name: field.name.clone(),
+                    value: IndexValue::String(token),
+                });
+            }
+            continue;
+        }
+        let mut index_value = binary_to_index_value(field, &value)?;
+        if field.index_type == "hash" {
+            index_value = IndexValue::Int(stable_hash(&stable_index_json(&index_value)?));
+        }
+        entries.push(IndexEntry {
+            name: field.name.clone(),
+            value: index_value,
+        });
+    }
+    Ok(entries)
+}
+
+fn json_field_to_binary(
+    field: &FieldSchemaManifest,
+    value: Option<&Value>,
+) -> Result<Option<BinaryValue>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let normalized = non_nullable_type(&field.dart_type);
+    match normalized {
+        "bool" => value
+            .as_bool()
+            .map(BinaryValue::Bool)
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be a bool", field.name)),
+        "int" => value
+            .as_i64()
+            .map(BinaryValue::Int)
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be an int", field.name)),
+        "double" => value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(BinaryValue::Double)
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be a finite double", field.name)),
+        "String" => value
+            .as_str()
+            .map(|value| BinaryValue::String(value.to_string()))
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be a string", field.name)),
+        "DateTime" => value
+            .as_i64()
+            .map(BinaryValue::DateTimeMicros)
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be DateTime microseconds", field.name)),
+        "Duration" => value
+            .as_i64()
+            .map(BinaryValue::DurationMicros)
+            .map(Some)
+            .ok_or_else(|| format!("field `{}` must be Duration microseconds", field.name)),
+        _ => json_to_binary_auto(value).map(Some),
+    }
+}
+
+fn json_to_binary_auto(value: &Value) -> Result<BinaryValue, String> {
+    match value {
+        Value::Null => Err("null must be represented outside BinaryValue".into()),
+        Value::Bool(value) => Ok(BinaryValue::Bool(*value)),
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(BinaryValue::Int(value))
+            } else if let Some(value) = value.as_f64().filter(|value| value.is_finite()) {
+                Ok(BinaryValue::Double(value))
+            } else {
+                Err("JSON number cannot be represented as a finite binary value".into())
+            }
+        }
+        Value::String(value) => Ok(BinaryValue::String(value.clone())),
+        Value::Array(values) => Ok(BinaryValue::List(
+            values
+                .iter()
+                .map(|value| {
+                    if value.is_null() {
+                        Ok(None)
+                    } else {
+                        json_to_binary_auto(value).map(Some)
+                    }
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+        Value::Object(values) => {
+            let mut entries = values
+                .iter()
+                .map(|(name, value)| {
+                    let value = if value.is_null() {
+                        None
+                    } else {
+                        Some(json_to_binary_auto(value)?)
+                    };
+                    Ok((name.clone(), value))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            Ok(BinaryValue::Object(entries))
+        }
+    }
+}
+
+fn binary_to_json(value: Option<&BinaryValue>) -> Result<Value, String> {
+    let Some(value) = value else {
+        return Ok(Value::Null);
+    };
+    match value {
+        BinaryValue::Bool(value) => Ok(Value::Bool(*value)),
+        BinaryValue::Int(value)
+        | BinaryValue::DateTimeMicros(value)
+        | BinaryValue::DurationMicros(value) => Ok(Value::Number(Number::from(*value))),
+        BinaryValue::Double(value) => Number::from_f64(*value)
+            .map(Value::Number)
+            .ok_or_else(|| "binary double cannot be represented in JSON".to_string()),
+        BinaryValue::String(value) | BinaryValue::Enum(value) => Ok(Value::String(value.clone())),
+        BinaryValue::List(values) => Ok(Value::Array(
+            values
+                .iter()
+                .map(|value| binary_to_json(value.as_ref()))
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+        BinaryValue::Embedded(fields) => Ok(Value::Array(
+            fields
+                .iter()
+                .map(|value| binary_to_json(value.as_ref()))
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+        BinaryValue::Object(entries) => {
+            let mut map = Map::new();
+            for (name, value) in entries {
+                map.insert(name.clone(), binary_to_json(value.as_ref())?);
+            }
+            Ok(Value::Object(map))
+        }
+    }
+}
+
+fn binary_to_index_value(
+    field: &FieldSchemaManifest,
+    value: &BinaryValue,
+) -> Result<IndexValue, String> {
+    let normalized = non_nullable_type(&field.dart_type);
+    match (normalized, value) {
+        ("bool", BinaryValue::Bool(value)) => Ok(IndexValue::Bool(*value)),
+        ("int", BinaryValue::Int(value))
+        | ("DateTime", BinaryValue::DateTimeMicros(value))
+        | ("Duration", BinaryValue::DurationMicros(value)) => Ok(IndexValue::Int(*value)),
+        ("double", BinaryValue::Double(value)) if value.is_finite() => {
+            Ok(IndexValue::Double(*value))
+        }
+        ("String", BinaryValue::String(value)) => Ok(IndexValue::String(indexed_string(
+            value,
+            field.index_case_sensitive,
+        ))),
+        (_, BinaryValue::Bool(value)) => Ok(IndexValue::Bool(*value)),
+        (_, BinaryValue::Int(value))
+        | (_, BinaryValue::DateTimeMicros(value))
+        | (_, BinaryValue::DurationMicros(value)) => Ok(IndexValue::Int(*value)),
+        (_, BinaryValue::Double(value)) if value.is_finite() => Ok(IndexValue::Double(*value)),
+        (_, BinaryValue::String(value)) | (_, BinaryValue::Enum(value)) => Ok(IndexValue::String(
+            indexed_string(value, field.index_case_sensitive),
+        )),
+        _ => Err(format!(
+            "field `{}` cannot be represented as an index value",
+            field.name
+        )),
+    }
+}
+
+fn indexed_string(value: &str, case_sensitive: bool) -> String {
+    if case_sensitive {
+        value.to_string()
+    } else {
+        value.to_lowercase()
+    }
+}
+
+fn non_nullable_type(dart_type: &str) -> &str {
+    dart_type.strip_suffix('?').unwrap_or(dart_type)
+}
+
+fn split_words(text: &str, case_sensitive: bool) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if character.is_alphanumeric() {
+            if case_sensitive {
+                current.push(character);
+            } else {
+                current.extend(character.to_lowercase());
+            }
+        } else if !current.is_empty() {
+            if seen.insert(current.clone()) {
+                tokens.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if !current.is_empty() && seen.insert(current.clone()) {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn stable_index_json(value: &IndexValue) -> Result<String, String> {
+    let json = match value {
+        IndexValue::Bool(value) => serde_json::json!({"type": "bool", "value": value}),
+        IndexValue::Int(value) => serde_json::json!({"type": "int", "value": value}),
+        IndexValue::Double(value) if value.is_finite() => {
+            serde_json::json!({"type": "double", "value": value})
+        }
+        IndexValue::Double(_) => return Err("hash index double values must be finite".into()),
+        IndexValue::String(value) => serde_json::json!({"type": "string", "value": value}),
+    };
+    serde_json::to_string(&json).map_err(|error| error.to_string())
+}
+
+fn stable_hash(value: &str) -> i64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    const MASK: u64 = 0x7fff_ffff_ffff_ffff;
+    let mut hash = OFFSET_BASIS;
+    for code_unit in value.encode_utf16() {
+        hash ^= u64::from(code_unit);
+        hash = hash.wrapping_mul(PRIME) & MASK;
+    }
+    hash as i64
 }
 
 fn static_slot(kind: BinaryKind, static_offset: u32) -> FieldSlot {
