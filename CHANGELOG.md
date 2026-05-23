@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.3
+
+- Added the first native binary document format prototype.
+- Documented the planned versioned object layout with field slots, static and
+  dynamic sections, null encoding, and maximum object size limits.
+- Added native tests proving supported field shapes can round-trip without JSON
+  and that a single field can be read by offset without decoding the whole
+  document.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
 ## 0.2.2
 
 - Added an internal MDBX layout prototype for performance benchmarking.

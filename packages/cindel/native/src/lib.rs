@@ -1,5 +1,6 @@
 #[doc(hidden)]
 pub mod benchmark;
+mod document_format;
 mod engine;
 mod ffi;
 mod storage;

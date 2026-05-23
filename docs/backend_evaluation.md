@@ -619,6 +619,32 @@ Decision:
 - No custom build patches or platform-specific hacks were added for this
   prototype.
 
+## Binary Document Format Prototype
+
+Cindel now has an internal native prototype for a versioned binary document
+format. The format is documented in `docs/binary_document_format.md`.
+
+The prototype uses:
+
+- a magic/versioned header,
+- fixed-size field slots,
+- a static section for bool, int, double, DateTime, and Duration values,
+- a dynamic section for strings, lists, enums, and embedded objects,
+- explicit null flags,
+- a 64 MiB maximum object size.
+
+The prototype is not connected to storage yet. It exists to prove that Cindel
+can move generated typed documents away from JSON while preserving one-field
+offset reads for future native index extraction, filtering, sorting, and
+projection work.
+
+Validated behavior:
+
+- Supported field shapes round-trip without JSON.
+- One fixed field can be read by offset without decoding unrelated dynamic
+  payloads.
+- Invalid headers and non-finite doubles are rejected.
+
 ## Benchmark Baseline
 
 The backend comparison benchmark is implemented as an internal Rust binary:

@@ -327,7 +327,7 @@ Guiding rules:
   - Prototype per-collection and per-index MDBX databases.
   - Compare the current global-table layout against the v2 layout for writes,
     reads, indexed queries, deletes, and database size.
-- [ ] PERF-04: Versioned binary document format design.
+- [x] PERF-04: Versioned binary document format design.
   - Design a generated binary object format with field offsets, null encoding,
     dynamic sections, and support for current Cindel field types.
   - Prove one-field reads without full document decode.

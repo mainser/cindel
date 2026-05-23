@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3
+
+- Added an internal native binary document format prototype.
+- Documented the planned versioned object layout for future generated
+  serializers.
+- Added native tests for round-tripping supported field shapes without JSON and
+  reading one field by offset without full document decoding.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
 ## 0.2.2
 
 - Added an internal MDBX layout prototype for native performance benchmarks.
