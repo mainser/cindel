@@ -145,9 +145,9 @@ Small, focused pull requests are preferred.
 
 ## Publishing Preparation
 
-Cindel is not published yet. The repository root stays private to pub.dev with
-`publish_to: none`; individual packages will be prepared and published in a
-controlled order when the API is ready.
+Cindel is published as individual packages. The repository root stays private
+to pub.dev with `publish_to: none`; publish from each package directory in the
+controlled dependency order.
 
 Before any package publication:
 
@@ -156,6 +156,10 @@ Before any package publication:
 - Replace local path dependencies with hosted version constraints.
 - Run `dart pub publish --dry-run` from the package directory and inspect the
   file list.
+- Run the dry-run from a clean git state; pub.dev reports modified checked-in
+  files as a package warning.
+- Publish in this order:
+  `cindel_annotations`, `cindel_flutter_libs`, `cindel_generator`, `cindel`.
 
 ## Commit Messages
 

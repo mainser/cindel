@@ -6,6 +6,10 @@
   native ABI 9 with native aggregate query support.
 - Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
   default backend.
+- Declared Linux in Flutter plugin metadata and included `linux/` in pub.dev
+  publication archives.
+- Completed Windows, Android, and Linux prebuilt validation for the optimized
+  MDBX storage release.
 
 ## 0.2.12
 

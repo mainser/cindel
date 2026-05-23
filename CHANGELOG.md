@@ -13,6 +13,10 @@ while the core design settles.
 - Kept SQLite aggregate behavior compatible through the existing Dart/JSON
   fallback paths.
 - Added native aggregate benchmark workloads and bumped the native ABI to 9.
+- Declared Linux in package platform metadata and included the Linux runtime
+  library in `cindel_flutter_libs` publication archives.
+- Completed release hardening for the optimized MDBX storage path with Rust,
+  Dart, Flutter, build, prebuilt, benchmark, and pub.dev dry-run validation.
 - Updated `cindel` and `cindel_flutter_libs` to `0.2.13`.
 
 ## 0.2.12

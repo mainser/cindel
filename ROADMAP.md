@@ -401,12 +401,12 @@ Guiding rules:
     enough to 1.0 to preserve external user data.
   - Rebuild indexes and verify counts, schemas, revisions, and selected
     queries.
-- [ ] PERF-17: Release hardening for optimized storage.
-  - Run full Dart and focused SQLite compatibility suites.
-  - Regenerate Windows, Android, and Linux prebuilt binaries if native symbols
-    change.
-  - Validate Windows, Android, and Linux smoke/prebuilt flows before making the
-    optimized path the default.
+- [x] PERF-17: Release hardening for optimized storage.
+  - Ran Rust, Dart, Flutter, Windows, Android, Linux prebuilt, benchmark, and
+    pub.dev dry-run validation for the optimized MDBX path.
+  - Confirmed SQLite remains selectable and behavior-compatible.
+  - Declared Linux in package platform metadata and ensured Linux runtime files
+    are included in the `cindel_flutter_libs` pub.dev archive.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -434,7 +434,11 @@ Guiding rules:
   - Changelogs.
   - Package-level README and LICENSE files.
   - Hosted dependency constraints for publishable packages.
-- [ ] `dart pub publish --dry-run` validation for every publishable package.
+- [x] `dart pub publish --dry-run` validation for every publishable package.
+  - `cindel_annotations` validated with 0 warnings.
+  - `cindel_generator` validated with 0 warnings and a version-jump hint.
+  - `cindel` and `cindel_flutter_libs` archives were produced; rerun from a
+    clean commit before publishing to clear pub.dev's modified-file warning.
 - [ ] Pub score polish after pub.dev re-analysis.
 
 ## Quality Goals

@@ -9,6 +9,9 @@
 - Kept SQLite behavior compatible through fallback aggregate evaluation.
 - Added FFI bindings for native aggregate queries and bumped the native ABI to
   9.
+- Declared Linux in pub.dev platform metadata now that Linux prebuilt
+  generation is part of release validation.
+- Completed release hardening for the optimized MDBX default storage path.
 
 ## 0.2.12
 

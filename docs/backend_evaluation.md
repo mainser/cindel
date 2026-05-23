@@ -722,6 +722,53 @@ Measured operations:
 - Batch indexed writes.
 - Batch deletes.
 
+## PERF-17 Release Hardening Snapshot
+
+The optimized MDBX path was release-hardened after native property aggregates
+landed in ABI 9. The validation pass kept MDBX as the default backend, kept
+SQLite explicitly selectable, and aligned package metadata with the current
+Android, Windows, and Linux prebuilt binaries.
+
+Validation summary:
+
+- Rust format check: clean.
+- Rust default/native test suite: `59 passed`.
+- Rust SQLite-only test suite with `--no-default-features`: `44 passed`.
+- Dart workspace analyzer: no issues.
+- Dart package suite with explicit MDBX: `85 passed`.
+- Dart package suite with explicit SQLite: `82 passed`, `3 skipped` MDBX-only
+  tests.
+- Flutter plugin analyzer for `cindel_flutter_libs`: no issues.
+- Todo example analyzer: no issues.
+- Todo example tests: `9 passed`.
+- Windows release build produced `cindel_todo.exe`.
+- Android release build produced `app-release.apk`.
+- Linux prebuilt generation through WSL produced `linux/libcindel_native.so`.
+- Pub dry-runs validated package archives. The only remaining warning during
+  this local pass is pub.dev's clean-git warning while release-hardening edits
+  are uncommitted; rerun from a clean commit before publishing.
+
+Release benchmark smoke, Windows, release mode, 1000 documents and 100 query
+repeats:
+
+| Operation | SQLite total ms | MDBX total ms | MDBX ratio |
+| --- | ---: | ---: | ---: |
+| `put_indexed` | 3530.370 | 794.596 | 4.44x |
+| `query_equal` | 14.876 | 0.717 | 20.75x |
+| `query_range` | 17.913 | 1.207 | 14.85x |
+| `query_composite_equal` | 17.301 | 0.537 | 32.23x |
+| `query_multi_entry` | 45.304 | 3.290 | 13.77x |
+| `aggregate_score_average` | 539.585 | 46.149 | 11.69x |
+| `aggregate_name_max` | 545.026 | 50.558 | 10.78x |
+| `put_many_indexed` | 771.917 | 71.836 | 10.75x |
+| `delete_many` | 716.534 | 25.885 | 27.68x |
+
+Point `get` remains faster on SQLite in this small smoke sample, while
+`get_many` is faster on MDBX. The current default-backend decision still favors
+MDBX because the optimized path wins decisively on indexed writes, indexed
+queries, aggregates, batch writes, and deletes, which are the critical paths
+for generated Cindel workloads.
+
 ## Adoption Gate
 
 MDBX was promoted to the default backend after satisfying these gates:
