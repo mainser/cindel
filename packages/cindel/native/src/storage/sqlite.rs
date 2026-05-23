@@ -7,6 +7,7 @@ use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
 };
+use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
 
 pub struct SqliteStorage {
     connection: Connection,
@@ -75,14 +76,9 @@ impl SqliteStorage {
                     schema_json TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    collection TEXT NOT NULL,
-                    from_version INTEGER NOT NULL,
-                    to_version INTEGER NOT NULL,
-                    from_schema_json TEXT NOT NULL,
-                    to_schema_json TEXT NOT NULL,
-                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS storage_metadata (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
@@ -97,7 +93,12 @@ impl SqliteStorage {
                 );
                 "#,
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        ensure_storage_metadata(
+            &self.connection,
+            StorageLayoutVersion::SqliteV1,
+            DocumentFormatVersion::JsonV1,
+        )
     }
 }
 
@@ -377,11 +378,7 @@ impl StorageEngine for SqliteStorage {
         self.ensure_can_write()?;
         if self.active_transaction.is_some() {
             for collection in &manifest.collections {
-                register_collection_schema(
-                    &self.connection,
-                    collection,
-                    SchemaRegistrationMode::Compatible,
-                )?;
+                register_collection_schema(&self.connection, collection)?;
             }
             return Ok(());
         }
@@ -392,44 +389,7 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())?;
 
         for collection in &manifest.collections {
-            register_collection_schema(
-                &transaction,
-                collection,
-                SchemaRegistrationMode::Compatible,
-            )?;
-        }
-
-        transaction.commit().map_err(|error| error.to_string())
-    }
-
-    fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        validate_schema_manifest(manifest)?;
-        self.ensure_can_write()?;
-        if self.active_transaction.is_some() {
-            for collection in &manifest.collections {
-                register_collection_schema(
-                    &self.connection,
-                    collection,
-                    SchemaRegistrationMode::ExplicitMigration,
-                )?;
-            }
-            return Ok(());
-        }
-
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-
-        for collection in &manifest.collections {
-            register_collection_schema(
-                &transaction,
-                collection,
-                SchemaRegistrationMode::ExplicitMigration,
-            )?;
+            register_collection_schema(&transaction, collection)?;
         }
 
         transaction.commit().map_err(|error| error.to_string())
@@ -447,6 +407,28 @@ impl StorageEngine for SqliteStorage {
             .map(u64::try_from)
             .transpose()
             .map_err(|error| error.to_string())
+    }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        read_storage_metadata(&self.connection)
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            return rebuild_indexes_on_connection(&self.connection, collection, documents);
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        rebuild_indexes_on_connection(&transaction, collection, documents)?;
+        transaction.commit().map_err(|error| error.to_string())
     }
 }
 
@@ -586,6 +568,51 @@ fn delete_index_entries(connection: &Connection, collection: &str, id: i64) -> R
         .map_err(|error| error.to_string())
 }
 
+#[allow(dead_code)]
+fn rebuild_indexes_on_connection(
+    connection: &Connection,
+    collection: &str,
+    documents: &[DocumentWrite],
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM index_entries WHERE collection = ?1",
+            params![collection],
+        )
+        .map_err(|error| error.to_string())?;
+    for document in documents {
+        let id = sqlite_id(document.id)?;
+        ensure_document_exists(connection, collection, id)?;
+        enforce_unique_indexes(connection, collection, id, &document.indexes)?;
+        insert_index_entries(connection, collection, id, &document.indexes)?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn ensure_document_exists(
+    connection: &Connection,
+    collection: &str,
+    id: i64,
+) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM documents WHERE collection = ?1 AND id = ?2",
+            params![collection, id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot rebuild indexes for missing document `{collection}`.`{id}`"
+        ))
+    }
+}
+
 fn enforce_unique_indexes(
     connection: &Connection,
     collection: &str,
@@ -681,6 +708,71 @@ fn insert_index_entries(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn ensure_storage_metadata(
+    connection: &Connection,
+    layout: StorageLayoutVersion,
+    document_format: DocumentFormatVersion,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
+            params!["storage_layout", layout.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
+            params!["document_format", document_format.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, String> {
+    let layout = connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'storage_layout'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| StorageLayoutVersion::SqliteV1.as_str().to_string());
+    let document_format = connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'document_format'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| DocumentFormatVersion::JsonV1.as_str().to_string());
+    Ok(StorageMetadata {
+        layout: parse_storage_layout(&layout)?,
+        document_format: parse_document_format(&document_format)?,
+    })
+}
+
+#[allow(dead_code)]
+fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
+    match value {
+        "sqlite-v1" => Ok(StorageLayoutVersion::SqliteV1),
+        "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
+        "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
+        _ => Err(format!("unknown storage layout version `{value}`")),
+    }
+}
+
+#[allow(dead_code)]
+fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
+    match value {
+        "json-v1" => Ok(DocumentFormatVersion::JsonV1),
+        "binary-v1" => Ok(DocumentFormatVersion::BinaryV1),
+        _ => Err(format!("unknown document format version `{value}`")),
+    }
 }
 
 fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<(), String> {
@@ -796,16 +888,9 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SchemaRegistrationMode {
-    Compatible,
-    ExplicitMigration,
-}
-
 fn register_collection_schema(
     connection: &Connection,
     collection: &CollectionSchemaManifest,
-    mode: SchemaRegistrationMode,
 ) -> Result<(), String> {
     let next_schema_json = canonical_schema_json(collection)?;
     let existing = connection
@@ -851,9 +936,7 @@ fn register_collection_schema(
             .map_err(|error| error.to_string())?;
         return Ok(());
     }
-    if mode == SchemaRegistrationMode::Compatible {
-        validate_compatible_schema_change(&existing_schema, collection)?;
-    }
+    validate_compatible_schema_change(&existing_schema, collection)?;
 
     let next_version = version + 1;
     connection
@@ -866,28 +949,7 @@ fn register_collection_schema(
             params![collection.name, next_version, next_schema_json],
         )
         .map_err(|error| error.to_string())?;
-    connection
-        .execute(
-            r#"
-            INSERT INTO schema_migrations (
-                collection,
-                from_version,
-                to_version,
-                from_schema_json,
-                to_schema_json
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            "#,
-            params![
-                collection.name,
-                version,
-                next_version,
-                schema_json,
-                next_schema_json,
-            ],
-        )
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    Ok(())
 }
 
 fn canonical_schema_json(collection: &CollectionSchemaManifest) -> Result<String, String> {
@@ -946,7 +1008,7 @@ fn validate_compatible_field(
     }
     if existing.is_indexed != next.is_indexed {
         return Err(format!(
-            "schema field `{}.{}` cannot change index status without an explicit migration",
+            "schema field `{}.{}` cannot change index status until public migration tooling exists",
             collection.name, existing.name
         ));
     }
@@ -955,7 +1017,7 @@ fn validate_compatible_field(
         || existing.index_type != next.index_type
     {
         return Err(format!(
-            "schema field `{}.{}` cannot change index options without an explicit migration",
+            "schema field `{}.{}` cannot change index options until public migration tooling exists",
             collection.name, existing.name
         ));
     }
@@ -1383,7 +1445,7 @@ mod tests {
         // Scenario: A schema adds a new persisted field.
         // Covers:
         // - Additive schema compatibility validation.
-        // - Schema version increments after a compatible migration.
+        // - Schema version increments after a compatible additive update.
         // Expected: Re-registering the expanded schema advances to version 2.
 
         // Arrange.
@@ -1434,34 +1496,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_incompatible_schema_after_explicit_migration() {
-        // Scenario: A Dart migration has already transformed stored documents.
-        // Covers:
-        // - Explicit migration schema registration bypassing compatibility
-        //   checks.
-        // - Schema version advancement after a field rename.
-        // Expected: The new schema is committed at the next version.
-
-        // Arrange.
-        let directory = TemporaryDirectory::new("schema_explicit_migration");
-        let mut storage = SqliteStorage::open(directory.path()).unwrap();
-        let original = schema_manifest(vec![user_schema(vec![field(
-            "email", "String", false, true,
-        )])]);
-        let renamed = schema_manifest(vec![user_schema(vec![field(
-            "address", "String", false, true,
-        )])]);
-
-        // Act.
-        storage.register_schemas(&original).unwrap();
-        storage.register_schemas_after_migration(&renamed).unwrap();
-        let version = storage.schema_version("users").unwrap();
-
-        // Assert.
-        assert_eq!(version, Some(2));
-    }
-
-    #[test]
     fn persists_index_variant_metadata_in_schemas() {
         // Scenario: A schema declares unique, case-insensitive, and hash index
         // options.
@@ -1499,8 +1533,8 @@ mod tests {
         // Covers:
         // - Index option compatibility validation.
         // - Existing schema version preservation after rejection.
-        // Expected: Changing index options requires a future explicit
-        // migration.
+        // Expected: Changing index options waits for future public migration
+        // tooling.
 
         // Arrange.
         let directory = TemporaryDirectory::new("schema_index_option_change");

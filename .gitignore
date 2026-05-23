@@ -25,6 +25,7 @@ target/
 # Local planning scratchpad
 cindel_steps.txt
 docs/pubdev_publication_plan.md
+docs/local_benchmarks/
 examples/cindel_todo/pubspec_overrides.yaml
 tool/benchmark/
 

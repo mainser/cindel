@@ -3,12 +3,21 @@ mod contract_tests;
 #[cfg(feature = "mdbx")]
 mod mdbx;
 mod mdbx_key;
+#[cfg(feature = "benchmarks")]
+mod mdbx_layout_v2;
+mod metadata;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
+#[cfg(feature = "benchmarks")]
+pub(crate) use mdbx_layout_v2::MdbxLayoutV2Storage;
+pub use metadata::{
+    DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMetadata,
+    StorageVerificationReport,
+};
 pub use sqlite::SqliteStorage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,13 +43,13 @@ impl StorageBackend {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct IndexEntry {
     pub name: String,
     pub value: IndexValue,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub enum IndexValue {
     Bool(bool),
     Int(i64),
@@ -89,6 +98,7 @@ fn default_index_type() -> String {
     "value".to_string()
 }
 
+#[allow(dead_code)]
 pub trait StorageEngine {
     fn begin_read_transaction(&mut self) -> Result<(), String>;
     fn begin_write_transaction(&mut self) -> Result<(), String>;
@@ -97,6 +107,16 @@ pub trait StorageEngine {
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String>;
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String>;
+    fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        self.get(collection, id)
+    }
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        self.get_many(collection, ids)
+    }
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
     fn put_indexed(
@@ -126,11 +146,32 @@ pub trait StorageEngine {
         lower: Option<&IndexValue>,
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String>;
+    fn query_filter(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        filter: &[u8],
+    ) -> Result<Vec<u64>, String> {
+        let _ = (collection, candidate_ids, filter);
+        Err("native filters are not supported by this storage backend".into())
+    }
     fn collection_revision(&self, collection: &str) -> Result<u64, String>;
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
-    fn register_schemas_after_migration(&mut self, manifest: &SchemaManifest)
-        -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
+    fn storage_metadata(&self) -> Result<StorageMetadata, String>;
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String>;
+
+    fn verify_storage(
+        &self,
+        manifest: &SchemaManifest,
+        checks: &[IndexVerificationCheck],
+    ) -> Result<StorageVerificationReport, String> {
+        StorageVerificationReport::from_storage(self, manifest, checks)
+    }
 }
 
 impl StorageEngine for StorageBackend {
@@ -187,6 +228,26 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.get_many(collection, ids),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.get_many(collection, ids),
+        }
+    }
+
+    fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.get_stored(collection, id),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.get_stored(collection, id),
+        }
+    }
+
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.get_many_stored(collection, ids),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.get_many_stored(collection, ids),
         }
     }
 
@@ -275,6 +336,19 @@ impl StorageEngine for StorageBackend {
         }
     }
 
+    fn query_filter(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        filter: &[u8],
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_filter(collection, candidate_ids, filter),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_filter(collection, candidate_ids, filter),
+        }
+    }
+
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         match self {
             Self::Sqlite(storage) => storage.collection_revision(collection),
@@ -291,22 +365,31 @@ impl StorageEngine for StorageBackend {
         }
     }
 
-    fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        match self {
-            Self::Sqlite(storage) => storage.register_schemas_after_migration(manifest),
-            #[cfg(feature = "mdbx")]
-            Self::Mdbx(storage) => storage.register_schemas_after_migration(manifest),
-        }
-    }
-
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         match self {
             Self::Sqlite(storage) => storage.schema_version(collection),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.schema_version(collection),
+        }
+    }
+
+    fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        match self {
+            Self::Sqlite(storage) => storage.storage_metadata(),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.storage_metadata(),
+        }
+    }
+
+    fn rebuild_indexes(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+    ) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.rebuild_indexes(collection, documents),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.rebuild_indexes(collection, documents),
         }
     }
 }

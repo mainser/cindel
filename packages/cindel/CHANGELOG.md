@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.2.7
+
+- Added native MDBX filtering for generated Cindel filter predicates over
+  binary document bytes.
+- Routed supported generated `filter()` and `where().filter()` queries through
+  native filtering on MDBX, with the existing Dart filter path retained for
+  SQLite and custom predicates.
+- Added FFI bindings for native filter queries and bumped the native ABI to 7.
+
+## 0.2.6
+
+- Added generated binary document callbacks to collection schemas.
+- Added MDBX typed collection write and read paths that use Cindel binary
+  document bytes instead of JSON map decoding.
+- Added FFI bindings for raw stored document reads and bumped the native ABI to
+  6.
+- Kept SQLite available on the existing JSON document path.
+- Updated the development generator dependency constraint to the `0.2.2`
+  release line.
+
+## 0.2.5
+
+- Switched MDBX schema-backed document storage to Cindel's native binary
+  document format.
+- MDBX now derives index entries from binary document bytes for generated
+  schema collections.
+- Made schema-backed MDBX writes strict: unknown fields are rejected instead of
+  falling back to JSON.
+- Removed the public migration callback and dry-run APIs while Cindel remains
+  pre-1.0 and the optimized storage format is still settling.
+- Made MDBX part of the default native Cargo build while keeping SQLite
+  compiled as an explicit secondary backend.
+- Moved the native benchmark and experimental MDBX layout prototype behind the
+  `benchmarks` Cargo feature so production builds stay smaller.
+- Updated the native MDBX default path so the Rust engine opens MDBX by default
+  when the native library is compiled with MDBX support.
+- Bumped the native ABI to 5 for the migration API cleanup.
+
+## 0.2.4
+
+- Added internal storage metadata for layout and document format versions.
+- Added native storage verification helpers for layout, document-format, and
+  index metadata.
+- Kept the public Dart API, production storage behavior, and native binary
+  symbols unchanged.
+
+## 0.2.3
+
+- Added an internal native binary document format prototype.
+- Documented the planned versioned object layout for future generated
+  serializers.
+- Added native tests for round-tripping supported field shapes without JSON and
+  reading one field by offset without full document decoding.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
+## 0.2.2
+
+- Added an internal MDBX layout prototype for native performance benchmarks.
+- Added a benchmark backend that compares SQLite, the current MDBX layout, and
+  the layout prototype with the same workload.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
+## 0.2.1
+
+- Added an internal MDBX index abstraction boundary for key creation, unique
+  checks, index replacement, deletion, collection clearing, and index stats.
+- Kept the existing MDBX storage layout and public Dart API unchanged.
+- Updated the development generator dependency constraint to the `0.2.1`
+  release line.
+
 ## 0.2.0
 
 - Prepared the Cindel API package for the coordinated `0.2.0` release line.

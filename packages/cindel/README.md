@@ -2,12 +2,7 @@
 
 Ultra-fast, lightweight NoSQL local database API for Flutter and Dart apps.
 Cindel provides typed collections, generated schemas, indexed queries,
-transactions, watchers, migrations, and a compact Rust native runtime behind
-Dart FFI.
-
-Maintainer: Alain Ramirez <nolbertrg@gmail.com>
-
-Repository: <https://github.com/mainser/Cindel>
+transactions, watchers, and a compact Rust native runtime behind Dart FFI.
 
 ## Usage
 
@@ -73,7 +68,7 @@ final db = await Cindel.open(
 
 Existing SQLite database directories are not migrated automatically by the
 default switch. Open them with `backend: CindelStorageBackend.sqlite` until an
-explicit migration helper is available.
+explicit migration helper exists in a later release.
 
 ## Features
 
@@ -85,15 +80,15 @@ explicit migration helper is available.
 - Explicit read and write transactions.
 - Document, collection, object, query, and lazy watchers.
 - Embedded objects and embedded object lists.
-- Schema versions, additive migrations, and explicit migration callbacks.
+- Schema versions and compatible additive schema updates.
 
 ## Supported Platforms
 
-The current release ships prebuilt native binaries for Android and Windows
-through `cindel_flutter_libs`.
+The current release ships prebuilt native binaries for Android, Windows, and
+Linux through `cindel_flutter_libs`.
 
-iOS, macOS, and Linux support are planned, but they are not advertised as
-available until their native binaries are generated and validated.
+iOS and macOS support are planned, but they are not advertised as available
+until their native binaries are generated and validated.
 
 ## Release Status
 

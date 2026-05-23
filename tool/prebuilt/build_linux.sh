@@ -23,8 +23,7 @@ cd "${REPO_ROOT}"
 cargo build \
   --release \
   --manifest-path "${NATIVE_DIR}/Cargo.toml" \
-  --target "${TARGET}" \
-  --features mdbx
+  --target "${TARGET}"
 
 mkdir -p "${OUT_DIR}"
 cp "${TARGET_DIR}/${TARGET}/release/libcindel_native.so" \

@@ -3,10 +3,6 @@
 Source generator for Cindel schemas, serializers, typed collections, query
 builders, filters, projections, and watcher helpers.
 
-Maintainer: Alain Ramirez <nolbertrg@gmail.com>
-
-Repository: <https://github.com/mainser/Cindel>
-
 ## Usage
 
 ```yaml

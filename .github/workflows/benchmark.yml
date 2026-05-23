@@ -50,7 +50,7 @@ jobs:
         run: |
           cargo +${{ env.RUST_TOOLCHAIN }} run --release --locked \
             --manifest-path packages/cindel/native/Cargo.toml \
-            --features mdbx \
+            --features benchmarks \
             --bin cindel_bench \
             -- \
             --backend all \

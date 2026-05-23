@@ -9,7 +9,14 @@ pub struct CindelEngine {
 
 impl CindelEngine {
     pub fn open(directory: &str) -> Result<Self, String> {
-        Self::open_with_backend(directory, StorageBackendKind::Sqlite)
+        #[cfg(feature = "mdbx")]
+        {
+            Self::open_with_backend(directory, StorageBackendKind::Mdbx)
+        }
+        #[cfg(not(feature = "mdbx"))]
+        {
+            Self::open_with_backend(directory, StorageBackendKind::Sqlite)
+        }
     }
 
     pub fn open_with_backend(directory: &str, backend: StorageBackendKind) -> Result<Self, String> {
@@ -24,6 +31,18 @@ impl CindelEngine {
 
     pub fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
         self.storage.get_many(collection, ids)
+    }
+
+    pub fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
+        self.storage.get_stored(collection, id)
+    }
+
+    pub fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        self.storage.get_many_stored(collection, ids)
     }
 
     pub fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
@@ -100,19 +119,21 @@ impl CindelEngine {
             .query_index_range(collection, index, lower, upper)
     }
 
+    pub fn query_filter(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        filter: &[u8],
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_filter(collection, candidate_ids, filter)
+    }
+
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
     }
 
     pub fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
         self.storage.register_schemas(manifest)
-    }
-
-    pub fn register_schemas_after_migration(
-        &mut self,
-        manifest: &SchemaManifest,
-    ) -> Result<(), String> {
-        self.storage.register_schemas_after_migration(manifest)
     }
 
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
@@ -157,8 +178,7 @@ mod tests {
         // Covers:
         // - The Rust-side backend option can be selected internally.
         // - Basic read/write behavior through the [StorageBackend] enum.
-        // Expected: Selecting MDBX succeeds without changing the default
-        //   SQLite FFI backend.
+        // Expected: Selecting MDBX succeeds through the default native build.
         let mut engine =
             CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx).unwrap();
 

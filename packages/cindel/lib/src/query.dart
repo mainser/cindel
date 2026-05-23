@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
@@ -7,6 +9,8 @@ import 'schema.dart';
 import 'text.dart';
 
 typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
+typedef _CindelDocumentFilter = bool Function(CindelDocument document);
+typedef _CindelIdReader = Future<List<int>> Function();
 
 /// Sort direction for Cindel query results.
 enum CindelSortOrder {
@@ -152,10 +156,12 @@ final class CindelFilterField {
 /// Query objects are usually created by generated `where()` helpers, for
 /// example `database.todos.where().titleEqualTo('Ship').findAll()`.
 final class CindelQuery<T> {
-  const CindelQuery._({
+  CindelQuery._({
     required CindelDatabase database,
     required CindelCollectionSchema<T> schema,
     required _CindelDocumentReader readDocuments,
+    _CindelDocumentFilter? sourceFilter,
+    _CindelIdReader? readIds,
     CindelFilterPredicate? filter,
     List<_CindelSortKey> sortKeys = const [],
     List<String> distinctFields = const [],
@@ -164,7 +170,10 @@ final class CindelQuery<T> {
   }) : _database = database,
        _schema = schema,
        _readDocuments = readDocuments,
+       _sourceFilter = sourceFilter,
+       _readIds = readIds,
        _filter = filter,
+       _nativeFilter = _nativeFilterBytes(filter),
        _sortKeys = sortKeys,
        _distinctFields = distinctFields,
        _offset = offset,
@@ -179,6 +188,7 @@ final class CindelQuery<T> {
       database: database,
       schema: schema,
       readDocuments: () => database.queryAll(schema.name),
+      readIds: () => database.documentIds(schema.name),
     );
   }
 
@@ -189,10 +199,14 @@ final class CindelQuery<T> {
     required String field,
     required Object value,
   }) {
+    final schemaField = _schemaField(schema, field);
     return CindelQuery._(
       database: database,
       schema: schema,
       readDocuments: () => database.queryEqual(schema.name, field, value),
+      readIds: schemaField.indexType == CindelIndexType.hash
+          ? null
+          : () => database.queryEqualIds(schema.name, field, value),
     );
   }
 
@@ -209,6 +223,12 @@ final class CindelQuery<T> {
       schema: schema,
       readDocuments: () =>
           database.queryRange(schema.name, field, lower: lower, upper: upper),
+      readIds: () => database.queryRangeIds(
+        schema.name,
+        field,
+        lower: lower,
+        upper: upper,
+      ),
     );
   }
 
@@ -226,6 +246,17 @@ final class CindelQuery<T> {
     final indexedPrefix = schemaField.indexCaseSensitive
         ? prefix
         : prefix.toLowerCase();
+    bool sourceFilter(CindelDocument document) {
+      final value = document[field];
+      if (value is! String) {
+        return false;
+      }
+      if (schemaField.indexCaseSensitive) {
+        return value.startsWith(prefix);
+      }
+      return value.toLowerCase().startsWith(indexedPrefix);
+    }
+
     return CindelQuery._(
       database: database,
       schema: schema,
@@ -238,19 +269,17 @@ final class CindelQuery<T> {
               ? null
               : _inclusivePrefixUpperBound(indexedPrefix),
         );
-        return documents
-            .where((document) {
-              final value = document[field];
-              if (value is! String) {
-                return false;
-              }
-              if (schemaField.indexCaseSensitive) {
-                return value.startsWith(prefix);
-              }
-              return value.toLowerCase().startsWith(indexedPrefix);
-            })
-            .toList(growable: false);
+        return documents.where(sourceFilter).toList(growable: false);
       },
+      sourceFilter: sourceFilter,
+      readIds: () => database.queryRangeIds(
+        schema.name,
+        field,
+        lower: indexedPrefix,
+        upper: indexedPrefix.isEmpty
+            ? null
+            : _inclusivePrefixUpperBound(indexedPrefix),
+      ),
     );
   }
 
@@ -272,6 +301,7 @@ final class CindelQuery<T> {
         database: database,
         schema: schema,
         readDocuments: () async => <CindelDocument>[],
+        readIds: () async => <int>[],
       );
     }
     return CindelQuery.equal(
@@ -300,6 +330,7 @@ final class CindelQuery<T> {
         database: database,
         schema: schema,
         readDocuments: () async => <CindelDocument>[],
+        readIds: () async => <int>[],
       );
     }
     final tokenPrefix = tokens.first;
@@ -315,7 +346,10 @@ final class CindelQuery<T> {
   final CindelDatabase _database;
   final CindelCollectionSchema<T> _schema;
   final _CindelDocumentReader _readDocuments;
+  final _CindelDocumentFilter? _sourceFilter;
+  final _CindelIdReader? _readIds;
   final CindelFilterPredicate? _filter;
+  final Uint8List? _nativeFilter;
   final List<_CindelSortKey> _sortKeys;
   final List<String> _distinctFields;
   final int _offset;
@@ -487,12 +521,7 @@ final class CindelQuery<T> {
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
-    final documents = await _readDocuments();
-    var matchingDocuments = documents;
-    final filter = _filter;
-    if (filter != null) {
-      matchingDocuments = matchingDocuments.where(filter.matches).toList();
-    }
+    var matchingDocuments = await _readFilteredDocuments();
     if (_sortKeys.isNotEmpty) {
       matchingDocuments = _sortDocuments(matchingDocuments, _sortKeys);
     }
@@ -506,6 +535,41 @@ final class CindelQuery<T> {
       matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
     }
     return matchingDocuments;
+  }
+
+  Future<List<CindelDocument>> _readFilteredDocuments() async {
+    final nativeFilter = _nativeFilter;
+    final readIds = _readIds;
+    if (nativeFilter != null && readIds != null && _canUseNativeFilter) {
+      final candidateIds = await readIds();
+      final matchingIds = await _database.queryNativeFilterIds(
+        _schema.name,
+        candidateIds,
+        nativeFilter,
+      );
+      final documents = await _database.documentsByIds(
+        _schema.name,
+        matchingIds,
+      );
+      final sourceFilter = _sourceFilter;
+      if (sourceFilter == null) {
+        return documents;
+      }
+      return documents.where(sourceFilter).toList();
+    }
+
+    final documents = await _readDocuments();
+    final filter = _filter;
+    if (filter == null) {
+      return documents;
+    }
+    return documents.where(filter.matches).toList();
+  }
+
+  bool get _canUseNativeFilter {
+    return _database.backend == CindelStorageBackend.mdbx &&
+        _schema.toBinaryDocument != null &&
+        _schema.fromBinaryDocument != null;
   }
 
   Stream<List<CindelDocument>> _watchMatchingDocuments({
@@ -590,6 +654,8 @@ final class CindelQuery<T> {
       database: _database,
       schema: _schema,
       readDocuments: _readDocuments,
+      sourceFilter: _sourceFilter,
+      readIds: _readIds,
       filter: filter ?? _filter,
       sortKeys: sortKeys ?? _sortKeys,
       distinctFields: distinctFields ?? _distinctFields,
@@ -615,6 +681,84 @@ void _checkWordsIndex(CindelFieldSchema field) {
   if (field.indexType != CindelIndexType.words) {
     throw StateError('Field `${field.name}` is not a word index.');
   }
+}
+
+Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
+  if (predicate == null) {
+    return null;
+  }
+  final json = _nativeFilterJson(predicate);
+  if (json == null) {
+    return null;
+  }
+  return Uint8List.fromList(utf8.encode(jsonEncode(json)));
+}
+
+Map<String, Object?>? _nativeFilterJson(CindelFilterPredicate predicate) {
+  if (predicate is _FieldFilterPredicate) {
+    if (!_isNativeFilterValue(predicate.expected)) {
+      return null;
+    }
+    return {
+      'type': 'field',
+      'field': predicate.field,
+      'operation': _nativeFilterOperation(predicate.operation),
+      'value': predicate.expected,
+    };
+  }
+
+  if (predicate is _CompositeFilterPredicate) {
+    final predicates = <Map<String, Object?>>[];
+    for (final child in predicate.predicates) {
+      final encoded = _nativeFilterJson(child);
+      if (encoded == null) {
+        return null;
+      }
+      predicates.add(encoded);
+    }
+    return {
+      'type': switch (predicate.mode) {
+        _CompositeFilterMode.all => 'all',
+        _CompositeFilterMode.any => 'any',
+      },
+      'predicates': predicates,
+    };
+  }
+
+  if (predicate is _NotFilterPredicate) {
+    final encoded = _nativeFilterJson(predicate.predicate);
+    if (encoded == null) {
+      return null;
+    }
+    return {'type': 'not', 'predicate': encoded};
+  }
+
+  return null;
+}
+
+String _nativeFilterOperation(_FilterOperation operation) {
+  return switch (operation) {
+    _FilterOperation.equalTo => 'equal_to',
+    _FilterOperation.greaterThan => 'greater_than',
+    _FilterOperation.greaterThanOrEqualTo => 'greater_than_or_equal_to',
+    _FilterOperation.lessThan => 'less_than',
+    _FilterOperation.lessThanOrEqualTo => 'less_than_or_equal_to',
+    _FilterOperation.contains => 'contains',
+    _FilterOperation.startsWith => 'starts_with',
+    _FilterOperation.endsWith => 'ends_with',
+  };
+}
+
+bool _isNativeFilterValue(Object? value) {
+  return switch (value) {
+    null || String() || bool() || int() => true,
+    double() => value.isFinite,
+    List() => value.every(_isNativeFilterValue),
+    Map() =>
+      value.keys.every((key) => key is String) &&
+          value.values.every(_isNativeFilterValue),
+    _ => false,
+  };
 }
 
 /// A projected query over a single field.

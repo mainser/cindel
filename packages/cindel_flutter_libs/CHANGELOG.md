@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.7
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 7.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
+## 0.2.6
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 6.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
+## 0.2.5
+
+- Regenerated native runtime libraries for the Cindel native ABI 5 cleanup.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as
+  Cindel's default backend.
+- Added Linux as an advertised prebuilt platform alongside Android and
+  Windows.
+
 ## 0.2.0
 
 - Prepared the Flutter native libraries package for the coordinated `0.2.0`

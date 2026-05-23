@@ -19,8 +19,7 @@ build_target() {
   cargo build \
     --release \
     --manifest-path "${NATIVE_DIR}/Cargo.toml" \
-    --target "${target}" \
-    --features mdbx
+    --target "${target}"
 }
 
 require_command cargo

@@ -183,6 +183,62 @@ void main() {
       expect(restored.transientNote, '');
     });
 
+    // Scenario: A generated serializer is used with Cindel binary documents.
+    // Covers:
+    // - Generated binary writer.
+    // - Generated binary reader.
+    // Expected: Stored field values round-trip without JSON map decoding.
+    test('generates binary serializers for typed objects.', () {
+      // Arrange.
+      final createdAt = DateTime.utc(2026, 5, 21, 12, 30, 45, 123, 456);
+      final recipient = Recipient()
+        ..name = 'Ada'
+        ..address = 'ada@example.com'
+        ..metadata = (RecipientMetadata()..label = 'primary');
+      final user = User()
+        ..id = 7
+        ..name = 'Noel'
+        ..email = 'demo@example.com'
+        ..username = 'noel'
+        ..displayName = 'Noel Alvarez'
+        ..accessToken = 'secret-token'
+        ..bio = 'Builds local databases'
+        ..active = true
+        ..createdAt = createdAt
+        ..sessionLength = const Duration(minutes: 3, microseconds: 45)
+        ..tags = ['local', 'database']
+        ..scores = [10, 20]
+        ..role = UserRole.owner
+        ..status = UserStatus.active
+        ..plan = UserPlan.pro
+        ..primaryRecipient = recipient
+        ..recipients = [recipient];
+
+      // Act.
+      final bytes = UserSchema.toBinaryDocument!(user);
+      final storedValues = cindelDecodeBinaryDocument(bytes);
+      final restored = UserSchema.fromBinaryDocument!(bytes);
+
+      // Assert.
+      expect(storedValues[3], createdAt.microsecondsSinceEpoch);
+      expect(storedValues[6], 7);
+      expect(storedValues[14], 1);
+      expect(restored.id, 7);
+      expect(restored.name, 'Noel');
+      expect(restored.createdAt, createdAt);
+      expect(
+        restored.sessionLength,
+        const Duration(minutes: 3, microseconds: 45),
+      );
+      expect(restored.tags, ['local', 'database']);
+      expect(restored.scores, [10, 20]);
+      expect(restored.role, UserRole.owner);
+      expect(restored.status, UserStatus.active);
+      expect(restored.plan, UserPlan.pro);
+      expect(restored.primaryRecipient?.metadata?.label, 'primary');
+      expect(restored.recipients?.single.address, 'ada@example.com');
+    });
+
     // Scenario: A generated schema assigns an auto-increment id.
     // Covers:
     // - Generated setId function.

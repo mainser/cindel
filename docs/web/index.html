@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cindel</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111820;
+      --panel: #1d2a36;
+      --panel-soft: #182430;
+      --text: #e8edf5;
+      --muted: #aeb9c7;
+      --blue: #8fc4f5;
+      --green: #7ee0b2;
+      --line: #334353;
+      --line-soft: rgba(143, 196, 245, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px),
+        var(--bg);
+      background-size: 44px 44px;
+    }
+
+    main {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+
+    .shell {
+      width: min(100%, 980px);
+      display: grid;
+      gap: 22px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mark {
+      display: inline-grid;
+      grid-template-columns: repeat(3, 10px);
+      gap: 5px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+
+    .mark span {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      background: var(--blue);
+    }
+
+    .mark span:nth-child(2),
+    .mark span:nth-child(5),
+    .mark span:nth-child(9) {
+      background: var(--green);
+    }
+
+    .badge {
+      border: 1px solid #60bd94;
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: var(--green);
+      white-space: nowrap;
+    }
+
+    .panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 32px;
+      align-items: stretch;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: clamp(24px, 5vw, 44px);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+      overflow: hidden;
+    }
+
+    .copy {
+      min-width: 0;
+      align-self: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(42px, 10vw, 92px);
+      line-height: 0.94;
+      font-weight: 680;
+      letter-spacing: 0;
+    }
+
+    .status {
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 3vw, 28px);
+      line-height: 1.35;
+      max-width: 680px;
+    }
+
+    .meta {
+      margin-top: 30px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      background: var(--panel-soft);
+      color: #c9d7e8;
+      font-size: 13px;
+    }
+
+    .meter {
+      display: grid;
+      align-content: end;
+      gap: 16px;
+      border-left: 1px solid var(--line);
+      padding-left: 30px;
+      min-height: 310px;
+    }
+
+    .meter-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: end;
+      height: 220px;
+    }
+
+    .bar-wrap {
+      display: grid;
+      justify-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .value {
+      color: #c9d7e8;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .bar {
+      width: min(32px, 46%);
+      min-height: 12px;
+      border-radius: 999px 999px 6px 6px;
+    }
+
+    .bar.blue {
+      height: 128px;
+      background: var(--blue);
+    }
+
+    .bar.green {
+      height: 176px;
+      background: var(--green);
+    }
+
+    .label {
+      color: var(--muted);
+      font-weight: 650;
+      font-size: 13px;
+    }
+
+    .meter-note {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:focus-visible,
+    a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 760px) {
+      main {
+        padding: 20px;
+      }
+
+      .panel {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+
+      .meter {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+        padding-left: 0;
+        padding-top: 20px;
+        min-height: 240px;
+      }
+
+      .meter-row {
+        height: 180px;
+      }
+
+      .bar.blue {
+        height: 96px;
+      }
+
+      .bar.green {
+        height: 132px;
+      }
+
+      footer,
+      .brand {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="shell">
+      <div class="brand" aria-label="Cindel site status">
+        <div class="mark" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="badge">Site under construction</div>
+      </div>
+
+      <section class="panel">
+        <div class="copy">
+          <h1>Cindel</h1>
+          <p class="status">
+            A fast local database for Flutter and Dart is being assembled here.
+          </p>
+          <div class="meta" aria-label="Project highlights">
+            <span class="chip">MDBX default</span>
+            <span class="chip">Rust native core</span>
+            <span class="chip">Typed Dart API</span>
+            <span class="chip">Flutter ready</span>
+          </div>
+        </div>
+
+        <aside class="meter" aria-label="Build progress">
+          <div class="meter-row">
+            <div class="bar-wrap">
+              <div class="value">API</div>
+              <div class="bar blue"></div>
+              <div class="label">Stable</div>
+            </div>
+            <div class="bar-wrap">
+              <div class="value">Core</div>
+              <div class="bar green"></div>
+              <div class="label">Moving fast</div>
+            </div>
+          </div>
+          <div class="meter-note">
+            Documentation, benchmarks, and release notes are being polished for
+            the next public preview.
+          </div>
+        </aside>
+      </section>
+
+      <footer>
+        <span>Built for local-first apps.</span>
+        <a href="https://github.com/mainser/Cindel">GitHub</a>
+      </footer>
+    </div>
+  </main>
+</body>
+</html>

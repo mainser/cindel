@@ -1,5 +1,4 @@
 import 'database.dart';
-import 'migration.dart';
 import 'schema.dart';
 import 'text.dart';
 
@@ -12,13 +11,11 @@ abstract final class Cindel {
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return CindelDatabase.open(
       directory: directory,
       schemas: schemas,
-      migration: migration,
       backend: backend,
     );
   }
@@ -29,29 +26,9 @@ abstract final class Cindel {
   /// the returned database is closed.
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
-    return CindelDatabase.openInMemory(
-      schemas: schemas,
-      migration: migration,
-      backend: backend,
-    );
-  }
-
-  /// Runs [migration] in dry-run mode against an existing database.
-  static Future<CindelMigrationReport> dryRunMigration({
-    required String directory,
-    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    required CindelMigrationCallback migration,
-    CindelStorageBackend backend = defaultCindelStorageBackend,
-  }) {
-    return CindelDatabase.dryRunMigration(
-      directory: directory,
-      schemas: schemas,
-      migration: migration,
-      backend: backend,
-    );
+    return CindelDatabase.openInMemory(schemas: schemas, backend: backend);
   }
 
   /// Splits text the same way Cindel word indexes do.

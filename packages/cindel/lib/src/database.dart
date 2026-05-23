@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
-import 'migration.dart';
 import 'native/bindings.dart';
 import 'schema.dart';
 import 'text.dart';
@@ -74,14 +73,12 @@ class CindelDatabase {
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) async {
     _checkDirectory(directory);
     return _openUnchecked(
       directory: directory,
       schemas: schemas,
-      migration: migration,
       backend: backend,
     );
   }
@@ -91,46 +88,18 @@ class CindelDatabase {
   /// Data is discarded when this database is closed.
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    CindelMigrationCallback? migration,
     CindelStorageBackend backend = defaultCindelStorageBackend,
   }) {
     return _openUnchecked(
       directory: _inMemoryDirectory,
       schemas: schemas,
-      migration: migration,
       backend: backend,
     );
-  }
-
-  /// Runs a migration callback without writing through Cindel migration helpers.
-  static Future<CindelMigrationReport> dryRunMigration({
-    required String directory,
-    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
-    required CindelMigrationCallback migration,
-    CindelStorageBackend backend = defaultCindelStorageBackend,
-  }) async {
-    _checkDirectory(directory);
-    final database = await _openRaw(
-      directory: directory,
-      schemas: schemas,
-      backend: backend,
-    );
-    try {
-      final context = await database._createMigrationContext(
-        schemas,
-        dryRun: true,
-      );
-      await migration(context);
-      return context.toReport();
-    } finally {
-      await database.close();
-    }
   }
 
   static Future<CindelDatabase> _openUnchecked({
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
-    required CindelMigrationCallback? migration,
     required CindelStorageBackend backend,
   }) async {
     final database = await _openRaw(
@@ -143,19 +112,7 @@ class CindelDatabase {
         ? null
         : _encodeSchemaManifest(schemasByCollection.values);
     try {
-      if (migration != null) {
-        final context = await database._createMigrationContext(schemas);
-        await database.writeTxn(() async {
-          await migration(context);
-          final manifest = schemaManifest;
-          if (manifest != null) {
-            database._bindings.registerSchemasAfterMigration(
-              database._checkOpen(),
-              manifest,
-            );
-          }
-        });
-      } else if (schemaManifest != null) {
+      if (schemaManifest != null) {
         database._bindings.registerSchemas(
           database._checkOpen(),
           schemaManifest,
@@ -294,6 +251,49 @@ class CindelDatabase {
     _markCollectionChanged(collection);
   }
 
+  /// Stores one generated binary document.
+  ///
+  /// This is intended for generated typed collections when the selected
+  /// backend can index and read Cindel's binary document format directly.
+  Future<void> putBinaryDocument(
+    String collection,
+    int id,
+    Uint8List bytes,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkId(id);
+
+    _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
+    _markCollectionChanged(collection);
+  }
+
+  /// Stores generated binary documents atomically.
+  Future<void> putAllBinaryDocuments(
+    String collection,
+    Map<int, Uint8List> values,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    if (values.isEmpty) {
+      return;
+    }
+    for (final id in values.keys) {
+      _checkId(id);
+    }
+
+    _bindings.putManyStored(
+      handle,
+      collection,
+      _encodeBinaryBatchPutEntries(values),
+    );
+    _markCollectionChanged(collection);
+  }
+
   /// Stores many documents atomically.
   ///
   /// Alias for [putAll], provided for APIs that prefer `many` naming.
@@ -334,6 +334,16 @@ class CindelDatabase {
     return decoded.cast<String, Object?>();
   }
 
+  /// Returns raw generated binary document bytes, or `null`.
+  Future<Uint8List?> getBinaryDocument(String collection, int id) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkId(id);
+
+    return _bindings.getStored(handle, collection, id);
+  }
+
   /// Returns the documents stored under [ids], preserving input order.
   ///
   /// Missing documents are returned as `null`.
@@ -351,6 +361,30 @@ class CindelDatabase {
     return _documentsByIdsNullable(handle, collection, idList);
   }
 
+  /// Returns raw generated binary document bytes, preserving input order.
+  Future<List<Uint8List?>> getAllBinaryDocuments(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return const <Uint8List?>[];
+    }
+
+    final bytes = _bindings.getManyStored(
+      handle,
+      collection,
+      _encodeIds(idList),
+    );
+    return _decodeBinaryDocumentBatch(bytes);
+  }
+
   /// Returns every document in [collection], ordered by id.
   Future<List<CindelDocument>> queryAll(String collection) async {
     final handle = _checkOpen();
@@ -358,6 +392,20 @@ class CindelDatabase {
 
     final ids = _bindings.documentIds(handle, collection);
     return _documentsByIds(collection, ids);
+  }
+
+  /// Returns documents stored under [ids], preserving input order.
+  Future<List<CindelDocument>> documentsByIds(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    return _documentsByIds(collection, idList);
   }
 
   /// Returns every id in [collection], ordered ascending.
@@ -495,18 +543,10 @@ class CindelDatabase {
     String field,
     Object value,
   ) async {
-    final handle = _checkOpen();
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
-    final encodedValue = _encodeIndexValue(value, schemaField);
-
-    final ids = _bindings.queryIndexEqual(
-      handle,
-      collection,
-      field,
-      encodedValue,
-    );
+    final ids = _queryEqualRawIds(collection, field, value, schemaField);
     final documents = await _documentsByIds(
       collection,
       schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
@@ -520,6 +560,29 @@ class CindelDatabase {
           .toList(growable: false);
     }
     return documents;
+  }
+
+  /// Returns ids whose indexed [field] equals [value].
+  ///
+  /// Hash indexes intentionally use [queryEqual] instead, because hash
+  /// collisions need document verification before the result is observable.
+  Future<List<int>> queryEqualIds(
+    String collection,
+    String field,
+    Object value,
+  ) async {
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final schemaField = _checkIndexedField(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError(
+        'Hash index `${schemaField.name}` requires document verification.',
+      );
+    }
+    final ids = _queryEqualRawIds(collection, field, value, schemaField);
+    return schemaField.indexType == CindelIndexType.words
+        ? _dedupeIds(ids)
+        : ids;
   }
 
   /// Returns documents whose indexed [field] is inside the inclusive range.
@@ -553,7 +616,7 @@ class CindelDatabase {
         : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
-    final ids = _bindings.queryIndexRange(
+    final ids = _queryRangeRawIds(
       handle,
       collection,
       field,
@@ -563,6 +626,70 @@ class CindelDatabase {
     return _documentsByIds(
       collection,
       schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
+    );
+  }
+
+  /// Returns ids whose indexed [field] is inside the inclusive range.
+  Future<List<int>> queryRangeIds(
+    String collection,
+    String field, {
+    Object? lower,
+    Object? upper,
+  }) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final schemaField = _checkIndexedField(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw StateError(
+        'Hash index `${schemaField.name}` only supports equality queries.',
+      );
+    }
+    if (lower == null && upper == null) {
+      throw ArgumentError.value(null, 'lower/upper', 'Must provide a bound.');
+    }
+
+    final encodedLower = lower == null
+        ? null
+        : _encodeRangeIndexValue(lower, schemaField, 'lower');
+    final encodedUpper = upper == null
+        ? null
+        : _encodeRangeIndexValue(upper, schemaField, 'upper');
+    _checkMatchingRangeBounds(encodedLower, encodedUpper);
+
+    final ids = _queryRangeRawIds(
+      handle,
+      collection,
+      field,
+      encodedLower?.bytes,
+      encodedUpper?.bytes,
+    );
+    return schemaField.indexType == CindelIndexType.words
+        ? _dedupeIds(ids)
+        : ids;
+  }
+
+  /// Applies a native binary-document filter to [candidateIds].
+  Future<List<int>> queryNativeFilterIds(
+    String collection,
+    Iterable<int> candidateIds,
+    Uint8List filter,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final idList = candidateIds.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return const <int>[];
+    }
+    return _bindings.queryFilter(
+      handle,
+      collection,
+      _encodeIds(idList),
+      filter,
     );
   }
 
@@ -778,6 +905,14 @@ class CindelDatabase {
     throw StateError('Field `$field` is not indexed for `$collection`.');
   }
 
+  void _checkBinaryBackend() {
+    if (backend != CindelStorageBackend.mdbx) {
+      throw StateError(
+        'Cindel binary documents require the MDBX storage backend.',
+      );
+    }
+  }
+
   CindelFieldSchema? _fieldSchema(String collection, String field) {
     final schema = _schemas[collection];
     if (schema == null) {
@@ -789,6 +924,29 @@ class CindelDatabase {
       }
     }
     return null;
+  }
+
+  List<int> _queryEqualRawIds(
+    String collection,
+    String field,
+    Object value,
+    CindelFieldSchema schemaField,
+  ) {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final encodedValue = _encodeIndexValue(value, schemaField);
+    return _bindings.queryIndexEqual(handle, collection, field, encodedValue);
+  }
+
+  List<int> _queryRangeRawIds(
+    Pointer<Void> handle,
+    String collection,
+    String field,
+    Uint8List? lower,
+    Uint8List? upper,
+  ) {
+    return _bindings.queryIndexRange(handle, collection, field, lower, upper);
   }
 
   Future<List<CindelDocument>> _documentsByIds(
@@ -825,21 +983,6 @@ class CindelDatabase {
         else
           throw StateError('Native Cindel returned a non-object document.'),
     ];
-  }
-
-  Future<CindelMigration> _createMigrationContext(
-    Iterable<CindelCollectionSchema<dynamic>> schemas, {
-    bool dryRun = false,
-  }) async {
-    final versions = <String, int?>{};
-    for (final schema in schemas) {
-      versions[schema.name] = await schemaVersion(schema.name);
-    }
-    return CindelMigration(
-      database: this,
-      oldVersions: versions,
-      dryRun: dryRun,
-    );
   }
 
   Stream<T> _watch<T>(
@@ -937,6 +1080,52 @@ Uint8List _encodeDocument(CindelDocument value) {
 
 Uint8List _encodeIds(Iterable<int> ids) {
   return Uint8List.fromList(utf8.encode(jsonEncode(ids.toList())));
+}
+
+List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {
+  final data = bytes.buffer.asByteData(
+    bytes.offsetInBytes,
+    bytes.lengthInBytes,
+  );
+  var offset = 0;
+  int readUint8() {
+    if (offset + 1 > bytes.length) {
+      throw StateError('Native Cindel returned a truncated binary batch.');
+    }
+    return bytes[offset++];
+  }
+
+  int readUint32() {
+    if (offset + 4 > bytes.length) {
+      throw StateError('Native Cindel returned a truncated binary batch.');
+    }
+    final value = data.getUint32(offset, Endian.little);
+    offset += 4;
+    return value;
+  }
+
+  final count = readUint32();
+  final documents = <Uint8List?>[];
+  for (var index = 0; index < count; index += 1) {
+    final present = readUint8();
+    final length = readUint32();
+    if (present == 0) {
+      if (length != 0) {
+        throw StateError('Native Cindel returned an invalid binary batch.');
+      }
+      documents.add(null);
+      continue;
+    }
+    if (present != 1 || offset + length > bytes.length) {
+      throw StateError('Native Cindel returned an invalid binary batch.');
+    }
+    documents.add(Uint8List.sublistView(bytes, offset, offset + length));
+    offset += length;
+  }
+  if (offset != bytes.length) {
+    throw StateError('Native Cindel returned trailing binary batch bytes.');
+  }
+  return documents;
 }
 
 void _checkDirectory(String directory) {
@@ -1056,6 +1245,29 @@ Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
       ]),
     ),
   );
+}
+
+Uint8List _encodeBinaryBatchPutEntries(Map<int, Uint8List> entries) {
+  final length =
+      4 +
+      entries.entries.fold<int>(
+        0,
+        (total, entry) => total + 8 + 4 + entry.value.length,
+      );
+  final bytes = Uint8List(length);
+  final data = bytes.buffer.asByteData();
+  var offset = 0;
+  data.setUint32(offset, entries.length, Endian.little);
+  offset += 4;
+  for (final entry in entries.entries) {
+    data.setUint64(offset, entry.key, Endian.little);
+    offset += 8;
+    data.setUint32(offset, entry.value.length, Endian.little);
+    offset += 4;
+    bytes.setRange(offset, offset + entry.value.length, entry.value);
+    offset += entry.value.length;
+  }
+  return bytes;
 }
 
 Uint8List _encodeSchemaManifest(

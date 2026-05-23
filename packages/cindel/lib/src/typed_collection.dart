@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'database.dart';
@@ -43,6 +45,13 @@ final class CindelTypedCollection<T> {
       setId(object, id);
       document = schema.toDocument(object);
     }
+    if (_usesBinaryDocuments) {
+      return database.putBinaryDocument(
+        schema.name,
+        id,
+        schema.toBinaryDocument!(object),
+      );
+    }
     return database.put(schema.name, id, document);
   }
 
@@ -53,7 +62,8 @@ final class CindelTypedCollection<T> {
       return;
     }
 
-    final values = <int, CindelDocument>{};
+    final binaryValues = _usesBinaryDocuments ? <int, Uint8List>{} : null;
+    final values = binaryValues == null ? <int, CindelDocument>{} : null;
     final seenIds = <int>{};
     CindelSetId<T>? setId;
     for (final object in objectList) {
@@ -72,10 +82,17 @@ final class CindelTypedCollection<T> {
           'Bulk writes cannot contain duplicate ids.',
         );
       }
-      values[id] = document;
+      if (binaryValues == null) {
+        values![id] = document;
+      } else {
+        binaryValues[id] = schema.toBinaryDocument!(object);
+      }
     }
 
-    return database.putAll(schema.name, values);
+    if (binaryValues != null) {
+      return database.putAllBinaryDocuments(schema.name, binaryValues);
+    }
+    return database.putAll(schema.name, values!);
   }
 
   /// Stores many objects atomically.
@@ -87,12 +104,23 @@ final class CindelTypedCollection<T> {
 
   /// Returns the typed object stored under [id], or `null`.
   Future<T?> get(int id) async {
+    if (_usesBinaryDocuments) {
+      final bytes = await database.getBinaryDocument(schema.name, id);
+      return bytes == null ? null : schema.fromBinaryDocument!(bytes);
+    }
     final document = await database.get(schema.name, id);
     return document == null ? null : schema.fromDocument(document);
   }
 
   /// Returns typed objects stored under [ids], preserving input order.
   Future<List<T?>> getAll(Iterable<int> ids) async {
+    if (_usesBinaryDocuments) {
+      final documents = await database.getAllBinaryDocuments(schema.name, ids);
+      return [
+        for (final bytes in documents)
+          bytes == null ? null : schema.fromBinaryDocument!(bytes),
+      ];
+    }
     final documents = await database.getAll(schema.name, ids);
     return [
       for (final document in documents)
@@ -170,6 +198,12 @@ final class CindelTypedCollection<T> {
 
   List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
     return documents.map(schema.fromDocument).toList(growable: false);
+  }
+
+  bool get _usesBinaryDocuments {
+    return database.backend == CindelStorageBackend.mdbx &&
+        schema.toBinaryDocument != null &&
+        schema.fromBinaryDocument != null;
   }
 
   int _idFromDocument(CindelDocument document) {

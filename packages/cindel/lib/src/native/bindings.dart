@@ -103,17 +103,6 @@ final class CindelNativeBindings {
     _checkStatus(status, 'register schemas');
   }
 
-  void registerSchemasAfterMigration(Pointer<Void> handle, Uint8List schemas) {
-    final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
-      return _functions.registerSchemasAfterMigration(
-        handle,
-        schemasPointer,
-        schemasLength,
-      );
-    });
-    _checkStatus(status, 'register schemas after migration');
-  }
-
   void putIndexed(
     Pointer<Void> handle,
     String collection,
@@ -166,6 +155,28 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put many indexed');
   }
 
+  void putManyStored(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List documents,
+  ) {
+    final status = _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(documents, (documentsPointer, documentsLength) {
+        return _functions.putManyStored(
+          handle,
+          collectionPointer,
+          collectionLength,
+          documentsPointer,
+          documentsLength,
+        );
+      });
+    });
+    _checkStatus(status, 'put many stored');
+  }
+
   Uint8List? get(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
@@ -199,6 +210,39 @@ final class CindelNativeBindings {
     });
   }
 
+  Uint8List? getStored(Pointer<Void> handle, String collection, int id) {
+    _checkId(id);
+    return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
+      final outPointer = calloc<Pointer<Uint8>>();
+      final outLength = calloc<Size>();
+      try {
+        final status = _functions.getStored(
+          handle,
+          collectionPointer,
+          collectionLen,
+          id,
+          outPointer,
+          outLength,
+        );
+
+        if (status == 1) {
+          return null;
+        }
+        _checkStatus(status, 'get stored');
+
+        final pointer = outPointer.value;
+        final length = outLength.value;
+        final bytes = Uint8List.fromList(pointer.asTypedList(length));
+        _functions.freeBuffer(pointer, length);
+        return bytes;
+      } finally {
+        calloc
+          ..free(outPointer)
+          ..free(outLength);
+      }
+    });
+  }
+
   Uint8List getMany(Pointer<Void> handle, String collection, Uint8List ids) {
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
       return _withNativeBytes(ids, (idsPointer, idsLength) {
@@ -216,6 +260,32 @@ final class CindelNativeBindings {
           },
           _functions.freeBuffer,
           'get many',
+        );
+      });
+    });
+  }
+
+  Uint8List getManyStored(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List ids,
+  ) {
+    return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _queryBytes(
+          (outPointer, outLength) {
+            return _functions.getManyStored(
+              handle,
+              collectionPointer,
+              collectionLen,
+              idsPointer,
+              idsLength,
+              outPointer,
+              outLength,
+            );
+          },
+          _functions.freeBuffer,
+          'get many stored',
         );
       });
     });
@@ -391,6 +461,40 @@ final class CindelNativeBindings {
       'query index range',
     );
   }
+
+  List<int> queryFilter(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List ids,
+    Uint8List filter,
+  ) {
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _withNativeBytes(ids, (idsPointer, idsLength) {
+            return _withNativeBytes(filter, (filterPointer, filterLength) {
+              return _functions.queryFilter(
+                handle,
+                collectionPointer,
+                collectionLength,
+                idsPointer,
+                idsLength,
+                filterPointer,
+                filterLength,
+                outPointer,
+                outLength,
+              );
+            });
+          });
+        });
+      },
+      _functions.freeBuffer,
+      'query filter',
+    );
+  }
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -430,9 +534,6 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
 
-  int Function(Pointer<Void>, Pointer<Uint8>, int)
-  get registerSchemasAfterMigration;
-
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -448,6 +549,9 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get putManyIndexed;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get putManyStored;
+
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -462,12 +566,33 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Void>,
     Pointer<Uint8>,
     int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getStored;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
     Pointer<Uint8>,
     int,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
   get getMany;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getManyStored;
 
   int Function(
     Pointer<Void>,
@@ -516,6 +641,19 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get queryIndexRange;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryFilter;
 
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }
@@ -590,11 +728,6 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
             int Function(Pointer<Void>, Pointer<Uint8>, int)
           >('cindel_register_schemas'),
-      registerSchemasAfterMigration = library
-          .lookupFunction<
-            Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
-            int Function(Pointer<Void>, Pointer<Uint8>, int)
-          >('cindel_register_schemas_after_migration'),
       putIndexed = library
           .lookupFunction<
             Int32 Function(
@@ -635,6 +768,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_put_many_indexed'),
+      putManyStored = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_put_many_stored'),
       get = library
           .lookupFunction<
             Int32 Function(
@@ -654,6 +804,25 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_get'),
+      getStored = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_get_stored'),
       getMany = library
           .lookupFunction<
             Int32 Function(
@@ -675,6 +844,27 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_get_many'),
+      getManyStored = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_get_many_stored'),
       documentIds = library
           .lookupFunction<
             Int32 Function(
@@ -788,6 +978,31 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_query_index_range'),
+      queryFilter = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_filter'),
       freeBuffer = library
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
@@ -852,10 +1067,6 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;
 
   @override
-  final int Function(Pointer<Void>, Pointer<Uint8>, int)
-  registerSchemasAfterMigration;
-
-  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -873,6 +1084,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   putManyIndexed;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  putManyStored;
+
+  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -888,12 +1103,35 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     Pointer<Void>,
     Pointer<Uint8>,
     int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  getStored;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
     Pointer<Uint8>,
     int,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
   getMany;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  getManyStored;
 
   @override
   final int Function(
@@ -951,6 +1189,20 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   queryIndexRange;
 
   @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryFilter;
+
+  @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }
 
@@ -1004,10 +1256,6 @@ final class _NativeAssetCindelNativeFunctions
       _cindelRegisterSchemas;
 
   @override
-  int Function(Pointer<Void>, Pointer<Uint8>, int)
-  get registerSchemasAfterMigration => _cindelRegisterSchemasAfterMigration;
-
-  @override
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -1025,6 +1273,10 @@ final class _NativeAssetCindelNativeFunctions
   get putManyIndexed => _cindelPutManyIndexed;
 
   @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get putManyStored => _cindelPutManyStored;
+
+  @override
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -1040,12 +1292,35 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Void>,
     Pointer<Uint8>,
     int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getStored => _cindelGetStored;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
     Pointer<Uint8>,
     int,
     Pointer<Pointer<Uint8>>,
     Pointer<Size>,
   )
   get getMany => _cindelGetMany;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get getManyStored => _cindelGetManyStored;
 
   @override
   int Function(
@@ -1102,6 +1377,20 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get queryIndexRange => _cindelQueryIndexRange;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryFilter => _cindelQueryFilter;
 
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
@@ -1267,16 +1556,6 @@ external int _cindelRegisterSchemas(
   int schemasLen,
 );
 
-@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
-  symbol: 'cindel_register_schemas_after_migration',
-  assetId: _assetId,
-)
-external int _cindelRegisterSchemasAfterMigration(
-  Pointer<Void> handle,
-  Pointer<Uint8> schemas,
-  int schemasLen,
-);
-
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -1312,6 +1591,17 @@ external int _cindelPutManyIndexed(
 );
 
 @Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint8>, Size)
+>(symbol: 'cindel_put_many_stored', assetId: _assetId)
+external int _cindelPutManyStored(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> documents,
+  int documentsLen,
+);
+
+@Native<
   Int32 Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -1335,6 +1625,25 @@ external int _cindelGet(
     Pointer<Void>,
     Pointer<Uint8>,
     Size,
+    Uint64,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_get_stored', assetId: _assetId)
+external int _cindelGetStored(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  int id,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
     Pointer<Uint8>,
     Size,
     Pointer<Pointer<Uint8>>,
@@ -1342,6 +1651,27 @@ external int _cindelGet(
   )
 >(symbol: 'cindel_get_many', assetId: _assetId)
 external int _cindelGetMany(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_get_many_stored', assetId: _assetId)
+external int _cindelGetManyStored(
   Pointer<Void> handle,
   Pointer<Uint8> collection,
   int collectionLen,
@@ -1462,6 +1792,31 @@ external int _cindelQueryIndexRange(
   int lowerLen,
   Pointer<Uint8> upper,
   int upperLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_filter', assetId: _assetId)
+external int _cindelQueryFilter(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+  Pointer<Uint8> filter,
+  int filterLen,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
 );

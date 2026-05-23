@@ -1,14 +1,14 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[cfg(feature = "mdbx")]
-use crate::storage::MdbxStorage;
 use crate::storage::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, SqliteStorage, StorageEngine,
 };
+#[cfg(feature = "mdbx")]
+use crate::storage::{MdbxLayoutV2Storage, MdbxStorage};
 
 const DEFAULT_DOCUMENTS: u64 = 10_000;
 const DEFAULT_QUERY_REPEATS: u64 = 1_000;
@@ -16,19 +16,17 @@ const DEFAULT_QUERY_REPEATS: u64 = 1_000;
 pub fn run_cli(args: impl Iterator<Item = String>) -> Result<(), String> {
     let config = BenchmarkConfig::from_args(args)?;
     let reports = run_benchmarks(&config)?;
+    let run = BenchmarkRun::new(&config, reports);
 
-    println!("backend,operation,items,total_ms,ops_per_second");
-    for report in reports {
-        for measurement in report.measurements {
-            println!(
-                "{},{},{},{:.3},{:.2}",
-                report.backend,
-                measurement.operation,
-                measurement.items,
-                measurement.elapsed.as_secs_f64() * 1000.0,
-                measurement.ops_per_second()
-            );
-        }
+    let output = match config.output_format {
+        OutputFormat::Csv => run.to_csv(),
+        OutputFormat::Json => run.to_json()?,
+    };
+
+    if let Some(output_path) = &config.output_path {
+        fs::write(output_path, output).map_err(|error| error.to_string())?;
+    } else {
+        print!("{output}");
     }
 
     Ok(())
@@ -38,9 +36,11 @@ fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkReport>, Stri
     match config.backend {
         BackendSelection::Sqlite => Ok(vec![run_sqlite_benchmark(config)?]),
         BackendSelection::Mdbx => Ok(vec![run_mdbx_benchmark(config)?]),
+        BackendSelection::MdbxV2 => Ok(vec![run_mdbx_v2_benchmark(config)?]),
         BackendSelection::All => Ok(vec![
             run_sqlite_benchmark(config)?,
             run_mdbx_benchmark(config)?,
+            run_mdbx_v2_benchmark(config)?,
         ]),
     }
 }
@@ -49,7 +49,7 @@ fn run_sqlite_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, Str
     let directory = TemporaryDirectory::new("sqlite_bench")?;
     let (storage, open) = measure_value("open", 1, || SqliteStorage::open(directory.path()))?;
 
-    run_storage_benchmark("sqlite", storage, open, config)
+    run_storage_benchmark("sqlite", storage, open, directory.path_buf(), config)
 }
 
 #[cfg(feature = "mdbx")]
@@ -57,78 +57,153 @@ fn run_mdbx_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, Strin
     let directory = TemporaryDirectory::new("mdbx_bench")?;
     let (storage, open) = measure_value("open", 1, || MdbxStorage::open(directory.path()))?;
 
-    run_storage_benchmark("mdbx", storage, open, config)
+    run_storage_benchmark("mdbx", storage, open, directory.path_buf(), config)
 }
 
 #[cfg(not(feature = "mdbx"))]
 fn run_mdbx_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
-    Err("MDBX benchmark requires building with `--features mdbx`.".into())
+    Err("MDBX benchmark requires building with `--features benchmarks`.".into())
+}
+
+#[cfg(feature = "mdbx")]
+fn run_mdbx_v2_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
+    let directory = TemporaryDirectory::new("mdbx_v2_bench")?;
+    let (storage, open) = measure_value("open", 1, || MdbxLayoutV2Storage::open(directory.path()))?;
+
+    run_storage_benchmark("mdbx-v2-spike", storage, open, directory.path_buf(), config)
+}
+
+#[cfg(not(feature = "mdbx"))]
+fn run_mdbx_v2_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
+    Err("MDBX layout v2 benchmark requires building with `--features benchmarks`.".into())
 }
 
 fn run_storage_benchmark(
     backend: &'static str,
     mut storage: impl StorageEngine,
     open: Measurement,
+    database_path: &Path,
     config: &BenchmarkConfig,
 ) -> Result<BenchmarkReport, String> {
     let register_schemas = measure("register_schemas", 1, || {
         storage.register_schemas(&schema_manifest())
     })?;
 
-    let put = measure("put_indexed", config.documents, || {
-        for id in 0..config.documents {
-            storage.put_indexed(
-                "users",
-                id,
-                document_bytes(id).as_bytes(),
-                &benchmark_indexes(id),
-            )?;
+    let put = measure_iterations("put_indexed", config.documents, |id| {
+        storage.put_indexed(
+            "users",
+            id,
+            document_bytes(id).as_bytes(),
+            &benchmark_indexes(id),
+        )
+    })?;
+
+    let get = measure_iterations("get", config.documents, |id| {
+        let Some(bytes) = storage.get("users", id)? else {
+            return Err(format!("missing document {id}"));
+        };
+        if bytes.is_empty() {
+            return Err(format!("empty document {id}"));
         }
         Ok(())
     })?;
 
-    let get = measure("get", config.documents, || {
-        for id in 0..config.documents {
-            let Some(bytes) = storage.get("users", id)? else {
-                return Err(format!("missing document {id}"));
-            };
-            if bytes.is_empty() {
-                return Err(format!("empty document {id}"));
-            }
+    let all_ids = (0..config.documents).collect::<Vec<_>>();
+    let get_many = measure("get_many", config.documents, || {
+        let documents = storage.get_many("users", &all_ids)?;
+        if documents.len() != all_ids.len() {
+            return Err(format!(
+                "get_many returned {} documents for {} ids",
+                documents.len(),
+                all_ids.len()
+            ));
+        }
+        if documents.iter().any(Option::is_none) {
+            return Err("get_many returned missing documents".into());
         }
         Ok(())
     })?;
 
-    let equality_query = measure("query_equal", config.query_repeats, || {
-        for repeat in 0..config.query_repeats {
+    let document_ids = measure("document_ids", config.documents, || {
+        let ids = storage.document_ids("users")?;
+        if ids.len() != config.documents as usize {
+            return Err(format!(
+                "document_ids returned {} ids for {} documents",
+                ids.len(),
+                config.documents
+            ));
+        }
+        Ok(())
+    })?;
+
+    let equality_query = measure_iterations("query_equal", config.query_repeats, |repeat| {
+        let id = repeat % config.documents;
+        let ids = storage.query_index_equal(
+            "users",
+            "email",
+            &IndexValue::String(format!("user-{id}@example.com")),
+        )?;
+        if ids != vec![id] {
+            return Err(format!("unexpected equality result for {id}: {ids:?}"));
+        }
+        Ok(())
+    })?;
+
+    let equality_query_with_get = measure_iterations(
+        "query_equal_with_get_many",
+        config.query_repeats,
+        |repeat| {
             let id = repeat % config.documents;
             let ids = storage.query_index_equal(
                 "users",
                 "email",
                 &IndexValue::String(format!("user-{id}@example.com")),
             )?;
-            if ids != vec![id] {
-                return Err(format!("unexpected equality result for {id}: {ids:?}"));
+            let documents = storage.get_many("users", &ids)?;
+            if documents.len() != 1 || documents[0].is_none() {
+                return Err(format!("unexpected equality documents for {id}"));
             }
+            Ok(())
+        },
+    )?;
+
+    let range_upper = config.documents.min(100) as i64 - 1;
+    let range_query = measure_iterations("query_range", config.query_repeats, |_| {
+        let ids = storage.query_index_range(
+            "users",
+            "score",
+            Some(&IndexValue::Int(0)),
+            Some(&IndexValue::Int(range_upper)),
+        )?;
+        if ids.is_empty() {
+            return Err("range query returned no ids".into());
         }
         Ok(())
     })?;
 
-    let range_upper = config.documents.min(100) as i64 - 1;
-    let range_query = measure("query_range", config.query_repeats, || {
-        for _ in 0..config.query_repeats {
+    let range_query_with_get =
+        measure_iterations("query_range_with_get_many", config.query_repeats, |_| {
             let ids = storage.query_index_range(
                 "users",
                 "score",
                 Some(&IndexValue::Int(0)),
                 Some(&IndexValue::Int(range_upper)),
             )?;
-            if ids.is_empty() {
-                return Err("range query returned no ids".into());
+            let documents = storage.get_many("users", &ids)?;
+            if documents.is_empty() || documents.iter().any(Option::is_none) {
+                return Err("range query returned missing documents".into());
             }
-        }
-        Ok(())
-    })?;
+            Ok(())
+        })?;
+
+    let collection_revision =
+        measure_iterations("collection_revision", config.query_repeats, |_| {
+            let revision = storage.collection_revision("users")?;
+            if revision == 0 {
+                return Err("collection revision was not advanced".into());
+            }
+            Ok(())
+        })?;
 
     let batch_start_id = config.documents;
     let batch_documents = (0..config.documents)
@@ -150,17 +225,42 @@ fn run_storage_benchmark(
         storage.delete_many("users", &batch_ids)
     })?;
 
+    let delete_start_id = batch_start_id + config.documents;
+    let delete_documents = (0..config.query_repeats)
+        .map(|offset| {
+            let id = delete_start_id + offset;
+            DocumentWrite {
+                id,
+                bytes: document_bytes(id).into_bytes(),
+                indexes: benchmark_indexes(id),
+            }
+        })
+        .collect::<Vec<_>>();
+    storage.put_many_indexed("users", &delete_documents)?;
+    let delete = measure_iterations("delete", config.query_repeats, |offset| {
+        storage.delete("users", delete_start_id + offset)
+    })?;
+
+    let database_size_bytes = directory_size_bytes(database_path)?;
+
     Ok(BenchmarkReport {
         backend,
+        database_size_bytes,
         measurements: vec![
             open,
             register_schemas,
             put,
             get,
+            get_many,
+            document_ids,
             equality_query,
+            equality_query_with_get,
             range_query,
+            range_query_with_get,
+            collection_revision,
             batch_put,
             delete_many,
+            delete,
         ],
     })
 }
@@ -172,10 +272,32 @@ fn measure(
 ) -> Result<Measurement, String> {
     let started_at = Instant::now();
     action()?;
+    let elapsed = started_at.elapsed();
+    Ok(Measurement {
+        operation,
+        items,
+        elapsed,
+        samples: vec![elapsed],
+    })
+}
+
+fn measure_iterations(
+    operation: &'static str,
+    items: u64,
+    mut action: impl FnMut(u64) -> Result<(), String>,
+) -> Result<Measurement, String> {
+    let mut samples = Vec::with_capacity(items as usize);
+    let started_at = Instant::now();
+    for index in 0..items {
+        let sample_started_at = Instant::now();
+        action(index)?;
+        samples.push(sample_started_at.elapsed());
+    }
     Ok(Measurement {
         operation,
         items,
         elapsed: started_at.elapsed(),
+        samples,
     })
 }
 
@@ -186,14 +308,35 @@ fn measure_value<T>(
 ) -> Result<(T, Measurement), String> {
     let started_at = Instant::now();
     let value = action()?;
+    let elapsed = started_at.elapsed();
     Ok((
         value,
         Measurement {
             operation,
             items,
-            elapsed: started_at.elapsed(),
+            elapsed,
+            samples: vec![elapsed],
         },
     ))
+}
+
+fn directory_size_bytes(path: &Path) -> Result<u64, String> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let mut size = 0;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+        if metadata.is_file() {
+            size += metadata.len();
+        } else if metadata.is_dir() {
+            for entry in fs::read_dir(&path).map_err(|error| error.to_string())? {
+                pending.push(entry.map_err(|error| error.to_string())?.path());
+            }
+        }
+    }
+    Ok(size)
 }
 
 fn document_bytes(id: u64) -> String {
@@ -263,10 +406,183 @@ fn schema_manifest() -> SchemaManifest {
     }
 }
 
+struct BenchmarkRun {
+    generated_at_unix_ms: u128,
+    config: BenchmarkConfigSnapshot,
+    reports: Vec<BenchmarkReport>,
+}
+
+impl BenchmarkRun {
+    fn new(config: &BenchmarkConfig, reports: Vec<BenchmarkReport>) -> Self {
+        let generated_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        Self {
+            generated_at_unix_ms,
+            config: BenchmarkConfigSnapshot {
+                backend: config.backend.as_str().to_string(),
+                documents: config.documents,
+                query_repeats: config.query_repeats,
+            },
+            reports,
+        }
+    }
+
+    fn to_csv(&self) -> String {
+        let mut output =
+            String::from("backend,operation,items,total_ms,ops_per_second,p50_us,p95_us\n");
+        for report in &self.reports {
+            for measurement in &report.measurements {
+                output.push_str(&format!(
+                    "{},{},{},{:.3},{:.2},{},{}\n",
+                    report.backend,
+                    measurement.operation,
+                    measurement.items,
+                    measurement.elapsed.as_secs_f64() * 1000.0,
+                    measurement.ops_per_second(),
+                    format_optional_f64(measurement.percentile_us(0.50)),
+                    format_optional_f64(measurement.percentile_us(0.95)),
+                ));
+            }
+        }
+        output
+    }
+
+    fn to_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(&BenchmarkRunJson::from(self))
+            .map_err(|error| error.to_string())
+            .map(|json| format!("{json}\n"))
+    }
+}
+
+fn format_optional_f64(value: Option<f64>) -> String {
+    value.map(|value| format!("{value:.3}")).unwrap_or_default()
+}
+
+#[derive(serde::Serialize)]
+struct BenchmarkRunJson {
+    generated_at_unix_ms: u128,
+    config: BenchmarkConfigSnapshot,
+    reports: Vec<BenchmarkReportJson>,
+}
+
+impl From<&BenchmarkRun> for BenchmarkRunJson {
+    fn from(run: &BenchmarkRun) -> Self {
+        Self {
+            generated_at_unix_ms: run.generated_at_unix_ms,
+            config: run.config.clone(),
+            reports: run.reports.iter().map(BenchmarkReportJson::from).collect(),
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct BenchmarkConfigSnapshot {
+    backend: String,
+    documents: u64,
+    query_repeats: u64,
+}
+
+#[derive(serde::Serialize)]
+struct BenchmarkReportJson {
+    backend: &'static str,
+    database_size_bytes: u64,
+    measurements: Vec<MeasurementJson>,
+}
+
+impl From<&BenchmarkReport> for BenchmarkReportJson {
+    fn from(report: &BenchmarkReport) -> Self {
+        Self {
+            backend: report.backend,
+            database_size_bytes: report.database_size_bytes,
+            measurements: report
+                .measurements
+                .iter()
+                .map(MeasurementJson::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct MeasurementJson {
+    operation: &'static str,
+    items: u64,
+    total_ms: f64,
+    ops_per_second: f64,
+    p50_us: Option<f64>,
+    p95_us: Option<f64>,
+}
+
+impl From<&Measurement> for MeasurementJson {
+    fn from(measurement: &Measurement) -> Self {
+        Self {
+            operation: measurement.operation,
+            items: measurement.items,
+            total_ms: measurement.elapsed.as_secs_f64() * 1000.0,
+            ops_per_second: measurement.ops_per_second(),
+            p50_us: measurement.percentile_us(0.50),
+            p95_us: measurement.percentile_us(0.95),
+        }
+    }
+}
+
+struct BenchmarkReport {
+    backend: &'static str,
+    database_size_bytes: u64,
+    measurements: Vec<Measurement>,
+}
+
+struct Measurement {
+    operation: &'static str,
+    items: u64,
+    elapsed: Duration,
+    samples: Vec<Duration>,
+}
+
+impl Measurement {
+    fn ops_per_second(&self) -> f64 {
+        self.items as f64 / self.elapsed.as_secs_f64()
+    }
+
+    fn percentile_us(&self, percentile: f64) -> Option<f64> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let mut samples = self.samples.clone();
+        samples.sort_unstable();
+        let index = ((samples.len().saturating_sub(1)) as f64 * percentile).round() as usize;
+        samples
+            .get(index)
+            .map(|duration| duration.as_secs_f64() * 1_000_000.0)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OutputFormat {
+    Csv,
+    Json,
+}
+
+impl OutputFormat {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "csv" => Ok(Self::Csv),
+            "json" => Ok(Self::Json),
+            _ => Err(format!(
+                "`--format` must be one of `csv` or `json`; got `{value}`"
+            )),
+        }
+    }
+}
+
 struct BenchmarkConfig {
     documents: u64,
     query_repeats: u64,
     backend: BackendSelection,
+    output_format: OutputFormat,
+    output_path: Option<PathBuf>,
 }
 
 impl BenchmarkConfig {
@@ -274,6 +590,8 @@ impl BenchmarkConfig {
         let mut documents = DEFAULT_DOCUMENTS;
         let mut query_repeats = DEFAULT_QUERY_REPEATS;
         let mut backend = BackendSelection::Sqlite;
+        let mut output_format = OutputFormat::Csv;
+        let mut output_path = None;
         let mut pending_flag: Option<String> = None;
 
         for arg in args {
@@ -282,13 +600,17 @@ impl BenchmarkConfig {
                     "--documents" => documents = parse_positive_u64(&flag, &arg)?,
                     "--query-repeats" => query_repeats = parse_positive_u64(&flag, &arg)?,
                     "--backend" => backend = BackendSelection::parse(&arg)?,
+                    "--format" => output_format = OutputFormat::parse(&arg)?,
+                    "--output" => output_path = Some(PathBuf::from(arg)),
                     _ => unreachable!("unexpected benchmark flag"),
                 }
                 continue;
             }
 
             match arg.as_str() {
-                "--backend" | "--documents" | "--query-repeats" => pending_flag = Some(arg),
+                "--backend" | "--documents" | "--query-repeats" | "--format" | "--output" => {
+                    pending_flag = Some(arg)
+                }
                 "--help" | "-h" => {
                     print_help();
                     std::process::exit(0);
@@ -308,6 +630,8 @@ impl BenchmarkConfig {
             documents,
             query_repeats,
             backend,
+            output_format,
+            output_path,
         })
     }
 }
@@ -316,6 +640,7 @@ impl BenchmarkConfig {
 enum BackendSelection {
     Sqlite,
     Mdbx,
+    MdbxV2,
     All,
 }
 
@@ -324,10 +649,20 @@ impl BackendSelection {
         match value {
             "sqlite" => Ok(Self::Sqlite),
             "mdbx" => Ok(Self::Mdbx),
+            "mdbx-v2" | "mdbx-v2-spike" => Ok(Self::MdbxV2),
             "all" => Ok(Self::All),
             _ => Err(format!(
-                "`--backend` must be one of `sqlite`, `mdbx`, or `all`; got `{value}`"
+                "`--backend` must be one of `sqlite`, `mdbx`, `mdbx-v2`, or `all`; got `{value}`"
             )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Sqlite => "sqlite",
+            Self::Mdbx => "mdbx",
+            Self::MdbxV2 => "mdbx-v2",
+            Self::All => "all",
         }
     }
 }
@@ -341,25 +676,8 @@ fn parse_positive_u64(flag: &str, value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|all] [--documents N] [--query-repeats N]"
+        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|mdbx-v2|all] [--documents N] [--query-repeats N] [--format csv|json] [--output PATH]"
     );
-}
-
-struct BenchmarkReport {
-    backend: &'static str,
-    measurements: Vec<Measurement>,
-}
-
-struct Measurement {
-    operation: &'static str,
-    items: u64,
-    elapsed: Duration,
-}
-
-impl Measurement {
-    fn ops_per_second(&self) -> f64 {
-        self.items as f64 / self.elapsed.as_secs_f64()
-    }
 }
 
 struct TemporaryDirectory {
@@ -378,6 +696,10 @@ impl TemporaryDirectory {
 
     fn path(&self) -> &str {
         self.path.to_str().expect("temporary path must be UTF-8")
+    }
+
+    fn path_buf(&self) -> &Path {
+        &self.path
     }
 }
 

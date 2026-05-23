@@ -5,6 +5,92 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.7
+
+- Added a native MDBX filter compiler for generated Cindel predicates over
+  binary document bytes.
+- Routed generated `filter()` and supported `where().filter()` queries through
+  native filtering when MDBX and binary documents are active, while keeping the
+  Dart filter path as the SQLite/custom-predicate fallback.
+- Added FFI bindings for native filter queries and bumped the native ABI to 7.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 7.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.7`.
+
+## 0.2.6
+
+- Added generated binary serializers for typed Cindel models.
+- Added native FFI read paths for raw stored document bytes so typed MDBX reads
+  can avoid JSON map decoding.
+- Updated typed collection writes and reads to use Cindel binary documents when
+  MDBX is the selected backend, while keeping SQLite on the JSON compatibility
+  path.
+- Kept MDBX transaction queries consistent by deriving staged index entries
+  from binary document bytes.
+- Bumped the native ABI to 6 for the new stored-byte FFI symbols.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 6.
+- Updated `cindel_generator` to `0.2.2`, `cindel` to `0.2.6`, and
+  `cindel_flutter_libs` to `0.2.6`.
+- Relaxed the generator `analyzer` constraint to keep the Todo example
+  compatible with Riverpod while still supporting current pub.dev analyzer
+  scoring.
+
+## 0.2.5
+
+- Switched MDBX schema-backed document storage to Cindel's native binary
+  document format.
+- MDBX now derives index entries from binary document bytes for generated
+  schema collections.
+- Made schema-backed MDBX writes strict: unknown fields are rejected instead of
+  falling back to JSON.
+- Removed the public migration callback and dry-run APIs while Cindel remains
+  pre-1.0 and the optimized storage format is still settling.
+- Made MDBX part of the default native Cargo build while keeping SQLite
+  compiled as an explicit secondary backend.
+- Moved the native benchmark and experimental MDBX layout prototype behind the
+  `benchmarks` Cargo feature so production builds stay smaller.
+- Updated the native MDBX default path so the Rust engine opens MDBX by default
+  when the native library is compiled with MDBX support.
+- Bumped the native ABI to 5 for the migration API cleanup.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 5.
+- Updated `cindel_flutter_libs` to `0.2.5` and advertised Linux alongside
+  Android and Windows.
+
+## 0.2.4
+
+- Added internal storage metadata for layout and document format versions.
+- Added native storage verification helpers for layout, document-format, and
+  index metadata.
+- Kept the public Dart API, production storage behavior, and native binary
+  symbols unchanged.
+
+## 0.2.3
+
+- Added the first native binary document format prototype.
+- Documented the planned versioned object layout with field slots, static and
+  dynamic sections, null encoding, and maximum object size limits.
+- Added native tests proving supported field shapes can round-trip without JSON
+  and that a single field can be read by offset without decoding the whole
+  document.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
+## 0.2.2
+
+- Added an internal MDBX layout prototype for performance benchmarking.
+- Extended the native benchmark so SQLite, the current MDBX layout, and the
+  layout prototype can be compared with the same workload.
+- Kept the public Dart API, production storage layout, and prebuilt binary
+  symbols unchanged.
+
+## 0.2.1
+
+- Added an MDBX index abstraction boundary in the Cindel native core.
+- Kept the storage format, public Dart API, and prebuilt binary symbols
+  unchanged.
+- Expanded the Cindel generator `analyzer` dependency constraint to support
+  the current stable analyzer release line reported by pub.dev.
+- Replaced deprecated analyzer field-origin checks in the generator.
+
 ## 0.2.0
 
 - Prepared the coordinated `0.2.0` pub.dev release line for all publishable
