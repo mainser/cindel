@@ -3,12 +3,16 @@ mod contract_tests;
 #[cfg(feature = "mdbx")]
 mod mdbx;
 mod mdbx_key;
+#[cfg(feature = "mdbx")]
+mod mdbx_layout_v2;
 mod sqlite;
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
+#[cfg(feature = "mdbx")]
+pub(crate) use mdbx_layout_v2::MdbxLayoutV2Storage;
 pub use sqlite::SqliteStorage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,13 +38,13 @@ impl StorageBackend {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct IndexEntry {
     pub name: String,
     pub value: IndexValue,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub enum IndexValue {
     Bool(bool),
     Int(i64),

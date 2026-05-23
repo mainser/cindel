@@ -5,6 +5,14 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.2
+
+- Added an internal MDBX layout prototype for performance benchmarking.
+- Extended the native benchmark so SQLite, the current MDBX layout, and the
+  layout prototype can be compared with the same workload.
+- Kept the public Dart API, production storage layout, and prebuilt binary
+  symbols unchanged.
+
 ## 0.2.1
 
 - Added an MDBX index abstraction boundary in the Cindel native core.

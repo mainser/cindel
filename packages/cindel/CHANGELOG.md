@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+- Added an internal MDBX layout prototype for native performance benchmarks.
+- Added a benchmark backend that compares SQLite, the current MDBX layout, and
+  the layout prototype with the same workload.
+- Kept the public Dart API, production storage layout, and native binary
+  symbols unchanged.
+
 ## 0.2.1
 
 - Added an internal MDBX index abstraction boundary for key creation, unique

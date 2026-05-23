@@ -574,6 +574,51 @@ Validation:
 - Rust and Dart validation should continue to run through the MDBX-11 CI
   backend matrix after pushing.
 
+## MDBX Layout Prototype
+
+A second MDBX layout has been added as an internal benchmark prototype. It is
+not the production storage format and is not exposed through Dart or FFI.
+
+Prototype shape:
+
+- One document table per collection.
+- Integer document ids as primary document keys.
+- One duplicate-sorted table per index.
+- Encoded index values as index keys and document ids as duplicate values.
+- Dedicated unique-index tables.
+- Reverse document-index metadata for replacing and deleting documents without
+  scanning every index table.
+
+Why this layout is promising:
+
+- It reduces global-key prefix work in the hottest document and index paths.
+- Duplicate-sorted index tables make equality and range scans closer to the
+  access pattern MDBX is optimized for.
+- Reverse index metadata makes index cleanup deterministic during replace and
+  delete operations.
+
+Windows release benchmark sample:
+
+```powershell
+cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features mdbx --bin cindel_bench -- --backend all --documents 1000 --query-repeats 100 --format json --output native-perf-layout-v2.json
+```
+
+| Backend | put indexed | get | query equal | query range | put many indexed | delete many | size |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SQLite | 3134.156 ms | 8.045 ms | 14.569 ms | 17.210 ms | 326.454 ms | 297.332 ms | 4,775,560 bytes |
+| MDBX current | 702.312 ms | 4.418 ms | 0.840 ms | 2.001 ms | 413.011 ms | 239.942 ms | 16,781,312 bytes |
+| MDBX prototype | 610.628 ms | 3.292 ms | 0.419 ms | 0.940 ms | 31.436 ms | 15.007 ms | 16,781,312 bytes |
+
+Decision:
+
+- Continue with the next performance stages. The prototype shows a meaningful
+  win for batch writes, deletes, point reads, and indexed queries.
+- Do not ship this layout yet. Cindel still needs versioned storage metadata,
+  migration planning, reopen validation, and binary document storage before a
+  format change is safe.
+- No custom build patches or platform-specific hacks were added for this
+  prototype.
+
 ## Benchmark Baseline
 
 The backend comparison benchmark is implemented as an internal Rust binary:

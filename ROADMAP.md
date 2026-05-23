@@ -323,7 +323,7 @@ Guiding rules:
   - Move MDBX index key creation, unique checks, insert/delete, clear, and
     accounting into a dedicated native abstraction.
   - Keep behavior unchanged while making later layout changes safer.
-- [ ] PERF-03: MDBX layout v2 spike.
+- [x] PERF-03: MDBX layout v2 spike.
   - Prototype per-collection and per-index MDBX databases.
   - Compare the current global-table layout against the v2 layout for writes,
     reads, indexed queries, deletes, and database size.
