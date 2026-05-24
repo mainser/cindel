@@ -12,7 +12,7 @@ use crate::wire::{
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    16
+    17
 }
 
 #[no_mangle]

@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::document_format::{write_document, BinaryValue};
 #[cfg(feature = "mdbx")]
 use crate::storage::MdbxStorage;
 use crate::storage::{
@@ -76,12 +77,8 @@ fn run_storage_benchmark(
     })?;
 
     let put = measure_iterations("put_indexed", config.documents, |id| {
-        storage.put_indexed(
-            "users",
-            id,
-            document_bytes(id).as_bytes(),
-            &benchmark_indexes(id),
-        )
+        let bytes = document_bytes(id)?;
+        storage.put_indexed("users", id, &bytes, &benchmark_indexes(id))
     })?;
 
     let get = measure_iterations("get", config.documents, |id| {
@@ -270,22 +267,37 @@ fn run_storage_benchmark(
         None
     };
 
-    let aggregate_average =
-        measure_iterations("aggregate_score_average", config.query_repeats, |_| {
-            let result = storage.query_aggregate("users", &all_ids, "score", "average")?;
-            if result.is_empty() {
-                return Err("aggregate average returned empty bytes".into());
-            }
-            Ok(())
-        })?;
+    let aggregate_average = if backend == "mdbx" {
+        Some(measure_iterations(
+            "aggregate_score_average",
+            config.query_repeats,
+            |_| {
+                let result = storage.query_aggregate("users", &all_ids, "score", "average")?;
+                if result.is_empty() {
+                    return Err("aggregate average returned empty bytes".into());
+                }
+                Ok(())
+            },
+        )?)
+    } else {
+        None
+    };
 
-    let aggregate_max = measure_iterations("aggregate_name_max", config.query_repeats, |_| {
-        let result = storage.query_aggregate("users", &all_ids, "name", "max")?;
-        if result.is_empty() {
-            return Err("aggregate max returned empty bytes".into());
-        }
-        Ok(())
-    })?;
+    let aggregate_max = if backend == "mdbx" {
+        Some(measure_iterations(
+            "aggregate_name_max",
+            config.query_repeats,
+            |_| {
+                let result = storage.query_aggregate("users", &all_ids, "name", "max")?;
+                if result.is_empty() {
+                    return Err("aggregate max returned empty bytes".into());
+                }
+                Ok(())
+            },
+        )?)
+    } else {
+        None
+    };
 
     let composite_query =
         measure_iterations("query_composite_equal", config.query_repeats, |repeat| {
@@ -325,13 +337,13 @@ fn run_storage_benchmark(
     let batch_documents = (0..config.documents)
         .map(|offset| {
             let id = batch_start_id + offset;
-            DocumentWrite {
+            Ok(DocumentWrite {
                 id,
-                bytes: document_bytes(id).into_bytes(),
+                bytes: document_bytes(id)?,
                 indexes: benchmark_indexes(id),
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     let batch_put = measure("put_many_indexed", config.documents, || {
         storage.put_many_indexed("users", &batch_documents)
     })?;
@@ -345,13 +357,13 @@ fn run_storage_benchmark(
     let delete_documents = (0..config.query_repeats)
         .map(|offset| {
             let id = delete_start_id + offset;
-            DocumentWrite {
+            Ok(DocumentWrite {
                 id,
-                bytes: document_bytes(id).into_bytes(),
+                bytes: document_bytes(id)?,
                 indexes: benchmark_indexes(id),
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     storage.put_many_indexed("users", &delete_documents)?;
     let delete = measure_iterations("delete", config.query_repeats, |offset| {
         storage.delete("users", delete_start_id + offset)
@@ -364,12 +376,8 @@ fn run_storage_benchmark(
     let auto_increment_put =
         measure_iterations("put_indexed_auto_increment", config.query_repeats, |_| {
             let id = storage.allocate_id("users")?;
-            storage.put_indexed(
-                "users",
-                id,
-                document_bytes(id).as_bytes(),
-                &benchmark_indexes(id),
-            )
+            let bytes = document_bytes(id)?;
+            storage.put_indexed("users", id, &bytes, &benchmark_indexes(id))
         })?;
 
     let database_size_bytes = directory_size_bytes(database_path)?;
@@ -402,9 +410,13 @@ fn run_storage_benchmark(
     if let Some(projection_name) = projection_name {
         measurements.push(projection_name);
     }
+    if let Some(aggregate_average) = aggregate_average {
+        measurements.push(aggregate_average);
+    }
+    if let Some(aggregate_max) = aggregate_max {
+        measurements.push(aggregate_max);
+    }
     measurements.extend([
-        aggregate_average,
-        aggregate_max,
         composite_query,
         multi_entry_query,
         collection_revision,
@@ -528,14 +540,20 @@ fn directory_size_bytes(path: &Path) -> Result<u64, String> {
     Ok(size)
 }
 
-fn document_bytes(id: u64) -> String {
-    format!(
-        r#"{{"id":{id},"name":"User {id}","email":"user-{id}@example.com","score":{},"active":{},"tags":["{}","user-{}"]}}"#,
-        id % 1_000,
-        id % 2 == 0,
-        if id % 2 == 0 { "even" } else { "odd" },
-        id % 100,
-    )
+fn document_bytes(id: u64) -> Result<Vec<u8>, String> {
+    write_document(&[
+        Some(BinaryValue::String(format!("user-{id}@example.com"))),
+        Some(BinaryValue::Int(id as i64)),
+        Some(BinaryValue::String(format!("User {id}"))),
+        Some(BinaryValue::Int((id % 1_000) as i64)),
+        Some(BinaryValue::Bool(id % 2 == 0)),
+        Some(BinaryValue::List(vec![
+            Some(BinaryValue::String(
+                if id % 2 == 0 { "even" } else { "odd" }.to_string(),
+            )),
+            Some(BinaryValue::String(format!("user-{}", id % 100))),
+        ])),
+    ])
 }
 
 fn benchmark_indexes(id: u64) -> Vec<IndexEntry> {

@@ -2,8 +2,6 @@
 
 use std::ops::Range;
 
-use serde_json::{Map, Number, Value};
-
 use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
 use crate::wire::{decode_value, encode_index_value, WireIndexValue, WireValue};
 
@@ -526,29 +524,6 @@ fn value_kind(value: &BinaryValue) -> BinaryKind {
     }
 }
 
-pub(crate) fn read_json_field(
-    schema: &CollectionSchemaManifest,
-    bytes: &[u8],
-    field: &str,
-) -> Result<Value, String> {
-    let document = BinaryDocument::parse(bytes)?;
-    let Some(index) = schema
-        .fields
-        .iter()
-        .position(|schema_field| schema_field.name == field)
-    else {
-        return Err(format!(
-            "field `{field}` is not declared in schema `{}`",
-            schema.name
-        ));
-    };
-    if index >= document.field_count() {
-        return Ok(Value::Null);
-    }
-    let value = document.field_value(index)?;
-    binary_to_json(value.as_ref())
-}
-
 pub(crate) fn read_binary_field(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
@@ -693,41 +668,6 @@ pub(crate) fn index_entries_from_binary_document(
         }
     }
     Ok(entries)
-}
-
-fn binary_to_json(value: Option<&BinaryValue>) -> Result<Value, String> {
-    let Some(value) = value else {
-        return Ok(Value::Null);
-    };
-    match value {
-        BinaryValue::Bool(value) => Ok(Value::Bool(*value)),
-        BinaryValue::Int(value)
-        | BinaryValue::DateTimeMicros(value)
-        | BinaryValue::DurationMicros(value) => Ok(Value::Number(Number::from(*value))),
-        BinaryValue::Double(value) => Number::from_f64(*value)
-            .map(Value::Number)
-            .ok_or_else(|| "binary double cannot be represented in JSON".to_string()),
-        BinaryValue::String(value) | BinaryValue::Enum(value) => Ok(Value::String(value.clone())),
-        BinaryValue::List(values) => Ok(Value::Array(
-            values
-                .iter()
-                .map(|value| binary_to_json(value.as_ref()))
-                .collect::<Result<Vec<_>, String>>()?,
-        )),
-        BinaryValue::Embedded(fields) => Ok(Value::Array(
-            fields
-                .iter()
-                .map(|value| binary_to_json(value.as_ref()))
-                .collect::<Result<Vec<_>, String>>()?,
-        )),
-        BinaryValue::Object(entries) => {
-            let mut map = Map::new();
-            for (name, value) in entries {
-                map.insert(name.clone(), binary_to_json(value.as_ref())?);
-            }
-            Ok(Value::Object(map))
-        }
-    }
 }
 
 fn binary_to_index_value(
@@ -989,10 +929,10 @@ mod tests {
     }
 
     #[test]
-    fn projects_one_json_field_without_building_a_document_map() {
+    fn projects_one_binary_field_without_building_a_document_map() {
         // Scenario: PERF-09 native projections need one field from a binary
-        // document without materializing the full JSON document.
-        // Covers: Schema field lookup and binary value conversion to JSON.
+        // document without materializing the full document.
+        // Covers: Schema field lookup and binary value conversion to wire.
         // Expected: The requested field is returned and null fields stay null.
         let schema = CollectionSchemaManifest {
             name: "users".to_string(),
@@ -1035,10 +975,19 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(read_json_field(&schema, &bytes, "name").unwrap(), "Ana");
         assert_eq!(
-            read_json_field(&schema, &bytes, "nickname").unwrap(),
-            Value::Null
+            binary_to_wire_value(read_binary_field(&schema, &bytes, "name").unwrap().as_ref())
+                .unwrap(),
+            WireValue::String("Ana".to_string())
+        );
+        assert_eq!(
+            binary_to_wire_value(
+                read_binary_field(&schema, &bytes, "nickname")
+                    .unwrap()
+                    .as_ref()
+            )
+            .unwrap(),
+            WireValue::Null
         );
     }
 

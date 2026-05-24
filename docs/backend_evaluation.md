@@ -27,7 +27,11 @@ ignored by git. The refreshed inventory now maps every known runtime JSON path
 to its planned removal stage: id lists and basic batches in JSON-02, index
 values and write metadata in JSON-03, native filters in JSON-04, manual
 documents in JSON-05, schema/reverse-index metadata in JSON-06, and projection
-or aggregate rows in JSON-07, with watcher change sets in JSON-08.
+or aggregate rows in JSON-07, with watcher change sets in JSON-08. JSON-09
+closes the line by removing the remaining runtime JSON projection/aggregate
+payloads, moving SQLite composite/list index keys to canonical binary wire
+bytes, and making `serde_json` an optional benchmark-report dependency instead
+of a default native runtime dependency.
 
 JSON-01 added the internal CindelWireV1 codec foundation in Dart and Rust. It
 does not change public Dart APIs, native ABI symbols, storage behavior, or
@@ -88,6 +92,39 @@ collection changes as CindelWireV1 buffers with collection name, post-commit
 revision, and affected document ids. Dart watchers consume those native change
 sets before using `pollInterval` as the compatibility fallback for external
 handles.
+
+JSON-09 removed the remaining runtime JSON leftovers. Dart no longer decodes
+native projection rows or aggregate scalar results with `jsonDecode`; MDBX now
+returns those results as CindelWireV1 `ProjectionRows` and `Scalar` buffers.
+The default native dependency graph no longer includes `serde_json`; JSON
+benchmark reports remain isolated behind the optional `benchmarks` feature, and
+the normal benchmark command emits CSV without writing repo artifacts.
+
+Local JSON-09 release benchmark evidence, Windows, 1000 documents and 100 query
+repeats:
+
+| Route | Previous evidence | JSON-09 release | Reading |
+| --- | ---: | ---: | --- |
+| SQLite `get_many` | 3.856 ms | 4.055 ms | stable |
+| MDBX `get_many` | 3.022 ms | 0.463 ms | 6.53x faster |
+| SQLite `query_equal` | 14.876 ms | 14.568 ms | stable |
+| MDBX `query_equal` | 0.717 ms | 1.084 ms | still 13.44x faster than SQLite |
+| SQLite `query_range` | 17.913 ms | 17.998 ms | stable |
+| MDBX `query_range` | 1.207 ms | 1.626 ms | still 11.07x faster than SQLite |
+| MDBX `query_filter_score_lte_99` | 1013.160 ms for 500 repeats | 43.928 ms for 100 repeats | per-query time improved from 2.026 ms to 0.439 ms |
+| MDBX `projection_name` | JSON result payload before this stage | 51.471 ms | now binary projection rows |
+| MDBX `aggregate_score_average` | 46.149 ms | 37.250 ms | 1.24x faster |
+| SQLite `put_many_indexed` | 771.917 ms | 805.635 ms | stable |
+| MDBX `put_many_indexed` | 71.836 ms | 57.381 ms | 1.25x faster |
+| SQLite `delete_many` | 716.534 ms | 773.438 ms | stable |
+| MDBX `delete_many` | 25.885 ms | 24.495 ms | 1.06x faster |
+
+The main optimization signal is no longer a single dramatic query-equality
+drop, because those ids and indexes were already binary in earlier JSON stages.
+The real JSON-09 win is closure: default runtime builds no longer carry
+`serde_json`, projection and aggregate result bytes are binary, and the existing
+MDBX advantages remain intact while `get_many`, aggregates, batch writes, and
+deletes improve in this local release sample.
 
 Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
 

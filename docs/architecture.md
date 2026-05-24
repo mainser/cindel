@@ -33,6 +33,9 @@ and the hot FFI paths now use CindelWireV1 for ids, indexed writes, filters,
 schema metadata, native query plans, scalar/projection results, and watcher
 change sets. SQLite remains the compatibility backend, but it stores the current
 manual and schema metadata formats instead of the early JSON preview records.
+The default native runtime dependency graph does not include `serde_json`;
+benchmark JSON reports are isolated behind the optional native `benchmarks`
+feature.
 
 ## Watcher and async boundaries
 

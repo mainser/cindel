@@ -499,6 +499,18 @@ mature.
   - Kept `pollInterval` as the compatibility fallback for writes from other
     database handles.
   - Native ABI 16 marks the binary watcher change-set contract.
+- [x] Remove runtime JSON and close evidence.
+  - Removed `serde_json` from the default native runtime dependency tree.
+  - Replaced legacy native projection and aggregate JSON result payloads with
+    CindelWireV1 `ProjectionRows` and `Scalar` buffers.
+  - Replaced SQLite stable list-index JSON keys with canonical binary
+    `WireIndexValue` bytes encoded as hex.
+  - Confirmed runtime/core search has no `serde_json`, `jsonDecode`,
+    `read_json`, `write_json`, or `stable_index_json` hits outside docs,
+    changelog history, and generator string-literal escaping.
+  - Kept native benchmark JSON reporting behind the optional `benchmarks`
+    feature rather than the default runtime.
+  - Native ABI 17 marks the final anti-JSON runtime contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -569,11 +581,11 @@ query/lazy watchers, binary MDBX document storage, and MDBX as the default
 backend with SQLite as an explicit fallback. CindelWireV1 now removes JSON from
 id lists, basic batches, index values, indexed write metadata, unique checks,
 stable hash-index canonicalization, native filters, manual documents, schema
-metadata, and common native query plan execution. The immediate next work is
-watcher and async polish after the query path moved farther into MDBX. Native
-watcher change sets are now in place, so the next anti-JSON work can focus on
-external-handle notification strategy, isolate execution, and later maintenance
-APIs without changing the public watcher surface.
+metadata, common native query plan execution, watcher change sets, projection
+rows, and aggregate scalar results. The default native runtime no longer
+depends on `serde_json`. The next work can focus on external-handle
+notification strategy, isolate execution, maintenance APIs, and future public
+migration tooling without changing the public watcher or query surfaces.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

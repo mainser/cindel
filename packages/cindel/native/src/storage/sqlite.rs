@@ -4,6 +4,8 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::wire::{encode_index_value, WireIndexValue};
+
 use super::{
     decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
     FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest, StorageChangeSet, StorageEngine,
@@ -1477,34 +1479,46 @@ impl SqliteIndexKey {
                 kind: INDEX_KIND_LIST,
                 int_value: None,
                 real_value: None,
-                text_value: Some(stable_index_list_json(values)?),
+                text_value: Some(stable_index_list_key(values)?),
             }),
         }
     }
 }
 
-fn stable_index_list_json(values: &[IndexValue]) -> Result<String, String> {
-    fn json_value(value: &IndexValue) -> Result<serde_json::Value, String> {
-        Ok(match value {
-            IndexValue::Bool(value) => serde_json::json!({"type": "bool", "value": value}),
-            IndexValue::Int(value) => serde_json::json!({"type": "int", "value": value}),
-            IndexValue::Double(value) if value.is_finite() => {
-                serde_json::json!({"type": "double", "value": value})
-            }
-            IndexValue::Double(_) => return Err("index double values must be finite".into()),
-            IndexValue::String(value) => serde_json::json!({"type": "string", "value": value}),
-            IndexValue::List(values) => serde_json::json!({
-                "type": "list",
-                "value": values
-                    .iter()
-                    .map(json_value)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-        })
-    }
+fn stable_index_list_key(values: &[IndexValue]) -> Result<String, String> {
+    let value = WireIndexValue::List(
+        values
+            .iter()
+            .map(index_value_to_wire)
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    encode_index_value(&value).map(hex_encode)
+}
 
-    serde_json::to_string(&json_value(&IndexValue::List(values.to_vec()))?)
-        .map_err(|error| error.to_string())
+fn index_value_to_wire(value: &IndexValue) -> Result<WireIndexValue, String> {
+    Ok(match value {
+        IndexValue::Bool(value) => WireIndexValue::Bool(*value),
+        IndexValue::Int(value) => WireIndexValue::Int(*value),
+        IndexValue::Double(value) if value.is_finite() => WireIndexValue::Double(*value),
+        IndexValue::Double(_) => return Err("index double values must be finite".into()),
+        IndexValue::String(value) => WireIndexValue::String(value.clone()),
+        IndexValue::List(values) => WireIndexValue::List(
+            values
+                .iter()
+                .map(index_value_to_wire)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+    })
+}
+
+fn hex_encode(bytes: Vec<u8>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 #[cfg(test)]

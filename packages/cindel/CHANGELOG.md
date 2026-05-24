@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.4
+
+- Removed the default-runtime `serde_json` dependency from the native Rust core.
+- Replaced legacy native projection and aggregate JSON result payloads with
+  CindelWireV1 `ProjectionRows` and `Scalar` buffers.
+- Replaced SQLite stable list-index JSON keys with canonical binary
+  `WireIndexValue` bytes encoded as hex.
+- Removed Dart runtime `jsonDecode` usage from FFI projection and aggregate
+  paths while keeping public query APIs source-compatible.
+- Kept benchmark JSON reporting isolated behind the optional native
+  `benchmarks` feature.
+- Bumped the native ABI to 17.
+
 ## 0.3.3
 
 - Added CindelWireV1 native watcher change-set payloads for collection name,

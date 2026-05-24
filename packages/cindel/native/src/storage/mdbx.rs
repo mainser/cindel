@@ -10,7 +10,7 @@ use libmdbx::{
     Database, DatabaseOptions, NoWriteMap, Table, TableFlags, Transaction, WriteFlags, RO, RW,
 };
 
-use crate::document_format::{binary_to_wire_value, read_binary_field, read_json_field};
+use crate::document_format::{binary_to_wire_value, read_binary_field};
 use crate::document_format::{
     index_entries_from_binary_document, validate_generic_document, BinaryDocument, BinaryValue,
 };
@@ -1216,14 +1216,19 @@ impl StorageEngine for MdbxStorage {
             ));
         }
         let documents = self.get_many_stored(collection, candidate_ids)?;
-        let mut values = Vec::new();
+        let mut cells = Vec::new();
         for document in documents {
             let Some(document) = document else {
                 continue;
             };
-            values.push(read_json_field(&schema, &document, field)?);
+            let value = read_binary_field(&schema, &document, field)?;
+            cells.push(binary_to_wire_value(value.as_ref())?);
         }
-        serde_json::to_vec(&values).map_err(|error| error.to_string())
+        encode_projection_rows(&WireProjectionRows {
+            row_count: cells.len() as u32,
+            column_count: 1,
+            cells,
+        })
     }
 
     fn query_aggregate(
@@ -1257,11 +1262,9 @@ impl StorageEngine for MdbxStorage {
             let Some(document) = document else {
                 continue;
             };
-            values.push(read_json_field(&schema, &document, field)?);
+            values.push(read_binary_field(&schema, &document, field)?);
         }
-
-        let result = super::aggregate_json_values(&values, operation)?;
-        serde_json::to_vec(&result).map_err(|error| error.to_string())
+        encode_scalar(&aggregate_binary_values(&values, operation)?)
     }
 
     fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
@@ -3294,7 +3297,7 @@ mod tests {
         // - Native count, min, max, sum, and average over binary documents.
         // - String min/max ordering.
         // - Missing candidate ids being ignored.
-        // Expected: Aggregates are returned as compact JSON scalars.
+        // Expected: Aggregates are returned as compact CindelWireV1 scalars.
         let directory = TemporaryDirectory::new("aggregates");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage.register_schemas(&schema_manifest()).unwrap();
@@ -3314,43 +3317,43 @@ mod tests {
             storage
                 .query_aggregate("users", &[1, 2, 3, 999], "score", "count")
                 .unwrap(),
-            b"3".to_vec()
+            encode_scalar(&WireScalar::Int(3)).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "score", "min")
                 .unwrap(),
-            b"10".to_vec()
+            encode_scalar(&WireScalar::Int(10)).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "score", "max")
                 .unwrap(),
-            b"30".to_vec()
+            encode_scalar(&WireScalar::Int(30)).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "score", "sum")
                 .unwrap(),
-            b"60.0".to_vec()
+            encode_scalar(&WireScalar::Double(60.0)).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "score", "average")
                 .unwrap(),
-            b"20.0".to_vec()
+            encode_scalar(&WireScalar::Double(20.0)).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "name", "min")
                 .unwrap(),
-            br#""Ana""#.to_vec()
+            encode_scalar(&WireScalar::String("Ana".to_string())).unwrap()
         );
         assert_eq!(
             storage
                 .query_aggregate("users", &[1, 2, 3], "name", "max")
                 .unwrap(),
-            br#""Cid""#.to_vec()
+            encode_scalar(&WireScalar::String("Cid".to_string())).unwrap()
         );
     }
 

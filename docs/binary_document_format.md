@@ -4,6 +4,8 @@ This document records the first Cindel binary object format. MDBX uses this
 format internally for schema-backed documents that match the registered
 collection schema. Manual documents use GenericDocumentV1, and the current hot
 FFI paths use CindelWireV1 binary payloads instead of the early JSON envelopes.
+After the anti-JSON cleanup, the default native runtime path no longer depends
+on `serde_json`; JSON output is limited to optional benchmark reporting.
 
 ## Goals
 

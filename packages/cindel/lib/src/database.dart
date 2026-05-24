@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
@@ -795,11 +794,11 @@ class CindelDatabase {
       _encodeIds(idList),
       field,
     );
-    final decoded = jsonDecode(utf8.decode(bytes));
-    if (decoded is! List) {
-      throw StateError('Native Cindel returned a non-list projection.');
+    final rows = decodeProjectionRows(bytes);
+    if (rows.columnCount != 1) {
+      throw StateError('Native Cindel returned an invalid projection shape.');
     }
-    return decoded.cast<Object?>();
+    return [for (final cell in rows.cells) _wireValueToObject(cell)];
   }
 
   /// Aggregates [field] from native binary documents under [candidateIds].
@@ -834,7 +833,7 @@ class CindelDatabase {
       field,
       operation,
     );
-    return jsonDecode(utf8.decode(bytes));
+    return _wireScalarToObject(decodeScalar(bytes));
   }
 
   Future<List<int>> queryNativePlanIds(
