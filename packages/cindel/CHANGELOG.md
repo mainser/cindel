@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.16
+
+- Optimized MDBX get-family reads by caching collection schema manifests after
+  registration, avoiding repeated schema metadata reads and JSON parsing during
+  `get` and `getMany` style lookups.
+- Expanded the benchmark harness to measure manual `get`, raw stored-byte
+  reads, generated binary-document reads, typed `get`, `getAll`, batch-size
+  variants, query hydration, and `readTxn` get loops separately.
+- Added typed collection coverage confirming MDBX generated writes store the
+  Cindel binary document format used by the fast typed read path.
+- Kept the public Dart API and native ABI unchanged.
+
 ## 0.2.15
 
 - Replaced JSON array id-list FFI payloads with CindelWireV1 binary buffers for

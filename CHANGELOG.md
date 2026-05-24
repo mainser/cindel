@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.16
+
+- Completed the first GET-01 read-path optimization pass for MDBX get-family
+  routes.
+- Cached MDBX collection schema manifests in memory after schema registration
+  so single `get` and `getMany` reads no longer parse schema JSON on every
+  lookup.
+- Expanded native and Dart benchmarks to split manual `get`, raw stored-byte
+  `getStored`, generated binary-document reads, typed `get`, `getAll`,
+  size-specific `getMany` batches, query hydration, and read transaction loops.
+- Regenerated Windows, Android, and Linux prebuilt native libraries with the
+  MDBX read-path optimization. Native ABI remains 10.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.16`.
+
 ## 0.2.15
 
 - Moved runtime FFI id-list payloads from JSON arrays to CindelWireV1 binary

@@ -436,6 +436,22 @@ Guiding rules:
     ABI 10.
   - Re-benchmark `get`, `getMany`, indexed queries, and `deleteMany` against
     the JSON-00 baseline, with special attention to MDBX single-get overhead.
+- [x] GET-01: Full get-family read path optimization.
+  - Expanded native and Dart benchmarks so manual `get`, raw stored-byte
+    reads, generated binary-document reads, typed `get`, `getAll`, batched
+    `getMany`, query hydration, and read transaction loops are measured
+    separately.
+  - Cached MDBX schema manifests after registration so single `get`/`getMany`
+    reads no longer parse schema JSON on every lookup.
+  - Measured public Dart `get` improving from the JSON-02 MDBX slower-than-
+    SQLite shape to MDBX winning the 5000-document run: MDBX 56.04 ms versus
+    SQLite 78.71 ms.
+  - Confirmed raw generated binary reads are the fast path: MDBX
+    `getBinaryDocument` 32.93 ms and `getAllBinaryDocuments` 5.05 ms for the
+    same local run.
+  - Documented that `readTxn` still needs a real reusable MDBX read transaction
+    context; today's marker prevents writes but does not remove per-get native
+    read setup cost.
 - [ ] JSON-03: Binary index values and document writes.
   - Replace JSON index values, index entries, indexed document writes, unique
     checks, and stable index hashing with canonical CindelWireV1 payloads.

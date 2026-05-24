@@ -69,11 +69,13 @@ Future<BenchmarkReport> runBackendBenchmark(
         database = await Cindel.open(
           directory: temporaryDirectory.path,
           backend: backend,
-          schemas: [benchmarkSchema],
+          schemas: [benchmarkSchema, binaryBenchmarkSchema],
         );
       }),
     );
     final db = database!;
+    final typedUsers = db.typedCollection(binaryBenchmarkSchema);
+    final allIds = List.generate(documents.length, (i) => i);
 
     measurements.add(
       await measureLoop('put', documents.length, (index) {
@@ -90,18 +92,95 @@ Future<BenchmarkReport> runBackendBenchmark(
       }),
     );
 
+    final readTxnGetCount = documents.length < config.queryRepeats
+        ? documents.length
+        : config.queryRepeats;
+    final readTxnIds = List.generate(readTxnGetCount, (index) => index);
+    measurements.add(
+      await measureOnce('get_loop_outside_read_txn', () async {
+        for (final id in readTxnIds) {
+          final document = await db.get('users', id);
+          if (document == null) {
+            throw StateError('Missing benchmark document $id.');
+          }
+        }
+      }, items: readTxnGetCount),
+    );
+
+    measurements.add(
+      await measureOnce('get_loop_inside_read_txn', () async {
+        await db.readTxn(() async {
+          for (final id in readTxnIds) {
+            final document = await db.get('users', id);
+            if (document == null) {
+              throw StateError('Missing benchmark document $id.');
+            }
+          }
+        });
+      }, items: readTxnGetCount),
+    );
+
     measurements.add(
       await measureOnce('get_all', () async {
-        final result = await db.getAll(
-          'users',
-          List.generate(documents.length, (i) => i),
-        );
+        final result = await db.getAll('users', allIds);
         if (result.length != documents.length ||
             result.any((value) => value == null)) {
           throw StateError('getAll returned missing benchmark documents.');
         }
       }, items: documents.length),
     );
+
+    measurements.add(
+      await measureOnce('typed_put_all_binary', () {
+        return typedUsers.putAll(documents);
+      }, items: documents.length),
+    );
+
+    measurements.add(
+      await measureLoop('typed_get', documents.length, (index) async {
+        final document = await typedUsers.get(index);
+        if (document == null) {
+          throw StateError('Missing typed benchmark document $index.');
+        }
+      }),
+    );
+
+    measurements.add(
+      await measureOnce('typed_get_all', () async {
+        final result = await typedUsers.getAll(allIds);
+        if (result.length != documents.length ||
+            result.any((value) => value == null)) {
+          throw StateError(
+            'typed getAll returned missing benchmark documents.',
+          );
+        }
+      }, items: documents.length),
+    );
+
+    if (backend == CindelStorageBackend.mdbx) {
+      measurements.add(
+        await measureLoop('get_binary_document', documents.length, (
+          index,
+        ) async {
+          final bytes = await db.getBinaryDocument('binary_users', index);
+          if (bytes == null || bytes.isEmpty) {
+            throw StateError('Missing binary benchmark document $index.');
+          }
+        }),
+      );
+
+      measurements.add(
+        await measureOnce('get_all_binary_documents', () async {
+          final result = await db.getAllBinaryDocuments('binary_users', allIds);
+          if (result.length != documents.length ||
+              result.any((value) => value == null || value.isEmpty)) {
+            throw StateError(
+              'getAllBinaryDocuments returned missing benchmark documents.',
+            );
+          }
+        }, items: documents.length),
+      );
+    }
 
     late List<CindelDocument> cachedDocuments;
     measurements.add(
@@ -289,6 +368,32 @@ final benchmarkSchema = CindelCollectionSchema<CindelDocument>(
   ],
   toDocument: (object) => Map<String, Object?>.of(object),
   fromDocument: (document) => Map<String, Object?>.of(document),
+);
+
+final binaryBenchmarkSchema = CindelCollectionSchema<CindelDocument>(
+  name: 'binary_users',
+  dartName: 'BinaryBenchmarkUser',
+  idField: 'id',
+  fields: benchmarkSchema.fields,
+  toDocument: (object) => Map<String, Object?>.of(object),
+  fromDocument: (document) => Map<String, Object?>.of(document),
+  toBinaryDocument: (object) => cindelEncodeBinaryDocument([
+    object['id'],
+    object['name'],
+    object['email'],
+    object['score'],
+    object['active'],
+  ]),
+  fromBinaryDocument: (bytes) {
+    final fields = cindelDecodeBinaryDocument(bytes);
+    return {
+      'id': fields[0],
+      'name': fields[1],
+      'email': fields[2],
+      'score': fields[3],
+      'active': fields[4],
+    };
+  },
 );
 
 Future<Measurement> measureOnce(

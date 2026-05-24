@@ -63,6 +63,37 @@ against the JSON-00 baseline, with special attention to per-get transaction,
 key-buffer, and FFI overhead before assuming storage engine latency is the
 cause.
 
+GET-01 addressed the first MDBX get-family bottleneck without changing the
+public Dart API or native ABI. MDBX now caches collection schema manifests in
+the shared storage state after schema registration, so `get`, `getMany`, active
+write staging, native filters, projections, and aggregates no longer have to
+read and parse schema JSON for every hot lookup. The benchmark harness now
+splits manual `get`, raw stored-byte `getStored`, generated binary-document
+reads, typed `get`, `getAll`, batch-size-specific `getMany`, query hydration,
+and read transaction loops.
+
+Local GET-01 benchmark evidence, 5000 documents and 500 query repeats:
+
+- Native storage:
+  - `get`: SQLite 40.15 ms, MDBX 40.88 ms. MDBX is now essentially tied with
+    SQLite instead of the JSON-02 slower-than-SQLite shape.
+  - `get_stored`: SQLite 38.53 ms, MDBX 19.66 ms, MDBX 1.96x faster.
+  - `get_many`: SQLite 20.09 ms, MDBX 14.26 ms, MDBX 1.41x faster.
+  - `get_many_stored`: SQLite 19.62 ms, MDBX 2.04 ms, MDBX 9.64x faster.
+- Dart public API:
+  - manual `get`: SQLite 78.71 ms, MDBX 56.04 ms, MDBX 1.40x faster.
+  - manual `getAll`: SQLite 33.19 ms, MDBX 16.28 ms, MDBX 2.04x faster.
+  - `getBinaryDocument`: MDBX 32.93 ms.
+  - `getAllBinaryDocuments`: MDBX 5.05 ms.
+  - typed `get`: SQLite 73.64 ms, MDBX 68.50 ms, MDBX 1.08x faster.
+  - typed `getAll`: SQLite 29.45 ms, MDBX 25.15 ms, MDBX 1.17x faster.
+
+GET-01 also confirmed the next read-path limit: `readTxn` in the current MDBX
+backend prevents writes but does not retain a reusable MDBX read transaction, so
+repeated single gets still pay native read setup cost. A future transaction
+context pass should make `readTxn` hold an actual native snapshot for repeated
+reads.
+
 ## Candidate: libmdbx
 
 `libmdbx` is a strong candidate for the advanced backend because it is an

@@ -39,6 +39,7 @@ pub struct MdbxStorage {
 struct MdbxSharedState {
     database: Arc<Database<NoWriteMap>>,
     next_ids: Mutex<HashMap<String, u64>>,
+    schemas: Mutex<HashMap<String, CollectionSchemaManifest>>,
 }
 
 type SharedMdbxState = Arc<MdbxSharedState>;
@@ -314,6 +315,52 @@ impl MdbxStorage {
         Ok(result)
     }
 
+    fn cached_collection_schema<K>(
+        &self,
+        transaction: &Transaction<'_, K, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+    ) -> Result<Option<CollectionSchemaManifest>, String>
+    where
+        K: libmdbx::TransactionKind,
+    {
+        if let Some(schema) = self
+            .state
+            .schemas
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(collection)
+            .cloned()
+        {
+            return Ok(Some(schema));
+        }
+
+        let record = schema_record(transaction, tables, collection)?;
+        if let Some(record) = record {
+            let schema = record.schema.clone();
+            self.state
+                .schemas
+                .lock()
+                .map_err(|error| error.to_string())?
+                .insert(collection.to_string(), schema.clone());
+            Ok(Some(schema))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn cache_schema_manifest(&self, manifest: &SchemaManifest) -> Result<(), String> {
+        let mut schemas = self
+            .state
+            .schemas
+            .lock()
+            .map_err(|error| error.to_string())?;
+        for collection in &manifest.collections {
+            schemas.insert(collection.name.clone(), collection.clone());
+        }
+        Ok(())
+    }
+
     fn ensure_can_write(&self) -> Result<(), String> {
         match self.active_transaction {
             Some(MdbxActiveTransaction::Read) => {
@@ -447,6 +494,7 @@ impl MdbxStorage {
 
     fn commit_staged_write(&self, staged: MdbxWriteTransaction) -> Result<(), String> {
         let counter_updates = staged.next_ids.clone();
+        let mut registered_manifests = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             for operation in staged.operations {
                 match operation {
@@ -503,12 +551,16 @@ impl MdbxStorage {
                         for collection in &manifest.collections {
                             register_collection_schema(transaction, &tables, collection, mode)?;
                         }
+                        registered_manifests.push(manifest);
                     }
                 }
             }
 
             Ok(())
         })?;
+        for manifest in &registered_manifests {
+            self.cache_schema_manifest(manifest)?;
+        }
         for (collection, next_id) in counter_updates {
             self.set_cached_next_id_at_least(&collection, next_id)?;
         }
@@ -537,6 +589,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
     let state = Arc::new(MdbxSharedState {
         database,
         next_ids: Mutex::new(HashMap::new()),
+        schemas: Mutex::new(HashMap::new()),
     });
     databases.insert(path.clone(), Arc::downgrade(&state));
     Ok(state)
@@ -637,7 +690,7 @@ impl StorageEngine for MdbxStorage {
             .and_then(|transaction| transaction.staged_document(collection, id))
         {
             let schema = self.with_read_transaction(|transaction, tables| {
-                collection_schema(transaction, &tables, collection)
+                self.cached_collection_schema(transaction, &tables, collection)
             })?;
             return document
                 .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
@@ -645,7 +698,7 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_read_transaction(|transaction, tables| {
-            let schema = collection_schema(transaction, &tables, collection)?;
+            let schema = self.cached_collection_schema(transaction, &tables, collection)?;
             let Ok(documents_table) = open_documents_table(transaction, collection) else {
                 return Ok(None);
             };
@@ -665,7 +718,7 @@ impl StorageEngine for MdbxStorage {
         }
 
         self.with_read_transaction(|transaction, tables| {
-            let schema = collection_schema(transaction, &tables, collection)?;
+            let schema = self.cached_collection_schema(transaction, &tables, collection)?;
             let documents_table = match open_documents_table(transaction, collection) {
                 Ok(table) => table,
                 Err(_) => return Ok(vec![None; ids.len()]),
@@ -756,7 +809,7 @@ impl StorageEngine for MdbxStorage {
         self.ensure_can_write()?;
         if self.active_write_mut().is_some() {
             let schema = self.with_read_transaction(|transaction, tables| {
-                collection_schema(transaction, &tables, collection)
+                self.cached_collection_schema(transaction, &tables, collection)
             })?;
             let (stored_bytes, effective_indexes) =
                 encode_document_for_storage(schema.as_ref(), bytes, indexes)?;
@@ -789,7 +842,7 @@ impl StorageEngine for MdbxStorage {
         self.ensure_can_write()?;
         if self.active_write_mut().is_some() {
             let schema = self.with_read_transaction(|transaction, tables| {
-                collection_schema(transaction, &tables, collection)
+                self.cached_collection_schema(transaction, &tables, collection)
             })?;
             let staged_documents = documents
                 .iter()
@@ -967,7 +1020,7 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<Vec<u64>, String> {
         let filter = NativeFilter::from_json(filter)?;
         let schema = self.with_read_transaction(|transaction, tables| {
-            collection_schema(transaction, &tables, collection)
+            self.cached_collection_schema(transaction, &tables, collection)
         })?;
         let Some(schema) = schema else {
             return Err(format!(
@@ -994,7 +1047,7 @@ impl StorageEngine for MdbxStorage {
         field: &str,
     ) -> Result<Vec<u8>, String> {
         let schema = self.with_read_transaction(|transaction, tables| {
-            collection_schema(transaction, &tables, collection)
+            self.cached_collection_schema(transaction, &tables, collection)
         })?;
         let Some(schema) = schema else {
             return Err(format!(
@@ -1029,7 +1082,7 @@ impl StorageEngine for MdbxStorage {
         operation: &str,
     ) -> Result<Vec<u8>, String> {
         let schema = self.with_read_transaction(|transaction, tables| {
-            collection_schema(transaction, &tables, collection)
+            self.cached_collection_schema(transaction, &tables, collection)
         })?;
         let Some(schema) = schema else {
             return Err(format!(
@@ -1105,7 +1158,8 @@ impl StorageEngine for MdbxStorage {
                 )?;
             }
             Ok(())
-        })
+        })?;
+        self.cache_schema_manifest(manifest)
     }
 
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
@@ -1297,7 +1351,7 @@ fn document_id_key(id: u64) -> [u8; 8] {
     id.to_be_bytes()
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct MdbxSchemaRecord {
     version: u64,
     schema: CollectionSchemaManifest,
@@ -1393,11 +1447,11 @@ fn decode_schema_record(bytes: &[u8]) -> Result<MdbxSchemaRecord, String> {
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
-fn collection_schema<K>(
+fn schema_record<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,
-) -> Result<Option<CollectionSchemaManifest>, String>
+) -> Result<Option<MdbxSchemaRecord>, String>
 where
     K: libmdbx::TransactionKind,
 {
@@ -1407,8 +1461,19 @@ where
             &encode_collection_key(collection),
         )
         .map_err(|error| error.to_string())?
-        .map(|bytes| decode_schema_record(&bytes).map(|record| record.schema))
+        .map(|bytes| decode_schema_record(&bytes))
         .transpose()
+}
+
+fn collection_schema<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+) -> Result<Option<CollectionSchemaManifest>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    schema_record(transaction, tables, collection).map(|record| record.map(|record| record.schema))
 }
 
 fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> HashSet<String> {

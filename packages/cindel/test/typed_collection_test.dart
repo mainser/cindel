@@ -34,6 +34,9 @@ void main() {
 
       // Act.
       await database.users.put(user);
+      final storedBinaryBytes = testStorageBackend == CindelStorageBackend.mdbx
+          ? await database.getBinaryDocument('users', 1)
+          : null;
       final savedUser = await database.users.get(1);
       user.name = 'Ana Maria';
       await database.users.put(user);
@@ -43,6 +46,10 @@ void main() {
 
       // Assert.
       expect(savedUser, isNotNull);
+      if (testStorageBackend == CindelStorageBackend.mdbx) {
+        expect(storedBinaryBytes, isNotNull);
+        expect(storedBinaryBytes!.take(4), [0x43, 0x44, 0x42, 0x46]);
+      }
       expect(savedUser!.name, 'Ana');
       expect(savedUser.email, 'ana@example.com');
       expect(savedUser.active, isTrue);

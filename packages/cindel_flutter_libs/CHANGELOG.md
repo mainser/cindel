@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.16
+
+- Regenerated Windows, Android, and Linux native runtime libraries with the
+  GET-01 MDBX read-path optimization that caches schema manifests for
+  get-family reads.
+- Kept the native ABI at 10 and kept MDBX and SQLite compiled into the shipped
+  binaries.
+
 ## 0.2.15
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

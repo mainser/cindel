@@ -112,6 +112,16 @@ fn run_storage_benchmark(
         Ok(())
     })?;
 
+    let get_stored = measure_iterations("get_stored", config.documents, |id| {
+        let Some(bytes) = storage.get_stored("users", id)? else {
+            return Err(format!("missing stored document {id}"));
+        };
+        if bytes.is_empty() {
+            return Err(format!("empty stored document {id}"));
+        }
+        Ok(())
+    })?;
+
     let all_ids = (0..config.documents).collect::<Vec<_>>();
     let get_many = measure("get_many", config.documents, || {
         let documents = storage.get_many("users", &all_ids)?;
@@ -127,6 +137,46 @@ fn run_storage_benchmark(
         }
         Ok(())
     })?;
+
+    let get_many_1 = measure_batched_reads("get_many_1", &all_ids, 1, |ids| {
+        storage.get_many("users", ids)
+    })?;
+    let get_many_10 = measure_batched_reads("get_many_10", &all_ids, 10, |ids| {
+        storage.get_many("users", ids)
+    })?;
+    let get_many_100 = measure_batched_reads("get_many_100", &all_ids, 100, |ids| {
+        storage.get_many("users", ids)
+    })?;
+    let get_many_1000 = measure_batched_reads("get_many_1000", &all_ids, 1000, |ids| {
+        storage.get_many("users", ids)
+    })?;
+    let get_many_stored = measure("get_many_stored", config.documents, || {
+        let documents = storage.get_many_stored("users", &all_ids)?;
+        if documents.len() != all_ids.len() {
+            return Err(format!(
+                "get_many_stored returned {} documents for {} ids",
+                documents.len(),
+                all_ids.len()
+            ));
+        }
+        if documents.iter().any(Option::is_none) {
+            return Err("get_many_stored returned missing documents".into());
+        }
+        Ok(())
+    })?;
+    let get_many_stored_1 = measure_batched_reads("get_many_stored_1", &all_ids, 1, |ids| {
+        storage.get_many_stored("users", ids)
+    })?;
+    let get_many_stored_10 = measure_batched_reads("get_many_stored_10", &all_ids, 10, |ids| {
+        storage.get_many_stored("users", ids)
+    })?;
+    let get_many_stored_100 = measure_batched_reads("get_many_stored_100", &all_ids, 100, |ids| {
+        storage.get_many_stored("users", ids)
+    })?;
+    let get_many_stored_1000 =
+        measure_batched_reads("get_many_stored_1000", &all_ids, 1000, |ids| {
+            storage.get_many_stored("users", ids)
+        })?;
 
     let document_ids = measure("document_ids", config.documents, || {
         let ids = storage.document_ids("users")?;
@@ -345,7 +395,17 @@ fn run_storage_benchmark(
         register_schemas,
         put,
         get,
+        get_stored,
         get_many,
+        get_many_1,
+        get_many_10,
+        get_many_100,
+        get_many_1000,
+        get_many_stored,
+        get_many_stored_1,
+        get_many_stored_10,
+        get_many_stored_100,
+        get_many_stored_1000,
         document_ids,
         equality_query,
         equality_query_with_get,
@@ -409,6 +469,38 @@ fn measure_iterations(
     Ok(Measurement {
         operation,
         items,
+        elapsed: started_at.elapsed(),
+        samples,
+    })
+}
+
+fn measure_batched_reads(
+    operation: &'static str,
+    ids: &[u64],
+    batch_size: usize,
+    mut read: impl FnMut(&[u64]) -> Result<Vec<Option<Vec<u8>>>, String>,
+) -> Result<Measurement, String> {
+    let batch_size = batch_size.max(1);
+    let mut samples = Vec::with_capacity(ids.len().div_ceil(batch_size));
+    let started_at = Instant::now();
+    for batch in ids.chunks(batch_size) {
+        let sample_started_at = Instant::now();
+        let documents = read(batch)?;
+        samples.push(sample_started_at.elapsed());
+        if documents.len() != batch.len() {
+            return Err(format!(
+                "{operation} returned {} documents for {} ids",
+                documents.len(),
+                batch.len()
+            ));
+        }
+        if documents.iter().any(Option::is_none) {
+            return Err(format!("{operation} returned missing documents"));
+        }
+    }
+    Ok(Measurement {
+        operation,
+        items: ids.len() as u64,
         elapsed: started_at.elapsed(),
         samples,
     })
