@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document_format::read_json_field;
 use crate::document_format::{
-    index_entries_from_binary_document, read_json_document, write_json_document, BinaryDocument,
+    index_entries_from_binary_document, validate_generic_document, BinaryDocument,
 };
 use crate::native_filter::NativeFilter;
 
@@ -1763,27 +1763,21 @@ fn encode_document_for_storage(
     let Some(schema) = schema else {
         return Ok((bytes.to_vec(), indexes.to_vec()));
     };
-    let stored_bytes = if BinaryDocument::parse(bytes).is_ok() {
-        bytes.to_vec()
-    } else {
-        write_json_document(schema, bytes)?
-    };
-    let indexes = index_entries_from_binary_document(schema, &stored_bytes)?;
-    Ok((stored_bytes, indexes))
+    if BinaryDocument::parse(bytes).is_ok() {
+        let indexes = index_entries_from_binary_document(schema, bytes)?;
+        return Ok((bytes.to_vec(), indexes));
+    }
+    if validate_generic_document(bytes).is_ok() {
+        return Ok((bytes.to_vec(), indexes.to_vec()));
+    }
+    Err("document storage requires GenericDocumentV1 or Cindel binary document bytes".into())
 }
 
 fn decode_document_for_read(
-    schema: Option<&CollectionSchemaManifest>,
+    _schema: Option<&CollectionSchemaManifest>,
     bytes: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let Some(schema) = schema else {
-        return Ok(bytes.to_vec());
-    };
-    if BinaryDocument::parse(bytes).is_ok() {
-        read_json_document(schema, bytes)
-    } else {
-        Ok(bytes.to_vec())
-    }
+    Ok(bytes.to_vec())
 }
 
 fn delete_document(
@@ -2353,6 +2347,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::document_format::{write_document, BinaryValue};
     use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
@@ -2491,7 +2486,7 @@ mod tests {
             .put_indexed(
                 "users",
                 1,
-                br#"{"id":1,"email":"ana@example.com","name":"Ana","score":10}"#,
+                &user_document("ana@example.com", 1, "Ana", 10),
                 &[
                     IndexEntry {
                         name: "email".into(),
@@ -2508,7 +2503,7 @@ mod tests {
             .put_indexed(
                 "users",
                 2,
-                br#"{"id":2,"email":"ben@example.com","name":"Ben","score":30}"#,
+                &user_document("ben@example.com", 2, "Ben", 30),
                 &[
                     IndexEntry {
                         name: "email".into(),
@@ -2523,15 +2518,7 @@ mod tests {
             .unwrap();
 
         let read = storage.get("users", 1).unwrap().unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&read).unwrap(),
-            serde_json::json!({
-                "email": "ana@example.com",
-                "id": 1,
-                "name": "Ana",
-                "score": 10,
-            })
-        );
+        assert_eq!(read, user_document("ana@example.com", 1, "Ana", 10));
         storage
             .with_read_transaction(|transaction, tables| {
                 let _ = tables;
@@ -2599,10 +2586,7 @@ mod tests {
                 .put_indexed(
                     "users",
                     id,
-                    format!(
-                        r#"{{"id":{id},"email":"user-{id}@example.com","name":"{name}","score":{score}}}"#
-                    )
-                    .as_bytes(),
+                    &user_document(&format!("user-{id}@example.com"), id as i64, name, score),
                     &[],
                 )
                 .unwrap();
@@ -2861,6 +2845,16 @@ mod tests {
             name: name.to_string(),
             value,
         }
+    }
+
+    fn user_document(email: &str, id: i64, name: &str, score: i64) -> Vec<u8> {
+        write_document(&[
+            Some(BinaryValue::String(email.to_string())),
+            Some(BinaryValue::Int(id)),
+            Some(BinaryValue::String(name.to_string())),
+            Some(BinaryValue::Int(score)),
+        ])
+        .unwrap()
     }
 
     struct TemporaryDirectory {

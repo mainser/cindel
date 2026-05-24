@@ -69,8 +69,8 @@ the existing equality, comparison, contains, startsWith, endsWith, all, any,
 not, and null behavior. The native ABI is now 12 because the existing
 `cindel_query_filter` payload contract changed from JSON to binary.
 
-JSON-04 still leaves manual document JSON, schema/reverse-index metadata JSON,
-and projection/aggregate result JSON for later stages.
+JSON-05 removes manual document JSON from the runtime path. Schema/reverse-index
+metadata JSON and projection/aggregate result JSON remain for later stages.
 
 Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
 
@@ -132,6 +132,29 @@ backend prevents writes but does not retain a reusable MDBX read transaction, so
 repeated single gets still pay native read setup cost. A future transaction
 context pass should make `readTxn` hold an actual native snapshot for repeated
 reads.
+
+Local JSON-05 Dart benchmark evidence, 5000 documents and 500 query repeats:
+
+- SQLite manual API:
+  - `put`: 25481.77 ms total, 196.22 ops/s.
+  - `get`: 94.41 ms total, 52958.81 ops/s.
+  - `get_all`: 50.28 ms total, 99441.14 ops/s.
+  - `query_equal`: 419.50 ms total, 1191.91 ops/s.
+  - `query_range`: 2015.96 ms total, 248.02 ops/s.
+  - `put_all`: 7669.89 ms total, 651.90 ops/s.
+- MDBX manual API:
+  - `put`: 3138.69 ms total, 1593.02 ops/s.
+  - `get`: 48.85 ms total, 102354.15 ops/s.
+  - `get_all`: 12.66 ms total, 394944.71 ops/s.
+  - `query_equal`: 11.33 ms total, 44146.21 ops/s.
+  - `query_range`: 668.27 ms total, 748.20 ops/s.
+  - `put_all`: 204.42 ms total, 24460.04 ops/s.
+
+Compared with GET-01, MDBX manual `get` improved from 56.04 ms to 48.85 ms
+and manual `getAll` improved from 16.28 ms to 12.66 ms in this local run. The
+large `query_equal` improvement mostly reflects removing manual JSON hydration
+from id-based result reads; the native index scan was already binary before
+this stage.
 
 ## Candidate: libmdbx
 

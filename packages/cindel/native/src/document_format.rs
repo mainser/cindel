@@ -5,9 +5,11 @@ use std::ops::Range;
 use serde_json::{Map, Number, Value};
 
 use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
-use crate::wire::{encode_index_value, WireIndexValue};
+use crate::wire::{decode_value, encode_index_value, WireIndexValue, WireValue};
 
 const MAGIC: &[u8; 4] = b"CDBF";
+const GENERIC_DOCUMENT_MAGIC: &[u8; 4] = b"CGD1";
+const GENERIC_DOCUMENT_VERSION: u32 = 1;
 const FORMAT_VERSION: u16 = 1;
 const HEADER_LEN: usize = 24;
 const SLOT_LEN: usize = 16;
@@ -269,6 +271,23 @@ impl<'a> BinaryDocument<'a> {
     }
 }
 
+pub(crate) fn validate_generic_document(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < 8 {
+        return Err("generic document is shorter than the header".into());
+    }
+    if &bytes[..4] != GENERIC_DOCUMENT_MAGIC {
+        return Err("generic document has an invalid magic header".into());
+    }
+    let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if version != GENERIC_DOCUMENT_VERSION {
+        return Err(format!("unsupported generic document version `{version}`"));
+    }
+    match decode_value(&bytes[8..])? {
+        WireValue::Object(_) => Ok(()),
+        _ => Err("generic document root must be an object".into()),
+    }
+}
+
 pub(crate) fn write_document(fields: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
     let header_len = HEADER_LEN + fields.len() * SLOT_LEN;
     if fields.len() > u16::MAX as usize {
@@ -507,54 +526,6 @@ fn value_kind(value: &BinaryValue) -> BinaryKind {
     }
 }
 
-pub(crate) fn write_json_document(
-    schema: &CollectionSchemaManifest,
-    bytes: &[u8],
-) -> Result<Vec<u8>, String> {
-    let value = serde_json::from_slice::<Value>(bytes).map_err(|error| error.to_string())?;
-    let Value::Object(document) = value else {
-        return Err("binary document storage requires JSON object input".into());
-    };
-    let schema_fields = schema
-        .fields
-        .iter()
-        .map(|field| field.name.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    if let Some(unknown) = document
-        .keys()
-        .find(|key| !schema_fields.contains(key.as_str()))
-    {
-        return Err(format!(
-            "binary document field `{}` is not declared in schema `{}`",
-            unknown, schema.name
-        ));
-    }
-    let fields = schema
-        .fields
-        .iter()
-        .map(|field| json_field_to_binary(field, document.get(&field.name)))
-        .collect::<Result<Vec<_>, _>>()?;
-    write_document(&fields)
-}
-
-pub(crate) fn read_json_document(
-    schema: &CollectionSchemaManifest,
-    bytes: &[u8],
-) -> Result<Vec<u8>, String> {
-    let document = BinaryDocument::parse(bytes)?;
-    let mut map = Map::new();
-    for (index, field) in schema.fields.iter().enumerate() {
-        if index >= document.field_count() {
-            continue;
-        }
-        let Some(value) = document.field_value(index)? else {
-            continue;
-        };
-        map.insert(field.name.clone(), binary_to_json(Some(&value))?);
-    }
-    serde_json::to_vec(&Value::Object(map)).map_err(|error| error.to_string())
-}
-
 pub(crate) fn read_json_field(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
@@ -667,97 +638,6 @@ pub(crate) fn index_entries_from_binary_document(
         }
     }
     Ok(entries)
-}
-
-fn json_field_to_binary(
-    field: &FieldSchemaManifest,
-    value: Option<&Value>,
-) -> Result<Option<BinaryValue>, String> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    if value.is_null() {
-        return Ok(None);
-    }
-    let normalized = non_nullable_type(&field.dart_type);
-    match normalized {
-        "bool" => value
-            .as_bool()
-            .map(BinaryValue::Bool)
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be a bool", field.name)),
-        "int" => value
-            .as_i64()
-            .map(BinaryValue::Int)
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be an int", field.name)),
-        "double" => value
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(BinaryValue::Double)
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be a finite double", field.name)),
-        "String" => value
-            .as_str()
-            .map(|value| BinaryValue::String(value.to_string()))
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be a string", field.name)),
-        "DateTime" => value
-            .as_i64()
-            .map(BinaryValue::DateTimeMicros)
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be DateTime microseconds", field.name)),
-        "Duration" => value
-            .as_i64()
-            .map(BinaryValue::DurationMicros)
-            .map(Some)
-            .ok_or_else(|| format!("field `{}` must be Duration microseconds", field.name)),
-        _ => json_to_binary_auto(value).map(Some),
-    }
-}
-
-fn json_to_binary_auto(value: &Value) -> Result<BinaryValue, String> {
-    match value {
-        Value::Null => Err("null must be represented outside BinaryValue".into()),
-        Value::Bool(value) => Ok(BinaryValue::Bool(*value)),
-        Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(BinaryValue::Int(value))
-            } else if let Some(value) = value.as_f64().filter(|value| value.is_finite()) {
-                Ok(BinaryValue::Double(value))
-            } else {
-                Err("JSON number cannot be represented as a finite binary value".into())
-            }
-        }
-        Value::String(value) => Ok(BinaryValue::String(value.clone())),
-        Value::Array(values) => Ok(BinaryValue::List(
-            values
-                .iter()
-                .map(|value| {
-                    if value.is_null() {
-                        Ok(None)
-                    } else {
-                        json_to_binary_auto(value).map(Some)
-                    }
-                })
-                .collect::<Result<Vec<_>, String>>()?,
-        )),
-        Value::Object(values) => {
-            let mut entries = values
-                .iter()
-                .map(|(name, value)| {
-                    let value = if value.is_null() {
-                        None
-                    } else {
-                        Some(json_to_binary_auto(value)?)
-                    };
-                    Ok((name.clone(), value))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Ok(BinaryValue::Object(entries))
-        }
-    }
 }
 
 fn binary_to_json(value: Option<&BinaryValue>) -> Result<Value, String> {
@@ -1116,5 +996,35 @@ mod tests {
         assert!(BinaryDocument::parse(b"not-a-document").is_err());
         assert!(write_document(&[Some(BinaryValue::Double(f64::NAN))]).is_err());
         assert!(write_document(&[Some(BinaryValue::Double(f64::INFINITY))]).is_err());
+    }
+
+    #[test]
+    fn validates_generic_document_envelope() {
+        // Scenario: Manual documents use GenericDocumentV1 instead of JSON.
+        // Covers: Header/version validation, root object validation, and
+        // trailing-payload rejection through the shared wire reader.
+        // Expected: Only a complete object-valued GenericDocumentV1 payload is
+        // accepted by native storage.
+        let valid = [
+            0x43, 0x47, 0x44, 0x31, // CGD1
+            1, 0, 0, 0, // version
+            6, 0, 0, 0, 0, // empty object
+        ];
+        let trailing = [
+            0x43, 0x47, 0x44, 0x31, // CGD1
+            1, 0, 0, 0, // version
+            6, 0, 0, 0, 0, 0,
+        ];
+        let scalar_root = [
+            0x43, 0x47, 0x44, 0x31, // CGD1
+            1, 0, 0, 0, // version
+            4, 0, 0, 0, 0, // empty string
+        ];
+
+        assert!(validate_generic_document(&valid).is_ok());
+        assert!(validate_generic_document(b"{\"name\":\"Ana\"}").is_err());
+        assert!(validate_generic_document(&valid[..7]).is_err());
+        assert!(validate_generic_document(&trailing).is_err());
+        assert!(validate_generic_document(&scalar_root).is_err());
     }
 }

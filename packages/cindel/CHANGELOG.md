@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Replaced manual `CindelDocument` JSON runtime storage with
+  GenericDocumentV1 binary payloads.
+- Switched `getMany` FFI results from JSON arrays to binary document batches.
+- Kept generated typed models on the existing typed binary document format,
+  with manual reads normalizing typed payloads through generated mappers when
+  needed.
+- Added GenericDocumentV1 Dart tests for nested values, UTF-8 key ordering, and
+  invalid payload rejection.
+- Bumped the native ABI to 13 while keeping the public Dart API unchanged.
+
 ## 0.2.18
 
 - Replaced native query filter JSON payloads with CindelWireV1 binary filter

@@ -21,7 +21,7 @@ void main() {
       final abiVersion = bindings.abiVersion;
 
       // Assert.
-      expect(abiVersion, 12);
+      expect(abiVersion, 13);
     });
 
     // Scenario: A database is opened and then closed through the public API.
@@ -204,12 +204,12 @@ void main() {
       expect(await database.get('users', 1), isNull);
     });
 
-    // Scenario: A document contains nested JSON-compatible values.
+    // Scenario: A document contains nested manual document values.
     // Covers:
     // - [CindelDatabase.put] accepting nested maps and lists.
-    // - [CindelDatabase.get] decoding nested JSON values from native bytes.
+    // - [CindelDatabase.get] decoding nested GenericDocumentV1 bytes.
     // Expected: The nested document round-trips without losing structure.
-    test('persists nested JSON-compatible documents.', () async {
+    test('persists nested manual documents.', () async {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
@@ -441,12 +441,12 @@ void main() {
       await expectLater(deleteWithTooLargeId, throwsA(isA<ArgumentError>()));
     });
 
-    // Scenario: A document includes values outside Cindel's JSON contract.
+    // Scenario: A document includes values outside Cindel's manual contract.
     // Covers:
-    // - [CindelDatabase.put] recursive JSON compatibility validation.
+    // - [CindelDatabase.put] recursive manual document validation.
     // - Rejection of non-finite numbers and unsupported Dart objects.
     // Expected: Invalid documents fail with [ArgumentError] before FFI.
-    test('rejects non JSON-compatible documents before FFI.', () async {
+    test('rejects unsupported manual documents before FFI.', () async {
       // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));

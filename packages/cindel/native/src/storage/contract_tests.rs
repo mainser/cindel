@@ -457,7 +457,7 @@ fn rejects_duplicate_unique_index_values<S>(
         .put_indexed(
             "users",
             1,
-            br#"{"email":"a@example.com"}"#,
+            &generic_document(),
             &[index("email", IndexValue::String("a@example.com".into()))],
         )
         .unwrap();
@@ -465,14 +465,14 @@ fn rejects_duplicate_unique_index_values<S>(
         .put_indexed(
             "users",
             1,
-            br#"{"email":"a@example.com"}"#,
+            &generic_document(),
             &[index("email", IndexValue::String("a@example.com".into()))],
         )
         .unwrap();
     let result = storage.put_indexed(
         "users",
         2,
-        br#"{"email":"a@example.com"}"#,
+        &generic_document(),
         &[index("email", IndexValue::String("a@example.com".into()))],
     );
 
@@ -562,7 +562,7 @@ fn bulk_deletes_documents_atomically_and_cleans_indexes<S>(
             &[
                 document_write(
                     1,
-                    br#"{"email":"team@example.com"}"#,
+                    &generic_document(),
                     vec![index(
                         "email",
                         IndexValue::String("team@example.com".into()),
@@ -684,7 +684,7 @@ where
             &[
                 document_write(
                     1,
-                    br#"{"email":"team@example.com"}"#,
+                    &generic_document(),
                     vec![index(
                         "email",
                         IndexValue::String("team@example.com".into()),
@@ -692,7 +692,7 @@ where
                 ),
                 document_write(
                     2,
-                    br#"{"email":"solo@example.com"}"#,
+                    &generic_document(),
                     vec![index(
                         "email",
                         IndexValue::String("solo@example.com".into()),
@@ -868,14 +868,14 @@ fn rolls_back_failed_write_transaction_commits<S>(
         .put_indexed(
             "users",
             1,
-            br#"{"email":"a@example.com"}"#,
+            &generic_document(),
             &[index("email", IndexValue::String("a@example.com".into()))],
         )
         .unwrap();
     let duplicate = storage.put_indexed(
         "users",
         2,
-        br#"{"email":"a@example.com"}"#,
+        &generic_document(),
         &[index("email", IndexValue::String("a@example.com".into()))],
     );
     let result = if duplicate.is_ok() {
@@ -904,6 +904,14 @@ fn document_write(id: u64, bytes: &[u8], indexes: Vec<IndexEntry>) -> DocumentWr
         bytes: bytes.to_vec(),
         indexes,
     }
+}
+
+fn generic_document() -> Vec<u8> {
+    vec![
+        0x43, 0x47, 0x44, 0x31, // CGD1
+        1, 0, 0, 0, // version
+        6, 0, 0, 0, 0, // empty object
+    ]
 }
 
 fn schema_manifest(collections: Vec<CollectionSchemaManifest>) -> SchemaManifest {

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
+import 'generic_document.dart';
 import 'native/bindings.dart';
 import 'native/wire.dart';
 import 'schema.dart';
@@ -333,11 +334,7 @@ class CindelDatabase {
       return null;
     }
 
-    final decoded = jsonDecode(utf8.decode(bytes));
-    if (decoded is! Map) {
-      throw StateError('Native Cindel returned a non-object document.');
-    }
-    return decoded.cast<String, Object?>();
+    return _decodeDocument(collection, bytes, _schemas[collection]);
   }
 
   /// Returns raw generated binary document bytes, or `null`.
@@ -1155,19 +1152,15 @@ class CindelDatabase {
       return const <CindelDocument?>[];
     }
 
-    final bytes = _bindings.getMany(handle, collection, _encodeIds(ids));
-    final decoded = jsonDecode(utf8.decode(bytes));
-    if (decoded is! List) {
-      throw StateError('Native Cindel returned a non-list document batch.');
-    }
+    final documents = _decodeBinaryDocumentBatch(
+      _bindings.getMany(handle, collection, _encodeIds(ids)),
+    );
     return [
-      for (final value in decoded)
-        if (value == null)
+      for (final bytes in documents)
+        if (bytes == null)
           null
-        else if (value is Map)
-          value.cast<String, Object?>()
         else
-          throw StateError('Native Cindel returned a non-object document.'),
+          _decodeDocument(collection, bytes, _schemas[collection]),
     ];
   }
 
@@ -1288,7 +1281,37 @@ List<int> _dedupeIds(List<int> ids) {
 }
 
 Uint8List _encodeDocument(CindelDocument value) {
-  return Uint8List.fromList(utf8.encode(jsonEncode(value)));
+  return cindelEncodeGenericDocument(value);
+}
+
+CindelDocument _decodeDocument(
+  String collection,
+  Uint8List bytes,
+  CindelCollectionSchema<dynamic>? schema,
+) {
+  if (cindelIsGenericDocument(bytes)) {
+    return cindelDecodeGenericDocument(bytes);
+  }
+
+  if (schema != null) {
+    final dynamic dynamicSchema = schema;
+    final fromBinaryDocument = dynamicSchema.fromBinaryDocument;
+    if (fromBinaryDocument != null) {
+      try {
+        final object = fromBinaryDocument(bytes);
+        final document = dynamicSchema.toDocument(object);
+        if (document is Map) {
+          return document.cast<String, Object?>();
+        }
+      } on Object {
+        // Fall through to the unsupported payload error below.
+      }
+    }
+  }
+
+  throw StateError(
+    'Native Cindel returned an unsupported document payload for `$collection`.',
+  );
 }
 
 Uint8List _encodeIds(Iterable<int> ids) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 13 with GenericDocumentV1 manual document payload support.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.18
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

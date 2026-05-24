@@ -190,6 +190,19 @@ pub(crate) fn decode_scalar(bytes: &[u8]) -> Result<WireScalar, String> {
     Ok(value)
 }
 
+pub(crate) fn encode_value(value: &WireValue) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_value(value)?;
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_value(bytes: &[u8]) -> Result<WireValue, String> {
+    let mut reader = Reader::new(bytes);
+    let value = reader.read_value()?;
+    reader.finish()?;
+    Ok(value)
+}
+
 pub(crate) fn encode_filter(filter: &WireFilter) -> Result<Vec<u8>, String> {
     let mut writer = Writer::new();
     writer.write_filter(filter)?;

@@ -10,7 +10,7 @@ use crate::wire::{
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    12
+    13
 }
 
 #[no_mangle]
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn cindel_get_many(
     };
 
     match engine.get_many(collection, &ids) {
-        Ok(documents) => write_json_documents(documents, out_ptr, out_len),
+        Ok(documents) => write_binary_documents(documents, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -791,32 +791,6 @@ fn write_wire_ids(ids: &[u64], out_ptr: *mut *mut u8, out_len: *mut usize) -> i3
         }
         Err(_) => -1,
     }
-}
-
-fn write_json_documents(
-    documents: Vec<Option<Vec<u8>>>,
-    out_ptr: *mut *mut u8,
-    out_len: *mut usize,
-) -> i32 {
-    let mut bytes = Vec::new();
-    bytes.push(b'[');
-    for (index, document) in documents.into_iter().enumerate() {
-        if index > 0 {
-            bytes.push(b',');
-        }
-        match document {
-            Some(document) => bytes.extend_from_slice(&document),
-            None => bytes.extend_from_slice(b"null"),
-        }
-    }
-    bytes.push(b']');
-
-    let (ptr, len) = into_raw_bytes(bytes);
-    unsafe {
-        *out_ptr = ptr;
-        *out_len = len;
-    }
-    0
 }
 
 fn write_binary_documents(

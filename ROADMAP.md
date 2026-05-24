@@ -470,6 +470,13 @@ Guiding rules:
   - Removed `NativeFilter::from_json` from the MDBX filter path while keeping
     public query/filter APIs unchanged.
   - Native ABI 12 marks the binary filter contract.
+- [x] Manual document binary format.
+  - Replaced runtime JSON bytes for manual `CindelDocument` values with
+    GenericDocumentV1.
+  - Canonicalized object keys by UTF-8 byte order in the Dart encoder.
+  - Changed `getMany` to return binary document batches over FFI.
+  - Kept generated typed models on the typed binary document format.
+  - Native ABI 13 marks the manual document binary contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.

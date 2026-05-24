@@ -5,6 +5,24 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.3.0
+
+- Replaced manual `CindelDocument` JSON runtime storage with
+  GenericDocumentV1 binary payloads for `put`, `get`, `getAll`, `queryAll`,
+  and id-based hydration.
+- Switched `getMany` over FFI from a JSON document array to the binary
+  document-batch payload, while preserving generated typed binary documents.
+- MDBX now stores manual GenericDocumentV1 bytes and generated typed binary
+  bytes directly; SQLite stores manual GenericDocumentV1 bytes as BLOB data.
+- Removed the native manual-document JSON conversion helpers from the MDBX
+  write/read path.
+- Bumped the native ABI to 13 and regenerated Windows, Android, and Linux
+  prebuilt native libraries.
+- Measured a local 5000-document, 500-repeat performance run: MDBX now measured
+  48.85 ms for manual `get`, 12.66 ms for `getAll`, and 11.33 ms for indexed
+  equality on that machine.
+- Updated `cindel` and `cindel_flutter_libs` to `0.3.0`.
+
 ## 0.2.18
 
 - Completed JSON-04 by moving native query filters from JSON envelopes to
