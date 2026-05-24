@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
 pub use metadata::{
-    DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMetadata,
-    StorageVerificationReport,
+    DocumentFormatVersion, IndexVerificationCheck, SchemaMetadataVersion, StorageLayoutVersion,
+    StorageMetadata, StorageVerificationReport,
 };
 pub use sqlite::SqliteStorage;
 
@@ -239,6 +239,36 @@ fn default_index_case_sensitive() -> bool {
 
 fn default_index_type() -> String {
     "value".to_string()
+}
+
+pub(crate) fn schema_manifest_from_wire(bytes: &[u8]) -> Result<SchemaManifest, String> {
+    metadata::decode_wire_schema_manifest(bytes)
+}
+
+pub(crate) fn encode_schema_record(
+    version: u64,
+    schema: &CollectionSchemaManifest,
+) -> Result<Vec<u8>, String> {
+    metadata::encode_schema_record(version, schema)
+}
+
+pub(crate) fn decode_schema_record(
+    bytes: &[u8],
+) -> Result<(u64, CollectionSchemaManifest), String> {
+    metadata::decode_schema_record(bytes)
+}
+
+#[cfg(feature = "mdbx")]
+pub(crate) fn encode_index_entry_metadata(
+    document_id: u64,
+    entries: &[IndexEntry],
+) -> Result<Vec<u8>, String> {
+    metadata::encode_index_entry_metadata(document_id, entries)
+}
+
+#[cfg(feature = "mdbx")]
+pub(crate) fn decode_index_entry_metadata(bytes: &[u8]) -> Result<Vec<IndexEntry>, String> {
+    metadata::decode_index_entry_metadata(bytes)
 }
 
 #[allow(dead_code)]

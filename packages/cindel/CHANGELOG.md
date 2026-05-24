@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Replaced schema registration JSON with CindelWireV1 binary schema manifests.
+- Replaced SQLite and MDBX collection schema JSON records with explicitly
+  versioned binary schema metadata.
+- Replaced MDBX reverse document-index JSON metadata with binary
+  `IndexEntryList` records.
+- Added fail-closed rejection for JSON-era preview schema metadata, JSON-era
+  reverse-index metadata, future schema metadata versions, and corrupt binary
+  metadata.
+- Bumped the native ABI to 14 while keeping the public Dart API unchanged.
+
 ## 0.3.0
 
 - Replaced manual `CindelDocument` JSON runtime storage with

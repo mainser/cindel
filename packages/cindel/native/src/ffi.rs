@@ -1,5 +1,7 @@
 use crate::engine::CindelEngine;
-use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackendKind};
+use crate::storage::{
+    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
+};
 use crate::wire::{
     decode_document_write_batch, decode_id_list, decode_index_entry_list, decode_index_value,
     decode_indexed_document_write_batch, encode_id_list,
@@ -10,7 +12,7 @@ use crate::wire::{
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    13
+    14
 }
 
 #[no_mangle]
@@ -168,7 +170,7 @@ pub unsafe extern "C" fn cindel_register_schemas(
     let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
         return -1;
     };
-    let Ok(manifest) = serde_json::from_slice::<SchemaManifest>(schemas) else {
+    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
         return -1;
     };
 

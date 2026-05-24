@@ -1492,43 +1492,43 @@ Uint8List _encodeSchemaManifest(
 ) {
   final collections = schemas.toList(growable: false)
     ..sort((left, right) => left.name.compareTo(right.name));
-  return Uint8List.fromList(
-    utf8.encode(
-      jsonEncode({
-        'collections': [for (final schema in collections) _schemaJson(schema)],
-      }),
+  return encodeSchemaManifest(
+    WireSchemaManifest(
+      version: 1,
+      collections: [for (final schema in collections) _schemaWire(schema)],
     ),
   );
 }
 
-Map<String, Object> _schemaJson(CindelCollectionSchema<dynamic> schema) {
+WireCollectionSchema _schemaWire(CindelCollectionSchema<dynamic> schema) {
   final fields = schema.fields.toList(growable: false)
     ..sort((left, right) => left.name.compareTo(right.name));
-  return {
-    'name': schema.name,
-    'id_field': schema.idField,
-    'fields': [
+  return WireCollectionSchema(
+    name: schema.name,
+    idField: schema.idField,
+    fields: [
       for (final field in fields)
-        {
-          'name': field.name,
-          'dart_type': field.dartType,
-          'is_id': field.isId,
-          'is_indexed': field.isIndexed,
-          'is_index_unique': field.isIndexUnique,
-          'index_case_sensitive': field.indexCaseSensitive,
-          'index_type': field.indexType.name,
-        },
+        WireFieldSchema(
+          name: field.name,
+          typeName: field.dartType,
+          indexType: field.indexType.name,
+          isId: field.isId,
+          isIndexed: field.isIndexed,
+          isUnique: field.isIndexUnique,
+          isNullable: field.dartType.endsWith('?'),
+          caseSensitive: field.indexCaseSensitive,
+        ),
     ],
-    'composite_indexes': [
+    indexes: [
       for (final index in schema.compositeIndexes)
-        {
-          'name': index.name,
-          'fields': index.fields,
-          'is_unique': index.isUnique,
-          'case_sensitive': index.caseSensitive,
-        },
+        WireIndexSchema(
+          name: index.name,
+          fields: index.fields,
+          isUnique: index.isUnique,
+          caseSensitive: index.caseSensitive,
+        ),
     ],
-  };
+  );
 }
 
 Uint8List _encodeIndexValue(Object value, CindelFieldSchema field) {

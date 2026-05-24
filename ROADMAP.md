@@ -302,19 +302,11 @@ next layer is added.
 
 Cindel's next performance direction is to keep the public Dart API stable while
 moving expensive JSON, allocation, filtering, and query-planning work into the
-native MDBX path. These stages come from the internal Isar-inspired research,
-but Cindel will continue using Dart FFI rather than recreating Isar's older
-custom bridge.
-
-Guiding rules:
-
-- Benchmark before and after every performance stage.
-- Optimize MDBX first while keeping SQLite as the correctness fallback.
-- Keep storage versions explicit. During the pre-release performance work,
-  MDBX can move forward without legacy-data migration because there are no
-  external production users yet.
-- Defer web, compaction, encryption, and broad platform extras until the core
-  native performance path is mature.
+native MDBX path. Guiding rules: benchmark before and after every performance
+stage; optimize MDBX first while keeping SQLite as the correctness fallback;
+keep storage versions explicit during pre-release work; defer web, compaction,
+encryption, and broad platform extras until the core native performance path is
+mature.
 
 - [x] PERF-01: Benchmark and profiling baseline.
   - Separate Dart encode/decode, FFI, native storage, native index query, and
@@ -477,6 +469,14 @@ Guiding rules:
   - Changed `getMany` to return binary document batches over FFI.
   - Kept generated typed models on the typed binary document format.
   - Native ABI 13 marks the manual document binary contract.
+- [x] Binary schema and metadata.
+  - Replaced schema registration JSON with CindelWireV1 `WireSchemaManifest`.
+  - Stored SQLite and MDBX collection schema metadata as explicitly versioned
+    binary records.
+  - Stored MDBX reverse document-index metadata as CindelWireV1
+    `IndexEntryList` records.
+  - Rejected JSON-era preview metadata and corrupt binary metadata on open.
+  - Native ABI 14 marks the binary schema metadata contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.

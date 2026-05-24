@@ -121,6 +121,7 @@ pub(crate) struct WireCollectionSchema {
 pub(crate) struct WireFieldSchema {
     pub(crate) name: String,
     pub(crate) type_name: String,
+    pub(crate) index_type: String,
     pub(crate) is_id: bool,
     pub(crate) is_indexed: bool,
     pub(crate) is_unique: bool,
@@ -333,6 +334,7 @@ pub(crate) fn encode_schema_manifest(manifest: &WireSchemaManifest) -> Result<Ve
         for field in &collection.fields {
             writer.write_string(&field.name)?;
             writer.write_string(&field.type_name)?;
+            writer.write_string(&field.index_type)?;
             writer.write_bool(field.is_id);
             writer.write_bool(field.is_indexed);
             writer.write_bool(field.is_unique);
@@ -363,12 +365,13 @@ pub(crate) fn decode_schema_manifest(bytes: &[u8]) -> Result<WireSchemaManifest,
         let name = reader.read_string()?;
         let id_field = reader.read_string()?;
         let field_count = reader.read_len()?;
-        reader.ensure_item_count(field_count, 13)?;
+        reader.ensure_item_count(field_count, 17)?;
         let mut fields = Vec::with_capacity(field_count);
         for _ in 0..field_count {
             fields.push(WireFieldSchema {
                 name: reader.read_string()?,
                 type_name: reader.read_string()?,
+                index_type: reader.read_string()?,
                 is_id: reader.read_bool()?,
                 is_indexed: reader.read_bool()?,
                 is_unique: reader.read_bool()?,
@@ -870,8 +873,8 @@ mod tests {
     ];
     const SCHEMA_MANIFEST_FIXTURE: &[u8] = &[
         1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 117, 2, 0, 0, 0, 105, 100, 1, 0, 0, 0, 2, 0, 0, 0, 105,
-        100, 3, 0, 0, 0, 105, 110, 116, 1, 0, 0, 0, 1, 1, 0, 0, 0, 5, 0, 0, 0, 98, 121, 95, 105,
-        100, 1, 0, 0, 0, 2, 0, 0, 0, 105, 100, 1, 1,
+        100, 3, 0, 0, 0, 105, 110, 116, 5, 0, 0, 0, 118, 97, 108, 117, 101, 1, 0, 0, 0, 1, 1, 0, 0,
+        0, 5, 0, 0, 0, 98, 121, 95, 105, 100, 1, 0, 0, 0, 2, 0, 0, 0, 105, 100, 1, 1,
     ];
     const INDEX_ENTRY_LIST_FIXTURE: &[u8] = &[
         1, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 101, 109, 97, 105, 108, 4, 1, 0, 0, 0, 97,
@@ -1061,6 +1064,7 @@ mod tests {
                 fields: vec![WireFieldSchema {
                     name: "id".to_string(),
                     type_name: "int".to_string(),
+                    index_type: "value".to_string(),
                     is_id: true,
                     is_indexed: false,
                     is_unique: false,

@@ -8,7 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use libmdbx::{
     Database, DatabaseOptions, NoWriteMap, Table, TableFlags, Transaction, WriteFlags, RO, RW,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::document_format::read_json_field;
 use crate::document_format::{
@@ -22,10 +21,11 @@ use super::mdbx_key::{
     STORAGE_METADATA_TABLE,
 };
 use super::{
-    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
-    SchemaManifest, StorageEngine,
+    decode_index_entry_metadata, decode_schema_record, encode_index_entry_metadata,
+    encode_schema_record, CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry,
+    IndexValue, SchemaManifest, StorageEngine,
 };
-use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
+use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
@@ -272,7 +272,16 @@ impl MdbxStorage {
             &tables,
             StorageLayoutVersion::MdbxV2,
             DocumentFormatVersion::BinaryV1,
+            SchemaMetadataVersion::BinaryV1,
         )?;
+        validate_storage_metadata(
+            &transaction,
+            &tables,
+            StorageLayoutVersion::MdbxV2,
+            DocumentFormatVersion::BinaryV1,
+            SchemaMetadataVersion::BinaryV1,
+        )?;
+        validate_binary_metadata_records(&transaction, &tables)?;
         transaction
             .commit()
             .map(|_| ())
@@ -337,7 +346,7 @@ impl MdbxStorage {
 
         let record = schema_record(transaction, tables, collection)?;
         if let Some(record) = record {
-            let schema = record.schema.clone();
+            let schema = record.1.clone();
             self.state
                 .schemas
                 .lock()
@@ -1170,7 +1179,7 @@ impl StorageEngine for MdbxStorage {
                     &encode_collection_key(collection),
                 )
                 .map_err(|error| error.to_string())?
-                .map(|bytes| decode_schema_record(&bytes).map(|record| record.version))
+                .map(|bytes| decode_schema_record(&bytes).map(|record| record.0))
                 .transpose()
         })
     }
@@ -1243,6 +1252,80 @@ where
             .open_table(Some(STORAGE_METADATA_TABLE))
             .map_err(|error| error.to_string())?,
     })
+}
+
+fn validate_binary_metadata_records<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    validate_schema_records(transaction, &tables.schema_collections)?;
+    validate_document_index_records(transaction, &tables.document_indexes)
+}
+
+fn validate_schema_records<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    for row in cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+        let (_, value) = row.map_err(|error| error.to_string())?;
+        decode_schema_record(&value)?;
+    }
+    Ok(())
+}
+
+fn validate_document_index_records<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    for row in cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+        let (_, value) = row.map_err(|error| error.to_string())?;
+        decode_index_entry_metadata(&value)?;
+    }
+    Ok(())
+}
+
+fn validate_storage_metadata<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    layout: StorageLayoutVersion,
+    document_format: DocumentFormatVersion,
+    schema_metadata_format: SchemaMetadataVersion,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let metadata = read_storage_metadata(transaction, tables)?;
+    if metadata.layout != layout {
+        return Err(format!(
+            "unsupported MDBX storage layout `{}`",
+            metadata.layout.as_str()
+        ));
+    }
+    if metadata.document_format != document_format {
+        return Err(
+            "JSON-era preview document storage is incompatible with Cindel binary storage; recreate the database"
+                .into(),
+        );
+    }
+    if metadata.schema_metadata_format != schema_metadata_format {
+        return Err("unsupported MDBX schema metadata format; recreate the database".into());
+    }
+    Ok(())
 }
 
 fn create_documents_table<'txn>(
@@ -1351,12 +1434,6 @@ fn document_id_key(id: u64) -> [u8; 8] {
     id.to_be_bytes()
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct MdbxSchemaRecord {
-    version: u64,
-    schema: CollectionSchemaManifest,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SchemaRegistrationMode {
     Compatible,
@@ -1391,18 +1468,14 @@ fn register_collection_schema(
                 create_unique_table(transaction, &collection.name, &index.name)?;
             }
         }
-        let record = MdbxSchemaRecord {
-            version: 1,
-            schema: collection.clone(),
-        };
-        return put_schema_record(transaction, tables, &key, &record);
+        return put_schema_record(transaction, tables, &key, 1, collection);
     };
 
-    if existing.schema == *collection {
+    if existing.1 == *collection {
         return Ok(());
     }
     if mode == SchemaRegistrationMode::Compatible {
-        validate_compatible_schema_change(&existing.schema, collection)?;
+        validate_compatible_schema_change(&existing.1, collection)?;
     }
     create_documents_table(transaction, &collection.name)?;
     for field in &collection.fields {
@@ -1421,37 +1494,30 @@ fn register_collection_schema(
     }
 
     let next_version = existing
-        .version
+        .0
         .checked_add(1)
         .ok_or_else(|| format!("schema version for `{}` overflowed", collection.name))?;
-    let record = MdbxSchemaRecord {
-        version: next_version,
-        schema: collection.clone(),
-    };
-    put_schema_record(transaction, tables, &key, &record)
+    put_schema_record(transaction, tables, &key, next_version, collection)
 }
 
 fn put_schema_record(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     tables: &MdbxTables<'_>,
     key: &[u8],
-    record: &MdbxSchemaRecord,
+    version: u64,
+    schema: &CollectionSchemaManifest,
 ) -> Result<(), String> {
-    let bytes = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+    let bytes = encode_schema_record(version, schema)?;
     transaction
         .put(&tables.schema_collections, key, bytes, WriteFlags::UPSERT)
         .map_err(|error| error.to_string())
-}
-
-fn decode_schema_record(bytes: &[u8]) -> Result<MdbxSchemaRecord, String> {
-    serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
 fn schema_record<K>(
     transaction: &Transaction<'_, K, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,
-) -> Result<Option<MdbxSchemaRecord>, String>
+) -> Result<Option<(u64, CollectionSchemaManifest)>, String>
 where
     K: libmdbx::TransactionKind,
 {
@@ -1473,7 +1539,7 @@ fn collection_schema<K>(
 where
     K: libmdbx::TransactionKind,
 {
-    schema_record(transaction, tables, collection).map(|record| record.map(|record| record.schema))
+    schema_record(transaction, tables, collection).map(|record| record.map(|record| record.1))
 }
 
 fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> HashSet<String> {
@@ -1862,6 +1928,7 @@ fn ensure_storage_metadata(
     tables: &MdbxTables<'_>,
     layout: StorageLayoutVersion,
     document_format: DocumentFormatVersion,
+    schema_metadata_format: SchemaMetadataVersion,
 ) -> Result<(), String> {
     put_metadata_if_missing(transaction, tables, "storage_layout", layout.as_str())?;
     put_metadata_if_missing(
@@ -1869,6 +1936,12 @@ fn ensure_storage_metadata(
         tables,
         "document_format",
         document_format.as_str(),
+    )?;
+    put_metadata_if_missing(
+        transaction,
+        tables,
+        "schema_metadata_format",
+        schema_metadata_format.as_str(),
     )
 }
 
@@ -1905,10 +1978,16 @@ where
     let layout = read_metadata_value(transaction, tables, "storage_layout")?
         .unwrap_or_else(|| StorageLayoutVersion::MdbxV1.as_str().to_string());
     let document_format = read_metadata_value(transaction, tables, "document_format")?
-        .unwrap_or_else(|| DocumentFormatVersion::JsonV1.as_str().to_string());
+        .unwrap_or_else(|| DocumentFormatVersion::BinaryV1.as_str().to_string());
+    let schema_metadata_format =
+        read_metadata_value(transaction, tables, "schema_metadata_format")?
+            .unwrap_or_else(|| SchemaMetadataVersion::BinaryV1.as_str().to_string());
     Ok(StorageMetadata {
         layout: parse_storage_layout(&layout)?,
         document_format: parse_document_format(&document_format)?,
+        schema_metadata_format: super::metadata::parse_schema_metadata_format(
+            &schema_metadata_format,
+        )?,
     })
 }
 
@@ -2040,7 +2119,7 @@ impl MdbxIndex {
                 .put(
                     document_indexes,
                     key,
-                    serde_json::to_vec(new_indexes).map_err(|error| error.to_string())?,
+                    encode_index_entry_metadata(document_id, new_indexes)?,
                     WriteFlags::UPSERT,
                 )
                 .map_err(|error| error.to_string())?;
@@ -2090,8 +2169,7 @@ impl MdbxIndex {
         else {
             return Ok(());
         };
-        let indexes = serde_json::from_slice::<Vec<IndexEntry>>(&indexes)
-            .map_err(|error| error.to_string())?;
+        let indexes = decode_index_entry_metadata(&indexes)?;
         for index in indexes {
             let key = Self::entry_key(collection, &index.name, &index.value)?;
             let index_table = create_index_table(transaction, collection, &index.name)?;
@@ -2146,8 +2224,7 @@ impl MdbxIndex {
             else {
                 continue;
             };
-            let indexes = serde_json::from_slice::<Vec<IndexEntry>>(&indexes)
-                .map_err(|error| error.to_string())?;
+            let indexes = decode_index_entry_metadata(&indexes)?;
             entries += indexes.len();
             for index in indexes {
                 let Ok(unique_table) = open_unique_table(transaction, collection, &index.name)
@@ -2388,6 +2465,68 @@ mod tests {
 
         assert!(result.is_ok(), "{:?}", result.err());
         assert!(Path::new(directory.path()).exists());
+    }
+
+    #[test]
+    fn rejects_json_era_schema_metadata_on_open() {
+        // Scenario: A preview MDBX database has JSON schema metadata rows.
+        // Covers:
+        // - Fail-closed behavior during MDBX initialization.
+        // - JSON-era schema_collections records.
+        // Expected: Opening the database asks the user to recreate it.
+        let directory = TemporaryDirectory::new("json_schema_metadata");
+        {
+            let storage = MdbxStorage::open(directory.path()).unwrap();
+            storage
+                .with_write_transaction(|transaction, tables| {
+                    transaction
+                        .put(
+                            &tables.schema_collections,
+                            encode_collection_key("users"),
+                            br#"{"version":1}"#,
+                            WriteFlags::UPSERT,
+                        )
+                        .map_err(|error| error.to_string())
+                })
+                .unwrap();
+        }
+
+        let error = MdbxStorage::open(directory.path())
+            .err()
+            .expect("JSON metadata should reject MDBX open");
+
+        assert!(error.contains("JSON-era preview metadata"));
+    }
+
+    #[test]
+    fn rejects_json_era_reverse_index_metadata_on_open() {
+        // Scenario: A preview MDBX database has JSON document-index metadata.
+        // Covers:
+        // - Fail-closed behavior for reverse index metadata.
+        // - The document_indexes table used to clean old index entries.
+        // Expected: Opening the database rejects the JSON-era reverse metadata.
+        let directory = TemporaryDirectory::new("json_reverse_index_metadata");
+        {
+            let storage = MdbxStorage::open(directory.path()).unwrap();
+            storage
+                .with_write_transaction(|transaction, tables| {
+                    transaction
+                        .put(
+                            &tables.document_indexes,
+                            encode_document_key("users", 1),
+                            br#"[{"name":"email"}]"#,
+                            WriteFlags::UPSERT,
+                        )
+                        .map_err(|error| error.to_string())
+                })
+                .unwrap();
+        }
+
+        let error = MdbxStorage::open(directory.path())
+            .err()
+            .expect("JSON reverse metadata should reject MDBX open");
+
+        assert!(error.contains("JSON-era preview metadata"));
     }
 
     #[test]

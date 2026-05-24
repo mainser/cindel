@@ -6,7 +6,9 @@ use super::{
     CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
     SchemaManifest, StorageEngine,
 };
-use super::{DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion};
+use super::{
+    DocumentFormatVersion, IndexVerificationCheck, SchemaMetadataVersion, StorageLayoutVersion,
+};
 
 pub(super) fn run_storage_engine_contract<S>(
     backend: &str,
@@ -608,14 +610,14 @@ where
     } else {
         StorageLayoutVersion::MdbxV2
     };
-    let expected_document_format = if backend == "sqlite" {
-        DocumentFormatVersion::JsonV1
-    } else {
-        DocumentFormatVersion::BinaryV1
-    };
+    let expected_document_format = DocumentFormatVersion::BinaryV1;
 
     assert_eq!(metadata.layout, expected_layout);
     assert_eq!(metadata.document_format, expected_document_format);
+    assert_eq!(
+        metadata.schema_metadata_format,
+        SchemaMetadataVersion::BinaryV1
+    );
 }
 
 fn rebuilds_indexes_with_supplied_entries<S>(

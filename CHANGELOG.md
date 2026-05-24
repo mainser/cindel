@@ -5,6 +5,23 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.3.1
+
+- Replaced schema registration JSON with the CindelWireV1 binary schema
+  manifest sent across FFI.
+- Replaced SQLite and MDBX `schema_collections` JSON records with explicitly
+  versioned binary schema metadata.
+- Replaced MDBX reverse document-index JSON metadata with CindelWireV1 binary
+  `IndexEntryList` records.
+- Added fail-closed rejection for JSON-era preview schema and reverse-index
+  metadata, future schema metadata versions, and corrupt binary metadata.
+- Added explicit schema metadata format storage metadata and aligned SQLite and
+  MDBX document metadata on binary storage.
+- Bumped the native ABI to 14 for the binary schema metadata contract.
+- Updated `cindel` and `cindel_flutter_libs` to `0.3.1`.
+- Updated the Todo example dependency constraints and build number for the ABI
+  14 package line.
+
 ## 0.3.0
 
 - Replaced manual `CindelDocument` JSON runtime storage with

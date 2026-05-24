@@ -5,10 +5,10 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
-    SchemaManifest, StorageEngine,
+    decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
+    FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest, StorageEngine,
 };
-use super::{DocumentFormatVersion, StorageLayoutVersion, StorageMetadata};
+use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
 pub struct SqliteStorage {
     connection: Connection,
@@ -74,7 +74,7 @@ impl SqliteStorage {
                 CREATE TABLE IF NOT EXISTS schema_collections (
                     collection TEXT PRIMARY KEY NOT NULL,
                     version INTEGER NOT NULL,
-                    schema_json TEXT NOT NULL
+                    schema_bytes BLOB NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS storage_metadata (
@@ -95,11 +95,20 @@ impl SqliteStorage {
                 "#,
             )
             .map_err(|error| error.to_string())?;
+        ensure_binary_schema_collections_table(&self.connection)?;
         ensure_storage_metadata(
             &self.connection,
             StorageLayoutVersion::SqliteV1,
-            DocumentFormatVersion::JsonV1,
-        )
+            DocumentFormatVersion::BinaryV1,
+            SchemaMetadataVersion::BinaryV1,
+        )?;
+        validate_storage_metadata(
+            &self.connection,
+            StorageLayoutVersion::SqliteV1,
+            DocumentFormatVersion::BinaryV1,
+            SchemaMetadataVersion::BinaryV1,
+        )?;
+        validate_schema_metadata_records(&self.connection)
     }
 }
 
@@ -653,19 +662,18 @@ fn unique_index_names(
     connection: &Connection,
     collection: &str,
 ) -> Result<std::collections::HashSet<String>, String> {
-    let schema_json = connection
+    let schema_bytes = connection
         .query_row(
-            "SELECT schema_json FROM schema_collections WHERE collection = ?1",
+            "SELECT schema_bytes FROM schema_collections WHERE collection = ?1",
             params![collection],
-            |row| row.get::<_, String>(0),
+            |row| row.get::<_, Vec<u8>>(0),
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some(schema_json) = schema_json else {
+    let Some(schema_bytes) = schema_bytes else {
         return Ok(std::collections::HashSet::new());
     };
-    let schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
-        .map_err(|error| error.to_string())?;
+    let (_, schema) = decode_schema_record(&schema_bytes)?;
     let mut names = std::collections::HashSet::new();
     names.extend(
         schema
@@ -725,6 +733,7 @@ fn ensure_storage_metadata(
     connection: &Connection,
     layout: StorageLayoutVersion,
     document_format: DocumentFormatVersion,
+    schema_metadata_format: SchemaMetadataVersion,
 ) -> Result<(), String> {
     connection
         .execute(
@@ -738,6 +747,97 @@ fn ensure_storage_metadata(
             params!["document_format", document_format.as_str()],
         )
         .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
+            params!["schema_metadata_format", schema_metadata_format.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn ensure_binary_schema_collections_table(connection: &Connection) -> Result<(), String> {
+    let columns = schema_collection_columns(connection)?;
+    if columns.iter().any(|column| column == "schema_json")
+        || !columns.iter().any(|column| column == "schema_bytes")
+    {
+        let row_count = connection
+            .query_row("SELECT COUNT(*) FROM schema_collections", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|error| error.to_string())?;
+        if row_count > 0 {
+            return Err(
+                "JSON-era preview schema metadata is incompatible with Cindel binary metadata; recreate the database"
+                    .into(),
+            );
+        }
+        connection
+            .execute("DROP TABLE schema_collections", [])
+            .map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                r#"
+                CREATE TABLE schema_collections (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    version INTEGER NOT NULL,
+                    schema_bytes BLOB NOT NULL
+                )
+                "#,
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn schema_collection_columns(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(schema_collections)")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+fn validate_schema_metadata_records(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("SELECT schema_bytes FROM schema_collections")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|error| error.to_string())?;
+    for row in rows {
+        let bytes = row.map_err(|error| error.to_string())?;
+        decode_schema_record(&bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_storage_metadata(
+    connection: &Connection,
+    layout: StorageLayoutVersion,
+    document_format: DocumentFormatVersion,
+    schema_metadata_format: SchemaMetadataVersion,
+) -> Result<(), String> {
+    let metadata = read_storage_metadata(connection)?;
+    if metadata.layout != layout {
+        return Err(format!(
+            "unsupported SQLite storage layout `{}`",
+            metadata.layout.as_str()
+        ));
+    }
+    if metadata.document_format != document_format {
+        return Err(
+            "JSON-era preview document storage is incompatible with Cindel binary storage; recreate the database"
+                .into(),
+        );
+    }
+    if metadata.schema_metadata_format != schema_metadata_format {
+        return Err("unsupported SQLite schema metadata format; recreate the database".into());
+    }
     Ok(())
 }
 
@@ -760,10 +860,22 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
         )
         .optional()
         .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| DocumentFormatVersion::JsonV1.as_str().to_string());
+        .unwrap_or_else(|| DocumentFormatVersion::BinaryV1.as_str().to_string());
+    let schema_metadata_format = connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'schema_metadata_format'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| SchemaMetadataVersion::BinaryV1.as_str().to_string());
     Ok(StorageMetadata {
         layout: parse_storage_layout(&layout)?,
         document_format: parse_document_format(&document_format)?,
+        schema_metadata_format: super::metadata::parse_schema_metadata_format(
+            &schema_metadata_format,
+        )?,
     })
 }
 
@@ -949,68 +1061,60 @@ fn register_collection_schema(
     connection: &Connection,
     collection: &CollectionSchemaManifest,
 ) -> Result<(), String> {
-    let next_schema_json = canonical_schema_json(collection)?;
     let existing = connection
         .query_row(
-            "SELECT version, schema_json FROM schema_collections WHERE collection = ?1",
+            "SELECT version, schema_bytes FROM schema_collections WHERE collection = ?1",
             params![collection.name],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
 
-    let Some((version, schema_json)) = existing else {
+    let Some((version, schema_bytes)) = existing else {
+        let schema_bytes = encode_schema_record(1, collection)?;
         connection
             .execute(
                 r#"
-                INSERT INTO schema_collections (collection, version, schema_json)
+                INSERT INTO schema_collections (collection, version, schema_bytes)
                 VALUES (?1, 1, ?2)
                 "#,
-                params![collection.name, next_schema_json],
+                params![collection.name, schema_bytes],
             )
             .map(|_| ())
             .map_err(|error| error.to_string())?;
         return Ok(());
     };
 
-    if schema_json == next_schema_json {
+    let (stored_version, existing_schema) = decode_schema_record(&schema_bytes)?;
+    let stored_version = i64::try_from(stored_version).map_err(|error| error.to_string())?;
+    if stored_version != version {
+        return Err(format!(
+            "schema metadata version mismatch for `{}`",
+            collection.name
+        ));
+    }
+    if existing_schema == *collection {
         return Ok(());
     }
 
-    let existing_schema = serde_json::from_str::<CollectionSchemaManifest>(&schema_json)
-        .map_err(|error| error.to_string())?;
-    if existing_schema == *collection {
-        connection
-            .execute(
-                r#"
-                UPDATE schema_collections
-                SET schema_json = ?2
-                WHERE collection = ?1
-                "#,
-                params![collection.name, next_schema_json],
-            )
-            .map(|_| ())
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
     validate_compatible_schema_change(&existing_schema, collection)?;
 
     let next_version = version + 1;
+    let schema_bytes = encode_schema_record(
+        u64::try_from(next_version).map_err(|error| error.to_string())?,
+        collection,
+    )?;
     connection
         .execute(
             r#"
             UPDATE schema_collections
-            SET version = ?2, schema_json = ?3
+            SET version = ?2, schema_bytes = ?3
             WHERE collection = ?1
             "#,
-            params![collection.name, next_version, next_schema_json],
+            params![collection.name, next_version, schema_bytes],
         )
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-fn canonical_schema_json(collection: &CollectionSchemaManifest) -> Result<String, String> {
-    serde_json::to_string(collection).map_err(|error| error.to_string())
 }
 
 fn validate_compatible_schema_change(
@@ -1380,6 +1484,82 @@ mod tests {
 
         // Assert.
         assert_eq!(stored, Some(br#"{"theme":"dark"}"#.to_vec()));
+    }
+
+    #[test]
+    fn rejects_json_era_schema_metadata_on_open() {
+        // Scenario: A preview SQLite database has JSON schema metadata rows.
+        // Covers:
+        // - Fail-closed behavior before old metadata can be used.
+        // - Clear incompatibility wording for preview JSON storage.
+        // Expected: Opening the database asks the user to recreate it.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("json_schema_metadata");
+        fs::create_dir_all(directory.path()).unwrap();
+        let connection =
+            Connection::open(Path::new(directory.path()).join("cindel.sqlite")).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE schema_collections (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    version INTEGER NOT NULL,
+                    schema_json TEXT NOT NULL
+                );
+                INSERT INTO schema_collections (collection, version, schema_json)
+                VALUES ('users', 1, '{"name":"users"}');
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        // Act.
+        let result = SqliteStorage::open(directory.path());
+
+        // Assert.
+        let error = result
+            .err()
+            .expect("JSON schema metadata should reject SQLite open");
+        assert!(error.contains("JSON-era preview schema metadata"));
+    }
+
+    #[test]
+    fn rejects_corrupt_binary_schema_metadata_on_open() {
+        // Scenario: A SQLite database has a malformed binary schema row.
+        // Covers:
+        // - Binary metadata validation during open.
+        // - Corrupt metadata rejection before any write.
+        // Expected: Opening fails instead of ignoring the bad record.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("corrupt_schema_metadata");
+        fs::create_dir_all(directory.path()).unwrap();
+        let connection =
+            Connection::open(Path::new(directory.path()).join("cindel.sqlite")).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE schema_collections (
+                    collection TEXT PRIMARY KEY NOT NULL,
+                    version INTEGER NOT NULL,
+                    schema_bytes BLOB NOT NULL
+                );
+                INSERT INTO schema_collections (collection, version, schema_bytes)
+                VALUES ('users', 1, x'43534d52');
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        // Act.
+        let result = SqliteStorage::open(directory.path());
+
+        // Assert.
+        let error = result
+            .err()
+            .expect("corrupt schema metadata should reject SQLite open");
+        assert!(error.contains("schema metadata is truncated"));
     }
 
     #[test]
