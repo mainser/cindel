@@ -8,6 +8,8 @@ mod sqlite;
 
 use serde::{Deserialize, Serialize};
 
+use crate::wire::WireQueryPlan;
+
 #[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
 pub use metadata::{
@@ -369,6 +371,49 @@ pub trait StorageEngine {
         collection: &str,
         documents: &[DocumentWrite],
     ) -> Result<(), String>;
+    fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
+        let _ = (collection, plan);
+        Err("native query plans are not supported by this storage backend".into())
+    }
+    fn query_plan_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let _ = (collection, plan);
+        Err("native query plan documents are not supported by this storage backend".into())
+    }
+    fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
+        let _ = (collection, plan);
+        Err("native query plan count is not supported by this storage backend".into())
+    }
+    fn query_plan_project(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let _ = (collection, plan, field);
+        Err("native query plan projections are not supported by this storage backend".into())
+    }
+    fn query_plan_aggregate(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        let _ = (collection, plan, field, operation);
+        Err("native query plan aggregates are not supported by this storage backend".into())
+    }
+    fn query_plan_delete(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        let _ = (collection, plan);
+        Err("native query plan deletes are not supported by this storage backend".into())
+    }
 
     fn verify_storage(
         &self,
@@ -626,6 +671,75 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.rebuild_indexes(collection, documents),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.rebuild_indexes(collection, documents),
+        }
+    }
+
+    fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_ids(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_ids(collection, plan),
+        }
+    }
+
+    fn query_plan_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_documents(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_documents(collection, plan),
+        }
+    }
+
+    fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_count(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_count(collection, plan),
+        }
+    }
+
+    fn query_plan_project(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_project(collection, plan, field),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_project(collection, plan, field),
+        }
+    }
+
+    fn query_plan_aggregate(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Sqlite(storage) => {
+                storage.query_plan_aggregate(collection, plan, field, operation)
+            }
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_aggregate(collection, plan, field, operation),
+        }
+    }
+
+    fn query_plan_delete(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_delete(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_delete(collection, plan),
         }
     }
 }

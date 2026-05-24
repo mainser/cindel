@@ -2,6 +2,7 @@ use crate::storage::{
     DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackend, StorageBackendKind,
     StorageEngine,
 };
+use crate::wire::WireQueryPlan;
 
 pub struct CindelEngine {
     storage: StorageBackend,
@@ -146,6 +147,58 @@ impl CindelEngine {
     ) -> Result<Vec<u8>, String> {
         self.storage
             .query_aggregate(collection, candidate_ids, field, operation)
+    }
+
+    pub(crate) fn query_plan_ids(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_plan_ids(collection, plan)
+    }
+
+    pub(crate) fn query_plan_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        self.storage.query_plan_documents(collection, plan)
+    }
+
+    pub(crate) fn query_plan_count(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<u64, String> {
+        self.storage.query_plan_count(collection, plan)
+    }
+
+    pub(crate) fn query_plan_project(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        self.storage.query_plan_project(collection, plan, field)
+    }
+
+    pub(crate) fn query_plan_aggregate(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        self.storage
+            .query_plan_aggregate(collection, plan, field, operation)
+    }
+
+    pub(crate) fn query_plan_delete(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_plan_delete(collection, plan)
     }
 
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {

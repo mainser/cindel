@@ -32,6 +32,76 @@ enum CindelStorageBackend {
 /// The storage backend used when callers do not pass an explicit backend.
 const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
 
+sealed class CindelNativeQuerySource {
+  const CindelNativeQuerySource();
+}
+
+final class CindelNativeAllQuerySource extends CindelNativeQuerySource {
+  const CindelNativeAllQuerySource();
+}
+
+final class CindelNativeIndexEqualQuerySource extends CindelNativeQuerySource {
+  const CindelNativeIndexEqualQuerySource({
+    required this.indexName,
+    required this.value,
+    this.dedupe = false,
+  });
+
+  final String indexName;
+  final Object value;
+  final bool dedupe;
+}
+
+final class CindelNativeCompositeEqualQuerySource
+    extends CindelNativeQuerySource {
+  const CindelNativeCompositeEqualQuerySource({
+    required this.indexName,
+    required this.values,
+  });
+
+  final String indexName;
+  final List<Object> values;
+}
+
+final class CindelNativeIndexRangeQuerySource extends CindelNativeQuerySource {
+  const CindelNativeIndexRangeQuerySource({
+    required this.indexName,
+    required this.lower,
+    required this.upper,
+    this.dedupe = false,
+  });
+
+  final String indexName;
+  final Object? lower;
+  final Object? upper;
+  final bool dedupe;
+}
+
+final class CindelNativeQuerySort {
+  const CindelNativeQuerySort({required this.field, required this.descending});
+
+  final String field;
+  final bool descending;
+}
+
+final class CindelNativeQueryPlan {
+  const CindelNativeQueryPlan({
+    required this.source,
+    this.filter,
+    this.sorts = const [],
+    this.distinctFields = const [],
+    this.offset = 0,
+    this.limit,
+  });
+
+  final CindelNativeQuerySource source;
+  final Uint8List? filter;
+  final List<CindelNativeQuerySort> sorts;
+  final List<String> distinctFields;
+  final int offset;
+  final int? limit;
+}
+
 extension on CindelStorageBackend {
   int get _nativeId {
     return switch (this) {
@@ -763,6 +833,131 @@ class CindelDatabase {
     return jsonDecode(utf8.decode(bytes));
   }
 
+  Future<List<int>> queryNativePlanIds(
+    String collection,
+    CindelNativeQueryPlan plan,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    return _bindings.queryPlanIds(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+    );
+  }
+
+  Future<List<CindelDocument>> queryNativePlanDocuments(
+    String collection,
+    CindelNativeQueryPlan plan,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final documents = _decodeBinaryDocumentBatch(
+      _bindings.queryPlanDocuments(
+        handle,
+        collection,
+        _encodeNativeQueryPlan(collection, plan),
+      ),
+    );
+    return [
+      for (final bytes in documents)
+        if (bytes != null)
+          _decodeDocument(collection, bytes, _schemas[collection]),
+    ];
+  }
+
+  Future<int> queryNativePlanCount(
+    String collection,
+    CindelNativeQueryPlan plan,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final scalar = decodeScalar(
+      _bindings.queryPlanCount(
+        handle,
+        collection,
+        _encodeNativeQueryPlan(collection, plan),
+      ),
+    );
+    final value = _wireScalarToObject(scalar);
+    if (value is int) {
+      return value;
+    }
+    throw StateError('Native Cindel returned a non-integer query count.');
+  }
+
+  Future<List<Object?>> queryNativePlanProjection(
+    String collection,
+    CindelNativeQueryPlan plan,
+    String field,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    final rows = decodeProjectionRows(
+      _bindings.queryPlanProject(
+        handle,
+        collection,
+        _encodeNativeQueryPlan(collection, plan),
+        field,
+      ),
+    );
+    if (rows.columnCount != 1) {
+      throw StateError('Native Cindel returned an invalid projection shape.');
+    }
+    return [for (final cell in rows.cells) _wireValueToObject(cell)];
+  }
+
+  Future<Object?> queryNativePlanAggregate(
+    String collection,
+    CindelNativeQueryPlan plan,
+    String field,
+    String operation,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    _checkIndexName(field);
+    if (!_nativeAggregateOperations.contains(operation)) {
+      throw ArgumentError.value(
+        operation,
+        'operation',
+        'Unsupported aggregate.',
+      );
+    }
+    final bytes = _bindings.queryPlanAggregate(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+      field,
+      operation,
+    );
+    return _wireScalarToObject(decodeScalar(bytes));
+  }
+
+  Future<List<int>> deleteNativePlan(
+    String collection,
+    CindelNativeQueryPlan plan,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final ids = _bindings.queryPlanDelete(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+    );
+    if (ids.isNotEmpty) {
+      _markCollectionChanged(CindelChangeSet.deletes(collection, ids));
+    }
+    return ids;
+  }
+
   /// Returns the persisted schema version for [collection], or `null`.
   ///
   /// A schema starts at version `1` when first registered. Compatible additive
@@ -1109,6 +1304,166 @@ class CindelDatabase {
     );
   }
 
+  Uint8List _encodeNativeQueryPlan(
+    String collection,
+    CindelNativeQueryPlan plan,
+  ) {
+    if (plan.offset < 0) {
+      throw ArgumentError.value(plan.offset, 'offset', 'Must be non-negative.');
+    }
+    final limit = plan.limit;
+    if (limit != null && limit < 0) {
+      throw ArgumentError.value(limit, 'limit', 'Must be non-negative.');
+    }
+
+    final wireSource = switch (plan.source) {
+      CindelNativeAllQuerySource() => const WireQuerySource.all(dedupe: false),
+      CindelNativeIndexEqualQuerySource(
+        :final indexName,
+        :final value,
+        :final dedupe,
+      ) =>
+        WireQuerySource.indexEqual(
+          indexName: indexName,
+          value: _nativeQueryIndexValue(collection, indexName, value),
+          dedupe: dedupe,
+        ),
+      CindelNativeCompositeEqualQuerySource(:final indexName, :final values) =>
+        WireQuerySource.indexEqual(
+          indexName: indexName,
+          value: _compositeIndexValueWire(collection, indexName, values),
+          dedupe: false,
+        ),
+      CindelNativeIndexRangeQuerySource(
+        :final indexName,
+        :final lower,
+        :final upper,
+        :final dedupe,
+      ) =>
+        WireQuerySource.indexRange(
+          indexName: indexName,
+          lower: lower == null
+              ? null
+              : _nativeQueryRangeValue(collection, indexName, lower, 'lower'),
+          upper: upper == null
+              ? null
+              : _nativeQueryRangeValue(collection, indexName, upper, 'upper'),
+          dedupe: dedupe,
+        ),
+    };
+
+    for (final sort in plan.sorts) {
+      _requireSchemaField(collection, sort.field);
+    }
+    for (final field in plan.distinctFields) {
+      _requireSchemaField(collection, field);
+    }
+
+    return encodeQueryPlan(
+      WireQueryPlan(
+        source: wireSource,
+        filter: plan.filter,
+        sorts: [
+          for (final sort in plan.sorts)
+            WireQuerySort(field: sort.field, ascending: !sort.descending),
+        ],
+        distinctFields: plan.distinctFields,
+        offset: plan.offset,
+        limit: limit,
+      ),
+    );
+  }
+
+  WireIndexValue _nativeQueryIndexValue(
+    String collection,
+    String field,
+    Object value,
+  ) {
+    final schemaField = _indexedFieldSchema(collection, field);
+    return _indexValueWire(value, schemaField);
+  }
+
+  WireIndexValue _nativeQueryRangeValue(
+    String collection,
+    String field,
+    Object value,
+    String argumentName,
+  ) {
+    final schemaField = _indexedFieldSchema(collection, field);
+    final encoded = _encodeRangeIndexValue(value, schemaField, argumentName);
+    return decodeIndexValue(encoded.bytes);
+  }
+
+  WireIndexValue _compositeIndexValueWire(
+    String collection,
+    String indexName,
+    List<Object> values,
+  ) {
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw StateError(
+        'Collection `$collection` has no registered Cindel schema.',
+      );
+    }
+    final composite = schema.compositeIndexes.firstWhere(
+      (index) => index.name == indexName,
+      orElse: () => throw StateError(
+        'Composite index `$indexName` is not registered for `$collection`.',
+      ),
+    );
+    if (values.length != composite.fields.length) {
+      throw ArgumentError.value(
+        values,
+        'values',
+        'Composite index `$indexName` expects ${composite.fields.length} values.',
+      );
+    }
+    return WireIndexValue.list([
+      for (var index = 0; index < values.length; index += 1)
+        _indexValueWire(
+          values[index],
+          _fieldSchemaWithCaseSensitivity(
+            collection,
+            composite.fields[index],
+            composite.caseSensitive,
+          ),
+        ),
+    ]);
+  }
+
+  CindelFieldSchema _fieldSchemaWithCaseSensitivity(
+    String collection,
+    String field,
+    bool caseSensitive,
+  ) {
+    final schemaField = _requireSchemaField(collection, field);
+    return CindelFieldSchema(
+      name: schemaField.name,
+      dartType: schemaField.dartType,
+      isId: schemaField.isId,
+      isIndexed: schemaField.isIndexed,
+      isIndexUnique: schemaField.isIndexUnique,
+      indexCaseSensitive: caseSensitive,
+      indexType: schemaField.indexType,
+    );
+  }
+
+  CindelFieldSchema _indexedFieldSchema(String collection, String field) {
+    final schemaField = _requireSchemaField(collection, field);
+    if (!schemaField.isIndexed) {
+      throw StateError('Field `$field` is not indexed for `$collection`.');
+    }
+    return schemaField;
+  }
+
+  CindelFieldSchema _requireSchemaField(String collection, String field) {
+    final schemaField = _fieldSchema(collection, field);
+    if (schemaField == null) {
+      throw StateError('Field `$field` is not registered for `$collection`.');
+    }
+    return schemaField;
+  }
+
   List<int> _queryEqualRawIds(
     String collection,
     String field,
@@ -1312,6 +1667,32 @@ CindelDocument _decodeDocument(
   throw StateError(
     'Native Cindel returned an unsupported document payload for `$collection`.',
   );
+}
+
+Object? _wireScalarToObject(WireScalar scalar) {
+  return switch (scalar) {
+    WireScalarNull() => null,
+    WireScalarBool(:final value) => value,
+    WireScalarInt(:final value) => value,
+    WireScalarDouble(:final value) => value,
+    WireScalarString(:final value) => value,
+  };
+}
+
+Object? _wireValueToObject(WireValue value) {
+  return switch (value) {
+    WireNullValue() => null,
+    WireBoolValue(:final value) => value,
+    WireIntValue(:final value) => value,
+    WireDoubleValue(:final value) => value,
+    WireStringValue(:final value) => value,
+    WireListValue(:final values) => [
+      for (final value in values) _wireValueToObject(value),
+    ],
+    WireObjectValue(:final fields) => {
+      for (final field in fields) field.name: _wireValueToObject(field.value),
+    },
+  };
 }
 
 Uint8List _encodeIds(Iterable<int> ids) {

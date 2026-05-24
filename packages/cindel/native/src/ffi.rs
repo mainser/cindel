@@ -4,15 +4,15 @@ use crate::storage::{
 };
 use crate::wire::{
     decode_document_write_batch, decode_id_list, decode_index_entry_list, decode_index_value,
-    decode_indexed_document_write_batch, encode_id_list,
+    decode_indexed_document_write_batch, decode_query_plan, encode_id_list, encode_scalar,
     WireDocumentWrite as WireBatchDocumentWrite, WireIndexEntry as WireBatchIndexEntry,
     WireIndexValue as WireBatchIndexValue,
-    WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite,
+    WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    14
+    15
 }
 
 #[no_mangle]
@@ -736,6 +736,244 @@ pub unsafe extern "C" fn cindel_query_aggregate(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_ids(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+
+    match engine.query_plan_ids(collection, &plan) {
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_documents(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+
+    match engine.query_plan_documents(collection, &plan) {
+        Ok(documents) => {
+            write_binary_documents(documents.into_iter().map(Some).collect(), out_ptr, out_len)
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_count(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+
+    match engine
+        .query_plan_count(collection, &plan)
+        .and_then(|count| {
+            i64::try_from(count)
+                .map(WireScalar::Int)
+                .map_err(|error| error.to_string())
+        })
+        .and_then(|scalar| encode_scalar(&scalar))
+    {
+        Ok(bytes) => {
+            let (ptr, len) = into_raw_bytes(bytes);
+            *out_ptr = ptr;
+            *out_len = len;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_project(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    field_ptr: *const u8,
+    field_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+    let Some(field) = read_str(field_ptr, field_len) else {
+        return -1;
+    };
+
+    match engine.query_plan_project(collection, &plan, field) {
+        Ok(bytes) => {
+            let (ptr, len) = into_raw_bytes(bytes);
+            *out_ptr = ptr;
+            *out_len = len;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_aggregate(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    field_ptr: *const u8,
+    field_len: usize,
+    operation_ptr: *const u8,
+    operation_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+    let Some(field) = read_str(field_ptr, field_len) else {
+        return -1;
+    };
+    let Some(operation) = read_str(operation_ptr, operation_len) else {
+        return -1;
+    };
+
+    match engine.query_plan_aggregate(collection, &plan, field, operation) {
+        Ok(bytes) => {
+            let (ptr, len) = into_raw_bytes(bytes);
+            *out_ptr = ptr;
+            *out_len = len;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_delete(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+
+    match engine.query_plan_delete(collection, &plan) {
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_free_buffer(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
         return;
@@ -866,6 +1104,11 @@ unsafe fn read_binary_document_writes(
 unsafe fn read_wire_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
     let bytes = read_bytes(ptr, len)?;
     decode_id_list(bytes).ok()
+}
+
+unsafe fn read_query_plan(ptr: *const u8, len: usize) -> Result<WireQueryPlan, ()> {
+    let bytes = read_bytes(ptr, len).ok_or(())?;
+    decode_query_plan(bytes).map_err(|_| ())
 }
 
 unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, ()> {

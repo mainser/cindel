@@ -79,6 +79,32 @@ void main() {
       expect(decodeFilter(bytes(filterFixture)), filter);
     });
 
+    // Scenario: Dart sends a native query plan to Rust.
+    // Covers:
+    // - Query source, sort, distinct, offset, and limit encoding.
+    // - Byte-for-byte compatibility with the Rust query-plan fixture.
+    // Expected: The full plan payload round-trips without JSON.
+    test('encodes and decodes query plan fixture', () {
+      // Arrange.
+      const plan = WireQueryPlan(
+        source: WireQuerySource.indexRange(
+          indexName: 'name',
+          lower: WireIndexValue.string('A'),
+          upper: WireIndexValue.string('B'),
+          dedupe: true,
+        ),
+        filter: null,
+        sorts: [WireQuerySort(field: 'id', ascending: true)],
+        distinctFields: ['name'],
+        offset: 2,
+        limit: 5,
+      );
+
+      // Act / Assert.
+      expect(encodeQueryPlan(plan), queryPlanFixture);
+      expect(decodeQueryPlan(bytes(queryPlanFixture)), plan);
+    });
+
     // Scenario: Dart batches document writes before crossing the FFI boundary.
     // Covers:
     // - DocumentWriteBatch count, id, byte length, and empty-byte handling.
@@ -360,6 +386,66 @@ const filterFixture = [
   0,
   0,
   65,
+];
+
+const queryPlanFixture = [
+  3,
+  1,
+  4,
+  0,
+  0,
+  0,
+  110,
+  97,
+  109,
+  101,
+  1,
+  4,
+  1,
+  0,
+  0,
+  0,
+  65,
+  1,
+  4,
+  1,
+  0,
+  0,
+  0,
+  66,
+  0,
+  1,
+  0,
+  0,
+  0,
+  2,
+  0,
+  0,
+  0,
+  105,
+  100,
+  1,
+  1,
+  0,
+  0,
+  0,
+  4,
+  0,
+  0,
+  0,
+  110,
+  97,
+  109,
+  101,
+  2,
+  0,
+  0,
+  0,
+  1,
+  5,
+  0,
+  0,
+  0,
 ];
 
 const documentBatchFixture = [

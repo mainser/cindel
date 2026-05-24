@@ -549,6 +549,61 @@ pub(crate) fn read_json_field(
     binary_to_json(value.as_ref())
 }
 
+pub(crate) fn read_binary_field(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    field: &str,
+) -> Result<Option<BinaryValue>, String> {
+    let document = BinaryDocument::parse(bytes)?;
+    let Some(index) = schema
+        .fields
+        .iter()
+        .position(|schema_field| schema_field.name == field)
+    else {
+        return Err(format!(
+            "field `{field}` is not declared in schema `{}`",
+            schema.name
+        ));
+    };
+    if index >= document.field_count() {
+        return Ok(None);
+    }
+    document.field_value(index)
+}
+
+pub(crate) fn binary_to_wire_value(value: Option<&BinaryValue>) -> Result<WireValue, String> {
+    let Some(value) = value else {
+        return Ok(WireValue::Null);
+    };
+    Ok(match value {
+        BinaryValue::Bool(value) => WireValue::Bool(*value),
+        BinaryValue::Int(value)
+        | BinaryValue::DateTimeMicros(value)
+        | BinaryValue::DurationMicros(value) => WireValue::Int(*value),
+        BinaryValue::Double(value) if value.is_finite() => WireValue::Double(*value),
+        BinaryValue::Double(_) => return Err("binary double cannot be represented on wire".into()),
+        BinaryValue::String(value) | BinaryValue::Enum(value) => WireValue::String(value.clone()),
+        BinaryValue::List(values) => WireValue::List(
+            values
+                .iter()
+                .map(|value| binary_to_wire_value(value.as_ref()))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        BinaryValue::Embedded(fields) => WireValue::List(
+            fields
+                .iter()
+                .map(|value| binary_to_wire_value(value.as_ref()))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        BinaryValue::Object(entries) => WireValue::Object(
+            entries
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), binary_to_wire_value(value.as_ref())?)))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+    })
+}
+
 pub(crate) fn index_entries_from_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],

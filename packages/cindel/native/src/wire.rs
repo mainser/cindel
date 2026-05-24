@@ -20,6 +20,9 @@ const FILTER_OP_CONTAINS: u8 = 6;
 const FILTER_OP_STARTS_WITH: u8 = 7;
 const FILTER_OP_ENDS_WITH: u8 = 8;
 const FILTER_OP_IS_NULL: u8 = 9;
+const QUERY_SOURCE_ALL: u8 = 1;
+const QUERY_SOURCE_INDEX_EQUAL: u8 = 2;
+const QUERY_SOURCE_INDEX_RANGE: u8 = 3;
 const MAX_WIRE_COUNT: usize = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +145,40 @@ pub(crate) struct WireIndexEntry {
     pub(crate) document_id: u64,
     pub(crate) index_name: String,
     pub(crate) value: WireIndexValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum WireQuerySource {
+    All {
+        dedupe: bool,
+    },
+    IndexEqual {
+        index_name: String,
+        value: WireIndexValue,
+        dedupe: bool,
+    },
+    IndexRange {
+        index_name: String,
+        lower: Option<WireIndexValue>,
+        upper: Option<WireIndexValue>,
+        dedupe: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WireQuerySort {
+    pub(crate) field: String,
+    pub(crate) ascending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WireQueryPlan {
+    pub(crate) source: WireQuerySource,
+    pub(crate) filter: Option<Vec<u8>>,
+    pub(crate) sorts: Vec<WireQuerySort>,
+    pub(crate) distinct_fields: Vec<String>,
+    pub(crate) offset: u32,
+    pub(crate) limit: Option<u32>,
 }
 
 pub(crate) fn encode_id_list(ids: &[u64]) -> Result<Vec<u8>, String> {
@@ -436,6 +473,46 @@ pub(crate) fn decode_index_entry_list(bytes: &[u8]) -> Result<Vec<WireIndexEntry
     }
     reader.finish()?;
     Ok(entries)
+}
+
+pub(crate) fn decode_query_plan(bytes: &[u8]) -> Result<WireQueryPlan, String> {
+    let mut reader = Reader::new(bytes);
+    let source = reader.read_query_source()?;
+    let filter = if reader.read_bool()? {
+        Some(reader.read_bytes()?.to_vec())
+    } else {
+        None
+    };
+    let sort_count = reader.read_len()?;
+    reader.ensure_item_count(sort_count, 5)?;
+    let mut sorts = Vec::with_capacity(sort_count);
+    for _ in 0..sort_count {
+        sorts.push(WireQuerySort {
+            field: reader.read_string()?,
+            ascending: reader.read_bool()?,
+        });
+    }
+    let distinct_count = reader.read_len()?;
+    reader.ensure_item_count(distinct_count, 4)?;
+    let mut distinct_fields = Vec::with_capacity(distinct_count);
+    for _ in 0..distinct_count {
+        distinct_fields.push(reader.read_string()?);
+    }
+    let offset = reader.read_u32()?;
+    let limit = if reader.read_bool()? {
+        Some(reader.read_u32()?)
+    } else {
+        None
+    };
+    reader.finish()?;
+    Ok(WireQueryPlan {
+        source,
+        filter,
+        sorts,
+        distinct_fields,
+        offset,
+        limit,
+    })
 }
 
 struct Writer {
@@ -814,6 +891,39 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn read_query_source(&mut self) -> Result<WireQuerySource, String> {
+        let tag = self.read_u8()?;
+        let dedupe = self.read_bool()?;
+        match tag {
+            QUERY_SOURCE_ALL => Ok(WireQuerySource::All { dedupe }),
+            QUERY_SOURCE_INDEX_EQUAL => Ok(WireQuerySource::IndexEqual {
+                dedupe,
+                index_name: self.read_string()?,
+                value: self.read_index_value()?,
+            }),
+            QUERY_SOURCE_INDEX_RANGE => {
+                let index_name = self.read_string()?;
+                let lower = if self.read_bool()? {
+                    Some(self.read_index_value()?)
+                } else {
+                    None
+                };
+                let upper = if self.read_bool()? {
+                    Some(self.read_index_value()?)
+                } else {
+                    None
+                };
+                Ok(WireQuerySource::IndexRange {
+                    dedupe,
+                    index_name,
+                    lower,
+                    upper,
+                })
+            }
+            tag => Err(format!("unknown wire query source tag {tag}")),
+        }
+    }
+
     fn read_filter_operation(&mut self) -> Result<WireFilterOperation, String> {
         match self.read_u8()? {
             FILTER_OP_EQUAL => Ok(WireFilterOperation::Equal),
@@ -858,6 +968,11 @@ mod tests {
     const FILTER_FIXTURE: &[u8] = &[
         2, 2, 0, 0, 0, 1, 6, 0, 0, 0, 97, 99, 116, 105, 118, 101, 1, 1, 1, 4, 1, 4, 0, 0, 0, 110,
         97, 109, 101, 7, 4, 1, 0, 0, 0, 65,
+    ];
+    const QUERY_PLAN_FIXTURE: &[u8] = &[
+        3, 1, 4, 0, 0, 0, 110, 97, 109, 101, 1, 4, 1, 0, 0, 0, 65, 1, 4, 1, 0, 0, 0, 66, 0, 1, 0,
+        0, 0, 2, 0, 0, 0, 105, 100, 1, 1, 0, 0, 0, 4, 0, 0, 0, 110, 97, 109, 101, 2, 0, 0, 0, 1, 5,
+        0, 0, 0,
     ];
     const DOCUMENT_BATCH_FIXTURE: &[u8] = &[
         2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 97, 98, 99, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -958,6 +1073,35 @@ mod tests {
         // Act / Assert.
         assert_eq!(encode_filter(&filter).unwrap(), FILTER_FIXTURE);
         assert_eq!(decode_filter(FILTER_FIXTURE).unwrap(), filter);
+    }
+
+    // Scenario: Rust receives a native query plan from Dart.
+    // Covers:
+    // - Query source, sort, distinct, offset, and limit decoding.
+    // - Byte-for-byte compatibility with the Dart query-plan fixture.
+    // Expected: The full plan payload decodes without JSON.
+    #[test]
+    fn decodes_query_plan_fixture() {
+        // Arrange.
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "name".to_string(),
+                lower: Some(WireIndexValue::String("A".to_string())),
+                upper: Some(WireIndexValue::String("B".to_string())),
+                dedupe: true,
+            },
+            filter: None,
+            sorts: vec![WireQuerySort {
+                field: "id".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: vec!["name".to_string()],
+            offset: 2,
+            limit: Some(5),
+        };
+
+        // Act / Assert.
+        assert_eq!(decode_query_plan(QUERY_PLAN_FIXTURE).unwrap(), plan);
     }
 
     // Scenario: Rust receives a batch of document writes from Dart.

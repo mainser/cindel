@@ -24,6 +24,10 @@ const int wireFilterOpStartsWith = 7;
 const int wireFilterOpEndsWith = 8;
 const int wireFilterOpIsNull = 9;
 
+const int wireQuerySourceAll = 1;
+const int wireQuerySourceIndexEqual = 2;
+const int wireQuerySourceIndexRange = 3;
+
 sealed class WireIndexValue {
   const WireIndexValue();
 
@@ -586,6 +590,139 @@ final class WireIndexEntry {
   int get hashCode => Object.hash(documentId, indexName, value);
 }
 
+sealed class WireQuerySource {
+  const WireQuerySource({required this.dedupe});
+
+  const factory WireQuerySource.all({bool dedupe}) = WireQueryAllSource;
+
+  const factory WireQuerySource.indexEqual({
+    required String indexName,
+    required WireIndexValue value,
+    bool dedupe,
+  }) = WireQueryIndexEqualSource;
+
+  const factory WireQuerySource.indexRange({
+    required String indexName,
+    required WireIndexValue? lower,
+    required WireIndexValue? upper,
+    bool dedupe,
+  }) = WireQueryIndexRangeSource;
+
+  final bool dedupe;
+}
+
+final class WireQueryAllSource extends WireQuerySource {
+  const WireQueryAllSource({bool dedupe = false}) : super(dedupe: dedupe);
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireQueryAllSource && other.dedupe == dedupe;
+
+  @override
+  int get hashCode => Object.hash(WireQueryAllSource, dedupe);
+}
+
+final class WireQueryIndexEqualSource extends WireQuerySource {
+  const WireQueryIndexEqualSource({
+    required this.indexName,
+    required this.value,
+    bool dedupe = false,
+  }) : super(dedupe: dedupe);
+
+  final String indexName;
+  final WireIndexValue value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireQueryIndexEqualSource &&
+      other.indexName == indexName &&
+      other.value == value &&
+      other.dedupe == dedupe;
+
+  @override
+  int get hashCode =>
+      Object.hash(WireQueryIndexEqualSource, indexName, value, dedupe);
+}
+
+final class WireQueryIndexRangeSource extends WireQuerySource {
+  const WireQueryIndexRangeSource({
+    required this.indexName,
+    required this.lower,
+    required this.upper,
+    bool dedupe = false,
+  }) : super(dedupe: dedupe);
+
+  final String indexName;
+  final WireIndexValue? lower;
+  final WireIndexValue? upper;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireQueryIndexRangeSource &&
+      other.indexName == indexName &&
+      other.lower == lower &&
+      other.upper == upper &&
+      other.dedupe == dedupe;
+
+  @override
+  int get hashCode =>
+      Object.hash(WireQueryIndexRangeSource, indexName, lower, upper, dedupe);
+}
+
+final class WireQuerySort {
+  const WireQuerySort({required this.field, required this.ascending});
+
+  final String field;
+  final bool ascending;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireQuerySort &&
+      other.field == field &&
+      other.ascending == ascending;
+
+  @override
+  int get hashCode => Object.hash(field, ascending);
+}
+
+final class WireQueryPlan {
+  const WireQueryPlan({
+    required this.source,
+    required this.filter,
+    required this.sorts,
+    required this.distinctFields,
+    required this.offset,
+    required this.limit,
+  });
+
+  final WireQuerySource source;
+  final Uint8List? filter;
+  final List<WireQuerySort> sorts;
+  final List<String> distinctFields;
+  final int offset;
+  final int? limit;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireQueryPlan &&
+      other.source == source &&
+      _nullableBytesEqual(other.filter, filter) &&
+      listEquals(other.sorts, sorts) &&
+      listEquals(other.distinctFields, distinctFields) &&
+      other.offset == offset &&
+      other.limit == limit;
+
+  @override
+  int get hashCode => Object.hash(
+    source,
+    filter == null ? null : Object.hashAll(filter!),
+    Object.hashAll(sorts),
+    Object.hashAll(distinctFields),
+    offset,
+    limit,
+  );
+}
+
 Uint8List encodeIdList(List<int> ids) {
   final writer = CindelWireWriter();
   writer.writeLength(ids.length);
@@ -861,6 +998,59 @@ List<WireIndexEntry> decodeIndexEntryList(Uint8List bytes) {
   return entries;
 }
 
+Uint8List encodeQueryPlan(WireQueryPlan plan) {
+  final writer = CindelWireWriter();
+  writer.writeQuerySource(plan.source);
+  writer.writeBool(plan.filter != null);
+  if (plan.filter != null) {
+    writer.writeBytes(plan.filter!);
+  }
+  writer.writeLength(plan.sorts.length);
+  for (final sort in plan.sorts) {
+    writer.writeString(sort.field);
+    writer.writeBool(sort.ascending);
+  }
+  writer.writeLength(plan.distinctFields.length);
+  for (final field in plan.distinctFields) {
+    writer.writeString(field);
+  }
+  writer.writeUint32(plan.offset);
+  writer.writeBool(plan.limit != null);
+  if (plan.limit != null) {
+    writer.writeUint32(plan.limit!);
+  }
+  return writer.finish();
+}
+
+WireQueryPlan decodeQueryPlan(Uint8List bytes) {
+  final reader = CindelWireReader(bytes);
+  final source = reader.readQuerySource();
+  final hasFilter = reader.readBool();
+  final filter = hasFilter ? reader.readBytes() : null;
+  final sorts = <WireQuerySort>[];
+  for (var i = 0, count = reader.readLength(); i < count; i++) {
+    sorts.add(
+      WireQuerySort(field: reader.readString(), ascending: reader.readBool()),
+    );
+  }
+  final distinctFields = <String>[];
+  for (var i = 0, count = reader.readLength(); i < count; i++) {
+    distinctFields.add(reader.readString());
+  }
+  final offset = reader.readUint32();
+  final hasLimit = reader.readBool();
+  final limit = hasLimit ? reader.readUint32() : null;
+  reader.finish();
+  return WireQueryPlan(
+    source: source,
+    filter: filter,
+    sorts: sorts,
+    distinctFields: distinctFields,
+    offset: offset,
+    limit: limit,
+  );
+}
+
 final class CindelWireWriter {
   CindelWireWriter();
 
@@ -1016,6 +1206,40 @@ final class CindelWireWriter {
         writeFilter(predicate);
     }
   }
+
+  void writeQuerySource(WireQuerySource source) {
+    switch (source) {
+      case WireQueryAllSource(:final dedupe):
+        writeUint8(wireQuerySourceAll);
+        writeBool(dedupe);
+      case WireQueryIndexEqualSource(
+        :final indexName,
+        :final value,
+        :final dedupe,
+      ):
+        writeUint8(wireQuerySourceIndexEqual);
+        writeBool(dedupe);
+        writeString(indexName);
+        writeIndexValue(value);
+      case WireQueryIndexRangeSource(
+        :final indexName,
+        :final lower,
+        :final upper,
+        :final dedupe,
+      ):
+        writeUint8(wireQuerySourceIndexRange);
+        writeBool(dedupe);
+        writeString(indexName);
+        writeBool(lower != null);
+        if (lower != null) {
+          writeIndexValue(lower);
+        }
+        writeBool(upper != null);
+        if (upper != null) {
+          writeIndexValue(upper);
+        }
+    }
+  }
 }
 
 final class CindelWireReader {
@@ -1129,6 +1353,26 @@ final class CindelWireReader {
     };
   }
 
+  WireQuerySource readQuerySource() {
+    final tag = readUint8();
+    final dedupe = readBool();
+    return switch (tag) {
+      wireQuerySourceAll => WireQuerySource.all(dedupe: dedupe),
+      wireQuerySourceIndexEqual => WireQuerySource.indexEqual(
+        indexName: readString(),
+        value: readIndexValue(),
+        dedupe: dedupe,
+      ),
+      wireQuerySourceIndexRange => WireQuerySource.indexRange(
+        indexName: readString(),
+        lower: readBool() ? readIndexValue() : null,
+        upper: readBool() ? readIndexValue() : null,
+        dedupe: dedupe,
+      ),
+      _ => throw FormatException('unknown wire query source tag $tag'),
+    };
+  }
+
   WireFilterOperation _readFilterOperation() {
     return switch (readUint8()) {
       wireFilterOpEqual => WireFilterOperation.equal,
@@ -1172,4 +1416,11 @@ bool listEquals<T>(List<T> left, List<T> right) {
     }
   }
   return true;
+}
+
+bool _nullableBytesEqual(Uint8List? left, Uint8List? right) {
+  if (left == null || right == null) {
+    return left == right;
+  }
+  return listEquals(left, right);
 }

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -9,11 +10,15 @@ use libmdbx::{
     Database, DatabaseOptions, NoWriteMap, Table, TableFlags, Transaction, WriteFlags, RO, RW,
 };
 
-use crate::document_format::read_json_field;
+use crate::document_format::{binary_to_wire_value, read_binary_field, read_json_field};
 use crate::document_format::{
-    index_entries_from_binary_document, validate_generic_document, BinaryDocument,
+    index_entries_from_binary_document, validate_generic_document, BinaryDocument, BinaryValue,
 };
 use crate::native_filter::NativeFilter;
+use crate::wire::{
+    encode_projection_rows, encode_scalar, WireIndexValue, WireProjectionRows, WireQueryPlan,
+    WireQuerySource, WireScalar,
+};
 
 use super::mdbx_key::{
     decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
@@ -40,6 +45,12 @@ struct MdbxSharedState {
     database: Arc<Database<NoWriteMap>>,
     next_ids: Mutex<HashMap<String, u64>>,
     schemas: Mutex<HashMap<String, CollectionSchemaManifest>>,
+}
+
+struct PlannedDocument {
+    id: u64,
+    bytes: Vec<u8>,
+    position: usize,
 }
 
 type SharedMdbxState = Arc<MdbxSharedState>;
@@ -368,6 +379,98 @@ impl MdbxStorage {
             schemas.insert(collection.name.clone(), collection.clone());
         }
         Ok(())
+    }
+
+    fn required_schema(&self, collection: &str) -> Result<CollectionSchemaManifest, String> {
+        let schema = self.with_read_transaction(|transaction, tables| {
+            self.cached_collection_schema(transaction, &tables, collection)
+        })?;
+        schema.ok_or_else(|| format!("collection `{collection}` has no registered schema"))
+    }
+
+    fn execute_query_plan(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<PlannedDocument>, String> {
+        let schema = self.required_schema(collection)?;
+        let mut ids = self.query_plan_source_ids(collection, &plan.source)?;
+        if query_source_dedupes(&plan.source) {
+            dedupe_ids(&mut ids);
+        }
+
+        let filter = plan
+            .filter
+            .as_ref()
+            .map(|bytes| NativeFilter::decode(bytes))
+            .transpose()?;
+        let documents = self.get_many_stored(collection, &ids)?;
+        let mut planned = Vec::new();
+        for (position, (id, document)) in ids.into_iter().zip(documents).enumerate() {
+            let Some(bytes) = document else {
+                continue;
+            };
+            if let Some(filter) = &filter {
+                if !filter.matches(&schema, &bytes)? {
+                    continue;
+                }
+            }
+            planned.push(PlannedDocument {
+                id,
+                bytes,
+                position,
+            });
+        }
+
+        if !plan.sorts.is_empty() {
+            sort_planned_documents(&schema, &mut planned, &plan.sorts)?;
+        }
+        if !plan.distinct_fields.is_empty() {
+            planned = distinct_planned_documents(&schema, planned, &plan.distinct_fields)?;
+        }
+        Ok(window_planned_documents(
+            planned,
+            plan.offset as usize,
+            plan.limit.map(|value| value as usize),
+        ))
+    }
+
+    fn query_plan_source_ids(
+        &self,
+        collection: &str,
+        source: &WireQuerySource,
+    ) -> Result<Vec<u64>, String> {
+        match source {
+            WireQuerySource::All { .. } => <Self as StorageEngine>::document_ids(self, collection),
+            WireQuerySource::IndexEqual {
+                index_name, value, ..
+            } => {
+                let value = wire_index_value_to_storage(value)?;
+                <Self as StorageEngine>::query_index_equal(self, collection, index_name, &value)
+            }
+            WireQuerySource::IndexRange {
+                index_name,
+                lower,
+                upper,
+                ..
+            } => {
+                let lower = lower
+                    .as_ref()
+                    .map(wire_index_value_to_storage)
+                    .transpose()?;
+                let upper = upper
+                    .as_ref()
+                    .map(wire_index_value_to_storage)
+                    .transpose()?;
+                <Self as StorageEngine>::query_index_range(
+                    self,
+                    collection,
+                    index_name,
+                    lower.as_ref(),
+                    upper.as_ref(),
+                )
+            }
+        }
     }
 
     fn ensure_can_write(&self) -> Result<(), String> {
@@ -1121,6 +1224,81 @@ impl StorageEngine for MdbxStorage {
         serde_json::to_vec(&result).map_err(|error| error.to_string())
     }
 
+    fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
+        Ok(self
+            .execute_query_plan(collection, plan)?
+            .into_iter()
+            .map(|document| document.id)
+            .collect())
+    }
+
+    fn query_plan_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        Ok(self
+            .execute_query_plan(collection, plan)?
+            .into_iter()
+            .map(|document| document.bytes)
+            .collect())
+    }
+
+    fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
+        Ok(self.execute_query_plan(collection, plan)?.len() as u64)
+    }
+
+    fn query_plan_project(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_schema(collection)?;
+        ensure_schema_field(&schema, field)?;
+        let documents = self.execute_query_plan(collection, plan)?;
+        let mut cells = Vec::with_capacity(documents.len());
+        for document in documents {
+            let value = read_binary_field(&schema, &document.bytes, field)?;
+            cells.push(binary_to_wire_value(value.as_ref())?);
+        }
+        encode_projection_rows(&WireProjectionRows {
+            row_count: cells.len() as u32,
+            column_count: 1,
+            cells,
+        })
+    }
+
+    fn query_plan_aggregate(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_schema(collection)?;
+        ensure_schema_field(&schema, field)?;
+        let documents = self.execute_query_plan(collection, plan)?;
+        let mut values = Vec::new();
+        for document in documents {
+            values.push(read_binary_field(&schema, &document.bytes, field)?);
+        }
+        encode_scalar(&aggregate_binary_values(&values, operation)?)
+    }
+
+    fn query_plan_delete(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        self.ensure_can_write()?;
+        let ids = self.query_plan_ids(collection, plan)?;
+        if !ids.is_empty() {
+            self.delete_many(collection, &ids)?;
+        }
+        Ok(ids)
+    }
+
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
             transaction
@@ -1561,6 +1739,333 @@ fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> 
         );
     }
     names
+}
+
+fn ensure_schema_field(schema: &CollectionSchemaManifest, field: &str) -> Result<(), String> {
+    if schema
+        .fields
+        .iter()
+        .any(|schema_field| schema_field.name == field)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "field `{field}` is not declared in schema `{}`",
+            schema.name
+        ))
+    }
+}
+
+fn query_source_dedupes(source: &WireQuerySource) -> bool {
+    match source {
+        WireQuerySource::All { dedupe }
+        | WireQuerySource::IndexEqual { dedupe, .. }
+        | WireQuerySource::IndexRange { dedupe, .. } => *dedupe,
+    }
+}
+
+fn dedupe_ids(ids: &mut Vec<u64>) {
+    let mut seen = HashSet::new();
+    ids.retain(|id| seen.insert(*id));
+}
+
+fn wire_index_value_to_storage(value: &WireIndexValue) -> Result<IndexValue, String> {
+    match value {
+        WireIndexValue::Null => Err("query plan index values cannot be null".into()),
+        WireIndexValue::Bool(value) => Ok(IndexValue::Bool(*value)),
+        WireIndexValue::Int(value) => Ok(IndexValue::Int(*value)),
+        WireIndexValue::Double(value) if value.is_finite() => Ok(IndexValue::Double(*value)),
+        WireIndexValue::Double(_) => Err("query plan double values must be finite".into()),
+        WireIndexValue::String(value) => Ok(IndexValue::String(value.clone())),
+        WireIndexValue::List(values) => values
+            .iter()
+            .map(wire_index_value_to_storage)
+            .collect::<Result<Vec<_>, _>>()
+            .map(IndexValue::List),
+    }
+}
+
+fn sort_planned_documents(
+    schema: &CollectionSchemaManifest,
+    documents: &mut [PlannedDocument],
+    sorts: &[crate::wire::WireQuerySort],
+) -> Result<(), String> {
+    let sort_fields = sorts
+        .iter()
+        .map(|sort| {
+            schema
+                .fields
+                .iter()
+                .position(|field| field.name == sort.field)
+                .map(|index| (index, sort.ascending))
+                .ok_or_else(|| {
+                    format!(
+                        "field `{}` is not declared in schema `{}`",
+                        sort.field, schema.name
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut keyed = documents
+        .iter()
+        .map(|document| {
+            let binary = BinaryDocument::parse(&document.bytes)?;
+            let values = sort_fields
+                .iter()
+                .map(|(index, _)| {
+                    if *index >= binary.field_count() {
+                        Ok(None)
+                    } else {
+                        binary.field_value(*index)
+                    }
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok((
+                document.id,
+                document.bytes.clone(),
+                document.position,
+                values,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    keyed.sort_by(|left, right| {
+        for (index, (_, ascending)) in sort_fields.iter().enumerate() {
+            let ordering = compare_binary_values(left.3[index].as_ref(), right.3[index].as_ref());
+            if ordering != Ordering::Equal {
+                return if *ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                };
+            }
+        }
+        left.2.cmp(&right.2)
+    });
+
+    for (target, (id, bytes, position, _)) in documents.iter_mut().zip(keyed) {
+        *target = PlannedDocument {
+            id,
+            bytes,
+            position,
+        };
+    }
+    Ok(())
+}
+
+fn compare_binary_values(left: Option<&BinaryValue>, right: Option<&BinaryValue>) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(left), Some(right)) => {
+            if let (Some(left), Some(right)) = (binary_number(left), binary_number(right)) {
+                return left.total_cmp(&right);
+            }
+            match (left, right) {
+                (BinaryValue::String(left), BinaryValue::String(right))
+                | (BinaryValue::Enum(left), BinaryValue::Enum(right))
+                | (BinaryValue::String(left), BinaryValue::Enum(right))
+                | (BinaryValue::Enum(left), BinaryValue::String(right)) => left.cmp(right),
+                (BinaryValue::Bool(left), BinaryValue::Bool(right)) => left.cmp(right),
+                _ => binary_distinct_key(Some(left)).cmp(&binary_distinct_key(Some(right))),
+            }
+        }
+    }
+}
+
+fn distinct_planned_documents(
+    schema: &CollectionSchemaManifest,
+    documents: Vec<PlannedDocument>,
+    fields: &[String],
+) -> Result<Vec<PlannedDocument>, String> {
+    for field in fields {
+        ensure_schema_field(schema, field)?;
+    }
+    let mut seen = HashSet::new();
+    let mut distinct = Vec::new();
+    for document in documents {
+        let key = fields
+            .iter()
+            .map(|field| {
+                read_binary_field(schema, &document.bytes, field)
+                    .map(|value| binary_distinct_key(value.as_ref()))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .join("\u{1}");
+        if seen.insert(key) {
+            distinct.push(document);
+        }
+    }
+    Ok(distinct)
+}
+
+fn binary_distinct_key(value: Option<&BinaryValue>) -> String {
+    match value {
+        None => "Null:null".to_string(),
+        Some(BinaryValue::Bool(value)) => format!("bool:{value}"),
+        Some(BinaryValue::Int(value)) => format!("int:{value}"),
+        Some(BinaryValue::DateTimeMicros(value)) => format!("DateTime:{value}"),
+        Some(BinaryValue::DurationMicros(value)) => format!("Duration:{value}"),
+        Some(BinaryValue::Double(value)) => format!("double:{value}"),
+        Some(BinaryValue::String(value)) => format!("String:{value}"),
+        Some(BinaryValue::Enum(value)) => format!("String:{value}"),
+        Some(BinaryValue::List(values)) => format!(
+            "List:[{}]",
+            values
+                .iter()
+                .map(|value| binary_distinct_key(value.as_ref()))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Some(BinaryValue::Embedded(values)) => format!(
+            "Embedded:[{}]",
+            values
+                .iter()
+                .map(|value| binary_distinct_key(value.as_ref()))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Some(BinaryValue::Object(entries)) => format!(
+            "Object:{{{}}}",
+            entries
+                .iter()
+                .map(|(name, value)| format!("{name}:{}", binary_distinct_key(value.as_ref())))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+fn window_planned_documents(
+    documents: Vec<PlannedDocument>,
+    offset: usize,
+    limit: Option<usize>,
+) -> Vec<PlannedDocument> {
+    if offset >= documents.len() {
+        return Vec::new();
+    }
+    let end = limit
+        .map(|limit| offset.saturating_add(limit).min(documents.len()))
+        .unwrap_or(documents.len());
+    documents
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .collect()
+}
+
+fn aggregate_binary_values(
+    values: &[Option<BinaryValue>],
+    operation: &str,
+) -> Result<WireScalar, String> {
+    match operation {
+        "count" => Ok(WireScalar::Int(
+            values.iter().filter(|value| value.is_some()).count() as i64,
+        )),
+        "min" => aggregate_binary_min_max(values, AggregateOrder::Min),
+        "max" => aggregate_binary_min_max(values, AggregateOrder::Max),
+        "sum" => aggregate_binary_sum(values),
+        "average" => aggregate_binary_average(values),
+        _ => Err(format!("unknown aggregate operation `{operation}`")),
+    }
+}
+
+fn aggregate_binary_min_max(
+    values: &[Option<BinaryValue>],
+    order: AggregateOrder,
+) -> Result<WireScalar, String> {
+    let mut best: Option<BinaryValue> = None;
+    for value in values.iter().flatten() {
+        match value {
+            BinaryValue::Int(_)
+            | BinaryValue::DateTimeMicros(_)
+            | BinaryValue::DurationMicros(_)
+            | BinaryValue::Double(_)
+            | BinaryValue::String(_)
+            | BinaryValue::Enum(_) => {}
+            _ => return Err("min/max aggregates require number, string, or null values".into()),
+        }
+        if let Some(best_value) = &best {
+            let comparison = compare_binary_values(Some(value), Some(best_value));
+            let replace = match order {
+                AggregateOrder::Min => comparison.is_lt(),
+                AggregateOrder::Max => comparison.is_gt(),
+            };
+            if replace {
+                best = Some(value.clone());
+            }
+        } else {
+            best = Some(value.clone());
+        }
+    }
+    binary_value_to_scalar(best.as_ref())
+}
+
+fn aggregate_binary_sum(values: &[Option<BinaryValue>]) -> Result<WireScalar, String> {
+    let mut sum = 0.0;
+    let mut count = 0_u64;
+    for value in values.iter().flatten() {
+        let Some(number) = binary_number(value) else {
+            return Err("sum aggregate requires number or null values".into());
+        };
+        sum += number;
+        count += 1;
+    }
+    if count == 0 {
+        Ok(WireScalar::Null)
+    } else {
+        Ok(WireScalar::Double(sum))
+    }
+}
+
+fn aggregate_binary_average(values: &[Option<BinaryValue>]) -> Result<WireScalar, String> {
+    let mut sum = 0.0;
+    let mut count = 0_u64;
+    for value in values.iter().flatten() {
+        let Some(number) = binary_number(value) else {
+            return Err("average aggregate requires number or null values".into());
+        };
+        sum += number;
+        count += 1;
+    }
+    if count == 0 {
+        Ok(WireScalar::Null)
+    } else {
+        Ok(WireScalar::Double(sum / count as f64))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AggregateOrder {
+    Min,
+    Max,
+}
+
+fn binary_number(value: &BinaryValue) -> Option<f64> {
+    match value {
+        BinaryValue::Int(value)
+        | BinaryValue::DateTimeMicros(value)
+        | BinaryValue::DurationMicros(value) => Some(*value as f64),
+        BinaryValue::Double(value) if value.is_finite() => Some(*value),
+        _ => None,
+    }
+}
+
+fn binary_value_to_scalar(value: Option<&BinaryValue>) -> Result<WireScalar, String> {
+    Ok(match value {
+        None => WireScalar::Null,
+        Some(BinaryValue::Bool(value)) => WireScalar::Bool(*value),
+        Some(BinaryValue::Int(value))
+        | Some(BinaryValue::DateTimeMicros(value))
+        | Some(BinaryValue::DurationMicros(value)) => WireScalar::Int(*value),
+        Some(BinaryValue::Double(value)) if value.is_finite() => WireScalar::Double(*value),
+        Some(BinaryValue::Double(_)) => return Err("aggregate double must be finite".into()),
+        Some(BinaryValue::String(value)) | Some(BinaryValue::Enum(value)) => {
+            WireScalar::String(value.clone())
+        }
+        Some(_) => return Err("aggregate value cannot be represented as a scalar".into()),
+    })
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {

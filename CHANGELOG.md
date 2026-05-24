@@ -5,6 +5,24 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.3.2
+
+- Added a CindelWireV1 native query plan payload for common MDBX query
+  execution paths.
+- Moved MDBX binary-document `findAll`, `count`, `deleteFirst`, `deleteAll`,
+  single-field projections, and property aggregates onto native plan execution
+  when the query shape is supported.
+- Expanded native planning beyond the old id-only fast path so sort, distinct,
+  offset, and limit can execute before Dart object hydration.
+- Kept SQLite on the existing compatibility fallback path with the same public
+  Dart query builder API.
+- Added Dart and Rust query-plan wire fixture coverage and a backend test for
+  native filter/sort/distinct/window/projection/aggregate/delete behavior.
+- Bumped the native ABI to 15 for the binary native query plan contract.
+- Updated `cindel` and `cindel_flutter_libs` to `0.3.2`.
+- Updated the Todo example dependency constraints and build number for the ABI
+  15 package line.
+
 ## 0.3.1
 
 - Replaced schema registration JSON with the CindelWireV1 binary schema

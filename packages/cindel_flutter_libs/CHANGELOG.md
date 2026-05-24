@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 15 with CindelWireV1 binary native query plan execution support.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.3.1
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

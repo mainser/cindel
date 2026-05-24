@@ -534,6 +534,54 @@ void main() {
       expect(lastName, 'Dee');
     });
 
+    // Scenario: A binary-document query can execute the whole common plan
+    // natively on MDBX while SQLite keeps the Dart fallback.
+    // Covers:
+    // - Native plan filter, sort, distinct, offset, limit, and projection.
+    // - Native plan count and aggregate result payloads.
+    // - Native plan delete of the first visible result.
+    // Expected: The public query API keeps the same result shape on both
+    // backends.
+    test('executes common query plans through the native path.', () async {
+      // Arrange.
+      final database = await _openUsersWithDuplicateNames();
+      addTearDown(database.close);
+
+      CindelQuery<User> query() {
+        return database.users
+            .all()
+            .filter()
+            .activeEqualTo(true)
+            .sortByName()
+            .distinctByName()
+            .offset(1)
+            .limit(1);
+      }
+
+      // Act.
+      final names = await query().nameProperty().findAll();
+      final count = await query().count();
+      final idSum = await query().idProperty().sum();
+      final deleted = await query().deleteFirst();
+      final deletedUser = await database.users.get(2);
+      final remainingNames = await database.users
+          .all()
+          .filter()
+          .activeEqualTo(true)
+          .sortByName()
+          .distinctByName()
+          .nameProperty()
+          .findAll();
+
+      // Assert.
+      expect(names, ['Ben']);
+      expect(count, 1);
+      expect(idSum, 2);
+      expect(deleted, isTrue);
+      expect(deletedUser, isNull);
+      expect(remainingNames, ['Ana']);
+    });
+
     // Scenario: Query modifiers are combined in the documented order.
     // Covers:
     // - Execution order: where, filter, sort, distinct, offset, limit,

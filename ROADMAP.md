@@ -477,6 +477,17 @@ mature.
     `IndexEntryList` records.
   - Rejected JSON-era preview metadata and corrupt binary metadata on open.
   - Native ABI 14 marks the binary schema metadata contract.
+- [x] Native query plan execution.
+  - Added an internal CindelWireV1 `WireQueryPlan` payload for native query
+    source, filter, sort, distinct, offset, and limit execution.
+  - MDBX now executes supported binary-document `findAll`, `count`,
+    `deleteFirst`, `deleteAll`, single-field projections, and property
+    aggregates without Dart-side candidate id materialization.
+  - Native query plan results return CindelWireV1 id lists, projection rows,
+    scalar results, or binary document batches depending on the public API
+    call.
+  - SQLite remains compatible through the Dart fallback path.
+  - Native ABI 15 marks the binary native query plan contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -541,14 +552,14 @@ mature.
 ## Current Focus
 
 The current implementation focus is the anti-JSON optimization line for
-`0.2.x`. Cindel now has the typed query pipeline, index variants, word-token
+`0.3.x`. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
 query/lazy watchers, binary MDBX document storage, and MDBX as the default
 backend with SQLite as an explicit fallback. CindelWireV1 now removes JSON from
 id lists, basic batches, index values, indexed write metadata, unique checks,
-and stable hash-index canonicalization. The immediate next work is to continue
-through binary native filters, manual documents, schema metadata, and native
-query planning.
+stable hash-index canonicalization, native filters, manual documents, schema
+metadata, and common native query plan execution. The immediate next work is
+watcher and async polish after the query path moved farther into MDBX.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

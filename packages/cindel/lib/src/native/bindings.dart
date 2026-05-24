@@ -576,6 +576,190 @@ final class CindelNativeBindings {
       });
     });
   }
+
+  List<int> queryPlanIds(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+  ) {
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _withNativeBytes(plan, (planPointer, planLength) {
+            return _functions.queryPlanIds(
+              handle,
+              collectionPointer,
+              collectionLength,
+              planPointer,
+              planLength,
+              outPointer,
+              outLength,
+            );
+          });
+        });
+      },
+      _functions.freeBuffer,
+      'query plan ids',
+    );
+  }
+
+  Uint8List queryPlanDocuments(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+  ) {
+    return _queryPlanBytes(
+      handle,
+      collection,
+      plan,
+      (args) {
+        return _functions.queryPlanDocuments(
+          args.handle,
+          args.collectionPointer,
+          args.collectionLength,
+          args.planPointer,
+          args.planLength,
+          args.outPointer,
+          args.outLength,
+        );
+      },
+      _functions.freeBuffer,
+      'query plan documents',
+    );
+  }
+
+  Uint8List queryPlanCount(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+  ) {
+    return _queryPlanBytes(
+      handle,
+      collection,
+      plan,
+      (args) {
+        return _functions.queryPlanCount(
+          args.handle,
+          args.collectionPointer,
+          args.collectionLength,
+          args.planPointer,
+          args.planLength,
+          args.outPointer,
+          args.outLength,
+        );
+      },
+      _functions.freeBuffer,
+      'query plan count',
+    );
+  }
+
+  Uint8List queryPlanProject(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+    String field,
+  ) {
+    return _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(plan, (planPointer, planLength) {
+        return _withNativeUtf8Bytes(field, (fieldPointer, fieldLength) {
+          return _queryBytes(
+            (outPointer, outLength) {
+              return _functions.queryPlanProject(
+                handle,
+                collectionPointer,
+                collectionLength,
+                planPointer,
+                planLength,
+                fieldPointer,
+                fieldLength,
+                outPointer,
+                outLength,
+              );
+            },
+            _functions.freeBuffer,
+            'query plan project',
+          );
+        });
+      });
+    });
+  }
+
+  Uint8List queryPlanAggregate(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+    String field,
+    String operation,
+  ) {
+    return _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(plan, (planPointer, planLength) {
+        return _withNativeUtf8Bytes(field, (fieldPointer, fieldLength) {
+          return _withNativeUtf8Bytes(operation, (
+            operationPointer,
+            operationLength,
+          ) {
+            return _queryBytes(
+              (outPointer, outLength) {
+                return _functions.queryPlanAggregate(
+                  handle,
+                  collectionPointer,
+                  collectionLength,
+                  planPointer,
+                  planLength,
+                  fieldPointer,
+                  fieldLength,
+                  operationPointer,
+                  operationLength,
+                  outPointer,
+                  outLength,
+                );
+              },
+              _functions.freeBuffer,
+              'query plan aggregate',
+            );
+          });
+        });
+      });
+    });
+  }
+
+  List<int> queryPlanDelete(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+  ) {
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _withNativeBytes(plan, (planPointer, planLength) {
+            return _functions.queryPlanDelete(
+              handle,
+              collectionPointer,
+              collectionLength,
+              planPointer,
+              planLength,
+              outPointer,
+              outLength,
+            );
+          });
+        });
+      },
+      _functions.freeBuffer,
+      'query plan delete',
+    );
+  }
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -763,6 +947,78 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get queryAggregate;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanIds;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanDocuments;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanCount;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanProject;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanAggregate;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanDelete;
 
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }
@@ -1166,6 +1422,144 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_query_aggregate'),
+      queryPlanIds = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_ids'),
+      queryPlanDocuments = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_documents'),
+      queryPlanCount = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_count'),
+      queryPlanProject = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_project'),
+      queryPlanAggregate = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_aggregate'),
+      queryPlanDelete = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_query_plan_delete'),
       freeBuffer = library
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
@@ -1396,6 +1790,84 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   queryAggregate;
 
   @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanIds;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanDocuments;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanCount;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanProject;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanAggregate;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  queryPlanDelete;
+
+  @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }
 
@@ -1614,6 +2086,84 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get queryAggregate => _cindelQueryAggregate;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanIds => _cindelQueryPlanIds;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanDocuments => _cindelQueryPlanDocuments;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanCount => _cindelQueryPlanCount;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanProject => _cindelQueryPlanProject;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanAggregate => _cindelQueryPlanAggregate;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get queryPlanDelete => _cindelQueryPlanDelete;
 
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
@@ -2098,6 +2648,144 @@ external int _cindelQueryAggregate(
   Pointer<Size> outLength,
 );
 
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_ids', assetId: _assetId)
+external int _cindelQueryPlanIds(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_documents', assetId: _assetId)
+external int _cindelQueryPlanDocuments(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_count', assetId: _assetId)
+external int _cindelQueryPlanCount(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_project', assetId: _assetId)
+external int _cindelQueryPlanProject(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Uint8> field,
+  int fieldLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_aggregate', assetId: _assetId)
+external int _cindelQueryPlanAggregate(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Uint8> field,
+  int fieldLen,
+  Pointer<Uint8> operation,
+  int operationLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_query_plan_delete', assetId: _assetId)
+external int _cindelQueryPlanDelete(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
 @Native<Void Function(Pointer<Uint8>, Size)>(
   symbol: 'cindel_free_buffer',
   assetId: _assetId,
@@ -2172,6 +2860,60 @@ Uint8List _queryBytes(
       ..free(outPointer)
       ..free(outLength);
   }
+}
+
+Uint8List _queryPlanBytes(
+  Pointer<Void> handle,
+  String collection,
+  Uint8List plan,
+  int Function(_QueryPlanCallArgs args) action,
+  void Function(Pointer<Uint8> pointer, int length) freeBuffer,
+  String operation,
+) {
+  return _withNativeUtf8Bytes(collection, (
+    collectionPointer,
+    collectionLength,
+  ) {
+    return _withNativeBytes(plan, (planPointer, planLength) {
+      return _queryBytes(
+        (outPointer, outLength) {
+          return action(
+            _QueryPlanCallArgs(
+              handle: handle,
+              collectionPointer: collectionPointer,
+              collectionLength: collectionLength,
+              planPointer: planPointer,
+              planLength: planLength,
+              outPointer: outPointer,
+              outLength: outLength,
+            ),
+          );
+        },
+        freeBuffer,
+        operation,
+      );
+    });
+  });
+}
+
+final class _QueryPlanCallArgs {
+  const _QueryPlanCallArgs({
+    required this.handle,
+    required this.collectionPointer,
+    required this.collectionLength,
+    required this.planPointer,
+    required this.planLength,
+    required this.outPointer,
+    required this.outLength,
+  });
+
+  final Pointer<Void> handle;
+  final Pointer<Uint8> collectionPointer;
+  final int collectionLength;
+  final Pointer<Uint8> planPointer;
+  final int planLength;
+  final Pointer<Pointer<Uint8>> outPointer;
+  final Pointer<Size> outLength;
 }
 
 void _checkId(int id) {

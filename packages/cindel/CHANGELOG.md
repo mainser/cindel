@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2
+
+- Added CindelWireV1 native query plan payloads for MDBX binary-document
+  queries.
+- Moved supported `findAll`, `count`, `deleteFirst`, `deleteAll`, property
+  projection, and property aggregate query shapes onto native plan execution.
+- Let native planning handle filter, sort, distinct, offset, and limit before
+  Dart object hydration when no Dart-only source filter is required.
+- Kept the public Dart query builder API unchanged and kept SQLite on the
+  compatibility fallback path.
+- Added query-plan codec fixtures in Dart and Rust plus backend coverage for
+  native plan behavior.
+- Bumped the native ABI to 15.
+
 ## 0.3.1
 
 - Replaced schema registration JSON with CindelWireV1 binary schema manifests.

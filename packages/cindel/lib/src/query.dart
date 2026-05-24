@@ -162,6 +162,7 @@ final class CindelQuery<T> {
     required _CindelDocumentReader readDocuments,
     _CindelDocumentFilter? sourceFilter,
     _CindelIdReader? readIds,
+    CindelNativeQuerySource? nativeSource,
     CindelFilterPredicate? filter,
     List<_CindelSortKey> sortKeys = const [],
     List<String> distinctFields = const [],
@@ -172,6 +173,7 @@ final class CindelQuery<T> {
        _readDocuments = readDocuments,
        _sourceFilter = sourceFilter,
        _readIds = readIds,
+       _nativeSource = nativeSource,
        _filter = filter,
        _nativeFilter = _nativeFilterBytes(filter),
        _sortKeys = sortKeys,
@@ -189,6 +191,7 @@ final class CindelQuery<T> {
       schema: schema,
       readDocuments: () => database.queryAll(schema.name),
       readIds: () => database.documentIds(schema.name),
+      nativeSource: const CindelNativeAllQuerySource(),
     );
   }
 
@@ -207,6 +210,11 @@ final class CindelQuery<T> {
       readIds: schemaField.indexType == CindelIndexType.hash
           ? null
           : () => database.queryEqualIds(schema.name, field, value),
+      nativeSource: CindelNativeIndexEqualQuerySource(
+        indexName: field,
+        value: value,
+        dedupe: schemaField.indexType == CindelIndexType.words,
+      ),
     );
   }
 
@@ -224,6 +232,10 @@ final class CindelQuery<T> {
           database.queryCompositeEqual(schema.name, index, values),
       readIds: () async =>
           database.queryCompositeEqualIds(schema.name, index, values),
+      nativeSource: CindelNativeCompositeEqualQuerySource(
+        indexName: index,
+        values: values,
+      ),
     );
   }
 
@@ -245,6 +257,12 @@ final class CindelQuery<T> {
         field,
         lower: lower,
         upper: upper,
+      ),
+      nativeSource: CindelNativeIndexRangeQuerySource(
+        indexName: field,
+        lower: lower,
+        upper: upper,
+        dedupe: _schemaField(schema, field).indexType == CindelIndexType.words,
       ),
     );
   }
@@ -365,6 +383,7 @@ final class CindelQuery<T> {
   final _CindelDocumentReader _readDocuments;
   final _CindelDocumentFilter? _sourceFilter;
   final _CindelIdReader? _readIds;
+  final CindelNativeQuerySource? _nativeSource;
   final CindelFilterPredicate? _filter;
   final Uint8List? _nativeFilter;
   final List<_CindelSortKey> _sortKeys;
@@ -501,9 +520,9 @@ final class CindelQuery<T> {
 
   /// Returns the number of objects matching this query.
   Future<int> count() async {
-    final nativeIds = await _nativePlannedIds();
-    if (nativeIds != null) {
-      return nativeIds.length;
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      return _database.queryNativePlanCount(_schema.name, nativePlan);
     }
     final documents = await _matchingDocuments();
     return documents.length;
@@ -511,6 +530,11 @@ final class CindelQuery<T> {
 
   /// Deletes the first object matching this query, if one exists.
   Future<bool> deleteFirst() async {
+    final nativePlan = _nativePlan(limitOverride: 1);
+    if (nativePlan != null) {
+      final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
+      return ids.isNotEmpty;
+    }
     final documents = await _matchingDocuments();
     if (documents.isEmpty) {
       return false;
@@ -521,6 +545,11 @@ final class CindelQuery<T> {
 
   /// Deletes every object matching this query atomically.
   Future<int> deleteAll() async {
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
+      return ids.length;
+    }
     final documents = await _matchingDocuments();
     if (documents.isEmpty) {
       return 0;
@@ -542,9 +571,9 @@ final class CindelQuery<T> {
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
-    final nativeIds = await _nativePlannedIds();
-    if (nativeIds != null) {
-      return _database.documentsByIds(_schema.name, nativeIds);
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      return _database.queryNativePlanDocuments(_schema.name, nativePlan);
     }
 
     var matchingDocuments = await _readFilteredDocuments();
@@ -563,25 +592,35 @@ final class CindelQuery<T> {
     return matchingDocuments;
   }
 
-  Future<List<int>?> _nativePlannedIds() async {
+  CindelNativeQueryPlan? _nativePlan({int? limitOverride}) {
+    final nativeSource = _nativeSource;
     final nativeFilter = _nativeFilter;
-    final filter = _filter;
-    final readIds = _readIds;
     if (!_canUseNativePlanner ||
-        readIds == null ||
-        (filter != null && nativeFilter == null)) {
+        nativeSource == null ||
+        (_filter != null && nativeFilter == null)) {
       return null;
     }
-
-    var ids = await readIds();
-    if (nativeFilter != null) {
-      ids = await _database.queryNativeFilterIds(
-        _schema.name,
-        ids,
-        nativeFilter,
-      );
-    }
-    return _windowIds(ids, _offset, _limit);
+    final effectiveLimit = switch ((_limit, limitOverride)) {
+      (null, null) => null,
+      (final current?, null) => current,
+      (null, final override?) => override,
+      (final current?, final override?) =>
+        current < override ? current : override,
+    };
+    return CindelNativeQueryPlan(
+      source: nativeSource,
+      filter: nativeFilter,
+      sorts: [
+        for (final sortKey in _sortKeys)
+          CindelNativeQuerySort(
+            field: sortKey.field,
+            descending: sortKey.order == CindelSortOrder.descending,
+          ),
+      ],
+      distinctFields: _distinctFields,
+      offset: _offset,
+      limit: effectiveLimit,
+    );
   }
 
   Future<List<CindelDocument>> _readFilteredDocuments() async {
@@ -620,10 +659,7 @@ final class CindelQuery<T> {
   }
 
   bool get _canUseNativePlanner {
-    return _canUseNativeFilter &&
-        _sourceFilter == null &&
-        _sortKeys.isEmpty &&
-        _distinctFields.isEmpty;
+    return _canUseNativeFilter && _sourceFilter == null;
   }
 
   bool get _canUseNativeProjection => _canUseNativePlanner;
@@ -754,6 +790,7 @@ final class CindelQuery<T> {
       readDocuments: _readDocuments,
       sourceFilter: _sourceFilter,
       readIds: _readIds,
+      nativeSource: _nativeSource,
       filter: filter ?? _filter,
       sortKeys: sortKeys ?? _sortKeys,
       distinctFields: distinctFields ?? _distinctFields,
@@ -903,11 +940,11 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns every projected value.
   Future<List<R>> findAll() async {
-    final nativeIds = await _query._nativePlannedIds();
-    if (nativeIds != null && _query._canUseNativeProjection) {
-      final values = await _query._database.queryNativeProjection(
+    final nativePlan = _query._nativePlan();
+    if (nativePlan != null && _query._canUseNativeProjection) {
+      final values = await _query._database.queryNativePlanProjection(
         _query._schema.name,
-        nativeIds,
+        nativePlan,
         _field,
       );
       final decode = _decode;
@@ -1008,13 +1045,13 @@ final class CindelPropertyQuery<T, R> {
   }
 
   Future<({Object? value})?> _tryNativeAggregate(String operation) async {
-    final nativeIds = await _query._nativePlannedIds();
-    if (nativeIds == null || !_query._canUseNativeProjection) {
+    final nativePlan = _query._nativePlan();
+    if (nativePlan == null || !_query._canUseNativeProjection) {
       return null;
     }
-    final value = await _query._database.queryNativeAggregate(
+    final value = await _query._database.queryNativePlanAggregate(
       _query._schema.name,
-      nativeIds,
+      nativePlan,
       _field,
       operation,
     );
@@ -1270,19 +1307,6 @@ List<CindelDocument> _windowDocuments(
       ? documents.length
       : (offset + limit).clamp(0, documents.length);
   return documents.sublist(offset, end);
-}
-
-List<int> _windowIds(List<int> ids, int offset, int? limit) {
-  if (offset == 0 && limit == null) {
-    return ids;
-  }
-  if (offset >= ids.length) {
-    return <int>[];
-  }
-  final end = limit == null
-      ? ids.length
-      : (offset + limit).clamp(0, ids.length);
-  return ids.sublist(offset, end);
 }
 
 enum _FilterOperation {
