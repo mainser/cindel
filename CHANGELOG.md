@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.17
+
+- Completed JSON-03 by moving indexed write metadata from JSON envelopes to
+  CindelWireV1 binary payloads for `putIndexed`, `putManyIndexed`, indexed
+  equality/range values, and unique-index checks.
+- Added a CindelWireV1 indexed document write batch codec with byte-for-byte
+  Dart and Rust fixture tests.
+- Replaced stable hash-index hashing over JSON strings with hashing over the
+  canonical binary index-value bytes shared by Dart and Rust.
+- Removed the obsolete Rust-only `mdbx-v2-spike` benchmark backend because the
+  useful layout work now lives in the real MDBX backend.
+- Bumped the native ABI to 11 for the binary index/write contract.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.17`.
+
 ## 0.2.16
 
 - Completed the first GET-01 read-path optimization pass for MDBX get-family

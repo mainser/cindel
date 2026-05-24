@@ -868,7 +868,7 @@ class CindelDatabase {
           caseSensitive: field.indexCaseSensitive,
         )) {
           entries.add(
-            _IndexEntry(name: field.name, value: _indexValueJson(token, field)),
+            _IndexEntry(name: field.name, value: _indexValueWire(token, field)),
           );
         }
         continue;
@@ -886,7 +886,7 @@ class CindelDatabase {
             continue;
           }
           entries.add(
-            _IndexEntry(name: field.name, value: _indexValueJson(item, field)),
+            _IndexEntry(name: field.name, value: _indexValueWire(item, field)),
           );
         }
         continue;
@@ -894,12 +894,12 @@ class CindelDatabase {
       entries.add(
         _IndexEntry(
           name: field.name,
-          value: _indexValueJson(fieldValue, field),
+          value: _indexValueWire(fieldValue, field),
         ),
       );
     }
     for (final index in schema.compositeIndexes) {
-      final values = <Map<String, Object>>[];
+      final values = <WireIndexValue>[];
       var hasAllValues = true;
       for (final fieldName in index.fields) {
         if (!value.containsKey(fieldName) || value[fieldName] == null) {
@@ -908,7 +908,7 @@ class CindelDatabase {
         }
         final field = _fieldSchema(collection, fieldName)!;
         values.add(
-          _indexValueJson(
+          _indexValueWire(
             value[fieldName]!,
             CindelFieldSchema(
               name: field.name,
@@ -924,10 +924,7 @@ class CindelDatabase {
       }
       if (hasAllValues) {
         entries.add(
-          _IndexEntry(
-            name: index.name,
-            value: {'type': 'list', 'value': values},
-          ),
+          _IndexEntry(name: index.name, value: WireIndexValue.list(values)),
         );
       }
     }
@@ -1088,11 +1085,11 @@ class CindelDatabase {
         'Composite index `$indexName` expects ${composite.fields.length} values.',
       );
     }
-    final encodedValues = <Map<String, Object>>[];
+    final encodedValues = <WireIndexValue>[];
     for (var index = 0; index < values.length; index += 1) {
       final field = _fieldSchema(collection, composite.fields[index])!;
       encodedValues.add(
-        _indexValueJson(
+        _indexValueWire(
           values[index],
           CindelFieldSchema(
             name: field.name,
@@ -1106,9 +1103,7 @@ class CindelDatabase {
         ),
       );
     }
-    final encodedValue = Uint8List.fromList(
-      utf8.encode(jsonEncode({'type': 'list', 'value': encodedValues})),
-    );
+    final encodedValue = encodeIndexValue(WireIndexValue.list(encodedValues));
     return _bindings.queryIndexEqual(
       handle,
       collection,
@@ -1438,31 +1433,28 @@ void _checkJsonValue(Object? value, String path) {
 }
 
 Uint8List _encodeIndexEntries(List<_IndexEntry> entries) {
-  return Uint8List.fromList(
-    utf8.encode(
-      jsonEncode([
-        for (final entry in entries) {'name': entry.name, 'value': entry.value},
-      ]),
-    ),
-  );
+  return encodeIndexEntryList([
+    for (final entry in entries)
+      WireIndexEntry(documentId: 0, indexName: entry.name, value: entry.value),
+  ]);
 }
 
 Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
-  return Uint8List.fromList(
-    utf8.encode(
-      jsonEncode([
-        for (final entry in entries)
-          {
-            'id': entry.id,
-            'document': entry.document,
-            'indexes': [
-              for (final index in entry.indexes)
-                {'name': index.name, 'value': index.value},
-            ],
-          },
-      ]),
-    ),
-  );
+  return encodeIndexedDocumentWriteBatch([
+    for (final entry in entries)
+      WireIndexedDocumentWrite(
+        id: entry.id,
+        bytes: _encodeDocument(entry.document),
+        indexes: [
+          for (final index in entry.indexes)
+            WireIndexEntry(
+              documentId: entry.id,
+              indexName: index.name,
+              value: index.value,
+            ),
+        ],
+      ),
+  ]);
 }
 
 Uint8List _encodeBinaryBatchPutEntries(Map<int, Uint8List> entries) {
@@ -1541,65 +1533,55 @@ _EncodedIndexValue _encodedIndexValue(
   CindelFieldSchema field,
   String argumentName,
 ) {
-  final json = _indexValueJson(value, field, argumentName);
+  final wire = _indexValueWire(value, field, argumentName);
   return _EncodedIndexValue(
-    kind: json['type']! as String,
-    bytes: Uint8List.fromList(utf8.encode(jsonEncode(json))),
+    kind: _wireIndexValueKind(wire),
+    bytes: encodeIndexValue(wire),
   );
 }
 
-Map<String, Object> _indexValueJson(
+WireIndexValue _indexValueWire(
   Object value,
   CindelFieldSchema field, [
   String argumentName = 'value',
 ]) {
   final normalizedType = _nonNullableDartType(field.dartType);
 
-  final valueJson = switch ((normalizedType, value)) {
-    ('bool', final bool value) => {'type': 'bool', 'value': value},
-    ('int', final int value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value, argumentName),
-    },
-    ('double', final double value) when value.isFinite => {
-      'type': 'double',
-      'value': value,
-    },
-    ('String', final String value) => _stringIndexValueJson(value, field),
-    ('DateTime', final DateTime value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value.microsecondsSinceEpoch, argumentName),
-    },
-    ('DateTime', final int value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value, argumentName),
-    },
-    ('Duration', final Duration value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value.inMicroseconds, argumentName),
-    },
-    ('Duration', final int value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value, argumentName),
-    },
+  final wireValue = switch ((normalizedType, value)) {
+    ('bool', final bool value) => WireIndexValue.bool(value),
+    ('int', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, argumentName),
+    ),
+    ('double', final double value) when value.isFinite => WireIndexValue.double(
+      value,
+    ),
+    ('String', final String value) => _stringIndexValueWire(value, field),
+    ('DateTime', final DateTime value) => WireIndexValue.int(
+      _checkSqliteInteger(value.microsecondsSinceEpoch, argumentName),
+    ),
+    ('DateTime', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, argumentName),
+    ),
+    ('Duration', final Duration value) => WireIndexValue.int(
+      _checkSqliteInteger(value.inMicroseconds, argumentName),
+    ),
+    ('Duration', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, argumentName),
+    ),
     ('double', final double value) => throw ArgumentError.value(
       value,
       argumentName,
       'Must be finite.',
     ),
-    (_, final bool value) => {'type': 'bool', 'value': value},
-    (_, final int value) => {
-      'type': 'int',
-      'value': _checkSqliteInteger(value, argumentName),
-    },
-    (_, final double value) when value.isFinite => {
-      'type': 'double',
-      'value': value,
-    },
+    (_, final bool value) => WireIndexValue.bool(value),
+    (_, final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, argumentName),
+    ),
+    (_, final double value) when value.isFinite => WireIndexValue.double(value),
     (_, final String value) =>
       field.indexType == CindelIndexType.multiEntry
-          ? _stringIndexValueJson(value, field)
-          : {'type': 'string', 'value': value},
+          ? _stringIndexValueWire(value, field)
+          : WireIndexValue.string(value),
     (_, final double value) => throw ArgumentError.value(
       value,
       argumentName,
@@ -1612,9 +1594,9 @@ Map<String, Object> _indexValueJson(
     ),
   };
   if (field.indexType == CindelIndexType.hash) {
-    return {'type': 'int', 'value': _stableHash(_stableJson(valueJson))};
+    return WireIndexValue.int(_stableHashBytes(encodeIndexValue(wireValue)));
   }
-  return valueJson;
+  return wireValue;
 }
 
 String _nonNullableDartType(String dartType) {
@@ -1623,12 +1605,20 @@ String _nonNullableDartType(String dartType) {
       : dartType;
 }
 
-Map<String, Object> _stringIndexValueJson(
-  String value,
-  CindelFieldSchema field,
-) {
+WireIndexValue _stringIndexValueWire(String value, CindelFieldSchema field) {
   final indexedValue = field.indexCaseSensitive ? value : value.toLowerCase();
-  return {'type': 'string', 'value': indexedValue};
+  return WireIndexValue.string(indexedValue);
+}
+
+String _wireIndexValueKind(WireIndexValue value) {
+  return switch (value) {
+    WireIndexNull() => 'null',
+    WireIndexBool() => 'bool',
+    WireIndexInt() => 'int',
+    WireIndexDouble() => 'double',
+    WireIndexString() => 'string',
+    WireIndexList() => 'list',
+  };
 }
 
 bool _indexedValuesEqual(
@@ -1667,8 +1657,6 @@ int? _durationMicros(Object? value) {
   };
 }
 
-String _stableJson(Object value) => jsonEncode(value);
-
 bool _jsonLikeEquals(Object? left, Object? right) {
   if (identical(left, right)) {
     return true;
@@ -1701,13 +1689,13 @@ bool _jsonLikeEquals(Object? left, Object? right) {
   return left == right;
 }
 
-int _stableHash(String value) {
+int _stableHashBytes(Uint8List value) {
   const offsetBasis = 0xcbf29ce484222325;
   const prime = 0x100000001b3;
   const mask = 0x7fffffffffffffff;
   var hash = offsetBasis;
-  for (final codeUnit in value.codeUnits) {
-    hash ^= codeUnit;
+  for (final byte in value) {
+    hash ^= byte;
     hash = (hash * prime) & mask;
   }
   return hash;
@@ -1741,7 +1729,7 @@ final class _IndexEntry {
   const _IndexEntry({required this.name, required this.value});
 
   final String name;
-  final Map<String, Object> value;
+  final WireIndexValue value;
 }
 
 final class _BatchPutEntry {
@@ -1767,7 +1755,7 @@ final class _UniqueIndexEntry {
   final int id;
   final CindelFieldSchema field;
   final Object? originalValue;
-  final Map<String, Object> encodedValue;
+  final WireIndexValue encodedValue;
 }
 
 final class _EncodedIndexValue {

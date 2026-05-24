@@ -3,12 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "mdbx")]
+use crate::storage::MdbxStorage;
 use crate::storage::{
     CollectionSchemaManifest, CompositeIndexSchemaManifest, DocumentWrite, FieldSchemaManifest,
     IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine,
 };
-#[cfg(feature = "mdbx")]
-use crate::storage::{MdbxLayoutV2Storage, MdbxStorage};
 
 const DEFAULT_DOCUMENTS: u64 = 10_000;
 const DEFAULT_QUERY_REPEATS: u64 = 1_000;
@@ -36,15 +36,9 @@ fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkReport>, Stri
     match config.backend {
         BackendSelection::Sqlite => Ok(vec![run_sqlite_benchmark(config)?]),
         BackendSelection::Mdbx => Ok(vec![run_mdbx_benchmark(config)?]),
-        BackendSelection::MdbxV2 => Ok(vec![run_mdbx_v2_benchmark(config)?]),
         BackendSelection::All => Ok(vec![
             run_sqlite_benchmark(config)?,
             run_mdbx_benchmark(config)?,
-        ]),
-        BackendSelection::AllWithSpike => Ok(vec![
-            run_sqlite_benchmark(config)?,
-            run_mdbx_benchmark(config)?,
-            run_mdbx_v2_benchmark(config)?,
         ]),
     }
 }
@@ -67,19 +61,6 @@ fn run_mdbx_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, Strin
 #[cfg(not(feature = "mdbx"))]
 fn run_mdbx_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
     Err("MDBX benchmark requires building with `--features benchmarks`.".into())
-}
-
-#[cfg(feature = "mdbx")]
-fn run_mdbx_v2_benchmark(config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
-    let directory = TemporaryDirectory::new("mdbx_v2_bench")?;
-    let (storage, open) = measure_value("open", 1, || MdbxLayoutV2Storage::open(directory.path()))?;
-
-    run_storage_benchmark("mdbx-v2-spike", storage, open, directory.path_buf(), config)
-}
-
-#[cfg(not(feature = "mdbx"))]
-fn run_mdbx_v2_benchmark(_config: &BenchmarkConfig) -> Result<BenchmarkReport, String> {
-    Err("MDBX layout v2 benchmark requires building with `--features benchmarks`.".into())
 }
 
 fn run_storage_benchmark(
@@ -887,9 +868,7 @@ impl BenchmarkConfig {
 enum BackendSelection {
     Sqlite,
     Mdbx,
-    MdbxV2,
     All,
-    AllWithSpike,
 }
 
 impl BackendSelection {
@@ -897,11 +876,9 @@ impl BackendSelection {
         match value {
             "sqlite" => Ok(Self::Sqlite),
             "mdbx" => Ok(Self::Mdbx),
-            "mdbx-v2" | "mdbx-v2-spike" => Ok(Self::MdbxV2),
             "all" => Ok(Self::All),
-            "all-with-spike" | "all-experimental" => Ok(Self::AllWithSpike),
             _ => Err(format!(
-                "`--backend` must be one of `sqlite`, `mdbx`, `mdbx-v2`, `all`, or `all-with-spike`; got `{value}`"
+                "`--backend` must be one of `sqlite`, `mdbx`, or `all`; got `{value}`"
             )),
         }
     }
@@ -910,9 +887,7 @@ impl BackendSelection {
         match self {
             Self::Sqlite => "sqlite",
             Self::Mdbx => "mdbx",
-            Self::MdbxV2 => "mdbx-v2",
             Self::All => "all",
-            Self::AllWithSpike => "all-with-spike",
         }
     }
 }
@@ -926,7 +901,7 @@ fn parse_positive_u64(flag: &str, value: &str) -> Result<u64, String> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|mdbx-v2|all|all-with-spike] [--documents N] [--query-repeats N] [--format csv|json] [--output PATH]"
+        "Usage: cargo run --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- [--backend sqlite|mdbx|all] [--documents N] [--query-repeats N] [--format csv|json] [--output PATH]"
     );
 }
 

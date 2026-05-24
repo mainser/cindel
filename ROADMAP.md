@@ -375,15 +375,15 @@ Guiding rules:
   - Reuse transaction buffers, key buffers, and query result buffers.
   - Only move lower-level MDBX cursor access if benchmarks prove it is needed.
 - [x] PERF-13: MDBX layout convergence.
-  - Promote the winning `mdbx-v2-spike` table layout ideas into the real MDBX
+  - Promoted the winning `mdbx-v2-spike` table layout ideas into the real MDBX
     backend instead of keeping a parallel benchmark-only backend.
   - Keep binary documents and in-memory auto-increment counters in the final
     MDBX path.
   - The real MDBX backend now uses per-collection document tables and
     per-index duplicate-sorted tables while preserving transactions and index
     parity.
-  - The spike remains only as a temporary benchmark fixture until the remaining
-    `get/get_many` differences are understood.
+  - The temporary `mdbx-v2-spike` benchmark backend has been retired; benchmark
+    runs now compare only SQLite and the real MDBX backend.
 - [x] PERF-14: Native watcher change sets.
   - Track changed collections, document ids, and affected index keys during
     native write transactions.
@@ -452,9 +452,15 @@ Guiding rules:
   - Documented that `readTxn` still needs a real reusable MDBX read transaction
     context; today's marker prevents writes but does not remove per-get native
     read setup cost.
-- [ ] JSON-03: Binary index values and document writes.
-  - Replace JSON index values, index entries, indexed document writes, unique
-    checks, and stable index hashing with canonical CindelWireV1 payloads.
+- [x] JSON-03: Binary index values and document writes.
+  - Replaced JSON index values and index entry lists with CindelWireV1 binary
+    payloads for `putIndexed`, indexed equality queries, range bounds, and
+    unique-index validation.
+  - Added `WireIndexedDocumentWrite` so manual `putAll` indexed batches carry
+    document bytes plus binary index entries instead of a JSON batch envelope.
+  - Switched hash-index canonicalization from stable JSON strings to stable
+    hashes over canonical binary `WireIndexValue` bytes in both Dart and Rust.
+  - Native ABI 11 marks the binary index/write contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -522,10 +528,11 @@ The current implementation focus is the anti-JSON optimization line for
 `0.2.x`. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
 query/lazy watchers, binary MDBX document storage, and MDBX as the default
-backend with SQLite as an explicit fallback. The immediate next work is to use
-CindelWireV1 to remove JSON from index writes, index values, unique checks, and
-stable index hashing, then continue through filters, manual documents, schema
-metadata, and native query planning.
+backend with SQLite as an explicit fallback. CindelWireV1 now removes JSON from
+id lists, basic batches, index values, indexed write metadata, unique checks,
+and stable hash-index canonicalization. The immediate next work is to continue
+through binary native filters, manual documents, schema metadata, and native
+query planning.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

@@ -3,8 +3,6 @@ mod contract_tests;
 #[cfg(feature = "mdbx")]
 mod mdbx;
 mod mdbx_key;
-#[cfg(feature = "benchmarks")]
-mod mdbx_layout_v2;
 mod metadata;
 mod sqlite;
 
@@ -12,8 +10,6 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
-#[cfg(feature = "benchmarks")]
-pub(crate) use mdbx_layout_v2::MdbxLayoutV2Storage;
 pub use metadata::{
     DocumentFormatVersion, IndexVerificationCheck, StorageLayoutVersion, StorageMetadata,
     StorageVerificationReport,

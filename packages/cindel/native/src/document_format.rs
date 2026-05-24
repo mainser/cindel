@@ -5,6 +5,7 @@ use std::ops::Range;
 use serde_json::{Map, Number, Value};
 
 use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
+use crate::wire::{encode_index_value, WireIndexValue};
 
 const MAGIC: &[u8; 4] = b"CDBF";
 const FORMAT_VERSION: u16 = 1;
@@ -625,7 +626,7 @@ pub(crate) fn index_entries_from_binary_document(
         }
         let mut index_value = binary_to_index_value(field, &value)?;
         if field.index_type == "hash" {
-            index_value = IndexValue::Int(stable_hash(&stable_index_json(&index_value)?));
+            index_value = IndexValue::Int(stable_hash_bytes(&stable_index_bytes(&index_value)?));
         }
         entries.push(IndexEntry {
             name: field.name.clone(),
@@ -863,37 +864,32 @@ fn split_words(text: &str, case_sensitive: bool) -> Vec<String> {
     tokens
 }
 
-fn stable_index_json(value: &IndexValue) -> Result<String, String> {
-    let json = match value {
-        IndexValue::Bool(value) => serde_json::json!({"type": "bool", "value": value}),
-        IndexValue::Int(value) => serde_json::json!({"type": "int", "value": value}),
-        IndexValue::Double(value) if value.is_finite() => {
-            serde_json::json!({"type": "double", "value": value})
-        }
-        IndexValue::Double(_) => return Err("hash index double values must be finite".into()),
-        IndexValue::String(value) => serde_json::json!({"type": "string", "value": value}),
-        IndexValue::List(values) => serde_json::json!({
-            "type": "list",
-            "value": values
-                .iter()
-                .map(|value| {
-                    let json = stable_index_json(value)?;
-                    serde_json::from_str::<serde_json::Value>(&json)
-                        .map_err(|error| error.to_string())
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
-    };
-    serde_json::to_string(&json).map_err(|error| error.to_string())
+fn stable_index_bytes(value: &IndexValue) -> Result<Vec<u8>, String> {
+    encode_index_value(&wire_index_value(value)?)
 }
 
-fn stable_hash(value: &str) -> i64 {
+fn wire_index_value(value: &IndexValue) -> Result<WireIndexValue, String> {
+    match value {
+        IndexValue::Bool(value) => Ok(WireIndexValue::Bool(*value)),
+        IndexValue::Int(value) => Ok(WireIndexValue::Int(*value)),
+        IndexValue::Double(value) if value.is_finite() => Ok(WireIndexValue::Double(*value)),
+        IndexValue::Double(_) => Err("hash index double values must be finite".into()),
+        IndexValue::String(value) => Ok(WireIndexValue::String(value.clone())),
+        IndexValue::List(values) => values
+            .iter()
+            .map(wire_index_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(WireIndexValue::List),
+    }
+}
+
+fn stable_hash_bytes(value: &[u8]) -> i64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     const MASK: u64 = 0x7fff_ffff_ffff_ffff;
     let mut hash = OFFSET_BASIS;
-    for code_unit in value.encode_utf16() {
-        hash ^= u64::from(code_unit);
+    for byte in value {
+        hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(PRIME) & MASK;
     }
     hash as i64

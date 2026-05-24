@@ -68,6 +68,38 @@ void main() {
       expect(decodeDocumentWriteBatch(bytes(documentBatchFixture)), documents);
     });
 
+    // Scenario: Dart batches indexed document writes before crossing FFI.
+    // Covers:
+    // - Document bytes plus per-document index names and tagged values.
+    // - Byte-for-byte compatibility with the Rust indexed-write fixture.
+    // Expected: The indexed batch round-trips without a JSON envelope.
+    test('encodes and decodes indexed document batch fixture', () {
+      // Arrange.
+      final documents = [
+        WireIndexedDocumentWrite(
+          id: 9,
+          bytes: bytes([97, 98, 99]),
+          indexes: const [
+            WireIndexEntry(
+              documentId: 9,
+              indexName: 'email',
+              value: WireIndexValue.string('a'),
+            ),
+          ],
+        ),
+      ];
+
+      // Act / Assert.
+      expect(
+        encodeIndexedDocumentWriteBatch(documents),
+        indexedDocumentBatchFixture,
+      );
+      expect(
+        decodeIndexedDocumentWriteBatch(bytes(indexedDocumentBatchFixture)),
+        documents,
+      );
+    });
+
     // Scenario: Rust returns projected cells without hydrating full documents.
     // Covers:
     // - ProjectionRows row/column counts.
@@ -287,6 +319,47 @@ const documentBatchFixture = [
   0,
   0,
   0,
+];
+
+const indexedDocumentBatchFixture = [
+  1,
+  0,
+  0,
+  0,
+  9,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  3,
+  0,
+  0,
+  0,
+  97,
+  98,
+  99,
+  1,
+  0,
+  0,
+  0,
+  5,
+  0,
+  0,
+  0,
+  101,
+  109,
+  97,
+  105,
+  108,
+  4,
+  1,
+  0,
+  0,
+  0,
+  97,
 ];
 
 const projectionRowsFixture = [

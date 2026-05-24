@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.17
+
+- Replaced JSON FFI payloads for index values, index entry lists, and manual
+  indexed document write batches with CindelWireV1 binary buffers.
+- Added `WireIndexedDocumentWrite` codec coverage in Dart and Rust so indexed
+  batch writes are tested byte-for-byte across the FFI boundary.
+- Changed hash index canonicalization to hash binary `WireIndexValue` bytes
+  instead of JSON strings.
+- Removed the obsolete `mdbx-v2-spike` benchmark backend and its dedicated
+  storage module now that the real MDBX backend carries the optimized layout.
+- Bumped the native ABI to 11 while keeping the public Dart API unchanged.
+
 ## 0.2.16
 
 - Optimized MDBX get-family reads by caching collection schema manifests after

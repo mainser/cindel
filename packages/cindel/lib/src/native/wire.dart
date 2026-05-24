@@ -299,6 +299,30 @@ final class WireDocumentWrite {
   int get hashCode => Object.hash(id, Object.hashAll(bytes));
 }
 
+final class WireIndexedDocumentWrite {
+  const WireIndexedDocumentWrite({
+    required this.id,
+    required this.bytes,
+    required this.indexes,
+  });
+
+  final int id;
+  final Uint8List bytes;
+  final List<WireIndexEntry> indexes;
+
+  @override
+  bool operator ==(Object other) {
+    return other is WireIndexedDocumentWrite &&
+        other.id == id &&
+        listEquals(other.bytes, bytes) &&
+        listEquals(other.indexes, indexes);
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, Object.hashAll(bytes), Object.hashAll(indexes));
+}
+
 final class WireProjectionRows {
   const WireProjectionRows({
     required this.rowCount,
@@ -520,6 +544,51 @@ List<WireDocumentWrite> decodeDocumentWriteBatch(Uint8List bytes) {
   for (var i = 0; i < count; i++) {
     documents.add(
       WireDocumentWrite(id: reader.readUint64(), bytes: reader.readBytes()),
+    );
+  }
+  reader.finish();
+  return documents;
+}
+
+Uint8List encodeIndexedDocumentWriteBatch(
+  List<WireIndexedDocumentWrite> documents,
+) {
+  final writer = CindelWireWriter();
+  writer.writeLength(documents.length);
+  for (final document in documents) {
+    writer.writeUint64(document.id);
+    writer.writeBytes(document.bytes);
+    writer.writeLength(document.indexes.length);
+    for (final index in document.indexes) {
+      writer.writeString(index.indexName);
+      writer.writeIndexValue(index.value);
+    }
+  }
+  return writer.finish();
+}
+
+List<WireIndexedDocumentWrite> decodeIndexedDocumentWriteBatch(
+  Uint8List bytes,
+) {
+  final reader = CindelWireReader(bytes);
+  final count = reader.readLength();
+  final documents = <WireIndexedDocumentWrite>[];
+  for (var i = 0; i < count; i++) {
+    final id = reader.readUint64();
+    final bytes = reader.readBytes();
+    final indexCount = reader.readLength();
+    final indexes = <WireIndexEntry>[];
+    for (var index = 0; index < indexCount; index++) {
+      indexes.add(
+        WireIndexEntry(
+          documentId: id,
+          indexName: reader.readString(),
+          value: reader.readIndexValue(),
+        ),
+      );
+    }
+    documents.add(
+      WireIndexedDocumentWrite(id: id, bytes: bytes, indexes: indexes),
     );
   }
   reader.finish();

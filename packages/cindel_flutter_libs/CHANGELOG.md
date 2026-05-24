@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.17
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 11 with CindelWireV1 binary index values, index entries, and
+  indexed document write batches.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.16
 
 - Regenerated Windows, Android, and Linux native runtime libraries with the

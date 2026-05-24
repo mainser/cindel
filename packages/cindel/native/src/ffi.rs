@@ -1,15 +1,16 @@
 use crate::engine::CindelEngine;
 use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackendKind};
 use crate::wire::{
-    decode_document_write_batch, decode_id_list, encode_id_list,
-    WireDocumentWrite as WireBatchDocumentWrite,
+    decode_document_write_batch, decode_id_list, decode_index_entry_list, decode_index_value,
+    decode_indexed_document_write_batch, encode_id_list,
+    WireDocumentWrite as WireBatchDocumentWrite, WireIndexEntry as WireBatchIndexEntry,
+    WireIndexValue as WireBatchIndexValue,
+    WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite,
 };
-
-use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    10
+    11
 }
 
 #[no_mangle]
@@ -855,8 +856,11 @@ unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntr
         return Ok(Vec::new());
     }
     let bytes = read_bytes(ptr, len).ok_or(())?;
-    let entries = serde_json::from_slice::<Vec<WireIndexEntry>>(bytes).map_err(|_| ())?;
-    entries.into_iter().map(TryInto::try_into).collect()
+    decode_index_entry_list(bytes)
+        .map_err(|_| ())?
+        .into_iter()
+        .map(WireBatchIndexEntry::into_index_entry)
+        .collect()
 }
 
 unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<DocumentWrite>, ()> {
@@ -864,8 +868,11 @@ unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<Documen
         return Ok(Vec::new());
     }
     let bytes = read_bytes(ptr, len).ok_or(())?;
-    let documents = serde_json::from_slice::<Vec<WireDocumentWrite>>(bytes).map_err(|_| ())?;
-    documents.into_iter().map(TryInto::try_into).collect()
+    decode_indexed_document_write_batch(bytes)
+        .map_err(|_| ())?
+        .into_iter()
+        .map(WireBatchIndexedDocumentWrite::into_document_write)
+        .collect()
 }
 
 unsafe fn read_binary_document_writes(
@@ -887,9 +894,9 @@ unsafe fn read_wire_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
 
 unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, ()> {
     let bytes = read_bytes(ptr, len).ok_or(())?;
-    serde_json::from_slice::<WireIndexValue>(bytes)
+    decode_index_value(bytes)
         .map_err(|_| ())?
-        .try_into()
+        .into_index_value()
 }
 
 unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option<IndexValue>, ()> {
@@ -897,41 +904,10 @@ unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option
     if bytes.is_empty() {
         return Ok(None);
     }
-    serde_json::from_slice::<WireIndexValue>(bytes)
+    decode_index_value(bytes)
         .map_err(|_| ())?
-        .try_into()
+        .into_index_value()
         .map(Some)
-}
-
-#[derive(Deserialize)]
-struct WireIndexEntry {
-    name: String,
-    value: WireIndexValue,
-}
-
-#[derive(Deserialize)]
-struct WireDocumentWrite {
-    id: u64,
-    document: serde_json::Value,
-    indexes: Vec<WireIndexEntry>,
-}
-
-impl TryFrom<WireDocumentWrite> for DocumentWrite {
-    type Error = ();
-
-    fn try_from(value: WireDocumentWrite) -> Result<Self, Self::Error> {
-        let bytes = serde_json::to_vec(&value.document).map_err(|_| ())?;
-        let indexes = value
-            .indexes
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            id: value.id,
-            bytes,
-            indexes,
-        })
-    }
 }
 
 impl WireBatchDocumentWrite {
@@ -944,45 +920,44 @@ impl WireBatchDocumentWrite {
     }
 }
 
-impl TryFrom<WireIndexEntry> for IndexEntry {
-    type Error = ();
-
-    fn try_from(value: WireIndexEntry) -> Result<Self, Self::Error> {
-        Ok(Self {
-            name: value.name,
-            value: value.value.try_into()?,
+impl WireBatchIndexedDocumentWrite {
+    fn into_document_write(self) -> Result<DocumentWrite, ()> {
+        let indexes = self
+            .indexes
+            .into_iter()
+            .map(WireBatchIndexEntry::into_index_entry)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(DocumentWrite {
+            id: self.id,
+            bytes: self.bytes,
+            indexes,
         })
     }
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", content = "value")]
-enum WireIndexValue {
-    #[serde(rename = "bool")]
-    Bool(bool),
-    #[serde(rename = "int")]
-    Int(i64),
-    #[serde(rename = "double")]
-    Double(f64),
-    #[serde(rename = "string")]
-    String(String),
-    #[serde(rename = "list")]
-    List(Vec<WireIndexValue>),
+impl WireBatchIndexEntry {
+    fn into_index_entry(self) -> Result<IndexEntry, ()> {
+        Ok(IndexEntry {
+            name: self.index_name,
+            value: self.value.into_index_value()?,
+        })
+    }
 }
 
-impl TryFrom<WireIndexValue> for IndexValue {
-    type Error = ();
-
-    fn try_from(value: WireIndexValue) -> Result<Self, Self::Error> {
-        match value {
-            WireIndexValue::Bool(value) => Ok(IndexValue::Bool(value)),
-            WireIndexValue::Int(value) => Ok(IndexValue::Int(value)),
-            WireIndexValue::Double(value) if value.is_finite() => Ok(IndexValue::Double(value)),
-            WireIndexValue::Double(_) => Err(()),
-            WireIndexValue::String(value) => Ok(IndexValue::String(value)),
-            WireIndexValue::List(values) => values
+impl WireBatchIndexValue {
+    fn into_index_value(self) -> Result<IndexValue, ()> {
+        match self {
+            WireBatchIndexValue::Null => Err(()),
+            WireBatchIndexValue::Bool(value) => Ok(IndexValue::Bool(value)),
+            WireBatchIndexValue::Int(value) => Ok(IndexValue::Int(value)),
+            WireBatchIndexValue::Double(value) if value.is_finite() => {
+                Ok(IndexValue::Double(value))
+            }
+            WireBatchIndexValue::Double(_) => Err(()),
+            WireBatchIndexValue::String(value) => Ok(IndexValue::String(value)),
+            WireBatchIndexValue::List(values) => values
                 .into_iter()
-                .map(TryInto::try_into)
+                .map(WireBatchIndexValue::into_index_value)
                 .collect::<Result<Vec<_>, _>>()
                 .map(IndexValue::List),
         }

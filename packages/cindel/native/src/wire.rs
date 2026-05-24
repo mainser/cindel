@@ -46,6 +46,13 @@ pub(crate) struct WireDocumentWrite {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WireIndexedDocumentWrite {
+    pub(crate) id: u64,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) indexes: Vec<WireIndexEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct WireProjectionRows {
     pub(crate) row_count: u32,
     pub(crate) column_count: u32,
@@ -160,6 +167,49 @@ pub(crate) fn decode_document_write_batch(bytes: &[u8]) -> Result<Vec<WireDocume
         let id = reader.read_u64()?;
         let bytes = reader.read_bytes()?.to_vec();
         documents.push(WireDocumentWrite { id, bytes });
+    }
+    reader.finish()?;
+    Ok(documents)
+}
+
+pub(crate) fn encode_indexed_document_write_batch(
+    documents: &[WireIndexedDocumentWrite],
+) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_len(documents.len())?;
+    for document in documents {
+        writer.write_u64(document.id);
+        writer.write_bytes(&document.bytes)?;
+        writer.write_len(document.indexes.len())?;
+        for index in &document.indexes {
+            writer.write_string(&index.index_name)?;
+            writer.write_index_value(&index.value)?;
+        }
+    }
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_indexed_document_write_batch(
+    bytes: &[u8],
+) -> Result<Vec<WireIndexedDocumentWrite>, String> {
+    let mut reader = Reader::new(bytes);
+    let count = reader.read_len()?;
+    reader.ensure_item_count(count, 16)?;
+    let mut documents = Vec::with_capacity(count);
+    for _ in 0..count {
+        let id = reader.read_u64()?;
+        let bytes = reader.read_bytes()?.to_vec();
+        let index_count = reader.read_len()?;
+        reader.ensure_item_count(index_count, 5)?;
+        let mut indexes = Vec::with_capacity(index_count);
+        for _ in 0..index_count {
+            indexes.push(WireIndexEntry {
+                document_id: id,
+                index_name: reader.read_string()?,
+                value: reader.read_index_value()?,
+            });
+        }
+        documents.push(WireIndexedDocumentWrite { id, bytes, indexes });
     }
     reader.finish()?;
     Ok(documents)
@@ -641,6 +691,10 @@ mod tests {
         2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 97, 98, 99, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
     ];
+    const INDEXED_DOCUMENT_BATCH_FIXTURE: &[u8] = &[
+        1, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 97, 98, 99, 1, 0, 0, 0, 5, 0, 0, 0, 101,
+        109, 97, 105, 108, 4, 1, 0, 0, 0, 97,
+    ];
     const PROJECTION_ROWS_FIXTURE: &[u8] = &[
         1, 0, 0, 0, 3, 0, 0, 0, 0, 4, 1, 0, 0, 0, 65, 5, 2, 0, 0, 0, 2, 5, 0, 0, 0, 0, 0, 0, 0, 1,
         0,
@@ -729,6 +783,35 @@ mod tests {
         );
         assert_eq!(
             decode_document_write_batch(DOCUMENT_BATCH_FIXTURE).unwrap(),
+            documents
+        );
+    }
+
+    // Scenario: Rust receives indexed document writes from Dart.
+    // Covers:
+    // - Document bytes plus per-document index names and tagged values.
+    // - Byte-for-byte compatibility with the Dart indexed-write fixture.
+    // Expected: The indexed batch round-trips without a JSON envelope.
+    #[test]
+    fn encodes_and_decodes_indexed_document_batch_fixture() {
+        // Arrange.
+        let documents = vec![WireIndexedDocumentWrite {
+            id: 9,
+            bytes: b"abc".to_vec(),
+            indexes: vec![WireIndexEntry {
+                document_id: 9,
+                index_name: "email".to_string(),
+                value: WireIndexValue::String("a".to_string()),
+            }],
+        }];
+
+        // Act / Assert.
+        assert_eq!(
+            encode_indexed_document_write_batch(&documents).unwrap(),
+            INDEXED_DOCUMENT_BATCH_FIXTURE
+        );
+        assert_eq!(
+            decode_indexed_document_write_batch(INDEXED_DOCUMENT_BATCH_FIXTURE).unwrap(),
             documents
         );
     }

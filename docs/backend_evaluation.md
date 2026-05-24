@@ -50,11 +50,31 @@ FFI id-list symbols changed their payload contract from JSON arrays to binary
 buffers. Windows, Android, and Linux prebuilt native libraries were regenerated
 for the ABI 10 contract.
 
-The next backend-relevant stage is JSON-03. It should move index values, index
-entries, indexed document writes, unique checks, and stable index hashing onto
-canonical binary payloads. JSON-02 still leaves manual document JSON, filter
-AST JSON, schema/reverse-index metadata JSON, and projection/aggregate result
-JSON for later stages.
+JSON-03 moved runtime index/write FFI traffic onto CindelWireV1. Dart now
+encodes index values with `encodeIndexValue`, index entry lists with
+`encodeIndexEntryList`, and indexed manual `putAll` batches with
+`encodeIndexedDocumentWriteBatch`. Native code decodes those payloads through
+the matching Rust wire codec before handing storage normalized `IndexValue`,
+`IndexEntry`, and `DocumentWrite` structs. Unique-index checks now reuse the
+same binary index values, and hash indexes now hash canonical binary
+`WireIndexValue` bytes instead of stable JSON strings. The native ABI is now
+11 because existing index and indexed-write FFI symbols changed their payload
+contract from JSON envelopes to binary buffers.
+
+JSON-03 still leaves manual document JSON, filter AST JSON,
+schema/reverse-index metadata JSON, and projection/aggregate result JSON for
+later stages.
+
+Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
+
+- SQLite:
+  - `query_equal`: 332.051 ms total, 1505.79 ops/s.
+  - `query_range`: 347.332 ms total, 1439.55 ops/s.
+  - `put_many_indexed`: 23604.827 ms total, 211.82 ops/s.
+- MDBX:
+  - `query_equal`: 2.493 ms total, 200577.66 ops/s.
+  - `query_range`: 17.133 ms total, 29183.45 ops/s.
+  - `put_many_indexed`: 322.508 ms total, 15503.47 ops/s.
 
 The JSON-00 large benchmark showed SQLite winning the simple single-get
 microbenchmark while MDBX leads the native indexed and batch-oriented routes.
@@ -202,6 +222,11 @@ The key spike proves:
 String case-insensitive and word-index normalization remains in the existing
 Dart index-entry path, so MDBX will receive the same normalized `IndexValue`
 entries SQLite receives today.
+
+The dedicated Rust-only `mdbx-v2-spike` storage module has now been removed
+from the benchmark build. The layout ideas that survived are part of the real
+`MdbxStorage` backend, so benchmark runs compare SQLite and MDBX directly
+instead of compiling a parallel spike backend.
 
 ## MDBX-04 Minimal Storage Prototype
 
