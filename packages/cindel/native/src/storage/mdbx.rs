@@ -28,7 +28,7 @@ use super::mdbx_key::{
 use super::{
     decode_index_entry_metadata, decode_schema_record, encode_index_entry_metadata,
     encode_schema_record, CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry,
-    IndexValue, SchemaManifest, StorageEngine,
+    IndexValue, SchemaManifest, StorageChangeSet, StorageEngine,
 };
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
@@ -38,6 +38,7 @@ const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
 pub struct MdbxStorage {
     state: SharedMdbxState,
     active_transaction: Option<MdbxActiveTransaction>,
+    last_change_sets: Vec<StorageChangeSet>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
 }
 
@@ -264,6 +265,7 @@ impl MdbxStorage {
         let storage = Self {
             state,
             active_transaction: None,
+            last_change_sets: Vec::new(),
             _temporary_directory: temporary_directory,
         };
         storage.initialize()?;
@@ -604,9 +606,10 @@ impl MdbxStorage {
         Ok(())
     }
 
-    fn commit_staged_write(&self, staged: MdbxWriteTransaction) -> Result<(), String> {
+    fn commit_staged_write(&mut self, staged: MdbxWriteTransaction) -> Result<(), String> {
         let counter_updates = staged.next_ids.clone();
         let mut registered_manifests = Vec::new();
+        let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             for operation in staged.operations {
                 match operation {
@@ -624,7 +627,8 @@ impl MdbxStorage {
                             &bytes,
                             &indexes,
                         )?;
-                        bump_collection_revision(transaction, &tables, &collection)?;
+                        let revision = bump_collection_revision(transaction, &tables, &collection)?;
+                        merge_change_set(&mut change_sets, &collection, revision, [id]);
                     }
                     MdbxWriteOperation::PutManyIndexed {
                         collection,
@@ -641,22 +645,35 @@ impl MdbxStorage {
                             )?;
                         }
                         if !documents.is_empty() {
-                            bump_collection_revision(transaction, &tables, &collection)?;
+                            let revision =
+                                bump_collection_revision(transaction, &tables, &collection)?;
+                            merge_change_set(
+                                &mut change_sets,
+                                &collection,
+                                revision,
+                                documents.iter().map(|document| document.id),
+                            );
                         }
                     }
                     MdbxWriteOperation::Delete { collection, id } => {
                         let deleted = delete_document(transaction, &tables, &collection, id)?;
                         if deleted {
-                            bump_collection_revision(transaction, &tables, &collection)?;
+                            let revision =
+                                bump_collection_revision(transaction, &tables, &collection)?;
+                            merge_change_set(&mut change_sets, &collection, revision, [id]);
                         }
                     }
                     MdbxWriteOperation::DeleteMany { collection, ids } => {
-                        let mut deleted_any = false;
+                        let mut deleted_ids = Vec::new();
                         for id in ids {
-                            deleted_any |= delete_document(transaction, &tables, &collection, id)?;
+                            if delete_document(transaction, &tables, &collection, id)? {
+                                deleted_ids.push(id);
+                            }
                         }
-                        if deleted_any {
-                            bump_collection_revision(transaction, &tables, &collection)?;
+                        if !deleted_ids.is_empty() {
+                            let revision =
+                                bump_collection_revision(transaction, &tables, &collection)?;
+                            merge_change_set(&mut change_sets, &collection, revision, deleted_ids);
                         }
                     }
                     MdbxWriteOperation::RegisterSchemas { manifest, mode } => {
@@ -670,6 +687,7 @@ impl MdbxStorage {
 
             Ok(())
         })?;
+        self.last_change_sets = change_sets;
         for manifest in &registered_manifests {
             self.cache_schema_manifest(manifest)?;
         }
@@ -939,10 +957,14 @@ impl StorageEngine for MdbxStorage {
             return Ok(());
         }
 
+        let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             put_document_with_indexes(transaction, &tables, collection, id, bytes, indexes)?;
-            bump_collection_revision(transaction, &tables, collection)
+            let revision = bump_collection_revision(transaction, &tables, collection)?;
+            merge_change_set(&mut change_sets, collection, revision, [id]);
+            Ok(())
         })?;
+        self.last_change_sets = change_sets;
         self.set_cached_next_id_at_least(collection, id.saturating_add(1))
     }
 
@@ -985,6 +1007,7 @@ impl StorageEngine for MdbxStorage {
             return Ok(());
         }
 
+        let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             for document in documents {
                 put_document_with_indexes(
@@ -997,10 +1020,17 @@ impl StorageEngine for MdbxStorage {
                 )?;
             }
             if !documents.is_empty() {
-                bump_collection_revision(transaction, &tables, collection)?;
+                let revision = bump_collection_revision(transaction, &tables, collection)?;
+                merge_change_set(
+                    &mut change_sets,
+                    collection,
+                    revision,
+                    documents.iter().map(|document| document.id),
+                );
             }
             Ok(())
         })?;
+        self.last_change_sets = change_sets;
         if let Some(next_id) = documents
             .iter()
             .map(|document| document.id.saturating_add(1))
@@ -1024,13 +1054,17 @@ impl StorageEngine for MdbxStorage {
             return Ok(());
         }
 
+        let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             let deleted = delete_document(transaction, &tables, collection, id)?;
             if deleted {
-                bump_collection_revision(transaction, &tables, collection)?;
+                let revision = bump_collection_revision(transaction, &tables, collection)?;
+                merge_change_set(&mut change_sets, collection, revision, [id]);
             }
             Ok(())
-        })
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(())
     }
 
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
@@ -1046,16 +1080,22 @@ impl StorageEngine for MdbxStorage {
             return Ok(());
         }
 
+        let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
-            let mut deleted_any = false;
+            let mut deleted_ids = Vec::new();
             for id in ids {
-                deleted_any |= delete_document(transaction, &tables, collection, *id)?;
+                if delete_document(transaction, &tables, collection, *id)? {
+                    deleted_ids.push(*id);
+                }
             }
-            if deleted_any {
-                bump_collection_revision(transaction, &tables, collection)?;
+            if !deleted_ids.is_empty() {
+                let revision = bump_collection_revision(transaction, &tables, collection)?;
+                merge_change_set(&mut change_sets, collection, revision, deleted_ids);
             }
             Ok(())
-        })
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(())
     }
 
     fn query_index_equal(
@@ -1319,6 +1359,10 @@ impl StorageEngine for MdbxStorage {
                 .transpose()
                 .map(Option::unwrap_or_default)
         })
+    }
+
+    fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
+        Ok(std::mem::take(&mut self.last_change_sets))
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
@@ -2859,7 +2903,7 @@ fn bump_collection_revision(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let key = encode_collection_key(collection);
     let current = transaction
         .get::<Vec<u8>>(&tables.collection_revisions, &key)
@@ -2877,7 +2921,37 @@ fn bump_collection_revision(
             next.to_be_bytes(),
             WriteFlags::UPSERT,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(next)
+}
+
+fn merge_change_set(
+    changes: &mut Vec<StorageChangeSet>,
+    collection: &str,
+    revision: u64,
+    ids: impl IntoIterator<Item = u64>,
+) {
+    let ids = ids.into_iter().collect::<Vec<_>>();
+    if ids.is_empty() {
+        return;
+    }
+    if let Some(change) = changes
+        .iter_mut()
+        .find(|change| change.collection == collection)
+    {
+        change.revision = change.revision.max(revision);
+        for id in ids {
+            if !change.document_ids.contains(&id) {
+                change.document_ids.push(id);
+            }
+        }
+        return;
+    }
+    changes.push(StorageChangeSet {
+        collection: collection.to_string(),
+        revision,
+        document_ids: ids,
+    });
 }
 
 fn decode_u64(bytes: &[u8]) -> Result<u64, String> {

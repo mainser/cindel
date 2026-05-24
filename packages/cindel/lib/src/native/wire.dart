@@ -723,6 +723,29 @@ final class WireQueryPlan {
   );
 }
 
+final class WireChangeSet {
+  const WireChangeSet({
+    required this.collection,
+    required this.revision,
+    required this.documentIds,
+  });
+
+  final String collection;
+  final int revision;
+  final List<int> documentIds;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireChangeSet &&
+      other.collection == collection &&
+      other.revision == revision &&
+      listEquals(other.documentIds, documentIds);
+
+  @override
+  int get hashCode =>
+      Object.hash(collection, revision, Object.hashAll(documentIds));
+}
+
 Uint8List encodeIdList(List<int> ids) {
   final writer = CindelWireWriter();
   writer.writeLength(ids.length);
@@ -1049,6 +1072,44 @@ WireQueryPlan decodeQueryPlan(Uint8List bytes) {
     offset: offset,
     limit: limit,
   );
+}
+
+Uint8List encodeChangeSetList(List<WireChangeSet> changes) {
+  final writer = CindelWireWriter();
+  writer.writeLength(changes.length);
+  for (final change in changes) {
+    writer.writeString(change.collection);
+    writer.writeUint64(change.revision);
+    writer.writeLength(change.documentIds.length);
+    for (final id in change.documentIds) {
+      writer.writeUint64(id);
+    }
+  }
+  return writer.finish();
+}
+
+List<WireChangeSet> decodeChangeSetList(Uint8List bytes) {
+  final reader = CindelWireReader(bytes);
+  final count = reader.readLength();
+  final changes = <WireChangeSet>[];
+  for (var i = 0; i < count; i++) {
+    final collection = reader.readString();
+    final revision = reader.readUint64();
+    final idCount = reader.readLength();
+    final ids = <int>[];
+    for (var idIndex = 0; idIndex < idCount; idIndex++) {
+      ids.add(reader.readUint64());
+    }
+    changes.add(
+      WireChangeSet(
+        collection: collection,
+        revision: revision,
+        documentIds: ids,
+      ),
+    );
+  }
+  reader.finish();
+  return changes;
 }
 
 final class CindelWireWriter {

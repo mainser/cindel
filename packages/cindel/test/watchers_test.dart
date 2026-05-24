@@ -92,14 +92,14 @@ void main() {
       // Arrange.
       final database = await openTestDatabaseInMemory();
       addTearDown(database.close);
-      final changes = <Set<int>?>[];
+      final changes = <CindelChangeSet>[];
       final subscription = database
           .watchCollectionChanges(
             'users',
             pollInterval: const Duration(milliseconds: 5),
             fireImmediately: false,
           )
-          .listen((change) => changes.add(change.documentIds));
+          .listen(changes.add);
       addTearDown(subscription.cancel);
 
       // Act.
@@ -111,7 +111,46 @@ void main() {
       await _waitUntil(() => changes.length == 1);
 
       // Assert.
-      expect(changes.single, {1, 2});
+      expect(changes.single.documentIds, {1, 2});
+      expect(changes.single.revision, isPositive);
+      expect(changes.single.isExternal, isFalse);
+    });
+
+    // Scenario: Delete operations return exact native change ids.
+    // Covers:
+    // - Native change sets skipping missing deletes.
+    // - [CindelDatabase.deleteAll] compacting deleted ids into one signal.
+    // Expected: Missing ids do not wake watchers, and existing deletes emit ids.
+    test('emits delete change ids only for existing documents.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory();
+      addTearDown(database.close);
+      final changes = <CindelChangeSet>[];
+      final subscription = database
+          .watchCollectionChanges(
+            'users',
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen(changes.add);
+      addTearDown(subscription.cancel);
+
+      // Act.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await database.delete('users', 404);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await database.putAll('users', {
+        1: {'name': 'Ana'},
+        2: {'name': 'Ben'},
+      });
+      await _waitUntil(() => changes.length == 1);
+      changes.clear();
+      await database.deleteAll('users', [1, 404]);
+      await _waitUntil(() => changes.length == 1);
+
+      // Assert.
+      expect(changes.single.documentIds, {1});
+      expect(changes.single.revision, isPositive);
     });
 
     // Scenario: A collection watcher observes writes from a separate handle.

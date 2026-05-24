@@ -197,6 +197,13 @@ pub struct DocumentWrite {
     pub indexes: Vec<IndexEntry>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageChangeSet {
+    pub collection: String,
+    pub revision: u64,
+    pub document_ids: Vec<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SchemaManifest {
     pub collections: Vec<CollectionSchemaManifest>,
@@ -363,6 +370,9 @@ pub trait StorageEngine {
         serde_json::to_vec(&result).map_err(|error| error.to_string())
     }
     fn collection_revision(&self, collection: &str) -> Result<u64, String>;
+    fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
+        Ok(Vec::new())
+    }
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
     fn storage_metadata(&self) -> Result<StorageMetadata, String>;
@@ -635,6 +645,14 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.collection_revision(collection),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.collection_revision(collection),
+        }
+    }
+
+    fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.take_change_sets(),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.take_change_sets(),
         }
     }
 

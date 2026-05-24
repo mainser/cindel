@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.3
+
+- Added CindelWireV1 native watcher change-set payloads for collection name,
+  post-commit revision, and affected document ids.
+- Wired Dart watchers to committed SQLite and MDBX native change sets so local
+  writes can wake subscriptions without first rereading collection revision.
+- Kept the public watcher API unchanged and retained `pollInterval` as the
+  fallback for external database-handle changes.
+- Added change-set codec fixtures in Dart and Rust plus watcher coverage for
+  compact batched writes and delete id reporting.
+- Bumped the native ABI to 16.
+
 ## 0.3.2
 
 - Added CindelWireV1 native query plan payloads for MDBX binary-document

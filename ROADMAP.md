@@ -488,6 +488,17 @@ mature.
     call.
   - SQLite remains compatible through the Dart fallback path.
   - Native ABI 15 marks the binary native query plan contract.
+- [x] Watchers and async polish.
+  - Added CindelWireV1 native change-set payloads carrying collection name,
+    post-commit revision, and affected document ids.
+  - SQLite and MDBX now expose compact committed write change sets through FFI
+    so Dart watchers can wake from native metadata before falling back to
+    polling for external handles.
+  - Local document, collection, and query watchers use native changed ids to
+    skip unrelated refreshes while preserving the existing public stream API.
+  - Kept `pollInterval` as the compatibility fallback for writes from other
+    database handles.
+  - Native ABI 16 marks the binary watcher change-set contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -559,7 +570,10 @@ backend with SQLite as an explicit fallback. CindelWireV1 now removes JSON from
 id lists, basic batches, index values, indexed write metadata, unique checks,
 stable hash-index canonicalization, native filters, manual documents, schema
 metadata, and common native query plan execution. The immediate next work is
-watcher and async polish after the query path moved farther into MDBX.
+watcher and async polish after the query path moved farther into MDBX. Native
+watcher change sets are now in place, so the next anti-JSON work can focus on
+external-handle notification strategy, isolate execution, and later maintenance
+APIs without changing the public watcher surface.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

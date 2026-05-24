@@ -5,6 +5,22 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.3.3
+
+- Added CindelWireV1 native watcher change-set payloads carrying collection
+  name, post-commit revision, and affected document ids.
+- Exposed committed SQLite and MDBX change sets through FFI so Dart watchers
+  can wake from native metadata and skip unrelated local document refreshes.
+- Kept `pollInterval` as the compatibility fallback for writes observed from
+  other database handles.
+- Added Dart and Rust change-set wire fixture coverage plus watcher tests for
+  compact `putAll` and delete id reporting.
+- Documented the isolate-pool ownership boundaries for future async execution.
+- Bumped the native ABI to 16 for the binary watcher change-set contract.
+- Updated `cindel` and `cindel_flutter_libs` to `0.3.3`.
+- Updated the Todo example dependency constraints and build number for the ABI
+  16 package line.
+
 ## 0.3.2
 
 - Added a CindelWireV1 native query plan payload for common MDBX query

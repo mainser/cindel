@@ -6,13 +6,15 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
     decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
-    FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest, StorageEngine,
+    FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest, StorageChangeSet, StorageEngine,
 };
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
 pub struct SqliteStorage {
     connection: Connection,
     active_transaction: Option<TransactionMode>,
+    active_change_sets: Vec<StorageChangeSet>,
+    last_change_sets: Vec<StorageChangeSet>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +35,8 @@ impl SqliteStorage {
         let storage = Self {
             connection,
             active_transaction: None,
+            active_change_sets: Vec::new(),
+            last_change_sets: Vec::new(),
         };
         storage.initialize()?;
 
@@ -110,6 +114,21 @@ impl SqliteStorage {
         )?;
         validate_schema_metadata_records(&self.connection)
     }
+
+    fn record_change(
+        &mut self,
+        collection: &str,
+        revision: u64,
+        ids: impl IntoIterator<Item = u64>,
+    ) {
+        let target = if self.active_transaction == Some(TransactionMode::Write) {
+            &mut self.active_change_sets
+        } else {
+            self.last_change_sets.clear();
+            &mut self.last_change_sets
+        };
+        merge_change_set(target, collection, revision, ids);
+    }
 }
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
@@ -124,13 +143,18 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn commit_transaction(&mut self) -> Result<(), String> {
-        if self.active_transaction.is_none() {
+        let Some(mode) = self.active_transaction else {
             return Err("no active transaction to commit".into());
-        }
+        };
         self.connection
             .execute_batch("COMMIT")
             .map_err(|error| error.to_string())?;
         self.active_transaction = None;
+        self.last_change_sets = if mode == TransactionMode::Write {
+            std::mem::take(&mut self.active_change_sets)
+        } else {
+            Vec::new()
+        };
         Ok(())
     }
 
@@ -142,6 +166,7 @@ impl StorageEngine for SqliteStorage {
             .execute_batch("ROLLBACK")
             .map_err(|error| error.to_string())?;
         self.active_transaction = None;
+        self.active_change_sets.clear();
         Ok(())
     }
 
@@ -220,7 +245,8 @@ impl StorageEngine for SqliteStorage {
         self.ensure_can_write()?;
         if self.active_transaction.is_some() {
             put_document_with_indexes(&self.connection, collection, id, bytes, indexes)?;
-            bump_collection_revision(&self.connection, collection)?;
+            let revision = bump_collection_revision(&self.connection, collection)?;
+            self.record_change(collection, revision, [id]);
             return Ok(());
         }
 
@@ -230,9 +256,11 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())?;
 
         put_document_with_indexes(&transaction, collection, id, bytes, indexes)?;
-        bump_collection_revision(&transaction, collection)?;
+        let revision = bump_collection_revision(&transaction, collection)?;
 
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        self.record_change(collection, revision, [id]);
+        Ok(())
     }
 
     fn put_many_indexed(
@@ -241,6 +269,9 @@ impl StorageEngine for SqliteStorage {
         documents: &[DocumentWrite],
     ) -> Result<(), String> {
         if documents.is_empty() {
+            if self.active_transaction.is_none() {
+                self.last_change_sets.clear();
+            }
             return Ok(());
         }
         self.ensure_can_write()?;
@@ -254,7 +285,12 @@ impl StorageEngine for SqliteStorage {
                     &document.indexes,
                 )?;
             }
-            bump_collection_revision(&self.connection, collection)?;
+            let revision = bump_collection_revision(&self.connection, collection)?;
+            self.record_change(
+                collection,
+                revision,
+                documents.iter().map(|document| document.id),
+            );
             return Ok(());
         }
 
@@ -272,9 +308,15 @@ impl StorageEngine for SqliteStorage {
                 &document.indexes,
             )?;
         }
-        bump_collection_revision(&transaction, collection)?;
+        let revision = bump_collection_revision(&transaction, collection)?;
 
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        self.record_change(
+            collection,
+            revision,
+            documents.iter().map(|document| document.id),
+        );
+        Ok(())
     }
 
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
@@ -283,11 +325,13 @@ impl StorageEngine for SqliteStorage {
         if self.active_transaction.is_some() {
             let deleted = delete_document(&self.connection, collection, id)?;
             if deleted {
-                bump_collection_revision(&self.connection, collection)?;
+                let revision = bump_collection_revision(&self.connection, collection)?;
+                self.record_change(collection, revision, [id as u64]);
             }
             return Ok(());
         }
 
+        self.last_change_sets.clear();
         let transaction = self
             .connection
             .transaction()
@@ -300,47 +344,67 @@ impl StorageEngine for SqliteStorage {
             )
             .map_err(|error| error.to_string())?;
         delete_index_entries(&transaction, collection, id)?;
+        let mut revision = None;
         if deleted > 0 {
-            bump_collection_revision(&transaction, collection)?;
+            revision = Some(bump_collection_revision(&transaction, collection)?);
         }
 
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        if let Some(revision) = revision {
+            self.record_change(collection, revision, [id as u64]);
+        }
+        Ok(())
     }
 
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
         if ids.is_empty() {
+            if self.active_transaction.is_none() {
+                self.last_change_sets.clear();
+            }
             return Ok(());
         }
         self.ensure_can_write()?;
         if self.active_transaction.is_some() {
-            let mut deleted_any = false;
+            let mut deleted_ids = Vec::new();
             for id in ids {
                 let id = sqlite_id(*id)?;
                 let deleted = delete_document(&self.connection, collection, id)?;
-                deleted_any |= deleted;
+                if deleted {
+                    deleted_ids.push(id as u64);
+                }
             }
-            if deleted_any {
-                bump_collection_revision(&self.connection, collection)?;
+            if !deleted_ids.is_empty() {
+                let revision = bump_collection_revision(&self.connection, collection)?;
+                self.record_change(collection, revision, deleted_ids);
             }
             return Ok(());
         }
 
+        self.last_change_sets.clear();
         let transaction = self
             .connection
             .transaction()
             .map_err(|error| error.to_string())?;
 
-        let mut deleted_any = false;
+        let mut deleted_ids = Vec::new();
         for id in ids {
             let id = sqlite_id(*id)?;
             let deleted = delete_document(&transaction, collection, id)?;
-            deleted_any |= deleted;
+            if deleted {
+                deleted_ids.push(id as u64);
+            }
         }
-        if deleted_any {
-            bump_collection_revision(&transaction, collection)?;
-        }
+        let revision = if deleted_ids.is_empty() {
+            None
+        } else {
+            Some(bump_collection_revision(&transaction, collection)?)
+        };
 
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        if let Some(revision) = revision {
+            self.record_change(collection, revision, deleted_ids);
+        }
+        Ok(())
     }
 
     fn query_index_equal(
@@ -381,6 +445,10 @@ impl StorageEngine for SqliteStorage {
             .transpose()
             .map_err(|error| error.to_string())
             .map(Option::unwrap_or_default)
+    }
+
+    fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
+        Ok(std::mem::take(&mut self.last_change_sets))
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
@@ -898,7 +966,7 @@ fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
     }
 }
 
-fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<(), String> {
+fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<u64, String> {
     connection
         .execute(
             r#"
@@ -909,8 +977,44 @@ fn bump_collection_revision(connection: &Connection, collection: &str) -> Result
             "#,
             params![collection],
         )
-        .map(|_| ())
+        .map_err(|error| error.to_string())?;
+    connection
+        .query_row(
+            "SELECT revision FROM collection_revisions WHERE collection = ?1",
+            params![collection],
+            |row| row.get::<_, i64>(0),
+        )
         .map_err(|error| error.to_string())
+        .and_then(|revision| u64::try_from(revision).map_err(|error| error.to_string()))
+}
+
+fn merge_change_set(
+    changes: &mut Vec<StorageChangeSet>,
+    collection: &str,
+    revision: u64,
+    ids: impl IntoIterator<Item = u64>,
+) {
+    let ids = ids.into_iter().collect::<Vec<_>>();
+    if ids.is_empty() {
+        return;
+    }
+    if let Some(change) = changes
+        .iter_mut()
+        .find(|change| change.collection == collection)
+    {
+        change.revision = change.revision.max(revision);
+        for id in ids {
+            if !change.document_ids.contains(&id) {
+                change.document_ids.push(id);
+            }
+        }
+        return;
+    }
+    changes.push(StorageChangeSet {
+        collection: collection.to_string(),
+        revision,
+        document_ids: ids,
+    });
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {

@@ -105,6 +105,22 @@ void main() {
       expect(decodeQueryPlan(bytes(queryPlanFixture)), plan);
     });
 
+    // Scenario: Rust returns compact post-commit watcher change sets.
+    // Covers:
+    // - Collection name, revision, and changed document ids.
+    // - Byte-for-byte compatibility with the Rust change-set fixture.
+    // Expected: Watcher metadata round-trips without JSON.
+    test('encodes and decodes change set fixture', () {
+      // Arrange.
+      const changes = [
+        WireChangeSet(collection: 'users', revision: 3, documentIds: [7, 9]),
+      ];
+
+      // Act / Assert.
+      expect(encodeChangeSetList(changes), changeSetFixture);
+      expect(decodeChangeSetList(bytes(changeSetFixture)), changes);
+    });
+
     // Scenario: Dart batches document writes before crossing the FFI boundary.
     // Covers:
     // - DocumentWriteBatch count, id, byte length, and empty-byte handling.
@@ -443,6 +459,50 @@ const queryPlanFixture = [
   0,
   1,
   5,
+  0,
+  0,
+  0,
+];
+
+const changeSetFixture = [
+  1,
+  0,
+  0,
+  0,
+  5,
+  0,
+  0,
+  0,
+  117,
+  115,
+  101,
+  114,
+  115,
+  3,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  2,
+  0,
+  0,
+  0,
+  7,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  9,
+  0,
+  0,
+  0,
+  0,
   0,
   0,
   0,

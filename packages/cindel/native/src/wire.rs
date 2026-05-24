@@ -181,6 +181,13 @@ pub(crate) struct WireQueryPlan {
     pub(crate) limit: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WireChangeSet {
+    pub(crate) collection: String,
+    pub(crate) revision: u64,
+    pub(crate) document_ids: Vec<u64>,
+}
+
 pub(crate) fn encode_id_list(ids: &[u64]) -> Result<Vec<u8>, String> {
     let mut writer = Writer::new();
     writer.write_len(ids.len())?;
@@ -513,6 +520,44 @@ pub(crate) fn decode_query_plan(bytes: &[u8]) -> Result<WireQueryPlan, String> {
         offset,
         limit,
     })
+}
+
+pub(crate) fn encode_change_set_list(changes: &[WireChangeSet]) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_len(changes.len())?;
+    for change in changes {
+        writer.write_string(&change.collection)?;
+        writer.write_u64(change.revision);
+        writer.write_len(change.document_ids.len())?;
+        for id in &change.document_ids {
+            writer.write_u64(*id);
+        }
+    }
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_change_set_list(bytes: &[u8]) -> Result<Vec<WireChangeSet>, String> {
+    let mut reader = Reader::new(bytes);
+    let count = reader.read_len()?;
+    reader.ensure_item_count(count, 12)?;
+    let mut changes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let collection = reader.read_string()?;
+        let revision = reader.read_u64()?;
+        let id_count = reader.read_len()?;
+        reader.ensure_item_count(id_count, 8)?;
+        let mut document_ids = Vec::with_capacity(id_count);
+        for _ in 0..id_count {
+            document_ids.push(reader.read_u64()?);
+        }
+        changes.push(WireChangeSet {
+            collection,
+            revision,
+            document_ids,
+        });
+    }
+    reader.finish()?;
+    Ok(changes)
 }
 
 struct Writer {
@@ -974,6 +1019,10 @@ mod tests {
         0, 0, 2, 0, 0, 0, 105, 100, 1, 1, 0, 0, 0, 4, 0, 0, 0, 110, 97, 109, 101, 2, 0, 0, 0, 1, 5,
         0, 0, 0,
     ];
+    const CHANGE_SET_FIXTURE: &[u8] = &[
+        1, 0, 0, 0, 5, 0, 0, 0, 117, 115, 101, 114, 115, 3, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 7, 0,
+        0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0,
+    ];
     const DOCUMENT_BATCH_FIXTURE: &[u8] = &[
         2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 97, 98, 99, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
@@ -1102,6 +1151,28 @@ mod tests {
 
         // Act / Assert.
         assert_eq!(decode_query_plan(QUERY_PLAN_FIXTURE).unwrap(), plan);
+    }
+
+    // Scenario: Rust sends compact post-commit watcher change sets to Dart.
+    // Covers:
+    // - Collection name, revision, and changed document ids.
+    // - Byte-for-byte compatibility with the Dart change-set fixture.
+    // Expected: Watcher metadata round-trips without JSON.
+    #[test]
+    fn encodes_and_decodes_change_set_fixture() {
+        // Arrange.
+        let changes = vec![WireChangeSet {
+            collection: "users".to_string(),
+            revision: 3,
+            document_ids: vec![7, 9],
+        }];
+
+        // Act / Assert.
+        assert_eq!(
+            encode_change_set_list(&changes).unwrap(),
+            CHANGE_SET_FIXTURE
+        );
+        assert_eq!(decode_change_set_list(CHANGE_SET_FIXTURE).unwrap(), changes);
     }
 
     // Scenario: Rust receives a batch of document writes from Dart.

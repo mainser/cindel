@@ -272,7 +272,9 @@ class CindelDatabase {
     final indexEntries = _indexEntriesFor(collection, value);
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
-      _markCollectionChanged(CindelChangeSet.upsert(collection, id, value));
+      _markNativeCollectionChanged(
+        CindelChangeSet.upsert(collection, id, value),
+      );
       return;
     }
     await _checkUniqueIndexes(collection, {id: value}, indexEntries);
@@ -284,7 +286,7 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
-    _markCollectionChanged(CindelChangeSet.upsert(collection, id, value));
+    _markNativeCollectionChanged(CindelChangeSet.upsert(collection, id, value));
   }
 
   /// Stores every document in [values] atomically.
@@ -321,7 +323,7 @@ class CindelDatabase {
       collection,
       _encodeBatchPutEntries(documents),
     );
-    _markCollectionChanged(CindelChangeSet.upserts(collection, values));
+    _markNativeCollectionChanged(CindelChangeSet.upserts(collection, values));
   }
 
   /// Stores one generated binary document.
@@ -341,7 +343,9 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
-    _markCollectionChanged(CindelChangeSet.upsert(collection, id, document));
+    _markNativeCollectionChanged(
+      CindelChangeSet.upsert(collection, id, document),
+    );
   }
 
   /// Stores generated binary documents atomically.
@@ -366,7 +370,7 @@ class CindelDatabase {
       collection,
       _encodeBinaryBatchPutEntries(values),
     );
-    _markCollectionChanged(
+    _markNativeCollectionChanged(
       CindelChangeSet.upserts(collection, documents, ids: values.keys),
     );
   }
@@ -501,7 +505,7 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
-    _markCollectionChanged(CindelChangeSet.delete(collection, id));
+    _markNativeCollectionChanged(CindelChangeSet.delete(collection, id));
   }
 
   /// Deletes every document under [ids] atomically.
@@ -518,7 +522,7 @@ class CindelDatabase {
     }
 
     _bindings.deleteMany(handle, collection, _encodeIds(idList));
-    _markCollectionChanged(CindelChangeSet.deletes(collection, idList));
+    _markNativeCollectionChanged(CindelChangeSet.deletes(collection, idList));
   }
 
   /// Watches the current value of a document and emits after committed changes.
@@ -953,7 +957,7 @@ class CindelDatabase {
       _encodeNativeQueryPlan(collection, plan),
     );
     if (ids.isNotEmpty) {
-      _markCollectionChanged(CindelChangeSet.deletes(collection, ids));
+      _markNativeCollectionChanged(CindelChangeSet.deletes(collection, ids));
     }
     return ids;
   }
@@ -1005,9 +1009,13 @@ class CindelDatabase {
     try {
       final result = await action();
       _bindings.commitTransaction(handle);
-      final changes = [
-        for (final builder in _changesInTransaction.values) builder.build(),
-      ];
+      final localChanges = {
+        for (final entry in _changesInTransaction.entries)
+          entry.key: entry.value.build(),
+      };
+      final changes = mode == _TransactionMode.write
+          ? _changesFromNative(_takeNativeChangeSets(handle), localChanges)
+          : const <CindelChangeSet>[];
       _changesInTransaction
         ..clear()
         ..addAll(previousChanges);
@@ -1582,6 +1590,54 @@ class CindelDatabase {
     for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
       unawaited(watcher.poll(change: change));
     }
+  }
+
+  void _markNativeCollectionChanged(CindelChangeSet fallback) {
+    if (_activeTransaction == _TransactionMode.write) {
+      _markCollectionChanged(fallback);
+      return;
+    }
+
+    final handle = _checkOpen();
+    final changes = _changesFromNative(_takeNativeChangeSets(handle), {
+      fallback.collection: fallback,
+    });
+    for (final change in changes) {
+      _notifyWatchers(change);
+    }
+  }
+
+  List<WireChangeSet> _takeNativeChangeSets(Pointer<Void> handle) {
+    return decodeChangeSetList(_bindings.takeChanges(handle));
+  }
+
+  List<CindelChangeSet> _changesFromNative(
+    List<WireChangeSet> nativeChanges,
+    Map<String, CindelChangeSet> localChanges,
+  ) {
+    return [
+      for (final change in nativeChanges)
+        _changeFromNative(change, localChanges[change.collection]),
+    ];
+  }
+
+  CindelChangeSet _changeFromNative(
+    WireChangeSet change,
+    CindelChangeSet? localChange,
+  ) {
+    final ids = change.documentIds.toSet();
+    final documents = {
+      for (final entry
+          in (localChange?.documents ?? const <int, CindelDocument>{}).entries)
+        if (ids.contains(entry.key)) entry.key: entry.value,
+    };
+    return CindelChangeSet.native(
+      collection: change.collection,
+      revision: change.revision,
+      ids: ids,
+      documents: documents,
+      hasUnknownDocuments: localChange?.hasUnknownDocuments ?? false,
+    );
   }
 
   void _markCollectionChanged(CindelChangeSet change) {
@@ -2181,6 +2237,7 @@ final class CindelChangeSet {
     required this.documents,
     required this.hasUnknownDocuments,
     required this.isExternal,
+    required this.revision,
   });
 
   factory CindelChangeSet.external(String collection) {
@@ -2190,6 +2247,7 @@ final class CindelChangeSet {
       documents: const {},
       hasUnknownDocuments: true,
       isExternal: true,
+      revision: null,
     );
   }
 
@@ -2204,6 +2262,7 @@ final class CindelChangeSet {
       documents: document == null ? const {} : {id: Map.of(document)},
       hasUnknownDocuments: document == null,
       isExternal: false,
+      revision: null,
     );
   }
 
@@ -2222,6 +2281,7 @@ final class CindelChangeSet {
       documents: documentCopies,
       hasUnknownDocuments: documents == null,
       isExternal: false,
+      revision: null,
     );
   }
 
@@ -2236,6 +2296,28 @@ final class CindelChangeSet {
       documents: const {},
       hasUnknownDocuments: false,
       isExternal: false,
+      revision: null,
+    );
+  }
+
+  factory CindelChangeSet.native({
+    required String collection,
+    required int revision,
+    required Iterable<int> ids,
+    Map<int, CindelDocument> documents = const {},
+    bool hasUnknownDocuments = false,
+  }) {
+    final documentCopies = {
+      for (final entry in documents.entries)
+        entry.key: Map<String, Object?>.of(entry.value),
+    };
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: ids.toSet(),
+      documents: Map<int, CindelDocument>.unmodifiable(documentCopies),
+      hasUnknownDocuments: hasUnknownDocuments,
+      isExternal: false,
+      revision: revision,
     );
   }
 
@@ -2254,6 +2336,10 @@ final class CindelChangeSet {
   /// Whether this change was detected from another handle through revision
   /// polling instead of from local write metadata.
   final bool isExternal;
+
+  /// Native collection revision after the commit, when delivered by the native
+  /// change-set path.
+  final int? revision;
 
   bool mayAffectDocument(int id) {
     final ids = documentIds;
@@ -2289,6 +2375,7 @@ final class _CindelChangeSetBuilder {
       documents: Map<int, CindelDocument>.unmodifiable(_documents),
       hasUnknownDocuments: _hasUnknownDocuments,
       isExternal: false,
+      revision: null,
     );
   }
 }
@@ -2382,7 +2469,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     }
     _isPolling = true;
     try {
-      final revision = _readRevision();
+      final revision = change?.revision ?? _readRevision();
       if (!force && change != null && !_shouldReadChange(change)) {
         _lastRevision = revision;
         return;

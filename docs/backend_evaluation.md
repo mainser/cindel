@@ -27,7 +27,7 @@ ignored by git. The refreshed inventory now maps every known runtime JSON path
 to its planned removal stage: id lists and basic batches in JSON-02, index
 values and write metadata in JSON-03, native filters in JSON-04, manual
 documents in JSON-05, schema/reverse-index metadata in JSON-06, and projection
-or aggregate rows in JSON-07.
+or aggregate rows in JSON-07, with watcher change sets in JSON-08.
 
 JSON-01 added the internal CindelWireV1 codec foundation in Dart and Rust. It
 does not change public Dart APIs, native ABI symbols, storage behavior, or
@@ -69,8 +69,25 @@ the existing equality, comparison, contains, startsWith, endsWith, all, any,
 not, and null behavior. The native ABI is now 12 because the existing
 `cindel_query_filter` payload contract changed from JSON to binary.
 
-JSON-05 removes manual document JSON from the runtime path. Schema/reverse-index
-metadata JSON and projection/aggregate result JSON remain for later stages.
+JSON-05 removed manual document JSON from the runtime path by storing
+GenericDocumentV1 bytes for `CindelDocument` values and returning `getMany`
+results as binary document batches over FFI.
+
+JSON-06 moved schema registration and storage metadata away from JSON.
+CindelWireV1 now carries `WireSchemaManifest` payloads across FFI, SQLite and
+MDBX store collection schema records as versioned binary records, and MDBX
+reverse document-index metadata uses binary `IndexEntryList` records.
+
+JSON-07 added the first binary native query plan execution surface. MDBX can
+execute supported binary-document query plans for counts, windowed document
+lists, deletes, one-field projections, and property aggregates, returning
+CindelWireV1 ids, document batches, projection rows, or scalar results.
+
+JSON-08 added binary watcher change sets. SQLite and MDBX now report committed
+collection changes as CindelWireV1 buffers with collection name, post-commit
+revision, and affected document ids. Dart watchers consume those native change
+sets before using `pollInterval` as the compatibility fallback for external
+handles.
 
 Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
 

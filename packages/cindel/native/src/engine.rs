@@ -1,6 +1,6 @@
 use crate::storage::{
     DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackend, StorageBackendKind,
-    StorageEngine,
+    StorageChangeSet, StorageEngine,
 };
 use crate::wire::WireQueryPlan;
 
@@ -203,6 +203,10 @@ impl CindelEngine {
 
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
+    }
+
+    pub(crate) fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
+        self.storage.take_change_sets()
     }
 
     pub fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {

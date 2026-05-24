@@ -367,6 +367,16 @@ final class CindelNativeBindings {
     }
   }
 
+  Uint8List takeChanges(Pointer<Void> handle) {
+    return _queryBytes(
+      (outPointer, outLength) {
+        return _functions.takeChanges(handle, outPointer, outLength);
+      },
+      _functions.freeBuffer,
+      'take changes',
+    );
+  }
+
   int? schemaVersion(Pointer<Void> handle, String collection) {
     final outVersion = calloc<Uint64>();
     try {
@@ -876,6 +886,9 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision;
 
+  int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get takeChanges;
+
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion;
 
@@ -1279,6 +1292,15 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             ),
             int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
           >('cindel_collection_revision'),
+      takeChanges = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+          >('cindel_take_changes'),
       schemaVersion = library
           .lookupFunction<
             Int32 Function(
@@ -1712,6 +1734,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   collectionRevision;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  takeChanges;
+
+  @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   schemaVersion;
 
@@ -2008,6 +2034,10 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision => _cindelCollectionRevision;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get takeChanges => _cindelTakeChanges;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -2502,6 +2532,16 @@ external int _cindelCollectionRevision(
   Pointer<Uint8> collection,
   int collectionLen,
   Pointer<Uint64> outRevision,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)>(
+  symbol: 'cindel_take_changes',
+  assetId: _assetId,
+)
+external int _cindelTakeChanges(
+  Pointer<Void> handle,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
 );
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(

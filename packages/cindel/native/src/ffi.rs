@@ -4,15 +4,15 @@ use crate::storage::{
 };
 use crate::wire::{
     decode_document_write_batch, decode_id_list, decode_index_entry_list, decode_index_value,
-    decode_indexed_document_write_batch, decode_query_plan, encode_id_list, encode_scalar,
-    WireDocumentWrite as WireBatchDocumentWrite, WireIndexEntry as WireBatchIndexEntry,
-    WireIndexValue as WireBatchIndexValue,
+    decode_indexed_document_write_batch, decode_query_plan, encode_change_set_list, encode_id_list,
+    encode_scalar, WireChangeSet, WireDocumentWrite as WireBatchDocumentWrite,
+    WireIndexEntry as WireBatchIndexEntry, WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    15
+    16
 }
 
 #[no_mangle]
@@ -490,6 +490,47 @@ pub unsafe extern "C" fn cindel_collection_revision(
         Ok(revision) => {
             *out_revision = revision;
             0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_take_changes(
+    handle: *mut CindelEngine,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.take_change_sets() {
+        Ok(changes) => {
+            let changes = changes
+                .into_iter()
+                .map(|change| WireChangeSet {
+                    collection: change.collection,
+                    revision: change.revision,
+                    document_ids: change.document_ids,
+                })
+                .collect::<Vec<_>>();
+            match encode_change_set_list(&changes) {
+                Ok(bytes) => {
+                    let (ptr, len) = into_raw_bytes(bytes);
+                    *out_ptr = ptr;
+                    *out_len = len;
+                    0
+                }
+                Err(_) => -1,
+            }
         }
         Err(_) => -1,
     }

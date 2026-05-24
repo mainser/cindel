@@ -8,8 +8,8 @@ transactions, watchers, and a compact Rust native runtime behind Dart FFI.
 
 ```yaml
 dependencies:
-  cindel: ^0.2.15
-  cindel_flutter_libs: ^0.2.15
+  cindel: ^0.3.3
+  cindel_flutter_libs: ^0.3.3
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -80,6 +80,7 @@ explicit migration helper exists in a later release.
   property aggregates.
 - Explicit read and write transactions.
 - Document, collection, object, query, and lazy watchers.
+- Native local watcher change sets with polling fallback for external handles.
 - Embedded objects and embedded object lists.
 - Schema versions and compatible additive schema updates.
 
@@ -93,7 +94,7 @@ until their native binaries are generated and validated.
 
 ## Release Status
 
-Cindel is still pre-1.0.0. The `0.2.15` package line ships MDBX as the default
+Cindel is still pre-1.0.0. The `0.3.3` package line ships MDBX as the default
 backend, SQLite as an explicit compatibility backend, and CindelWireV1 binary
-id-list FFI payloads for common many-read, query, projection, aggregate, and
-delete paths.
+payloads for ids, indexed writes, filters, schema metadata, native query plans,
+and local watcher change sets.

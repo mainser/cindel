@@ -9,7 +9,7 @@ scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
-Cindel is in early pre-1.0 development. The current `0.3.2` line has the core
+Cindel is in early pre-1.0 development. The current `0.3.3` line has the core
 local database slice working end to end:
 
 ```text
@@ -46,6 +46,8 @@ The API is still experimental and can change before 1.0.
 - Explicit read and write transactions.
 - Document, collection, object, and query watchers with Dart streams.
 - Lazy watchers and `fireImmediately` control for reactive UI flows.
+- Native watcher change sets for local write notifications, with polling kept
+  as the external-handle fallback.
 - In-memory databases for tests and short-lived work.
 - Schema metadata registration and compatible additive version bumps.
 - Prebuilt native library package for Flutter consumers.
@@ -70,8 +72,8 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.3.2
-  cindel_flutter_libs: ^0.3.2
+  cindel: ^0.3.3
+  cindel_flutter_libs: ^0.3.3
 
 dev_dependencies:
   build_runner: ^2.15.0

@@ -2,8 +2,8 @@
 
 This document records the first Cindel binary object format. MDBX uses this
 format internally for schema-backed documents that match the registered
-collection schema. The public Dart API and current FFI payloads still speak
-JSON during the transition.
+collection schema. Manual documents use GenericDocumentV1, and the current hot
+FFI paths use CindelWireV1 binary payloads instead of the early JSON envelopes.
 
 ## Goals
 
@@ -16,15 +16,13 @@ JSON during the transition.
 ## Scope
 
 The format is intended for generated typed models first. Manual map-style APIs
-still cross the current public FFI boundary as JSON, but MDBX converts
-schema-backed writes into binary storage immediately.
+now use GenericDocumentV1 for document bytes, while schema-backed MDBX writes use
+the generated binary document format directly.
 
 This stage does not change:
 
 - the public Dart API,
-- the FFI symbols,
-- SQLite storage,
-- prebuilt native binaries.
+- the public shape of the FFI-backed Dart APIs.
 
 ## Object Layout
 
@@ -109,16 +107,16 @@ are rejected instead of being stored through a JSON compatibility fallback,
 because Cindel is still pre-1.0 and no external database migration promise has
 been made yet.
 
-Manual writes without a registered schema may still be stored as raw payloads.
-SQLite remains the compatibility backend and continues to use the JSON-oriented
-storage path internally.
+Manual writes without a registered schema are stored as GenericDocumentV1 raw
+payloads. SQLite remains the compatibility backend and stores the same current
+manual and schema metadata formats.
 
-The next optimization stage is to remove JSON from the generated FFI hot path
-by writing and reading typed fields directly through native handles.
+The generated FFI hot path now writes and reads typed fields through binary
+native handles where MDBX planning supports the query shape.
 
 Before this format is the only native path, Cindel still needs:
 
-- generated Dart writer/reader integration,
-- native filter/query execution over binary documents,
 - a final decision on how much of the manual map API should remain optimized
-  after generated typed FFI becomes the hot path.
+  after generated typed FFI becomes the hot path,
+- public migration tooling once the optimized storage format is close enough to
+  1.0.
