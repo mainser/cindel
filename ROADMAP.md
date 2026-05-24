@@ -407,6 +407,27 @@ Guiding rules:
   - Confirmed SQLite remains selectable and behavior-compatible.
   - Declared Linux in package platform metadata and ensured Linux runtime files
     are included in the `cindel_flutter_libs` pub.dev archive.
+- [x] JSON-00: Anti-JSON baseline and exact inventory.
+  - Captured small and large CSV benchmark baselines for MDBX and SQLite.
+  - Refreshed the runtime JSON inventory across Dart FFI, native helpers,
+    manual documents, filters, schema metadata, reverse index metadata,
+    projection rows, aggregate results, and benchmark-only fixtures.
+  - Flagged the MDBX single-get anomaly for JSON-02 investigation because
+    SQLite currently wins the simple `get` microbenchmark while MDBX wins the
+    indexed and batch-oriented native paths.
+- [x] JSON-01: Binary wire codec foundation.
+  - Added internal CindelWireV1 codecs in Dart and Rust without changing the
+    public Dart API, native ABI, storage behavior, or prebuilt binaries.
+  - Covered id lists, index values, scalar results, document write batches,
+    nullable/list/object cells, projection rows, schema manifests, and reverse
+    index entry lists with byte-for-byte fixtures on both sides.
+  - Added malformed-payload validation for truncation, invalid tags, invalid
+    UTF-8, invalid bool bytes, trailing bytes, and unsafe native item counts.
+- [ ] JSON-02: Binary FFI ids and batches.
+  - Replace JSON id-list payloads and basic batch lookup/delete FFI traffic
+    with CindelWireV1 buffers.
+  - Re-benchmark `get`, `getMany`, indexed queries, and `deleteMany` against
+    the JSON-00 baseline, with special attention to MDBX single-get overhead.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -470,11 +491,14 @@ Guiding rules:
 
 ## Current Focus
 
-The current implementation focus is release validation for the `0.2.x` package
-line. Cindel now has the typed query pipeline, index variants, word-token
+The current implementation focus is the anti-JSON optimization line for
+`0.2.x`. Cindel now has the typed query pipeline, index variants, word-token
 indexes, expanded generated serialization, embedded value-object persistence,
 query/lazy watchers, binary MDBX document storage, and MDBX as the default
-backend with SQLite as an explicit fallback.
+backend with SQLite as an explicit fallback. The immediate next work is to use
+CindelWireV1 to remove JSON from id-list and batch FFI payloads, then continue
+through index writes, filters, manual documents, schema metadata, and native
+query planning.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

@@ -7,5 +7,6 @@ mod ffi;
 #[cfg(feature = "mdbx")]
 mod native_filter;
 mod storage;
+mod wire;
 
 pub use engine::CindelEngine;

@@ -200,6 +200,42 @@ fn run_storage_benchmark(
             Ok(())
         })?;
 
+    let filter_query = if backend == "mdbx" {
+        Some(measure_iterations(
+            "query_filter_score_lte_99",
+            config.query_repeats,
+            |_| {
+                let ids = storage.query_filter(
+                    "users",
+                    &all_ids,
+                    br#"{"type":"field","field":"score","operation":"less_than_or_equal_to","value":99}"#,
+                )?;
+                if ids.is_empty() {
+                    return Err("filter query returned no ids".into());
+                }
+                Ok(())
+            },
+        )?)
+    } else {
+        None
+    };
+
+    let projection_name = if backend == "mdbx" {
+        Some(measure_iterations(
+            "projection_name",
+            config.query_repeats,
+            |_| {
+                let result = storage.query_project("users", &all_ids, "name")?;
+                if result.is_empty() {
+                    return Err("projection returned empty bytes".into());
+                }
+                Ok(())
+            },
+        )?)
+    } else {
+        None
+    };
+
     let aggregate_average =
         measure_iterations("aggregate_score_average", config.query_repeats, |_| {
             let result = storage.query_aggregate("users", &all_ids, "score", "average")?;
@@ -304,31 +340,41 @@ fn run_storage_benchmark(
 
     let database_size_bytes = directory_size_bytes(database_path)?;
 
+    let mut measurements = vec![
+        open,
+        register_schemas,
+        put,
+        get,
+        get_many,
+        document_ids,
+        equality_query,
+        equality_query_with_get,
+        range_query,
+        range_query_with_get,
+    ];
+    if let Some(filter_query) = filter_query {
+        measurements.push(filter_query);
+    }
+    if let Some(projection_name) = projection_name {
+        measurements.push(projection_name);
+    }
+    measurements.extend([
+        aggregate_average,
+        aggregate_max,
+        composite_query,
+        multi_entry_query,
+        collection_revision,
+        batch_put,
+        delete_many,
+        delete,
+        allocate_id,
+        auto_increment_put,
+    ]);
+
     Ok(BenchmarkReport {
         backend,
         database_size_bytes,
-        measurements: vec![
-            open,
-            register_schemas,
-            put,
-            get,
-            get_many,
-            document_ids,
-            equality_query,
-            equality_query_with_get,
-            range_query,
-            range_query_with_get,
-            aggregate_average,
-            aggregate_max,
-            composite_query,
-            multi_entry_query,
-            collection_revision,
-            batch_put,
-            delete_many,
-            delete,
-            allocate_id,
-            auto_increment_put,
-        ],
+        measurements,
     })
 }
 

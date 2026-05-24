@@ -18,6 +18,35 @@ Reasons:
 - SQLite remains selectable as a secondary backend for compatibility,
   debugging, and benchmark comparison.
 
+## Anti-JSON Optimization Track
+
+JSON-00 established the measured baseline and exact JSON inventory for the
+next performance line. The benchmark output is stored locally as CSV under
+`docs/local_benchmarks/` because those runs are machine-specific and intentionally
+ignored by git. The refreshed inventory now maps every known runtime JSON path
+to its planned removal stage: id lists and basic batches in JSON-02, index
+values and write metadata in JSON-03, native filters in JSON-04, manual
+documents in JSON-05, schema/reverse-index metadata in JSON-06, and projection
+or aggregate rows in JSON-07.
+
+JSON-01 added the internal CindelWireV1 codec foundation in Dart and Rust. It
+does not change public Dart APIs, native ABI symbols, storage behavior, or
+prebuilt native libraries. The codec gives later stages a shared binary contract
+for id lists, index values, scalar results, document write batches,
+nullable/list/object cells, projection rows, schema manifests, and reverse
+index entry lists. Dart and Rust now share byte-for-byte fixture tests plus
+malformed-payload checks for truncation, invalid tags, invalid UTF-8, invalid
+bool bytes, trailing bytes, and unsafe native item counts.
+
+The next backend-relevant stage is JSON-02. It should move id-list and basic
+batch FFI traffic onto CindelWireV1, keep the legacy JSON symbols only for the
+short internal migration window if needed, and re-benchmark `get`, `getMany`,
+indexed queries, and `deleteMany` against the JSON-00 baseline. The JSON-00
+large benchmark showed SQLite winning the simple single-get microbenchmark
+while MDBX leads the native indexed and batch-oriented routes, so JSON-02 should
+also inspect per-get transaction, key-buffer, and FFI overhead before assuming
+storage engine latency is the cause.
+
 ## Candidate: libmdbx
 
 `libmdbx` is a strong candidate for the advanced backend because it is an

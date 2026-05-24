@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.14
+
+- Added the internal CindelWireV1 binary codec foundation shared by Dart and
+  Rust.
+- Added byte-for-byte Dart and Rust fixture coverage for id lists, index
+  values, scalar results, document write batches, projection rows, schema
+  manifests, and reverse index entry lists.
+- Added malformed-payload validation coverage for truncated buffers, invalid
+  tags, invalid UTF-8, invalid bool bytes, trailing bytes, and unsafe native
+  item counts.
+- Kept the public Dart API, native ABI, runtime storage behavior, and prebuilt
+  native binaries unchanged; runtime FFI paths still switch away from JSON in
+  the later JSON-02 and JSON-03 stages.
+
 ## 0.2.13
 
 - Added `CindelPropertyQuery` aggregate helpers for count, min, max, sum, and

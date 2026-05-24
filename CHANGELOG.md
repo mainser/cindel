@@ -5,6 +5,21 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.14
+
+- Added the internal CindelWireV1 binary codec foundation for the anti-JSON
+  optimization roadmap.
+- Added shared Dart and Rust byte-for-byte fixture tests covering id lists,
+  index values, scalar results, document write batches, projection rows, schema
+  manifests, and reverse index entry lists.
+- Added malformed wire-payload tests for truncation, invalid tags, invalid
+  UTF-8, invalid bool bytes, trailing bytes, and unsafe native item counts.
+- Documented the JSON-00 baseline and JSON-01 codec foundation in the roadmap,
+  backend evaluation notes, and implementation checklist.
+- Updated `cindel` to `0.2.14`. `cindel_flutter_libs` remains at `0.2.13`
+  because JSON-01 does not change the native ABI or regenerated prebuilt
+  binaries.
+
 ## 0.2.13
 
 - Added native property aggregates for count, min, max, sum, and average.
