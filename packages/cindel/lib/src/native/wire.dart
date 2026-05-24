@@ -9,6 +9,21 @@ const int wireTagString = 4;
 const int wireTagList = 5;
 const int wireTagObject = 6;
 
+const int wireFilterTagField = 1;
+const int wireFilterTagAll = 2;
+const int wireFilterTagAny = 3;
+const int wireFilterTagNot = 4;
+
+const int wireFilterOpEqual = 1;
+const int wireFilterOpLessThan = 2;
+const int wireFilterOpLessThanOrEqual = 3;
+const int wireFilterOpGreaterThan = 4;
+const int wireFilterOpGreaterThanOrEqual = 5;
+const int wireFilterOpContains = 6;
+const int wireFilterOpStartsWith = 7;
+const int wireFilterOpEndsWith = 8;
+const int wireFilterOpIsNull = 9;
+
 sealed class WireIndexValue {
   const WireIndexValue();
 
@@ -283,6 +298,92 @@ final class WireObjectEntry {
   int get hashCode => Object.hash(name, value);
 }
 
+sealed class WireFilter {
+  const WireFilter();
+
+  const factory WireFilter.field({
+    required String field,
+    required WireFilterOperation operation,
+    required WireValue value,
+  }) = WireFieldFilter;
+  const factory WireFilter.all(List<WireFilter> predicates) = WireAllFilter;
+  const factory WireFilter.any(List<WireFilter> predicates) = WireAnyFilter;
+  const factory WireFilter.not(WireFilter predicate) = WireNotFilter;
+}
+
+enum WireFilterOperation {
+  equal,
+  lessThan,
+  lessThanOrEqual,
+  greaterThan,
+  greaterThanOrEqual,
+  contains,
+  startsWith,
+  endsWith,
+  isNull,
+}
+
+final class WireFieldFilter extends WireFilter {
+  const WireFieldFilter({
+    required this.field,
+    required this.operation,
+    required this.value,
+  });
+
+  final String field;
+  final WireFilterOperation operation;
+  final WireValue value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireFieldFilter &&
+      other.field == field &&
+      other.operation == operation &&
+      other.value == value;
+
+  @override
+  int get hashCode => Object.hash(field, operation, value);
+}
+
+final class WireAllFilter extends WireFilter {
+  const WireAllFilter(this.predicates);
+
+  final List<WireFilter> predicates;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireAllFilter && listEquals(other.predicates, predicates);
+
+  @override
+  int get hashCode => Object.hashAll(predicates);
+}
+
+final class WireAnyFilter extends WireFilter {
+  const WireAnyFilter(this.predicates);
+
+  final List<WireFilter> predicates;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireAnyFilter && listEquals(other.predicates, predicates);
+
+  @override
+  int get hashCode => Object.hashAll(predicates);
+}
+
+final class WireNotFilter extends WireFilter {
+  const WireNotFilter(this.predicate);
+
+  final WireFilter predicate;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNotFilter && other.predicate == predicate;
+
+  @override
+  int get hashCode => Object.hash(WireNotFilter, predicate);
+}
+
 final class WireDocumentWrite {
   const WireDocumentWrite({required this.id, required this.bytes});
 
@@ -525,6 +626,19 @@ WireScalar decodeScalar(Uint8List bytes) {
   final value = reader.readScalar();
   reader.finish();
   return value;
+}
+
+Uint8List encodeFilter(WireFilter filter) {
+  final writer = CindelWireWriter();
+  writer.writeFilter(filter);
+  return writer.finish();
+}
+
+WireFilter decodeFilter(Uint8List bytes) {
+  final reader = CindelWireReader(bytes);
+  final filter = reader.readFilter();
+  reader.finish();
+  return filter;
 }
 
 Uint8List encodeDocumentWriteBatch(List<WireDocumentWrite> documents) {
@@ -871,6 +985,31 @@ final class CindelWireWriter {
         }
     }
   }
+
+  void writeFilter(WireFilter filter) {
+    switch (filter) {
+      case WireFieldFilter(:final field, :final operation, :final value):
+        writeUint8(wireFilterTagField);
+        writeString(field);
+        writeUint8(_filterOperationTag(operation));
+        writeValue(value);
+      case WireAllFilter(:final predicates):
+        writeUint8(wireFilterTagAll);
+        writeLength(predicates.length);
+        for (final predicate in predicates) {
+          writeFilter(predicate);
+        }
+      case WireAnyFilter(:final predicates):
+        writeUint8(wireFilterTagAny);
+        writeLength(predicates.length);
+        for (final predicate in predicates) {
+          writeFilter(predicate);
+        }
+      case WireNotFilter(:final predicate):
+        writeUint8(wireFilterTagNot);
+        writeFilter(predicate);
+    }
+  }
 }
 
 final class CindelWireReader {
@@ -965,6 +1104,53 @@ final class CindelWireReader {
       final tag => throw FormatException('unknown wire value tag $tag'),
     };
   }
+
+  WireFilter readFilter() {
+    return switch (readUint8()) {
+      wireFilterTagField => WireFilter.field(
+        field: readString(),
+        operation: _readFilterOperation(),
+        value: readValue(),
+      ),
+      wireFilterTagAll => WireFilter.all([
+        for (var i = 0, count = readLength(); i < count; i++) readFilter(),
+      ]),
+      wireFilterTagAny => WireFilter.any([
+        for (var i = 0, count = readLength(); i < count; i++) readFilter(),
+      ]),
+      wireFilterTagNot => WireFilter.not(readFilter()),
+      final tag => throw FormatException('unknown wire filter tag $tag'),
+    };
+  }
+
+  WireFilterOperation _readFilterOperation() {
+    return switch (readUint8()) {
+      wireFilterOpEqual => WireFilterOperation.equal,
+      wireFilterOpLessThan => WireFilterOperation.lessThan,
+      wireFilterOpLessThanOrEqual => WireFilterOperation.lessThanOrEqual,
+      wireFilterOpGreaterThan => WireFilterOperation.greaterThan,
+      wireFilterOpGreaterThanOrEqual => WireFilterOperation.greaterThanOrEqual,
+      wireFilterOpContains => WireFilterOperation.contains,
+      wireFilterOpStartsWith => WireFilterOperation.startsWith,
+      wireFilterOpEndsWith => WireFilterOperation.endsWith,
+      wireFilterOpIsNull => WireFilterOperation.isNull,
+      final tag => throw FormatException('unknown wire filter operation $tag'),
+    };
+  }
+}
+
+int _filterOperationTag(WireFilterOperation operation) {
+  return switch (operation) {
+    WireFilterOperation.equal => wireFilterOpEqual,
+    WireFilterOperation.lessThan => wireFilterOpLessThan,
+    WireFilterOperation.lessThanOrEqual => wireFilterOpLessThanOrEqual,
+    WireFilterOperation.greaterThan => wireFilterOpGreaterThan,
+    WireFilterOperation.greaterThanOrEqual => wireFilterOpGreaterThanOrEqual,
+    WireFilterOperation.contains => wireFilterOpContains,
+    WireFilterOperation.startsWith => wireFilterOpStartsWith,
+    WireFilterOperation.endsWith => wireFilterOpEndsWith,
+    WireFilterOperation.isNull => wireFilterOpIsNull,
+  };
 }
 
 bool listEquals<T>(List<T> left, List<T> right) {

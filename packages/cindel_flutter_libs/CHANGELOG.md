@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.18
+
+- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
+  native ABI 12 with CindelWireV1 binary native filter AST payloads.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.2.17
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

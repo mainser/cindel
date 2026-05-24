@@ -1018,7 +1018,7 @@ impl StorageEngine for MdbxStorage {
         candidate_ids: &[u64],
         filter: &[u8],
     ) -> Result<Vec<u64>, String> {
-        let filter = NativeFilter::from_json(filter)?;
+        let filter = NativeFilter::decode(filter)?;
         let schema = self.with_read_transaction(|transaction, tables| {
             self.cached_collection_schema(transaction, &tables, collection)
         })?;

@@ -9,6 +9,7 @@ use crate::storage::{
     CollectionSchemaManifest, CompositeIndexSchemaManifest, DocumentWrite, FieldSchemaManifest,
     IndexEntry, IndexValue, SchemaManifest, SqliteStorage, StorageEngine,
 };
+use crate::wire::{encode_filter, WireFilter, WireFilterOperation, WireValue};
 
 const DEFAULT_DOCUMENTS: u64 = 10_000;
 const DEFAULT_QUERY_REPEATS: u64 = 1_000;
@@ -231,16 +232,18 @@ fn run_storage_benchmark(
             Ok(())
         })?;
 
+    let filter = encode_filter(&WireFilter::Field {
+        field: "score".to_string(),
+        operation: WireFilterOperation::LessThanOrEqual,
+        value: WireValue::Int(99),
+    })?;
+
     let filter_query = if backend == "mdbx" {
         Some(measure_iterations(
             "query_filter_score_lte_99",
             config.query_repeats,
             |_| {
-                let ids = storage.query_filter(
-                    "users",
-                    &all_ids,
-                    br#"{"type":"field","field":"score","operation":"less_than_or_equal_to","value":99}"#,
-                )?;
+                let ids = storage.query_filter("users", &all_ids, &filter)?;
                 if ids.is_empty() {
                     return Err("filter query returned no ids".into());
                 }

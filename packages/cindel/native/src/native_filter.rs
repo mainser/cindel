@@ -1,28 +1,26 @@
-use serde::Deserialize;
-use serde_json::Value;
-
 use crate::document_format::{BinaryDocument, BinaryValue};
 use crate::storage::CollectionSchemaManifest;
+use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug)]
 pub(crate) enum NativeFilter {
-    #[serde(rename = "field")]
     Field {
         field: String,
         operation: FieldFilterOperation,
-        value: Value,
+        value: WireValue,
     },
-    #[serde(rename = "all")]
-    All { predicates: Vec<NativeFilter> },
-    #[serde(rename = "any")]
-    Any { predicates: Vec<NativeFilter> },
-    #[serde(rename = "not")]
-    Not { predicate: Box<NativeFilter> },
+    All {
+        predicates: Vec<NativeFilter>,
+    },
+    Any {
+        predicates: Vec<NativeFilter>,
+    },
+    Not {
+        predicate: Box<NativeFilter>,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum FieldFilterOperation {
     EqualTo,
     GreaterThan,
@@ -32,11 +30,42 @@ pub(crate) enum FieldFilterOperation {
     Contains,
     StartsWith,
     EndsWith,
+    IsNull,
 }
 
 impl NativeFilter {
-    pub(crate) fn from_json(bytes: &[u8]) -> Result<Self, String> {
-        serde_json::from_slice(bytes).map_err(|error| error.to_string())
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let filter = decode_filter(bytes)?;
+        Self::from_wire(filter)
+    }
+
+    fn from_wire(filter: WireFilter) -> Result<Self, String> {
+        match filter {
+            WireFilter::Field {
+                field,
+                operation,
+                value,
+            } => Ok(Self::Field {
+                field,
+                operation: FieldFilterOperation::from_wire(operation),
+                value,
+            }),
+            WireFilter::All { predicates } => Ok(Self::All {
+                predicates: predicates
+                    .into_iter()
+                    .map(Self::from_wire)
+                    .collect::<Result<Vec<_>, String>>()?,
+            }),
+            WireFilter::Any { predicates } => Ok(Self::Any {
+                predicates: predicates
+                    .into_iter()
+                    .map(Self::from_wire)
+                    .collect::<Result<Vec<_>, String>>()?,
+            }),
+            WireFilter::Not { predicate } => Ok(Self::Not {
+                predicate: Box::new(Self::from_wire(*predicate)?),
+            }),
+        }
     }
 
     pub(crate) fn matches(
@@ -71,9 +100,10 @@ impl NativeFilter {
                 }
                 match document.field_value(index)? {
                     Some(actual) => field_matches(&actual, *operation, value),
-                    None => {
-                        Ok(matches!(operation, FieldFilterOperation::EqualTo) && value.is_null())
-                    }
+                    None => Ok(matches!(
+                        operation,
+                        FieldFilterOperation::EqualTo | FieldFilterOperation::IsNull
+                    ) && matches!(value, WireValue::Null)),
                 }
             }
             Self::All { predicates } => {
@@ -97,18 +127,35 @@ impl NativeFilter {
     }
 }
 
+impl FieldFilterOperation {
+    fn from_wire(operation: WireFilterOperation) -> Self {
+        match operation {
+            WireFilterOperation::Equal => Self::EqualTo,
+            WireFilterOperation::LessThan => Self::LessThan,
+            WireFilterOperation::LessThanOrEqual => Self::LessThanOrEqualTo,
+            WireFilterOperation::GreaterThan => Self::GreaterThan,
+            WireFilterOperation::GreaterThanOrEqual => Self::GreaterThanOrEqualTo,
+            WireFilterOperation::Contains => Self::Contains,
+            WireFilterOperation::StartsWith => Self::StartsWith,
+            WireFilterOperation::EndsWith => Self::EndsWith,
+            WireFilterOperation::IsNull => Self::IsNull,
+        }
+    }
+}
+
 fn field_matches(
     actual: &BinaryValue,
     operation: FieldFilterOperation,
-    expected: &Value,
+    expected: &WireValue,
 ) -> Result<bool, String> {
     Ok(match operation {
         FieldFilterOperation::EqualTo => {
-            let Some(expected) = json_to_binary_value(expected)? else {
+            let Some(expected) = wire_to_binary_value(expected)? else {
                 return Ok(false);
             };
             binary_values_equal(actual, &expected)
         }
+        FieldFilterOperation::IsNull => false,
         FieldFilterOperation::GreaterThan => compare_numbers(actual, expected)
             .map(|ordering| ordering > 0)
             .unwrap_or(false),
@@ -122,20 +169,20 @@ fn field_matches(
             .map(|ordering| ordering <= 0)
             .unwrap_or(false),
         FieldFilterOperation::Contains => contains_value(actual, expected)?,
-        FieldFilterOperation::StartsWith => match (binary_string(actual), expected.as_str()) {
+        FieldFilterOperation::StartsWith => match (binary_string(actual), wire_string(expected)) {
             (Some(actual), Some(expected)) => actual.starts_with(expected),
             _ => false,
         },
-        FieldFilterOperation::EndsWith => match (binary_string(actual), expected.as_str()) {
+        FieldFilterOperation::EndsWith => match (binary_string(actual), wire_string(expected)) {
             (Some(actual), Some(expected)) => actual.ends_with(expected),
             _ => false,
         },
     })
 }
 
-fn compare_numbers(actual: &BinaryValue, expected: &Value) -> Option<i8> {
+fn compare_numbers(actual: &BinaryValue, expected: &WireValue) -> Option<i8> {
     let actual = binary_number(actual)?;
-    let expected = json_number(expected)?;
+    let expected = wire_number(expected)?;
     if actual < expected {
         Some(-1)
     } else if actual > expected {
@@ -145,11 +192,11 @@ fn compare_numbers(actual: &BinaryValue, expected: &Value) -> Option<i8> {
     }
 }
 
-fn contains_value(actual: &BinaryValue, expected: &Value) -> Result<bool, String> {
-    if let (Some(actual), Some(expected)) = (binary_string(actual), expected.as_str()) {
+fn contains_value(actual: &BinaryValue, expected: &WireValue) -> Result<bool, String> {
+    if let (Some(actual), Some(expected)) = (binary_string(actual), wire_string(expected)) {
         return Ok(actual.contains(expected));
     }
-    let Some(expected) = json_to_binary_value(expected)? else {
+    let Some(expected) = wire_to_binary_value(expected)? else {
         return Ok(false);
     };
     match actual {
@@ -183,9 +230,10 @@ fn binary_number(value: &BinaryValue) -> Option<f64> {
     }
 }
 
-fn json_number(value: &Value) -> Option<f64> {
+fn wire_number(value: &WireValue) -> Option<f64> {
     match value {
-        Value::Number(value) => value.as_f64(),
+        WireValue::Int(value) => Some(*value as f64),
+        WireValue::Double(value) if value.is_finite() => Some(*value),
         _ => None,
     }
 }
@@ -197,30 +245,36 @@ fn binary_string(value: &BinaryValue) -> Option<&str> {
     }
 }
 
-fn json_to_binary_value(value: &Value) -> Result<Option<BinaryValue>, String> {
+fn wire_string(value: &WireValue) -> Option<&str> {
     match value {
-        Value::Null => Ok(None),
-        Value::Bool(value) => Ok(Some(BinaryValue::Bool(*value))),
-        Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(Some(BinaryValue::Int(value)))
-            } else if let Some(value) = value.as_f64().filter(|value| value.is_finite()) {
-                Ok(Some(BinaryValue::Double(value)))
+        WireValue::String(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn wire_to_binary_value(value: &WireValue) -> Result<Option<BinaryValue>, String> {
+    match value {
+        WireValue::Null => Ok(None),
+        WireValue::Bool(value) => Ok(Some(BinaryValue::Bool(*value))),
+        WireValue::Int(value) => Ok(Some(BinaryValue::Int(*value))),
+        WireValue::Double(value) => {
+            if value.is_finite() {
+                Ok(Some(BinaryValue::Double(*value)))
             } else {
                 Err("filter number cannot be represented as a finite binary value".into())
             }
         }
-        Value::String(value) => Ok(Some(BinaryValue::String(value.clone()))),
-        Value::Array(values) => Ok(Some(BinaryValue::List(
+        WireValue::String(value) => Ok(Some(BinaryValue::String(value.clone()))),
+        WireValue::List(values) => Ok(Some(BinaryValue::List(
             values
                 .iter()
-                .map(json_to_binary_value)
+                .map(wire_to_binary_value)
                 .collect::<Result<Vec<_>, String>>()?,
         ))),
-        Value::Object(values) => {
+        WireValue::Object(values) => {
             let mut entries = values
                 .iter()
-                .map(|(name, value)| Ok((name.clone(), json_to_binary_value(value)?)))
+                .map(|(name, value)| Ok((name.clone(), wire_to_binary_value(value)?)))
                 .collect::<Result<Vec<(String, Option<BinaryValue>)>, String>>()?;
             entries.sort_by(|left, right| left.0.cmp(&right.0));
             Ok(Some(BinaryValue::Object(entries)))
@@ -233,6 +287,7 @@ mod tests {
     use super::*;
     use crate::document_format::write_document;
     use crate::storage::FieldSchemaManifest;
+    use crate::wire::encode_filter;
 
     fn schema() -> CollectionSchemaManifest {
         CollectionSchemaManifest {
@@ -316,50 +371,102 @@ mod tests {
         .unwrap()
     }
 
+    // Scenario: Rust evaluates a decoded binary filter with field predicates.
+    // Covers:
+    // - CindelWireV1 all-group decoding.
+    // - Bool equality, numeric comparison, and string contains operations.
+    // Expected: The typed binary document matches all field predicates.
     #[test]
     fn evaluates_field_and_group_predicates() {
-        let filter = NativeFilter::from_json(
-            br#"{
-              "type":"all",
-              "predicates":[
-                {"type":"field","field":"active","operation":"equal_to","value":true},
-                {"type":"field","field":"age","operation":"greater_than_or_equal_to","value":40},
-                {"type":"field","field":"name","operation":"contains","value":"Love"}
-              ]
-            }"#,
-        )
+        // Arrange.
+        let bytes = encode_filter(&WireFilter::All {
+            predicates: vec![
+                WireFilter::Field {
+                    field: "active".to_string(),
+                    operation: WireFilterOperation::Equal,
+                    value: WireValue::Bool(true),
+                },
+                WireFilter::Field {
+                    field: "age".to_string(),
+                    operation: WireFilterOperation::GreaterThanOrEqual,
+                    value: WireValue::Int(40),
+                },
+                WireFilter::Field {
+                    field: "name".to_string(),
+                    operation: WireFilterOperation::Contains,
+                    value: WireValue::String("Love".to_string()),
+                },
+            ],
+        })
         .unwrap();
 
+        // Act.
+        let filter = NativeFilter::decode(&bytes).unwrap();
+
+        // Assert.
         assert!(filter.matches(&schema(), &document()).unwrap());
     }
 
+    // Scenario: Rust evaluates a decoded binary negated filter.
+    // Covers:
+    // - CindelWireV1 not decoding.
+    // - String suffix operation over binary document fields.
+    // Expected: The negated suffix predicate matches the document.
     #[test]
     fn evaluates_not_and_string_suffix_predicates() {
-        let filter = NativeFilter::from_json(
-            br#"{
-              "type":"not",
-              "predicate":{"type":"field","field":"name","operation":"ends_with","value":"Byron"}
-            }"#,
-        )
+        // Arrange.
+        let bytes = encode_filter(&WireFilter::Not {
+            predicate: Box::new(WireFilter::Field {
+                field: "name".to_string(),
+                operation: WireFilterOperation::EndsWith,
+                value: WireValue::String("Byron".to_string()),
+            }),
+        })
         .unwrap();
 
+        // Act.
+        let filter = NativeFilter::decode(&bytes).unwrap();
+
+        // Assert.
         assert!(filter.matches(&schema(), &document()).unwrap());
     }
 
+    // Scenario: Rust evaluates null, list, and object filter operands.
+    // Covers:
+    // - CindelWireV1 isNull operation.
+    // - List contains and embedded object equality conversion.
+    // Expected: Nullable, list, and object predicates preserve old semantics.
     #[test]
     fn evaluates_null_list_and_object_predicates() {
-        let filter = NativeFilter::from_json(
-            br#"{
-              "type":"all",
-              "predicates":[
-                {"type":"field","field":"nickname","operation":"equal_to","value":null},
-                {"type":"field","field":"tags","operation":"contains","value":"math"},
-                {"type":"field","field":"profile","operation":"equal_to","value":{"label":"admin"}}
-              ]
-            }"#,
-        )
+        // Arrange.
+        let bytes = encode_filter(&WireFilter::All {
+            predicates: vec![
+                WireFilter::Field {
+                    field: "nickname".to_string(),
+                    operation: WireFilterOperation::IsNull,
+                    value: WireValue::Null,
+                },
+                WireFilter::Field {
+                    field: "tags".to_string(),
+                    operation: WireFilterOperation::Contains,
+                    value: WireValue::String("math".to_string()),
+                },
+                WireFilter::Field {
+                    field: "profile".to_string(),
+                    operation: WireFilterOperation::Equal,
+                    value: WireValue::Object(vec![(
+                        "label".to_string(),
+                        WireValue::String("admin".to_string()),
+                    )]),
+                },
+            ],
+        })
         .unwrap();
 
+        // Act.
+        let filter = NativeFilter::decode(&bytes).unwrap();
+
+        // Assert.
         assert!(filter.matches(&schema(), &document()).unwrap());
     }
 }

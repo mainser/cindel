@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'database.dart';
+import 'native/wire.dart';
 import 'schema.dart';
 import 'text.dart';
 
@@ -785,66 +785,94 @@ Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
   if (predicate == null) {
     return null;
   }
-  final json = _nativeFilterJson(predicate);
-  if (json == null) {
+  final filter = _nativeFilterWire(predicate);
+  if (filter == null) {
     return null;
   }
-  return Uint8List.fromList(utf8.encode(jsonEncode(json)));
+  return encodeFilter(filter);
 }
 
-Map<String, Object?>? _nativeFilterJson(CindelFilterPredicate predicate) {
+WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   if (predicate is _FieldFilterPredicate) {
     if (!_isNativeFilterValue(predicate.expected)) {
       return null;
     }
-    return {
-      'type': 'field',
-      'field': predicate.field,
-      'operation': _nativeFilterOperation(predicate.operation),
-      'value': predicate.expected,
-    };
+    final value = _nativeFilterValue(predicate.expected);
+    return WireFilter.field(
+      field: predicate.field,
+      operation: _nativeFilterOperation(predicate.operation, value),
+      value: value,
+    );
   }
 
   if (predicate is _CompositeFilterPredicate) {
-    final predicates = <Map<String, Object?>>[];
+    final predicates = <WireFilter>[];
     for (final child in predicate.predicates) {
-      final encoded = _nativeFilterJson(child);
+      final encoded = _nativeFilterWire(child);
       if (encoded == null) {
         return null;
       }
       predicates.add(encoded);
     }
-    return {
-      'type': switch (predicate.mode) {
-        _CompositeFilterMode.all => 'all',
-        _CompositeFilterMode.any => 'any',
-      },
-      'predicates': predicates,
+    return switch (predicate.mode) {
+      _CompositeFilterMode.all => WireFilter.all(predicates),
+      _CompositeFilterMode.any => WireFilter.any(predicates),
     };
   }
 
   if (predicate is _NotFilterPredicate) {
-    final encoded = _nativeFilterJson(predicate.predicate);
+    final encoded = _nativeFilterWire(predicate.predicate);
     if (encoded == null) {
       return null;
     }
-    return {'type': 'not', 'predicate': encoded};
+    return WireFilter.not(encoded);
   }
 
   return null;
 }
 
-String _nativeFilterOperation(_FilterOperation operation) {
+WireFilterOperation _nativeFilterOperation(
+  _FilterOperation operation,
+  WireValue value,
+) {
+  if (operation == _FilterOperation.equalTo && value is WireNullValue) {
+    return WireFilterOperation.isNull;
+  }
   return switch (operation) {
-    _FilterOperation.equalTo => 'equal_to',
-    _FilterOperation.greaterThan => 'greater_than',
-    _FilterOperation.greaterThanOrEqualTo => 'greater_than_or_equal_to',
-    _FilterOperation.lessThan => 'less_than',
-    _FilterOperation.lessThanOrEqualTo => 'less_than_or_equal_to',
-    _FilterOperation.contains => 'contains',
-    _FilterOperation.startsWith => 'starts_with',
-    _FilterOperation.endsWith => 'ends_with',
+    _FilterOperation.equalTo => WireFilterOperation.equal,
+    _FilterOperation.greaterThan => WireFilterOperation.greaterThan,
+    _FilterOperation.greaterThanOrEqualTo =>
+      WireFilterOperation.greaterThanOrEqual,
+    _FilterOperation.lessThan => WireFilterOperation.lessThan,
+    _FilterOperation.lessThanOrEqualTo => WireFilterOperation.lessThanOrEqual,
+    _FilterOperation.contains => WireFilterOperation.contains,
+    _FilterOperation.startsWith => WireFilterOperation.startsWith,
+    _FilterOperation.endsWith => WireFilterOperation.endsWith,
   };
+}
+
+WireValue _nativeFilterValue(Object? value) {
+  return switch (value) {
+    null => const WireValue.nullValue(),
+    bool() => WireValue.bool(value),
+    int() => WireValue.int(value),
+    double() => WireValue.double(value),
+    String() => WireValue.string(value),
+    List() => WireValue.list([
+      for (final item in value) _nativeFilterValue(item),
+    ]),
+    Map() => WireValue.object(_nativeFilterObjectEntries(value)),
+    _ => throw ArgumentError.value(value, 'value', 'Unsupported filter value.'),
+  };
+}
+
+List<WireObjectEntry> _nativeFilterObjectEntries(Map<Object?, Object?> value) {
+  final entries = <WireObjectEntry>[
+    for (final MapEntry(:key, :value) in value.entries)
+      WireObjectEntry(key as String, _nativeFilterValue(value)),
+  ];
+  entries.sort((left, right) => left.name.compareTo(right.name));
+  return entries;
 }
 
 bool _isNativeFilterValue(Object? value) {

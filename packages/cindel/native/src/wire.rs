@@ -7,6 +7,19 @@ const TAG_DOUBLE: u8 = 3;
 const TAG_STRING: u8 = 4;
 const TAG_LIST: u8 = 5;
 const TAG_OBJECT: u8 = 6;
+const FILTER_TAG_FIELD: u8 = 1;
+const FILTER_TAG_ALL: u8 = 2;
+const FILTER_TAG_ANY: u8 = 3;
+const FILTER_TAG_NOT: u8 = 4;
+const FILTER_OP_EQUAL: u8 = 1;
+const FILTER_OP_LESS_THAN: u8 = 2;
+const FILTER_OP_LESS_THAN_OR_EQUAL: u8 = 3;
+const FILTER_OP_GREATER_THAN: u8 = 4;
+const FILTER_OP_GREATER_THAN_OR_EQUAL: u8 = 5;
+const FILTER_OP_CONTAINS: u8 = 6;
+const FILTER_OP_STARTS_WITH: u8 = 7;
+const FILTER_OP_ENDS_WITH: u8 = 8;
+const FILTER_OP_IS_NULL: u8 = 9;
 const MAX_WIRE_COUNT: usize = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +50,37 @@ pub(crate) enum WireValue {
     String(String),
     List(Vec<WireValue>),
     Object(Vec<(String, WireValue)>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WireFilterOperation {
+    Equal,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    Contains,
+    StartsWith,
+    EndsWith,
+    IsNull,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum WireFilter {
+    Field {
+        field: String,
+        operation: WireFilterOperation,
+        value: WireValue,
+    },
+    All {
+        predicates: Vec<WireFilter>,
+    },
+    Any {
+        predicates: Vec<WireFilter>,
+    },
+    Not {
+        predicate: Box<WireFilter>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +188,19 @@ pub(crate) fn decode_scalar(bytes: &[u8]) -> Result<WireScalar, String> {
     let value = reader.read_scalar()?;
     reader.finish()?;
     Ok(value)
+}
+
+pub(crate) fn encode_filter(filter: &WireFilter) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_filter(filter)?;
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_filter(bytes: &[u8]) -> Result<WireFilter, String> {
+    let mut reader = Reader::new(bytes);
+    let filter = reader.read_filter()?;
+    reader.finish()?;
+    Ok(filter)
 }
 
 pub(crate) fn encode_document_write_batch(
@@ -514,6 +571,40 @@ impl Writer {
         }
         Ok(())
     }
+
+    fn write_filter(&mut self, filter: &WireFilter) -> Result<(), String> {
+        match filter {
+            WireFilter::Field {
+                field,
+                operation,
+                value,
+            } => {
+                self.write_u8(FILTER_TAG_FIELD);
+                self.write_string(field)?;
+                self.write_u8(filter_operation_tag(*operation));
+                self.write_value(value)?;
+            }
+            WireFilter::All { predicates } => {
+                self.write_u8(FILTER_TAG_ALL);
+                self.write_len(predicates.len())?;
+                for predicate in predicates {
+                    self.write_filter(predicate)?;
+                }
+            }
+            WireFilter::Any { predicates } => {
+                self.write_u8(FILTER_TAG_ANY);
+                self.write_len(predicates.len())?;
+                for predicate in predicates {
+                    self.write_filter(predicate)?;
+                }
+            }
+            WireFilter::Not { predicate } => {
+                self.write_u8(FILTER_TAG_NOT);
+                self.write_filter(predicate)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 struct Reader<'a> {
@@ -674,6 +765,67 @@ impl<'a> Reader<'a> {
             tag => Err(format!("unknown wire value tag {tag}")),
         }
     }
+
+    fn read_filter(&mut self) -> Result<WireFilter, String> {
+        match self.read_u8()? {
+            FILTER_TAG_FIELD => Ok(WireFilter::Field {
+                field: self.read_string()?,
+                operation: self.read_filter_operation()?,
+                value: self.read_value()?,
+            }),
+            FILTER_TAG_ALL => {
+                let count = self.read_len()?;
+                self.ensure_item_count(count, 1)?;
+                let mut predicates = Vec::with_capacity(count);
+                for _ in 0..count {
+                    predicates.push(self.read_filter()?);
+                }
+                Ok(WireFilter::All { predicates })
+            }
+            FILTER_TAG_ANY => {
+                let count = self.read_len()?;
+                self.ensure_item_count(count, 1)?;
+                let mut predicates = Vec::with_capacity(count);
+                for _ in 0..count {
+                    predicates.push(self.read_filter()?);
+                }
+                Ok(WireFilter::Any { predicates })
+            }
+            FILTER_TAG_NOT => Ok(WireFilter::Not {
+                predicate: Box::new(self.read_filter()?),
+            }),
+            tag => Err(format!("unknown wire filter tag {tag}")),
+        }
+    }
+
+    fn read_filter_operation(&mut self) -> Result<WireFilterOperation, String> {
+        match self.read_u8()? {
+            FILTER_OP_EQUAL => Ok(WireFilterOperation::Equal),
+            FILTER_OP_LESS_THAN => Ok(WireFilterOperation::LessThan),
+            FILTER_OP_LESS_THAN_OR_EQUAL => Ok(WireFilterOperation::LessThanOrEqual),
+            FILTER_OP_GREATER_THAN => Ok(WireFilterOperation::GreaterThan),
+            FILTER_OP_GREATER_THAN_OR_EQUAL => Ok(WireFilterOperation::GreaterThanOrEqual),
+            FILTER_OP_CONTAINS => Ok(WireFilterOperation::Contains),
+            FILTER_OP_STARTS_WITH => Ok(WireFilterOperation::StartsWith),
+            FILTER_OP_ENDS_WITH => Ok(WireFilterOperation::EndsWith),
+            FILTER_OP_IS_NULL => Ok(WireFilterOperation::IsNull),
+            tag => Err(format!("unknown wire filter operation {tag}")),
+        }
+    }
+}
+
+fn filter_operation_tag(operation: WireFilterOperation) -> u8 {
+    match operation {
+        WireFilterOperation::Equal => FILTER_OP_EQUAL,
+        WireFilterOperation::LessThan => FILTER_OP_LESS_THAN,
+        WireFilterOperation::LessThanOrEqual => FILTER_OP_LESS_THAN_OR_EQUAL,
+        WireFilterOperation::GreaterThan => FILTER_OP_GREATER_THAN,
+        WireFilterOperation::GreaterThanOrEqual => FILTER_OP_GREATER_THAN_OR_EQUAL,
+        WireFilterOperation::Contains => FILTER_OP_CONTAINS,
+        WireFilterOperation::StartsWith => FILTER_OP_STARTS_WITH,
+        WireFilterOperation::EndsWith => FILTER_OP_ENDS_WITH,
+        WireFilterOperation::IsNull => FILTER_OP_IS_NULL,
+    }
 }
 
 #[cfg(test)]
@@ -687,6 +839,10 @@ mod tests {
         5, 3, 0, 0, 0, 1, 1, 2, 254, 255, 255, 255, 255, 255, 255, 255, 4, 2, 0, 0, 0, 104, 105,
     ];
     const SCALAR_FIXTURE: &[u8] = &[3, 0, 0, 0, 0, 0, 0, 248, 63];
+    const FILTER_FIXTURE: &[u8] = &[
+        2, 2, 0, 0, 0, 1, 6, 0, 0, 0, 97, 99, 116, 105, 118, 101, 1, 1, 1, 4, 1, 4, 0, 0, 0, 110,
+        97, 109, 101, 7, 4, 1, 0, 0, 0, 65,
+    ];
     const DOCUMENT_BATCH_FIXTURE: &[u8] = &[
         2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 97, 98, 99, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0,
@@ -755,6 +911,37 @@ mod tests {
         // Act / Assert.
         assert_eq!(encode_scalar(&value).unwrap(), SCALAR_FIXTURE);
         assert_eq!(decode_scalar(SCALAR_FIXTURE).unwrap(), value);
+    }
+
+    // Scenario: Rust receives a native filter AST from Dart.
+    // Covers:
+    // - Filter all/not/field tags.
+    // - Filter operation tags and nested scalar values.
+    // - Byte-for-byte compatibility with the Dart filter fixture.
+    // Expected: The filter payload round-trips without JSON.
+    #[test]
+    fn encodes_and_decodes_filter_fixture() {
+        // Arrange.
+        let filter = WireFilter::All {
+            predicates: vec![
+                WireFilter::Field {
+                    field: "active".to_string(),
+                    operation: WireFilterOperation::Equal,
+                    value: WireValue::Bool(true),
+                },
+                WireFilter::Not {
+                    predicate: Box::new(WireFilter::Field {
+                        field: "name".to_string(),
+                        operation: WireFilterOperation::StartsWith,
+                        value: WireValue::String("A".to_string()),
+                    }),
+                },
+            ],
+        };
+
+        // Act / Assert.
+        assert_eq!(encode_filter(&filter).unwrap(), FILTER_FIXTURE);
+        assert_eq!(decode_filter(FILTER_FIXTURE).unwrap(), filter);
     }
 
     // Scenario: Rust receives a batch of document writes from Dart.
@@ -924,6 +1111,8 @@ mod tests {
         // Arrange / Act / Assert.
         assert!(decode_id_list(&IDS_FIXTURE[..IDS_FIXTURE.len() - 1]).is_err());
         assert!(decode_index_value(&[99]).is_err());
+        assert!(decode_filter(&[99]).is_err());
+        assert!(decode_filter(&[FILTER_TAG_FIELD, 1, 0, 0, 0, b'a', 99, TAG_NULL]).is_err());
         assert!(decode_id_list(&[255, 255, 255, 255]).is_err());
 
         let mut with_trailing = IDS_FIXTURE.to_vec();

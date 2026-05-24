@@ -61,9 +61,16 @@ same binary index values, and hash indexes now hash canonical binary
 11 because existing index and indexed-write FFI symbols changed their payload
 contract from JSON envelopes to binary buffers.
 
-JSON-03 still leaves manual document JSON, filter AST JSON,
-schema/reverse-index metadata JSON, and projection/aggregate result JSON for
-later stages.
+JSON-04 moved native query filters onto CindelWireV1. Dart now encodes
+`CindelFilterPredicate` trees as binary `WireFilter` AST payloads, and MDBX
+decodes them through the Rust wire codec before evaluating predicates over
+stored binary documents. This removes `NativeFilter::from_json` and preserves
+the existing equality, comparison, contains, startsWith, endsWith, all, any,
+not, and null behavior. The native ABI is now 12 because the existing
+`cindel_query_filter` payload contract changed from JSON to binary.
+
+JSON-04 still leaves manual document JSON, schema/reverse-index metadata JSON,
+and projection/aggregate result JSON for later stages.
 
 Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
 
@@ -75,6 +82,18 @@ Local JSON-03 native benchmark evidence, 5000 documents and 500 query repeats:
   - `query_equal`: 2.493 ms total, 200577.66 ops/s.
   - `query_range`: 17.133 ms total, 29183.45 ops/s.
   - `put_many_indexed`: 322.508 ms total, 15503.47 ops/s.
+
+Local JSON-04 native benchmark evidence, 5000 documents and 500 query repeats:
+
+- SQLite:
+  - `query_equal`: 327.122 ms total, 1528.48 ops/s.
+  - `query_range`: 350.099 ms total, 1428.17 ops/s.
+  - `put_many_indexed`: 22956.516 ms total, 217.80 ops/s.
+- MDBX:
+  - `query_equal`: 2.472 ms total, 202281.74 ops/s.
+  - `query_range`: 15.879 ms total, 31488.33 ops/s.
+  - `query_filter_score_lte_99`: 1013.160 ms total, 493.51 ops/s.
+  - `put_many_indexed`: 316.300 ms total, 15807.80 ops/s.
 
 The JSON-00 large benchmark showed SQLite winning the simple single-get
 microbenchmark while MDBX leads the native indexed and batch-oriented routes.

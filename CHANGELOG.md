@@ -5,6 +5,19 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.18
+
+- Completed JSON-04 by moving native query filters from JSON envelopes to
+  CindelWireV1 binary filter AST payloads.
+- Added Dart and Rust filter AST codecs with byte-for-byte fixture coverage and
+  deterministic malformed-payload rejection.
+- Replaced `NativeFilter::from_json` with binary filter decoding while
+  preserving existing equality, comparison, contains, startsWith, endsWith,
+  all, any, not, and null behavior.
+- Bumped the native ABI to 12 for the binary filter contract.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 12.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.18`.
+
 ## 0.2.17
 
 - Completed JSON-03 by moving indexed write metadata from JSON envelopes to

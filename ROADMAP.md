@@ -461,6 +461,15 @@ Guiding rules:
   - Switched hash-index canonicalization from stable JSON strings to stable
     hashes over canonical binary `WireIndexValue` bytes in both Dart and Rust.
   - Native ABI 11 marks the binary index/write contract.
+- [x] JSON-04: Binary native filter AST.
+  - Replaced native query filter JSON envelopes with CindelWireV1 `WireFilter`
+    AST payloads.
+  - Covered field, all, any, and not nodes plus equality, comparisons, string
+    contains/prefix/suffix, and `isNull` operation tags with Dart/Rust fixture
+    tests.
+  - Removed `NativeFilter::from_json` from the MDBX filter path while keeping
+    public query/filter APIs unchanged.
+  - Native ABI 12 marks the binary filter contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.

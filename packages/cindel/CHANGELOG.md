@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.18
+
+- Replaced native query filter JSON payloads with CindelWireV1 binary filter
+  AST buffers.
+- Added `WireFilter` codec coverage in Dart and Rust so field/group/not filters
+  are tested byte-for-byte across the FFI boundary.
+- Preserved current filter semantics for null equality, numeric comparisons,
+  string contains/prefix/suffix filters, list contains, object equality, and
+  all/any/not groups.
+- Bumped the native ABI to 12 while keeping the public Dart API unchanged.
+
 ## 0.2.17
 
 - Replaced JSON FFI payloads for index values, index entry lists, and manual

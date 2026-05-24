@@ -51,6 +51,34 @@ void main() {
       expect(decodeScalar(bytes(scalarFixture)), value);
     });
 
+    // Scenario: Dart sends a native filter AST to Rust.
+    // Covers:
+    // - Filter all/not/field tags.
+    // - Filter operation tags and nested scalar values.
+    // - Byte-for-byte compatibility with the Rust filter fixture.
+    // Expected: The filter payload round-trips without JSON.
+    test('encodes and decodes filter fixture', () {
+      // Arrange.
+      const filter = WireFilter.all([
+        WireFilter.field(
+          field: 'active',
+          operation: WireFilterOperation.equal,
+          value: WireValue.bool(true),
+        ),
+        WireFilter.not(
+          WireFilter.field(
+            field: 'name',
+            operation: WireFilterOperation.startsWith,
+            value: WireValue.string('A'),
+          ),
+        ),
+      ]);
+
+      // Act / Assert.
+      expect(encodeFilter(filter), filterFixture);
+      expect(decodeFilter(bytes(filterFixture)), filter);
+    });
+
     // Scenario: Dart batches document writes before crossing the FFI boundary.
     // Covers:
     // - DocumentWriteBatch count, id, byte length, and empty-byte handling.
@@ -205,6 +233,13 @@ void main() {
         () => decodeIdList(bytes([...idsFixture, 0])),
         throwsFormatException,
       );
+      expect(() => decodeFilter(bytes([99])), throwsFormatException);
+      expect(
+        () => decodeFilter(
+          bytes([wireFilterTagField, 1, 0, 0, 0, 97, 99, wireTagNull]),
+        ),
+        throwsFormatException,
+      );
     });
 
     // Scenario: Dart receives invalid primitive wire encodings.
@@ -286,6 +321,45 @@ const indexValueFixture = [
 ];
 
 const scalarFixture = [3, 0, 0, 0, 0, 0, 0, 248, 63];
+
+const filterFixture = [
+  2,
+  2,
+  0,
+  0,
+  0,
+  1,
+  6,
+  0,
+  0,
+  0,
+  97,
+  99,
+  116,
+  105,
+  118,
+  101,
+  1,
+  1,
+  1,
+  4,
+  1,
+  4,
+  0,
+  0,
+  0,
+  110,
+  97,
+  109,
+  101,
+  7,
+  4,
+  1,
+  0,
+  0,
+  0,
+  65,
+];
 
 const documentBatchFixture = [
   2,
