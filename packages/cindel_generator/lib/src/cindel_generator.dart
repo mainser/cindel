@@ -1334,8 +1334,16 @@ ClassElement? _embeddedElement(DartType type) {
 }
 
 bool _isPersistedFieldCandidate(FieldElement field) {
-  return !field.isStatic &&
-      (field.isOriginDeclaration || field.isOriginDeclaringFormalParameter);
+  if (field.isStatic) {
+    return false;
+  }
+  final dynamic dynamicField = field;
+  try {
+    return dynamicField.isOriginDeclaration == true ||
+        dynamicField.isOriginDeclaringFormalParameter == true;
+  } on NoSuchMethodError {
+    return dynamicField.isSynthetic != true;
+  }
 }
 
 List<_EmbeddedInfo> _collectEmbeddedTypes(List<_FieldInfo> fields) {

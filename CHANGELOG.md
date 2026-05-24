@@ -21,6 +21,8 @@ while the core design settles.
 - Updated `cindel` and `cindel_flutter_libs` to `0.3.4`.
 - Updated the Todo example dependency constraints and build number for the ABI
   17 package line.
+- Prepared `cindel_generator` 0.2.4 for pub.dev downgrade analysis by restoring
+  analyzer 9 compatibility while keeping analyzer 10+ field-origin handling.
 
 ## 0.3.3
 

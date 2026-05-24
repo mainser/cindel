@@ -13,7 +13,7 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.2.3
+  cindel_generator: ^0.2.4
 ```
 
 Define a collection:

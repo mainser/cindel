@@ -8,7 +8,7 @@ builders, filters, projections, and watcher helpers.
 ```yaml
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.2.0
+  cindel_generator: ^0.2.4
 ```
 
 Run the generator with:
@@ -30,5 +30,5 @@ The generator reads Cindel annotations from model classes and emits:
 
 ## Release Status
 
-This package is still pre-1.0.0. The `0.2.0` package line is the first normal
+This package is still pre-1.0.0. The `0.2.x` package line is the first normal
 release line after the coordinated Cindel development previews.

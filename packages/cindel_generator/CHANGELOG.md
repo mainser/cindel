@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Restored analyzer 9 downgrade compatibility while keeping analyzer 10+
+  field-origin handling, so pub.dev downgrade analysis and Riverpod generator
+  consumers can resolve the same package line.
+
 ## 0.2.3
 
 - Generated collection-level composite index metadata and equality where
