@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import 'wire.dart';
+
 const _assetId = 'package:cindel/src/native/bindings.dart';
 
 final class CindelNativeBindings {
@@ -2139,11 +2141,13 @@ List<int> _queryIds(
   String operation,
 ) {
   final bytes = _queryBytes(action, freeBuffer, operation);
-  final decoded = jsonDecode(utf8.decode(bytes));
-  if (decoded is! List) {
-    throw StateError('Native Cindel returned invalid index query ids.');
+  try {
+    return decodeIdList(bytes);
+  } on FormatException {
+    throw StateError('Native Cindel returned invalid binary id list.');
+  } catch (_) {
+    throw StateError('Native Cindel returned invalid binary id list.');
   }
-  return decoded.cast<int>();
 }
 
 Uint8List _queryBytes(

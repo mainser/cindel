@@ -1,11 +1,15 @@
 use crate::engine::CindelEngine;
 use crate::storage::{DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackendKind};
+use crate::wire::{
+    decode_document_write_batch, decode_id_list, encode_id_list,
+    WireDocumentWrite as WireBatchDocumentWrite,
+};
 
 use serde::Deserialize;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    9
+    10
 }
 
 #[no_mangle]
@@ -309,7 +313,7 @@ pub unsafe extern "C" fn cindel_get_many(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
 
@@ -377,7 +381,7 @@ pub unsafe extern "C" fn cindel_get_many_stored(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
 
@@ -410,7 +414,7 @@ pub unsafe extern "C" fn cindel_document_ids(
     };
 
     match engine.document_ids(collection) {
-        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -449,7 +453,7 @@ pub unsafe extern "C" fn cindel_delete_many(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
 
@@ -551,7 +555,7 @@ pub unsafe extern "C" fn cindel_query_index_equal(
     };
 
     match engine.query_index_equal(collection, index, &value) {
-        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -594,7 +598,7 @@ pub unsafe extern "C" fn cindel_query_index_range(
     };
 
     match engine.query_index_range(collection, index, lower.as_ref(), upper.as_ref()) {
-        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -624,7 +628,7 @@ pub unsafe extern "C" fn cindel_query_filter(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
     let Some(filter) = read_bytes(filter_ptr, filter_len) else {
@@ -632,7 +636,7 @@ pub unsafe extern "C" fn cindel_query_filter(
     };
 
     match engine.query_filter(collection, &ids, filter) {
-        Ok(ids) => write_json_ids(ids, out_ptr, out_len),
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
         Err(_) => -1,
     }
 }
@@ -662,7 +666,7 @@ pub unsafe extern "C" fn cindel_query_project(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
     let Some(field) = read_str(field_ptr, field_len) else {
@@ -707,7 +711,7 @@ pub unsafe extern "C" fn cindel_query_aggregate(
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         return -1;
     };
-    let Some(ids) = read_json_ids(ids_ptr, ids_len) else {
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
         return -1;
     };
     let Some(field) = read_str(field_ptr, field_len) else {
@@ -774,8 +778,8 @@ fn into_raw_bytes(bytes: Vec<u8>) -> (*mut u8, usize) {
     (ptr, len)
 }
 
-fn write_json_ids(ids: Vec<u64>, out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
-    match serde_json::to_vec(&ids) {
+fn write_wire_ids(ids: &[u64], out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
+    match encode_id_list(ids) {
         Ok(bytes) => {
             let (ptr, len) = into_raw_bytes(bytes);
             unsafe {
@@ -869,37 +873,16 @@ unsafe fn read_binary_document_writes(
     len: usize,
 ) -> Result<Vec<DocumentWrite>, ()> {
     let bytes = read_bytes(ptr, len).ok_or(())?;
-    if bytes.len() < 4 {
-        return Err(());
-    }
-    let count = read_u32_le(bytes, 0)? as usize;
-    let mut offset = 4;
-    let mut documents = Vec::with_capacity(count);
-    for _ in 0..count {
-        let id = read_u64_le(bytes, offset)?;
-        offset += 8;
-        let document_len = read_u32_le(bytes, offset)? as usize;
-        offset += 4;
-        let end = offset.checked_add(document_len).ok_or(())?;
-        if end > bytes.len() {
-            return Err(());
-        }
-        documents.push(DocumentWrite {
-            id,
-            bytes: bytes[offset..end].to_vec(),
-            indexes: Vec::new(),
-        });
-        offset = end;
-    }
-    if offset != bytes.len() {
-        return Err(());
-    }
-    Ok(documents)
+    decode_document_write_batch(bytes)
+        .map_err(|_| ())?
+        .into_iter()
+        .map(WireBatchDocumentWrite::into_document_write)
+        .collect()
 }
 
-unsafe fn read_json_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
+unsafe fn read_wire_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
     let bytes = read_bytes(ptr, len)?;
-    serde_json::from_slice::<Vec<u64>>(bytes).ok()
+    decode_id_list(bytes).ok()
 }
 
 unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, ()> {
@@ -918,18 +901,6 @@ unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option
         .map_err(|_| ())?
         .try_into()
         .map(Some)
-}
-
-fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ()> {
-    let end = offset.checked_add(4).ok_or(())?;
-    let slice = bytes.get(offset..end).ok_or(())?;
-    Ok(u32::from_le_bytes(slice.try_into().map_err(|_| ())?))
-}
-
-fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64, ()> {
-    let end = offset.checked_add(8).ok_or(())?;
-    let slice = bytes.get(offset..end).ok_or(())?;
-    Ok(u64::from_le_bytes(slice.try_into().map_err(|_| ())?))
 }
 
 #[derive(Deserialize)]
@@ -959,6 +930,16 @@ impl TryFrom<WireDocumentWrite> for DocumentWrite {
             id: value.id,
             bytes,
             indexes,
+        })
+    }
+}
+
+impl WireBatchDocumentWrite {
+    fn into_document_write(self) -> Result<DocumentWrite, ()> {
+        Ok(DocumentWrite {
+            id: self.id,
+            bytes: self.bytes,
+            indexes: Vec::new(),
         })
     }
 }

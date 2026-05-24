@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.2.15
+
+- Moved runtime FFI id-list payloads from JSON arrays to CindelWireV1 binary
+  buffers for document id scans, `getMany`, `getManyStored`, `deleteMany`,
+  indexed equality/range query results, native filter candidates/results,
+  projection candidates, and aggregate candidates.
+- Reused CindelWireV1 `DocumentWriteBatch` for generated binary batch writes so
+  the stored-document batch path no longer carries a one-off binary format.
+- Bumped the native ABI to 10 for the binary id-list contract.
+- Regenerated Windows, Android, and Linux prebuilt native libraries for ABI 10.
+- Updated `cindel` and `cindel_flutter_libs` to `0.2.15`.
+- Updated the Todo example dependency constraints and build number for the ABI
+  10 package line.
+
 ## 0.2.14
 
 - Added the internal CindelWireV1 binary codec foundation for the anti-JSON

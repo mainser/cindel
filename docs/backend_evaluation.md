@@ -38,14 +38,30 @@ index entry lists. Dart and Rust now share byte-for-byte fixture tests plus
 malformed-payload checks for truncation, invalid tags, invalid UTF-8, invalid
 bool bytes, trailing bytes, and unsafe native item counts.
 
-The next backend-relevant stage is JSON-02. It should move id-list and basic
-batch FFI traffic onto CindelWireV1, keep the legacy JSON symbols only for the
-short internal migration window if needed, and re-benchmark `get`, `getMany`,
-indexed queries, and `deleteMany` against the JSON-00 baseline. The JSON-00
-large benchmark showed SQLite winning the simple single-get microbenchmark
-while MDBX leads the native indexed and batch-oriented routes, so JSON-02 should
-also inspect per-get transaction, key-buffer, and FFI overhead before assuming
-storage engine latency is the cause.
+JSON-02 moved runtime id-list FFI traffic onto CindelWireV1. Dart now encodes
+ids with `encodeIdList`, native code decodes ids with `decode_id_list`, and
+native id results return through `encode_id_list`. This covers document id
+scans, manual `getMany`, generated `getManyStored`, `deleteMany`, indexed
+equality/range id results, native filter candidate/result ids, projection
+candidate ids, and aggregate candidate ids. Generated binary document batch
+writes also reuse CindelWireV1 `DocumentWriteBatch`, removing the previous
+one-off stored-document batch codec. The native ABI is now 10 because existing
+FFI id-list symbols changed their payload contract from JSON arrays to binary
+buffers. Windows, Android, and Linux prebuilt native libraries were regenerated
+for the ABI 10 contract.
+
+The next backend-relevant stage is JSON-03. It should move index values, index
+entries, indexed document writes, unique checks, and stable index hashing onto
+canonical binary payloads. JSON-02 still leaves manual document JSON, filter
+AST JSON, schema/reverse-index metadata JSON, and projection/aggregate result
+JSON for later stages.
+
+The JSON-00 large benchmark showed SQLite winning the simple single-get
+microbenchmark while MDBX leads the native indexed and batch-oriented routes.
+After JSON-02, re-benchmark `get`, `getMany`, indexed queries, and `deleteMany`
+against the JSON-00 baseline, with special attention to per-get transaction,
+key-buffer, and FFI overhead before assuming storage engine latency is the
+cause.
 
 ## Candidate: libmdbx
 

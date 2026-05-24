@@ -423,11 +423,22 @@ Guiding rules:
     index entry lists with byte-for-byte fixtures on both sides.
   - Added malformed-payload validation for truncation, invalid tags, invalid
     UTF-8, invalid bool bytes, trailing bytes, and unsafe native item counts.
-- [ ] JSON-02: Binary FFI ids and batches.
+- [x] JSON-02: Binary FFI ids and batches.
   - Replace JSON id-list payloads and basic batch lookup/delete FFI traffic
     with CindelWireV1 buffers.
+  - Runtime id-list FFI now uses CindelWireV1 for document id scans, many-read
+    calls, batched deletes, indexed query id results, native filter
+    candidates/results, projection candidates, and aggregate candidates.
+  - Generated binary document batch writes now reuse CindelWireV1
+    `DocumentWriteBatch`.
+  - Native ABI 10 marks the binary id-list contract.
+  - Windows, Android, and Linux prebuilt native libraries were regenerated for
+    ABI 10.
   - Re-benchmark `get`, `getMany`, indexed queries, and `deleteMany` against
     the JSON-00 baseline, with special attention to MDBX single-get overhead.
+- [ ] JSON-03: Binary index values and document writes.
+  - Replace JSON index values, index entries, indexed document writes, unique
+    checks, and stable index hashing with canonical CindelWireV1 payloads.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
@@ -496,9 +507,9 @@ The current implementation focus is the anti-JSON optimization line for
 indexes, expanded generated serialization, embedded value-object persistence,
 query/lazy watchers, binary MDBX document storage, and MDBX as the default
 backend with SQLite as an explicit fallback. The immediate next work is to use
-CindelWireV1 to remove JSON from id-list and batch FFI payloads, then continue
-through index writes, filters, manual documents, schema metadata, and native
-query planning.
+CindelWireV1 to remove JSON from index writes, index values, unique checks, and
+stable index hashing, then continue through filters, manual documents, schema
+metadata, and native query planning.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

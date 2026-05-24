@@ -9,7 +9,7 @@ scratch with its own native core, storage model, code generator, and public API.
 
 ## Status
 
-Cindel is in early pre-1.0 development. The current `0.2.13` line has the core
+Cindel is in early pre-1.0 development. The current `0.2.15` line has the core
 local database slice working end to end:
 
 ```text
@@ -49,6 +49,8 @@ The API is still experimental and can change before 1.0.
 - In-memory databases for tests and short-lived work.
 - Schema metadata registration and compatible additive version bumps.
 - Prebuilt native library package for Flutter consumers.
+- CindelWireV1 binary id-list FFI payloads on common many-read, query,
+  projection, aggregate, and delete paths.
 - Manual backend benchmark harness for SQLite versus MDBX.
 
 ## Packages
@@ -67,8 +69,8 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.2.13
-  cindel_flutter_libs: ^0.2.13
+  cindel: ^0.2.15
+  cindel_flutter_libs: ^0.2.15
 
 dev_dependencies:
   build_runner: ^2.15.0

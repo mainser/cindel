@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.15
+
+- Replaced JSON array id-list FFI payloads with CindelWireV1 binary buffers for
+  document ids, `getMany`, `getManyStored`, `deleteMany`, indexed query id
+  results, native filter candidate/result ids, projection candidate ids, and
+  aggregate candidate ids.
+- Reused CindelWireV1 `DocumentWriteBatch` for generated binary batch writes.
+- Bumped the native ABI to 10 for the binary id-list contract.
+- Kept the public Dart API unchanged; callers still use `getAll`,
+  `documentIds`, query builders, projections, aggregates, and deletes the same
+  way.
+
 ## 0.2.14
 
 - Added the internal CindelWireV1 binary codec foundation shared by Dart and

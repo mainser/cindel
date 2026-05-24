@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'native/bindings.dart';
+import 'native/wire.dart';
 import 'schema.dart';
 import 'text.dart';
 
@@ -1296,7 +1297,7 @@ Uint8List _encodeDocument(CindelDocument value) {
 }
 
 Uint8List _encodeIds(Iterable<int> ids) {
-  return Uint8List.fromList(utf8.encode(jsonEncode(ids.toList())));
+  return encodeIdList(ids.toList(growable: false));
 }
 
 List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {
@@ -1465,26 +1466,10 @@ Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
 }
 
 Uint8List _encodeBinaryBatchPutEntries(Map<int, Uint8List> entries) {
-  final length =
-      4 +
-      entries.entries.fold<int>(
-        0,
-        (total, entry) => total + 8 + 4 + entry.value.length,
-      );
-  final bytes = Uint8List(length);
-  final data = bytes.buffer.asByteData();
-  var offset = 0;
-  data.setUint32(offset, entries.length, Endian.little);
-  offset += 4;
-  for (final entry in entries.entries) {
-    data.setUint64(offset, entry.key, Endian.little);
-    offset += 8;
-    data.setUint32(offset, entry.value.length, Endian.little);
-    offset += 4;
-    bytes.setRange(offset, offset + entry.value.length, entry.value);
-    offset += entry.value.length;
-  }
-  return bytes;
+  return encodeDocumentWriteBatch([
+    for (final entry in entries.entries)
+      WireDocumentWrite(id: entry.key, bytes: entry.value),
+  ]);
 }
 
 Uint8List _encodeSchemaManifest(
