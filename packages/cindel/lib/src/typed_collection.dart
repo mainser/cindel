@@ -63,6 +63,10 @@ final class CindelTypedCollection<T> {
       return;
     }
 
+    if (_usesBinaryDocuments && schema.getId != null) {
+      return _putAllBinaryObjects(objectList);
+    }
+
     final binaryValues = _usesBinaryDocuments ? <int, Uint8List>{} : null;
     final values = binaryValues == null ? <int, CindelDocument>{} : null;
     final changedDocuments = binaryValues == null
@@ -104,6 +108,52 @@ final class CindelTypedCollection<T> {
     return database.putAll(schema.name, values!);
   }
 
+  Future<void> _putAllBinaryObjects(List<T> objects) async {
+    final nativeWriter = schema.writeNativeDocument;
+    final nativeFieldTypes = _nativeFieldTypes();
+    final nativeObjects = nativeWriter == null || nativeFieldTypes == null
+        ? null
+        : <T>[];
+    final binaryValues = nativeObjects == null ? <int, Uint8List>{} : null;
+    final seenIds = <int>{};
+    final ids = <int>[];
+    final getId = schema.getId!;
+    CindelSetId<T>? setId;
+
+    for (final object in objects) {
+      var id = getId(object);
+      if (id == autoIncrement) {
+        setId ??= _idSetter();
+        id = await database.allocateId(schema.name);
+        setId(object, id);
+      }
+      if (!seenIds.add(id)) {
+        throw ArgumentError.value(
+          id,
+          'objects',
+          'Bulk writes cannot contain duplicate ids.',
+        );
+      }
+      ids.add(id);
+      if (nativeObjects == null) {
+        binaryValues![id] = schema.toBinaryDocument!(object);
+      } else {
+        nativeObjects.add(object);
+      }
+    }
+
+    if (nativeObjects != null) {
+      return database.putAllNativeBinaryDocuments(
+        schema.name,
+        ids,
+        nativeObjects,
+        nativeFieldTypes!,
+        nativeWriter!,
+      );
+    }
+    return database.putAllBinaryDocuments(schema.name, binaryValues!);
+  }
+
   /// Stores many objects atomically.
   ///
   /// Alias for [putAll], provided for APIs that prefer `many` naming.
@@ -124,6 +174,16 @@ final class CindelTypedCollection<T> {
   /// Returns typed objects stored under [ids], preserving input order.
   Future<List<T?>> getAll(Iterable<int> ids) async {
     if (_usesBinaryDocuments) {
+      final nativeReader = schema.readNativeDocument;
+      final nativeFieldTypes = _nativeFieldTypes();
+      if (nativeReader != null && nativeFieldTypes != null) {
+        return database.getAllNativeBinaryDocuments(
+          schema.name,
+          ids,
+          nativeFieldTypes,
+          nativeReader,
+        );
+      }
       final documents = await database.getAllBinaryDocuments(schema.name, ids);
       return [
         for (final bytes in documents)
@@ -213,6 +273,27 @@ final class CindelTypedCollection<T> {
     return database.backend == CindelStorageBackend.mdbx &&
         schema.toBinaryDocument != null &&
         schema.fromBinaryDocument != null;
+  }
+
+  Uint8List? _nativeFieldTypes() {
+    final fields = schema.fields.toList(growable: false)
+      ..sort((left, right) => left.name.compareTo(right.name));
+    final bytes = Uint8List(fields.length);
+    for (var i = 0; i < fields.length; i += 1) {
+      final type = fields[i].binaryType;
+      final value = switch (type) {
+        'bool' => 0,
+        'int' => 1,
+        'double' => 2,
+        'string' => 3,
+        _ => null,
+      };
+      if (value == null) {
+        return null;
+      }
+      bytes[i] = value;
+    }
+    return bytes;
   }
 
   int _idFromDocument(CindelDocument document) {

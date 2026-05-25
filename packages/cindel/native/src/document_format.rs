@@ -766,13 +766,36 @@ pub(crate) fn index_entries_from_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
 ) -> Result<Vec<IndexEntry>, String> {
-    validate_binary_document(schema, bytes)?;
+    if bytes.starts_with(MAGIC) {
+        let document = BinaryDocument::parse(bytes)?;
+        return index_entries_from_binary_reader(schema, |index| {
+            if index >= document.field_count() {
+                Ok(None)
+            } else {
+                document.field_value(index)
+            }
+        });
+    }
+    let document = CompactBinaryDocument::parse(schema, bytes)?;
+    index_entries_from_binary_reader(schema, |index| {
+        if index >= document.field_count() {
+            Ok(None)
+        } else {
+            document.field_value(index)
+        }
+    })
+}
+
+fn index_entries_from_binary_reader(
+    schema: &CollectionSchemaManifest,
+    mut read_field: impl FnMut(usize) -> Result<Option<BinaryValue>, String>,
+) -> Result<Vec<IndexEntry>, String> {
     let mut entries = Vec::new();
     for (index, field) in schema.fields.iter().enumerate() {
         if !field.is_indexed {
             continue;
         }
-        let Some(value) = read_binary_field_at(schema, bytes, index)? else {
+        let Some(value) = read_field(index)? else {
             continue;
         };
         if field.index_type == "words" {
@@ -828,7 +851,7 @@ pub(crate) fn index_entries_from_binary_document(
                     composite.name, field_name
                 ));
             };
-            let Some(value) = read_binary_field_at(schema, bytes, field_index)? else {
+            let Some(value) = read_field(field_index)? else {
                 values.clear();
                 break;
             };

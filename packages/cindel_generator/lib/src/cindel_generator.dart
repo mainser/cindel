@@ -111,7 +111,19 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln(
       '  fromBinaryDocument: '
       '_\$${collection.dartName}FromCindelBinaryDocument,',
-    )
+    );
+  if (collection.supportsNativeWriter) {
+    buffer.writeln(
+      '  writeNativeDocument: '
+      '_\$${collection.dartName}WriteCindelNativeDocument,',
+    );
+    buffer.writeln(
+      '  readNativeDocument: '
+      '_\$${collection.dartName}ReadCindelNativeDocument,',
+    );
+  }
+  buffer
+    ..writeln('  getId: _\$${collection.dartName}GetCindelId,')
     ..writeln('  setId: _\$${collection.dartName}SetCindelId,')
     ..writeln(');')
     ..writeln()
@@ -283,6 +295,49 @@ String _emitCollection(_CollectionInfo collection) {
 
   buffer
     ..writeln('  return object;')
+    ..writeln('}')
+    ..writeln();
+
+  if (collection.supportsNativeWriter) {
+    buffer
+      ..writeln('void _\$${collection.dartName}WriteCindelNativeDocument(')
+      ..writeln('  CindelNativeDocumentWriter writer,')
+      ..writeln('  ${collection.dartName} object,')
+      ..writeln(') {');
+    for (var index = 0; index < collection.binaryFields.length; index += 1) {
+      buffer.write(collection.binaryFields[index].nativeWriteStatement(index));
+    }
+    buffer
+      ..writeln('}')
+      ..writeln();
+
+    buffer
+      ..writeln(
+        '${collection.dartName} _\$${collection.dartName}'
+        'ReadCindelNativeDocument(',
+      )
+      ..writeln('  CindelNativeDocumentReader reader,')
+      ..writeln('  int documentIndex,')
+      ..writeln(') {')
+      ..writeln('  final object = ${collection.dartName}();');
+    for (var index = 0; index < collection.binaryFields.length; index += 1) {
+      final field = collection.binaryFields[index];
+      buffer.writeln(
+        '  object.${field.name} = ${field.nativeReadExpression(index)};',
+      );
+    }
+    buffer
+      ..writeln('  return object;')
+      ..writeln('}')
+      ..writeln();
+  }
+
+  buffer
+    ..writeln(
+      'int _\$${collection.dartName}GetCindelId('
+      '${collection.dartName} object) {',
+    )
+    ..writeln('  return object.${collection.idField.name};')
     ..writeln('}')
     ..writeln()
     ..writeln(
@@ -480,6 +535,10 @@ final class _CollectionInfo {
     return fields.toList(growable: false)
       ..sort((left, right) => left.name.compareTo(right.name));
   }
+
+  bool get supportsNativeWriter {
+    return binaryFields.every((field) => field.supportsNativeWriter);
+  }
 }
 
 void _emitFilterMethods(
@@ -676,6 +735,55 @@ final class _FieldInfo {
   String get binaryType => type.binaryType;
 
   String get binaryFieldType => type.binaryFieldType;
+
+  bool get supportsNativeWriter {
+    return switch (binaryType) {
+      'bool' || 'int' || 'double' || 'string' => true,
+      _ => false,
+    };
+  }
+
+  String nativeWriteStatement(int index) {
+    final method = switch (binaryType) {
+      'bool' => 'writeBool',
+      'int' => 'writeInt',
+      'double' => 'writeDouble',
+      'string' => 'writeString',
+      final type => throw StateError('Unsupported native writer type `$type`.'),
+    };
+    final castType = switch (binaryType) {
+      'bool' => 'bool',
+      'int' => 'int',
+      'double' => 'double',
+      'string' => 'String',
+      final type => throw StateError('Unsupported native writer type `$type`.'),
+    };
+    final expression = toDocumentExpression;
+    if (!isNullable) {
+      return '  writer.$method($index, $expression as $castType);\n';
+    }
+    return '''
+  {
+    final value = $expression;
+    if (value == null) {
+      writer.writeNull($index);
+    } else {
+      writer.$method($index, value as $castType);
+    }
+  }
+''';
+  }
+
+  String nativeReadExpression(int index) {
+    final method = switch (binaryType) {
+      'bool' => 'readBool',
+      'int' => 'readInt',
+      'double' => 'readDouble',
+      'string' => 'readString',
+      final type => throw StateError('Unsupported native reader type `$type`.'),
+    };
+    return fromStoredValueExpression('reader.$method(documentIndex, $index)');
+  }
 
   String fromDocumentExpression(String fieldLiteral) {
     return type.fromStoredExpression('document[$fieldLiteral]');

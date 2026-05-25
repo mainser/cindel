@@ -2543,8 +2543,7 @@ fn encode_document_for_storage(
     let Some(schema) = schema else {
         return Ok((bytes.to_vec(), indexes.to_vec()));
     };
-    if validate_binary_document(schema, bytes).is_ok() {
-        let indexes = index_entries_from_binary_document(schema, bytes)?;
+    if let Ok(indexes) = index_entries_from_binary_document(schema, bytes) {
         return Ok((bytes.to_vec(), indexes));
     }
     if validate_generic_document(bytes).is_ok() {

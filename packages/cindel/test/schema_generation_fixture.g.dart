@@ -196,6 +196,7 @@ final UserSchema = CindelCollectionSchema<User>(
   fromDocument: _$UserFromCindelDocument,
   toBinaryDocument: _$UserToCindelBinaryDocument,
   fromBinaryDocument: _$UserFromCindelBinaryDocument,
+  getId: _$UserGetCindelId,
   setId: _$UserSetCindelId,
 );
 
@@ -1366,6 +1367,10 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
       .toList(growable: false);
   object.username = fields[16] == null ? null : fields[16] as String?;
   return object;
+}
+
+int _$UserGetCindelId(User object) {
+  return object.id;
 }
 
 void _$UserSetCindelId(User object, int id) {

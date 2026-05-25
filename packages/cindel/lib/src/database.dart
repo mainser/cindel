@@ -374,6 +374,45 @@ class CindelDatabase {
     );
   }
 
+  /// Stores generated typed objects through the native binary document writer.
+  Future<void> putAllNativeBinaryDocuments<T>(
+    String collection,
+    List<int> ids,
+    List<T> objects,
+    Uint8List fieldTypes,
+    CindelWriteNativeDocument<T> writeDocument,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    if (objects.isEmpty) {
+      return;
+    }
+    if (ids.length != objects.length) {
+      throw ArgumentError.value(
+        ids.length,
+        'ids',
+        'Must match the object count.',
+      );
+    }
+    for (final id in ids) {
+      _checkId(id);
+    }
+
+    _bindings.putManyNativeDocuments(
+      handle,
+      collection,
+      fieldTypes,
+      ids,
+      objects,
+      writeDocument,
+    );
+    _markNativeCollectionChanged(
+      CindelChangeSet.upserts(collection, null, ids: ids),
+    );
+  }
+
   /// Stores many documents atomically.
   ///
   /// Alias for [putAll], provided for APIs that prefer `many` naming.
@@ -459,6 +498,33 @@ class CindelDatabase {
       _encodeIds(idList),
     );
     return _decodeBinaryDocumentBatch(bytes);
+  }
+
+  /// Reads generated typed objects through the native binary document reader.
+  Future<List<T?>> getAllNativeBinaryDocuments<T>(
+    String collection,
+    Iterable<int> ids,
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readDocument,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return <T?>[];
+    }
+
+    return _bindings.getManyNativeDocuments(
+      handle,
+      collection,
+      _encodeIds(idList),
+      fieldTypes,
+      readDocument,
+    );
   }
 
   /// Returns every document in [collection], ordered by id.

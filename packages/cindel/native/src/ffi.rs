@@ -449,6 +449,27 @@ pub unsafe extern "C" fn cindel_native_document_reader_is_present(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_bool(
+    reader: *const CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    out_value: *mut bool,
+) -> bool {
+    let Some(reader) = reader.as_ref() else {
+        return false;
+    };
+    let Some(value) = reader.read_bool(document_index, field_index as usize) else {
+        return false;
+    };
+    if let Some(out_value) = out_value.as_mut() {
+        *out_value = value;
+        true
+    } else {
+        false
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_int(
     reader: *const CindelNativeDocumentReader,
     document_index: usize,
@@ -466,6 +487,27 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_int(
     };
     *out_value = value;
     true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_double(
+    reader: *const CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    out_value: *mut f64,
+) -> bool {
+    let Some(reader) = reader.as_ref() else {
+        return false;
+    };
+    let Some(value) = reader.read_double(document_index, field_index as usize) else {
+        return false;
+    };
+    if let Some(out_value) = out_value.as_mut() {
+        *out_value = value;
+        true
+    } else {
+        false
+    }
 }
 
 #[no_mangle]
@@ -1522,6 +1564,18 @@ impl CindelNativeBatchWriter {
 }
 
 impl CindelNativeDocumentReader {
+    fn read_bool(&self, document_index: usize, field_index: usize) -> Option<bool> {
+        self.layout
+            .require_field(field_index, NativeBatchFieldType::Bool)?;
+        let bytes = self.document_bytes(document_index)?;
+        let offset = self.layout.absolute_offset(field_index)?;
+        match *bytes.get(offset)? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
     fn read_int(&self, document_index: usize, field_index: usize) -> Option<i64> {
         self.layout
             .require_field(field_index, NativeBatchFieldType::Int)?;
@@ -1532,6 +1586,19 @@ impl CindelNativeDocumentReader {
             None
         } else {
             Some(value)
+        }
+    }
+
+    fn read_double(&self, document_index: usize, field_index: usize) -> Option<f64> {
+        self.layout
+            .require_field(field_index, NativeBatchFieldType::Double)?;
+        let bytes = self.document_bytes(document_index)?;
+        let offset = self.layout.absolute_offset(field_index)?;
+        let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+        if value.is_finite() {
+            Some(value)
+        } else {
+            None
         }
     }
 

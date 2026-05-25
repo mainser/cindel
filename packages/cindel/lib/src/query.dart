@@ -480,6 +480,10 @@ final class CindelQuery<T> {
 
   /// Returns every object matching this query.
   Future<List<T>> findAll() async {
+    final nativeObjects = await _matchingNativeObjects();
+    if (nativeObjects != null) {
+      return nativeObjects;
+    }
     final documents = await _matchingDocuments();
     return documents.map(_schema.fromDocument).toList(growable: false);
   }
@@ -590,6 +594,51 @@ final class CindelQuery<T> {
       matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
     }
     return matchingDocuments;
+  }
+
+  Future<List<T>>? _matchingNativeObjects() {
+    final nativePlan = _nativePlan();
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (nativePlan == null ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+    return () async {
+      final ids = await _database.queryNativePlanIds(_schema.name, nativePlan);
+      final objects = await _database.getAllNativeBinaryDocuments(
+        _schema.name,
+        ids,
+        fieldTypes,
+        readNativeDocument,
+      );
+      return [
+        for (final object in objects)
+          if (object != null) object,
+      ];
+    }();
+  }
+
+  Uint8List? _nativeFieldTypes() {
+    final fields = _schema.fields.toList(growable: false)
+      ..sort((left, right) => left.name.compareTo(right.name));
+    final bytes = Uint8List(fields.length);
+    for (var i = 0; i < fields.length; i += 1) {
+      final type = fields[i].binaryType;
+      final value = switch (type) {
+        'bool' => 0,
+        'int' => 1,
+        'double' => 2,
+        'string' => 3,
+        _ => null,
+      };
+      if (value == null) {
+        return null;
+      }
+      bytes[i] = value;
+    }
+    return bytes;
   }
 
   CindelNativeQueryPlan? _nativePlan({int? limitOverride}) {

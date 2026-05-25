@@ -34,6 +34,11 @@ while the core design settles.
 - Reworked the native compact-document writer to use a single object buffer
   and static null template.
 - Added an MDBX fast path for no-schema/no-index batch document writes.
+- Added generated id getters for typed schemas and preserved generated field
+  order in native schema registration.
+- Added generated native typed writer and reader serializers for supported
+  schema fields.
+- Reduced native index extraction reparsing for schema-backed binary documents.
 - Bumped the native ABI to 18.
 
 ## 0.3.4
