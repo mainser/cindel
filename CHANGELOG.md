@@ -29,6 +29,12 @@ while the core design settles.
   once per native `putAll`.
 - Aligned native schema registration with generated binary document field
   slots.
+- Added native compact-document writer and reader handles for Isar-like FFI
+  typed paths.
+- Reworked the native compact-document writer to use a single object buffer
+  and static null template.
+- Added an MDBX fast path for no-schema/no-index batch document writes.
+- Bumped the native ABI to 18.
 
 ## 0.3.4
 

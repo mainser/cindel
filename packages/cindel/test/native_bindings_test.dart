@@ -21,7 +21,7 @@ void main() {
       final abiVersion = bindings.abiVersion;
 
       // Assert.
-      expect(abiVersion, 17);
+      expect(abiVersion, 18);
     });
 
     // Scenario: A database is opened and then closed through the public API.

@@ -2421,6 +2421,20 @@ fn put_many_documents_with_indexes(
 
     let schema = collection_schema(transaction, tables, collection)?;
     if schema.is_none() {
+        if documents.iter().all(|document| document.indexes.is_empty()) {
+            let documents_table = create_documents_table(transaction, collection)?;
+            for document in documents {
+                transaction
+                    .put(
+                        &documents_table,
+                        document_table_key(document.id),
+                        &document.bytes,
+                        WriteFlags::UPSERT,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            return Ok(());
+        }
         for document in documents {
             put_document_with_indexes(
                 transaction,
