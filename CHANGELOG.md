@@ -15,6 +15,9 @@ while the core design settles.
   minimum map size, 128 MiB default maximum map size, 5 MiB growth steps, and
   20 MiB shrink threshold.
 - Changed the MDBX default table limit from 2048 to 512.
+- Removed `MDBX_ACCEDE` from the default MDBX open flags.
+- Shortened MDBX document table names and marked the storage layout as
+  `mdbx-v4`.
 
 ## 0.3.4
 

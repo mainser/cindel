@@ -298,14 +298,14 @@ impl MdbxStorage {
         ensure_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV3,
+            StorageLayoutVersion::MdbxV4,
             DocumentFormatVersion::BinaryV1,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV3,
+            StorageLayoutVersion::MdbxV4,
             DocumentFormatVersion::BinaryV1,
             SchemaMetadataVersion::BinaryV1,
         )?;
@@ -727,7 +727,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
                 permissions: Some(0o600),
                 max_tables: Some(MDBX_MAX_TABLES),
                 no_sub_dir: true,
-                accede: true,
+                accede: false,
                 coalesce: true,
                 mode: Mode::ReadWrite(ReadWriteOptions {
                     sync_mode: SyncMode::NoMetaSync,
@@ -1652,7 +1652,7 @@ where
 }
 
 fn documents_table_name(collection: &str) -> String {
-    format!("v2:documents:{collection}")
+    format!("d:{collection}")
 }
 
 fn index_table_name(collection: &str, index: &str) -> String {
@@ -2600,6 +2600,7 @@ fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
         "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
         "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
         "mdbx-v3" => Ok(StorageLayoutVersion::MdbxV3),
+        "mdbx-v4" => Ok(StorageLayoutVersion::MdbxV4),
         _ => Err(format!("unknown storage layout version `{value}`")),
     }
 }
