@@ -399,6 +399,9 @@ class CindelDatabase {
     for (final id in ids) {
       _checkId(id);
     }
+    final trackChanges =
+        _activeTransaction == _TransactionMode.write ||
+        _hasWatchers(collection);
 
     _bindings.putManyNativeDocuments(
       handle,
@@ -407,10 +410,42 @@ class CindelDatabase {
       ids,
       objects,
       writeDocument,
+      trackChanges,
     );
     _markNativeCollectionChanged(
       CindelChangeSet.upserts(collection, null, ids: ids),
     );
+  }
+
+  /// Stores generated typed objects through the native writer in one Dart pass.
+  Future<void> putAllNativeBinaryObjects<T>(
+    String collection,
+    List<T> objects,
+    Uint8List fieldTypes,
+    CindelGetId<T> getId,
+    CindelWriteNativeDocument<T> writeDocument,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    if (objects.isEmpty) {
+      return;
+    }
+    final trackChanges =
+        _activeTransaction == _TransactionMode.write ||
+        _hasWatchers(collection);
+
+    _bindings.putManyNativeObjects(
+      handle,
+      collection,
+      fieldTypes,
+      objects,
+      getId,
+      writeDocument,
+      trackChanges,
+    );
+    _markNativeCollectionChanged(CindelChangeSet.upserts(collection, null));
   }
 
   /// Stores many documents atomically.
@@ -522,6 +557,26 @@ class CindelDatabase {
       handle,
       collection,
       _encodeIds(idList),
+      fieldTypes,
+      readDocument,
+    );
+  }
+
+  /// Reads generated typed query results through the native binary document
+  /// reader without a separate id-list round trip.
+  Future<List<T>> queryNativePlanObjects<T>(
+    String collection,
+    CindelNativeQueryPlan plan,
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readDocument,
+  ) async {
+    final handle = _checkOpen();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    return _bindings.queryPlanNativeDocuments(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
       fieldTypes,
       readDocument,
     );
@@ -1079,7 +1134,7 @@ class CindelDatabase {
           entry.key: entry.value.build(),
       };
       final changes = mode == _TransactionMode.write
-          ? _changesFromNative(_takeNativeChangeSets(handle), localChanges)
+          ? _nativeChangesForWatchers(handle, localChanges)
           : const <CindelChangeSet>[];
       _changesInTransaction
         ..clear()
@@ -1667,12 +1722,31 @@ class CindelDatabase {
     }
 
     final handle = _checkOpen();
+    if (!_hasWatchers(fallback.collection)) {
+      _bindings.discardChanges(handle);
+      return;
+    }
     final changes = _changesFromNative(_takeNativeChangeSets(handle), {
       fallback.collection: fallback,
     });
     for (final change in changes) {
       _notifyWatchers(change);
     }
+  }
+
+  List<CindelChangeSet> _nativeChangesForWatchers(
+    Pointer<Void> handle,
+    Map<String, CindelChangeSet> localChanges,
+  ) {
+    if (!localChanges.keys.any(_hasWatchers)) {
+      _bindings.discardChanges(handle);
+      return const [];
+    }
+    return _changesFromNative(_takeNativeChangeSets(handle), localChanges);
+  }
+
+  bool _hasWatchers(String collection) {
+    return _watchersByCollection[collection]?.isNotEmpty ?? false;
   }
 
   List<WireChangeSet> _takeNativeChangeSets(Pointer<Void> handle) {

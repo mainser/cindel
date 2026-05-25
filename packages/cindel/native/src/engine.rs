@@ -92,6 +92,31 @@ impl CindelEngine {
         self.storage.put_many_indexed(collection, documents)
     }
 
+    pub fn put_many_indexed_with_change_tracking(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+    ) -> Result<(), String> {
+        self.storage
+            .put_many_indexed_with_change_tracking(collection, documents, track_changes)
+    }
+
+    pub fn put_many_indexed_with_options(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+        trust_schema_documents: bool,
+    ) -> Result<(), String> {
+        self.storage.put_many_indexed_with_options(
+            collection,
+            documents,
+            track_changes,
+            trust_schema_documents,
+        )
+    }
+
     pub fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
         self.storage.delete(collection, id)
     }
@@ -207,6 +232,10 @@ impl CindelEngine {
 
     pub(crate) fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
         self.storage.take_change_sets()
+    }
+
+    pub(crate) fn discard_change_sets(&mut self) -> Result<(), String> {
+        self.storage.take_change_sets().map(|_| ())
     }
 
     pub fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {

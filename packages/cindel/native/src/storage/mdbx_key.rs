@@ -64,6 +64,14 @@ pub(crate) fn encode_table_index_value(value: &IndexValue) -> Result<Vec<u8>, St
     Ok(key)
 }
 
+pub(crate) fn encode_table_index_value_into(
+    value: &IndexValue,
+    key: &mut Vec<u8>,
+) -> Result<(), String> {
+    key.clear();
+    push_table_index_value(key, value)
+}
+
 pub(crate) fn encode_table_index_range(
     lower: Option<&IndexValue>,
     upper: Option<&IndexValue>,

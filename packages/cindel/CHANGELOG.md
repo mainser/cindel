@@ -33,7 +33,25 @@
 - Added generated native typed writer and reader serializers for supported
   schema fields.
 - Reduced native index extraction reparsing for schema-backed binary documents.
-- Bumped the native ABI to 18.
+- Streamed schema-backed indexed native `putAll` without prepared document
+  batches.
+- Optimized compact-document index iteration for typed MDBX writes.
+- Reduced native writer string marshaling overhead for large repeated strings.
+- Skipped native change-set id tracking for generated writes when no watchers
+  are registered.
+- Treated generated native-writer documents as trusted schema documents during
+  MDBX typed batch writes.
+- Optimized ASCII word-index extraction for generated binary documents.
+- Replaced per-entry MDBX index table hash lookups with prepared table lookup.
+- Reused MDBX index key buffers during generated typed batch writes.
+- Added native query-plan document readers for generated typed `findAll`
+  results.
+- Added ASCII string reads and native repeated-large-string interning to the
+  generated document reader.
+- Skipped redundant query-plan presence checks during generated typed
+  materialization.
+- Changed the native release profile from size-optimized to speed-optimized.
+- Bumped the native ABI to 23.
 
 ## 0.3.4
 

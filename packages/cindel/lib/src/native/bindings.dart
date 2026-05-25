@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
@@ -190,6 +191,7 @@ final class CindelNativeBindings {
     List<int> ids,
     List<T> objects,
     CindelWriteNativeDocument<T> writeDocument,
+    bool trackChanges,
   ) {
     if (ids.length != objects.length) {
       throw ArgumentError.value(
@@ -197,9 +199,6 @@ final class CindelNativeBindings {
         'ids',
         'Must match the object count.',
       );
-    }
-    for (final id in ids) {
-      _checkId(id);
     }
 
     final writer = _withNativeBytes(fieldTypes, (
@@ -232,15 +231,82 @@ final class CindelNativeBindings {
         collectionPointer,
         collectionLength,
       ) {
-        return _functions.nativeBatchWriterFinish(
+        return _functions.nativeBatchWriterFinishWithOptions(
           handle,
           collectionPointer,
           collectionLength,
           writer,
+          trackChanges ? 1 : 0,
         );
       });
       finished = true;
       _checkStatus(status, 'put many native documents');
+    } finally {
+      if (!finished) {
+        _functions.nativeBatchWriterAbort(writer);
+      }
+    }
+  }
+
+  void putManyNativeObjects<T>(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List fieldTypes,
+    List<T> objects,
+    CindelGetId<T> getId,
+    CindelWriteNativeDocument<T> writeDocument,
+    bool trackChanges,
+  ) {
+    final writer = _withNativeBytes(fieldTypes, (
+      fieldTypesPointer,
+      fieldTypesLength,
+    ) {
+      return _functions.nativeBatchWriterNew(
+        fieldTypesPointer,
+        fieldTypesLength,
+        objects.length,
+      );
+    });
+    if (writer == nullptr) {
+      throw StateError('Native Cindel batch writer allocation failed.');
+    }
+
+    var finished = false;
+    try {
+      final nativeWriter = _CindelNativeDocumentWriter(_functions, writer);
+      final seenIds = <int>{};
+      try {
+        for (final object in objects) {
+          final id = getId(object);
+          _checkId(id);
+          if (!seenIds.add(id)) {
+            throw ArgumentError.value(
+              id,
+              'objects',
+              'Bulk writes cannot contain duplicate ids.',
+            );
+          }
+          _functions.nativeBatchWriterBeginDocument(writer, id);
+          writeDocument(nativeWriter, object);
+          _functions.nativeBatchWriterEndDocument(writer);
+        }
+      } finally {
+        nativeWriter.release();
+      }
+      final status = _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _functions.nativeBatchWriterFinishWithOptions(
+          handle,
+          collectionPointer,
+          collectionLength,
+          writer,
+          trackChanges ? 1 : 0,
+        );
+      });
+      finished = true;
+      _checkStatus(status, 'put many native objects');
     } finally {
       if (!finished) {
         _functions.nativeBatchWriterAbort(writer);
@@ -401,6 +467,46 @@ final class CindelNativeBindings {
     });
   }
 
+  List<T> queryPlanNativeDocuments<T>(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readDocument,
+  ) {
+    return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
+      return _withNativeBytes(plan, (planPointer, planLength) {
+        return _withNativeBytes(fieldTypes, (fieldTypesPointer, fieldTypesLen) {
+          final readerPointer = _functions.nativeDocumentReaderNewFromQueryPlan(
+            handle,
+            collectionPointer,
+            collectionLen,
+            planPointer,
+            planLength,
+            fieldTypesPointer,
+            fieldTypesLen,
+          );
+          if (readerPointer == nullptr) {
+            throw StateError(
+              'Native Cindel query document reader allocation failed.',
+            );
+          }
+          final reader = _CindelNativeDocumentReader(_functions, readerPointer);
+          try {
+            final length = _functions.nativeDocumentReaderLen(readerPointer);
+            return List<T>.generate(
+              length,
+              (index) => readDocument(reader, index),
+              growable: false,
+            );
+          } finally {
+            reader.release();
+          }
+        });
+      });
+    });
+  }
+
   List<int> documentIds(Pointer<Void> handle, String collection) {
     return _queryIds(
       (outPointer, outLength) {
@@ -480,6 +586,10 @@ final class CindelNativeBindings {
       _functions.freeBuffer,
       'take changes',
     );
+  }
+
+  void discardChanges(Pointer<Void> handle) {
+    _checkStatus(_functions.discardChanges(handle), 'discard changes');
   }
 
   int? schemaVersion(Pointer<Void> handle, String collection) {
@@ -879,11 +989,13 @@ final class CindelNativeBindings {
 
 final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
   _CindelNativeDocumentWriter(this._functions, this._writer)
-    : _stringBytes = _ReusableNativeBytes(256);
+    : _stringBytes = _ReusableNativeBytes(256),
+      _largeStringCache = LinkedHashMap<String, Uint8List>();
 
   final _CindelNativeFunctions _functions;
   final Pointer<Void> _writer;
   final _ReusableNativeBytes _stringBytes;
+  final LinkedHashMap<String, Uint8List> _largeStringCache;
 
   @override
   void writeNull(int fieldIndex) {
@@ -907,18 +1019,40 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
 
   @override
   void writeString(int fieldIndex, String value) {
-    _stringBytes.withBytes(utf8.encode(value), (pointer, length) {
+    final cachedBytes = _cachedLargeStringBytes(value);
+    final write = (Pointer<Uint8> pointer, int length) {
       _functions.nativeBatchWriterWriteBytes(
         _writer,
         fieldIndex,
         pointer,
         length,
       );
-    });
+    };
+    if (cachedBytes == null) {
+      _stringBytes.withUtf8String(value, write);
+    } else {
+      _stringBytes.withBytes(cachedBytes, write);
+    }
   }
 
   void release() {
     _stringBytes.free();
+  }
+
+  Uint8List? _cachedLargeStringBytes(String value) {
+    if (value.length < 128) {
+      return null;
+    }
+    final existing = _largeStringCache[value];
+    if (existing != null) {
+      return existing;
+    }
+    final bytes = Uint8List.fromList(utf8.encode(value));
+    if (_largeStringCache.length >= 8) {
+      _largeStringCache.remove(_largeStringCache.keys.first);
+    }
+    _largeStringCache[value] = bytes;
+    return bytes;
   }
 }
 
@@ -929,6 +1063,31 @@ final class _ReusableNativeBytes {
 
   Pointer<Uint8> pointer;
   int capacity;
+
+  void withUtf8String(String value, void Function(Pointer<Uint8>, int) action) {
+    var isAscii = true;
+    for (var i = 0; i < value.length; i += 1) {
+      if (value.codeUnitAt(i) > 0x7f) {
+        isAscii = false;
+        break;
+      }
+    }
+    if (!isAscii) {
+      withBytes(utf8.encode(value), action);
+      return;
+    }
+
+    if (value.length > capacity) {
+      calloc.free(pointer);
+      capacity = value.length;
+      pointer = calloc<Uint8>(capacity);
+    }
+    final list = pointer.asTypedList(value.length);
+    for (var i = 0; i < value.length; i += 1) {
+      list[i] = value.codeUnitAt(i);
+    }
+    action(pointer, value.length);
+  }
 
   void withBytes(List<int> bytes, void Function(Pointer<Uint8>, int) action) {
     if (bytes.length > capacity) {
@@ -951,7 +1110,9 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _intValue = calloc<Int64>(),
       _doubleValue = calloc<Double>(),
       _bytesPointer = calloc<Pointer<Uint8>>(),
-      _bytesLength = calloc<Size>();
+      _bytesLength = calloc<Size>(),
+      _stringIsAscii = calloc<Bool>(),
+      _stringInternId = calloc<Uint64>();
 
   final _CindelNativeFunctions _functions;
   final Pointer<Void> _reader;
@@ -960,6 +1121,9 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Double> _doubleValue;
   final Pointer<Pointer<Uint8>> _bytesPointer;
   final Pointer<Size> _bytesLength;
+  final Pointer<Bool> _stringIsAscii;
+  final Pointer<Uint64> _stringInternId;
+  final Map<int, String> _internedStrings = {};
 
   @override
   bool isPresent(int documentIndex) {
@@ -1007,16 +1171,30 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
 
   @override
   String? readString(int documentIndex, int fieldIndex) {
-    if (!_functions.nativeDocumentReaderReadBytes(
+    if (!_functions.nativeDocumentReaderReadString(
       _reader,
       documentIndex,
       fieldIndex,
       _bytesPointer,
       _bytesLength,
+      _stringIsAscii,
+      _stringInternId,
     )) {
       return null;
     }
-    return utf8.decode(_bytesPointer.value.asTypedList(_bytesLength.value));
+    final internId = _stringInternId.value;
+    if (internId != 0) {
+      final cached = _internedStrings[internId];
+      if (cached != null) {
+        return cached;
+      }
+    }
+    final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
+    final value = _decodeNativeString(bytes, isAscii: _stringIsAscii.value);
+    if (internId != 0) {
+      _internedStrings[internId] = value;
+    }
+    return value;
   }
 
   void release() {
@@ -1026,8 +1204,17 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       ..free(_intValue)
       ..free(_doubleValue)
       ..free(_bytesPointer)
-      ..free(_bytesLength);
+      ..free(_bytesLength)
+      ..free(_stringIsAscii)
+      ..free(_stringInternId);
   }
+}
+
+String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
+  if (isAscii) {
+    return String.fromCharCodes(bytes);
+  }
+  return utf8.decode(bytes);
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -1105,6 +1292,9 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>)
   get nativeBatchWriterFinish;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>, int)
+  get nativeBatchWriterFinishWithOptions;
+
   void Function(Pointer<Void>) get nativeBatchWriterAbort;
 
   Pointer<Void> Function(
@@ -1117,6 +1307,17 @@ abstract interface class _CindelNativeFunctions {
     int,
   )
   get nativeDocumentReaderNew;
+
+  Pointer<Void> Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get nativeDocumentReaderNewFromQueryPlan;
 
   int Function(Pointer<Void>) get nativeDocumentReaderLen;
 
@@ -1133,6 +1334,17 @@ abstract interface class _CindelNativeFunctions {
 
   bool Function(Pointer<Void>, int, int, Pointer<Pointer<Uint8>>, Pointer<Size>)
   get nativeDocumentReaderReadBytes;
+
+  bool Function(
+    Pointer<Void>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+    Pointer<Bool>,
+    Pointer<Uint64>,
+  )
+  get nativeDocumentReaderReadString;
 
   void Function(Pointer<Void>) get nativeDocumentReaderFree;
 
@@ -1197,6 +1409,8 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
   get takeChanges;
+
+  int Function(Pointer<Void>) get discardChanges;
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion;
@@ -1481,42 +1695,53 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
           .lookupFunction<
             Void Function(Pointer<Void>, Uint64),
             void Function(Pointer<Void>, int)
-          >('cindel_native_batch_writer_begin_document'),
+          >('cindel_native_batch_writer_begin_document', isLeaf: true),
       nativeBatchWriterWriteNull = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint32),
             void Function(Pointer<Void>, int)
-          >('cindel_native_batch_writer_write_null'),
+          >('cindel_native_batch_writer_write_null', isLeaf: true),
       nativeBatchWriterWriteBool = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint32, Bool),
             void Function(Pointer<Void>, int, bool)
-          >('cindel_native_batch_writer_write_bool'),
+          >('cindel_native_batch_writer_write_bool', isLeaf: true),
       nativeBatchWriterWriteInt = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint32, Int64),
             void Function(Pointer<Void>, int, int)
-          >('cindel_native_batch_writer_write_int'),
+          >('cindel_native_batch_writer_write_int', isLeaf: true),
       nativeBatchWriterWriteDouble = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint32, Double),
             void Function(Pointer<Void>, int, double)
-          >('cindel_native_batch_writer_write_double'),
+          >('cindel_native_batch_writer_write_double', isLeaf: true),
       nativeBatchWriterWriteBytes = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
             void Function(Pointer<Void>, int, Pointer<Uint8>, int)
-          >('cindel_native_batch_writer_write_bytes'),
+          >('cindel_native_batch_writer_write_bytes', isLeaf: true),
       nativeBatchWriterEndDocument = library
           .lookupFunction<
             Void Function(Pointer<Void>),
             void Function(Pointer<Void>)
-          >('cindel_native_batch_writer_end_document'),
+          >('cindel_native_batch_writer_end_document', isLeaf: true),
       nativeBatchWriterFinish = library
           .lookupFunction<
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Void>),
             int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>)
           >('cindel_native_batch_writer_finish'),
+      nativeBatchWriterFinishWithOptions = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Void>,
+              Int32,
+            ),
+            int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>, int)
+          >('cindel_native_batch_writer_finish_with_options'),
       nativeBatchWriterAbort = library
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -1543,6 +1768,27 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_native_document_reader_new'),
+      nativeDocumentReaderNewFromQueryPlan = library
+          .lookupFunction<
+            Pointer<Void> Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            Pointer<Void> Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_native_document_reader_new_from_query_plan'),
       nativeDocumentReaderLen = library
           .lookupFunction<
             Size Function(Pointer<Void>),
@@ -1585,6 +1831,27 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_native_document_reader_read_bytes', isLeaf: true),
+      nativeDocumentReaderReadString = library
+          .lookupFunction<
+            Bool Function(
+              Pointer<Void>,
+              Size,
+              Uint32,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+              Pointer<Bool>,
+              Pointer<Uint64>,
+            ),
+            bool Function(
+              Pointer<Void>,
+              int,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+              Pointer<Bool>,
+              Pointer<Uint64>,
+            )
+          >('cindel_native_document_reader_read_string', isLeaf: true),
       nativeDocumentReaderFree = library
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -1728,6 +1995,11 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             ),
             int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
           >('cindel_take_changes'),
+      discardChanges = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_discard_changes'),
       schemaVersion = library
           .lookupFunction<
             Int32 Function(
@@ -2123,6 +2395,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   nativeBatchWriterFinish;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>, int)
+  nativeBatchWriterFinishWithOptions;
+
+  @override
   final void Function(Pointer<Void>) nativeBatchWriterAbort;
 
   @override
@@ -2136,6 +2412,18 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     int,
   )
   nativeDocumentReaderNew;
+
+  @override
+  final Pointer<Void> Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  nativeDocumentReaderNewFromQueryPlan;
 
   @override
   final int Function(Pointer<Void>) nativeDocumentReaderLen;
@@ -2164,6 +2452,18 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     Pointer<Size>,
   )
   nativeDocumentReaderReadBytes;
+
+  @override
+  final bool Function(
+    Pointer<Void>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+    Pointer<Bool>,
+    Pointer<Uint64>,
+  )
+  nativeDocumentReaderReadString;
 
   @override
   final void Function(Pointer<Void>) nativeDocumentReaderFree;
@@ -2238,6 +2538,9 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
   takeChanges;
+
+  @override
+  final int Function(Pointer<Void>) discardChanges;
 
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -2506,6 +2809,11 @@ final class _NativeAssetCindelNativeFunctions
   get nativeBatchWriterFinish => _cindelNativeBatchWriterFinish;
 
   @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Void>, int)
+  get nativeBatchWriterFinishWithOptions =>
+      _cindelNativeBatchWriterFinishWithOptions;
+
+  @override
   void Function(Pointer<Void>) get nativeBatchWriterAbort =>
       _cindelNativeBatchWriterAbort;
 
@@ -2520,6 +2828,19 @@ final class _NativeAssetCindelNativeFunctions
     int,
   )
   get nativeDocumentReaderNew => _cindelNativeDocumentReaderNew;
+
+  @override
+  Pointer<Void> Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get nativeDocumentReaderNewFromQueryPlan =>
+      _cindelNativeDocumentReaderNewFromQueryPlan;
 
   @override
   int Function(Pointer<Void>) get nativeDocumentReaderLen =>
@@ -2544,6 +2865,18 @@ final class _NativeAssetCindelNativeFunctions
   @override
   bool Function(Pointer<Void>, int, int, Pointer<Pointer<Uint8>>, Pointer<Size>)
   get nativeDocumentReaderReadBytes => _cindelNativeDocumentReaderReadBytes;
+
+  @override
+  bool Function(
+    Pointer<Void>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+    Pointer<Bool>,
+    Pointer<Uint64>,
+  )
+  get nativeDocumentReaderReadString => _cindelNativeDocumentReaderReadString;
 
   @override
   void Function(Pointer<Void>) get nativeDocumentReaderFree =>
@@ -2620,6 +2953,9 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
   get takeChanges => _cindelTakeChanges;
+
+  @override
+  int Function(Pointer<Void>) get discardChanges => _cindelDiscardChanges;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -3072,6 +3408,17 @@ external int _cindelNativeBatchWriterFinish(
   Pointer<Void> writer,
 );
 
+@Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Void>, Int32)
+>(symbol: 'cindel_native_batch_writer_finish_with_options', assetId: _assetId)
+external int _cindelNativeBatchWriterFinishWithOptions(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Void> writer,
+  int trackChanges,
+);
+
 @Native<Void Function(Pointer<Void>)>(
   symbol: 'cindel_native_batch_writer_abort',
   assetId: _assetId,
@@ -3095,6 +3442,30 @@ external Pointer<Void> _cindelNativeDocumentReaderNew(
   int collectionLen,
   Pointer<Uint8> ids,
   int idsLen,
+  Pointer<Uint8> fieldTypes,
+  int fieldTypesLen,
+);
+
+@Native<
+  Pointer<Void> Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+  )
+>(
+  symbol: 'cindel_native_document_reader_new_from_query_plan',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelNativeDocumentReaderNewFromQueryPlan(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
   Pointer<Uint8> fieldTypes,
   int fieldTypesLen,
 );
@@ -3171,6 +3542,31 @@ external bool _cindelNativeDocumentReaderReadBytes(
   int fieldIndex,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
+);
+
+@Native<
+  Bool Function(
+    Pointer<Void>,
+    Size,
+    Uint32,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+    Pointer<Bool>,
+    Pointer<Uint64>,
+  )
+>(
+  symbol: 'cindel_native_document_reader_read_string',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external bool _cindelNativeDocumentReaderReadString(
+  Pointer<Void> reader,
+  int documentIndex,
+  int fieldIndex,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+  Pointer<Bool> outIsAscii,
+  Pointer<Uint64> outInternId,
 );
 
 @Native<Void Function(Pointer<Void>)>(
@@ -3318,6 +3714,12 @@ external int _cindelTakeChanges(
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
 );
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_discard_changes',
+  assetId: _assetId,
+)
+external int _cindelDiscardChanges(Pointer<Void> handle);
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(
   symbol: 'cindel_schema_version',

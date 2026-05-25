@@ -598,25 +598,21 @@ final class CindelQuery<T> {
 
   Future<List<T>>? _matchingNativeObjects() {
     final nativePlan = _nativePlan();
-    final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
+    final readNativeDocument = _schema.readNativeDocument;
     if (nativePlan == null ||
         readNativeDocument == null ||
         fieldTypes == null) {
       return null;
     }
     return () async {
-      final ids = await _database.queryNativePlanIds(_schema.name, nativePlan);
-      final objects = await _database.getAllNativeBinaryDocuments(
+      final objects = await _database.queryNativePlanObjects(
         _schema.name,
-        ids,
+        nativePlan,
         fieldTypes,
         readNativeDocument,
       );
-      return [
-        for (final object in objects)
-          if (object != null) object,
-      ];
+      return objects;
     }();
   }
 

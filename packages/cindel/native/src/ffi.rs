@@ -9,10 +9,11 @@ use crate::wire::{
     WireIndexEntry as WireBatchIndexEntry, WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
+use std::cell::RefCell;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    18
+    23
 }
 
 #[no_mangle]
@@ -387,6 +388,40 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_finish_with_options(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    writer: *mut CindelNativeBatchWriter,
+    track_changes: i32,
+) -> i32 {
+    if writer.is_null() {
+        return -1;
+    }
+    let Some(engine) = handle.as_mut() else {
+        drop(Box::from_raw(writer));
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        drop(Box::from_raw(writer));
+        return -1;
+    };
+    let writer = Box::from_raw(writer);
+    if writer.failed || writer.current.is_some() {
+        return -1;
+    }
+    match engine.put_many_indexed_with_options(
+        collection,
+        &writer.documents,
+        track_changes != 0,
+        true,
+    ) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_batch_writer_abort(writer: *mut CindelNativeBatchWriter) {
     if !writer.is_null() {
         drop(Box::from_raw(writer));
@@ -421,7 +456,46 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     let Ok(documents) = engine.get_many_stored(collection, &ids) else {
         return std::ptr::null_mut();
     };
-    Box::into_raw(Box::new(CindelNativeDocumentReader { layout, documents }))
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        layout,
+        documents,
+        string_cache: RefCell::new(NativeStringCache::default()),
+    }))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    field_types_ptr: *const u8,
+    field_types_len: usize,
+) -> *mut CindelNativeDocumentReader {
+    let Some(engine) = handle.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return std::ptr::null_mut();
+    };
+    let Some(field_type_bytes) = read_bytes(field_types_ptr, field_types_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(layout) = NativeBatchLayout::new(field_type_bytes) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(documents) = engine.query_plan_documents(collection, &plan) else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        layout,
+        documents: documents.into_iter().map(Some).collect(),
+        string_cache: RefCell::new(NativeStringCache::default()),
+    }))
 }
 
 #[no_mangle]
@@ -531,6 +605,39 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
     };
     *out_ptr = bytes.as_ptr();
     *out_len = bytes.len();
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_string(
+    reader: *const CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+    out_is_ascii: *mut bool,
+    out_intern_id: *mut u64,
+) -> bool {
+    if out_ptr.is_null() || out_len.is_null() || out_is_ascii.is_null() || out_intern_id.is_null() {
+        return false;
+    }
+    *out_ptr = std::ptr::null();
+    *out_len = 0;
+    *out_is_ascii = false;
+    *out_intern_id = 0;
+    let Some(reader) = reader.as_ref() else {
+        return false;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return false;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_len = bytes.len();
+    *out_is_ascii = bytes.is_ascii();
+    *out_intern_id = reader
+        .string_cache
+        .borrow_mut()
+        .intern_id(field_index as usize, bytes);
     true
 }
 
@@ -817,6 +924,17 @@ pub unsafe extern "C" fn cindel_take_changes(
                 Err(_) => -1,
             }
         }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_discard_changes(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    match engine.discard_change_sets() {
+        Ok(()) => 0,
         Err(_) => -1,
     }
 }
@@ -1411,6 +1529,43 @@ pub struct CindelNativeBatchWriter {
 pub struct CindelNativeDocumentReader {
     layout: NativeBatchLayout,
     documents: Vec<Option<Vec<u8>>>,
+    string_cache: RefCell<NativeStringCache>,
+}
+
+#[derive(Default)]
+struct NativeStringCache {
+    entries: Vec<NativeStringCacheEntry>,
+    next_id: u64,
+}
+
+struct NativeStringCacheEntry {
+    id: u64,
+    field_index: usize,
+    bytes: Vec<u8>,
+}
+
+impl NativeStringCache {
+    fn intern_id(&mut self, field_index: usize, bytes: &[u8]) -> u64 {
+        if bytes.len() < 128 {
+            return 0;
+        }
+        for entry in self.entries.iter() {
+            if entry.field_index == field_index && entry.bytes == bytes {
+                return entry.id;
+            }
+        }
+        self.next_id = self.next_id.saturating_add(1);
+        let id = self.next_id;
+        if self.entries.len() == 8 {
+            self.entries.remove(0);
+        }
+        self.entries.push(NativeStringCacheEntry {
+            id,
+            field_index,
+            bytes: bytes.to_vec(),
+        });
+        id
+    }
 }
 
 struct NativeBatchLayout {

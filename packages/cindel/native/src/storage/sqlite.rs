@@ -270,6 +270,25 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         documents: &[DocumentWrite],
     ) -> Result<(), String> {
+        self.put_many_indexed_with_change_tracking(collection, documents, true)
+    }
+
+    fn put_many_indexed_with_change_tracking(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+    ) -> Result<(), String> {
+        self.put_many_indexed_with_options(collection, documents, track_changes, false)
+    }
+
+    fn put_many_indexed_with_options(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+        _trust_schema_documents: bool,
+    ) -> Result<(), String> {
         if documents.is_empty() {
             if self.active_transaction.is_none() {
                 self.last_change_sets.clear();
@@ -288,11 +307,13 @@ impl StorageEngine for SqliteStorage {
                 )?;
             }
             let revision = bump_collection_revision(&self.connection, collection)?;
-            self.record_change(
-                collection,
-                revision,
-                documents.iter().map(|document| document.id),
-            );
+            if track_changes {
+                self.record_change(
+                    collection,
+                    revision,
+                    documents.iter().map(|document| document.id),
+                );
+            }
             return Ok(());
         }
 
@@ -313,11 +334,15 @@ impl StorageEngine for SqliteStorage {
         let revision = bump_collection_revision(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())?;
-        self.record_change(
-            collection,
-            revision,
-            documents.iter().map(|document| document.id),
-        );
+        if track_changes {
+            self.record_change(
+                collection,
+                revision,
+                documents.iter().map(|document| document.id),
+            );
+        } else {
+            self.last_change_sets.clear();
+        }
         Ok(())
     }
 

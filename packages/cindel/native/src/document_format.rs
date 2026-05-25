@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::ops::Range;
+use std::str;
 
 use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
 use crate::wire::{decode_value, encode_index_value, WireIndexValue, WireValue};
@@ -403,6 +404,23 @@ impl<'a> CompactBinaryDocument<'a> {
         }
     }
 
+    fn string_payload(&self, index: usize) -> Result<Option<&'a str>, String> {
+        let (field_type, offset) = self
+            .field_offsets
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        if field_type != CompactFieldType::String {
+            return Err(format!("field index `{index}` is not a string field"));
+        }
+        let Some(payload) = self.dynamic_payload(offset)? else {
+            return Ok(None);
+        };
+        str::from_utf8(payload)
+            .map(Some)
+            .map_err(|error| format!("invalid UTF-8 string: {error}"))
+    }
+
     fn dynamic_payload(&self, static_offset: usize) -> Result<Option<&'a [u8]>, String> {
         let relative = read_u24(self.bytes, 3 + static_offset)? as usize;
         if relative == 0 {
@@ -777,13 +795,120 @@ pub(crate) fn index_entries_from_binary_document(
         });
     }
     let document = CompactBinaryDocument::parse(schema, bytes)?;
-    index_entries_from_binary_reader(schema, |index| {
-        if index >= document.field_count() {
-            Ok(None)
-        } else {
-            document.field_value(index)
+    index_entries_from_compact_binary_document(schema, &document)
+}
+
+pub(crate) fn for_each_index_entry_from_binary_document(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    mut callback: impl FnMut(&str, IndexValue) -> Result<(), String>,
+) -> Result<(), String> {
+    if bytes.starts_with(MAGIC) {
+        for entry in index_entries_from_binary_document(schema, bytes)? {
+            callback(&entry.name, entry.value)?;
         }
-    })
+        return Ok(());
+    }
+
+    let document = CompactBinaryDocument::parse(schema, bytes)?;
+    for (index, field) in schema.fields.iter().enumerate() {
+        if !field.is_indexed {
+            continue;
+        }
+        if field.index_type == "words" {
+            let Some(text) = document.string_payload(index)? else {
+                continue;
+            };
+            for_each_word_index_value(text, field.index_case_sensitive, |value| {
+                callback(&field.name, IndexValue::String(value))
+            })?;
+            continue;
+        }
+        let Some(value) = document.field_value(index)? else {
+            continue;
+        };
+        for_each_field_index_value(schema, field, value, |value| callback(&field.name, value))?;
+    }
+    for composite in &schema.composite_indexes {
+        let mut values = Vec::new();
+        for field_name in &composite.fields {
+            let Some((field_index, field)) = schema
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| &field.name == field_name)
+            else {
+                return Err(format!(
+                    "composite index `{}` references missing field `{}`",
+                    composite.name, field_name
+                ));
+            };
+            let Some(value) = document.field_value(field_index)? else {
+                values.clear();
+                break;
+            };
+            let mut indexed_field = field.clone();
+            indexed_field.index_case_sensitive = composite.case_sensitive;
+            values.push(binary_to_index_value(&indexed_field, &value)?);
+        }
+        if values.len() == composite.fields.len() {
+            callback(&composite.name, IndexValue::List(values))?;
+        }
+    }
+    Ok(())
+}
+
+fn index_entries_from_compact_binary_document(
+    schema: &CollectionSchemaManifest,
+    document: &CompactBinaryDocument<'_>,
+) -> Result<Vec<IndexEntry>, String> {
+    let mut entries = Vec::new();
+    for (index, field) in schema.fields.iter().enumerate() {
+        if !field.is_indexed {
+            continue;
+        }
+        if field.index_type == "words" {
+            let Some(text) = document.string_payload(index)? else {
+                continue;
+            };
+            push_word_index_entries(&mut entries, &field.name, text, field.index_case_sensitive);
+            continue;
+        }
+        let Some(value) = document.field_value(index)? else {
+            continue;
+        };
+        push_field_index_entry(schema, field, value, &mut entries)?;
+    }
+    for composite in &schema.composite_indexes {
+        let mut values = Vec::new();
+        for field_name in &composite.fields {
+            let Some((field_index, field)) = schema
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| &field.name == field_name)
+            else {
+                return Err(format!(
+                    "composite index `{}` references missing field `{}`",
+                    composite.name, field_name
+                ));
+            };
+            let Some(value) = document.field_value(field_index)? else {
+                values.clear();
+                break;
+            };
+            let mut indexed_field = field.clone();
+            indexed_field.index_case_sensitive = composite.case_sensitive;
+            values.push(binary_to_index_value(&indexed_field, &value)?);
+        }
+        if values.len() == composite.fields.len() {
+            entries.push(IndexEntry {
+                name: composite.name.clone(),
+                value: IndexValue::List(values),
+            });
+        }
+    }
+    Ok(entries)
 }
 
 fn index_entries_from_binary_reader(
@@ -798,44 +923,7 @@ fn index_entries_from_binary_reader(
         let Some(value) = read_field(index)? else {
             continue;
         };
-        if field.index_type == "words" {
-            let BinaryValue::String(text) = value else {
-                return Err(format!(
-                    "word index `{}.{}` requires a string value",
-                    schema.name, field.name
-                ));
-            };
-            for token in split_words(&text, field.index_case_sensitive) {
-                entries.push(IndexEntry {
-                    name: field.name.clone(),
-                    value: IndexValue::String(token),
-                });
-            }
-            continue;
-        }
-        if field.index_type == "multiEntry" {
-            let BinaryValue::List(values) = value else {
-                return Err(format!(
-                    "multi-entry index `{}.{}` requires a list value",
-                    schema.name, field.name
-                ));
-            };
-            for value in values.into_iter().flatten() {
-                entries.push(IndexEntry {
-                    name: field.name.clone(),
-                    value: binary_to_index_value(field, &value)?,
-                });
-            }
-            continue;
-        }
-        let mut index_value = binary_to_index_value(field, &value)?;
-        if field.index_type == "hash" {
-            index_value = IndexValue::Int(stable_hash_bytes(&stable_index_bytes(&index_value)?));
-        }
-        entries.push(IndexEntry {
-            name: field.name.clone(),
-            value: index_value,
-        });
+        push_field_index_entry(schema, field, value, &mut entries)?;
     }
     for composite in &schema.composite_indexes {
         let mut values = Vec::new();
@@ -867,6 +955,184 @@ fn index_entries_from_binary_reader(
         }
     }
     Ok(entries)
+}
+
+fn push_field_index_entry(
+    schema: &CollectionSchemaManifest,
+    field: &FieldSchemaManifest,
+    value: BinaryValue,
+    entries: &mut Vec<IndexEntry>,
+) -> Result<(), String> {
+    for_each_field_index_value(schema, field, value, |value| {
+        entries.push(IndexEntry {
+            name: field.name.clone(),
+            value,
+        });
+        Ok(())
+    })
+}
+
+fn for_each_field_index_value(
+    schema: &CollectionSchemaManifest,
+    field: &FieldSchemaManifest,
+    value: BinaryValue,
+    mut emit: impl FnMut(IndexValue) -> Result<(), String>,
+) -> Result<(), String> {
+    if field.index_type == "words" {
+        let BinaryValue::String(text) = value else {
+            return Err(format!(
+                "word index `{}.{}` requires a string value",
+                schema.name, field.name
+            ));
+        };
+        return for_each_word_index_value(&text, field.index_case_sensitive, |value| {
+            emit(IndexValue::String(value))
+        });
+    }
+    if field.index_type == "multiEntry" {
+        let BinaryValue::List(values) = value else {
+            return Err(format!(
+                "multi-entry index `{}.{}` requires a list value",
+                schema.name, field.name
+            ));
+        };
+        for value in values.into_iter().flatten() {
+            emit(binary_to_index_value(field, &value)?)?;
+        }
+        return Ok(());
+    }
+    let mut index_value = binary_to_index_value(field, &value)?;
+    if field.index_type == "hash" {
+        index_value = IndexValue::Int(stable_hash_bytes(&stable_index_bytes(&index_value)?));
+    }
+    emit(index_value)
+}
+
+fn push_word_index_entries(
+    entries: &mut Vec<IndexEntry>,
+    name: &str,
+    text: &str,
+    case_sensitive: bool,
+) {
+    let mut seen = std::collections::HashSet::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if character.is_alphanumeric() {
+            if case_sensitive {
+                current.push(character);
+            } else {
+                current.extend(character.to_lowercase());
+            }
+        } else if !current.is_empty() {
+            if seen.insert(current.clone()) {
+                entries.push(IndexEntry {
+                    name: name.to_string(),
+                    value: IndexValue::String(std::mem::take(&mut current)),
+                });
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if !current.is_empty() && seen.insert(current.clone()) {
+        entries.push(IndexEntry {
+            name: name.to_string(),
+            value: IndexValue::String(current),
+        });
+    }
+}
+
+fn for_each_word_index_value(
+    text: &str,
+    case_sensitive: bool,
+    mut emit: impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    if text.is_ascii() {
+        return for_each_ascii_word_index_value(text, case_sensitive, emit);
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if character.is_alphanumeric() {
+            if case_sensitive {
+                current.push(character);
+            } else {
+                current.extend(character.to_lowercase());
+            }
+        } else if !current.is_empty() {
+            if !seen.iter().any(|word| word == &current) {
+                seen.push(current.clone());
+                emit(std::mem::take(&mut current))?;
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if !current.is_empty() && !seen.iter().any(|word| word == &current) {
+        emit(current)?;
+    }
+    Ok(())
+}
+
+fn for_each_ascii_word_index_value(
+    text: &str,
+    case_sensitive: bool,
+    mut emit: impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut seen: Vec<String> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = None;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if byte.is_ascii_alphanumeric() {
+            start.get_or_insert(index);
+            continue;
+        }
+        if let Some(word_start) = start.take() {
+            emit_ascii_word(
+                text,
+                word_start,
+                index,
+                case_sensitive,
+                &mut seen,
+                &mut emit,
+            )?;
+        }
+    }
+    if let Some(word_start) = start {
+        emit_ascii_word(
+            text,
+            word_start,
+            bytes.len(),
+            case_sensitive,
+            &mut seen,
+            &mut emit,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_ascii_word(
+    text: &str,
+    start: usize,
+    end: usize,
+    case_sensitive: bool,
+    seen: &mut Vec<String>,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    let word = &text[start..end];
+    let value = if case_sensitive {
+        word.to_string()
+    } else if word.as_bytes().iter().any(u8::is_ascii_uppercase) {
+        word.to_ascii_lowercase()
+    } else {
+        word.to_string()
+    };
+    if seen.iter().any(|existing| existing == &value) {
+        return Ok(());
+    }
+    seen.push(value.clone());
+    emit(value)
 }
 
 fn binary_to_index_value(
@@ -911,31 +1177,6 @@ fn indexed_string(value: &str, case_sensitive: bool) -> String {
 
 fn non_nullable_type(dart_type: &str) -> &str {
     dart_type.strip_suffix('?').unwrap_or(dart_type)
-}
-
-fn split_words(text: &str, case_sensitive: bool) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut current = String::new();
-    for character in text.chars() {
-        if character.is_alphanumeric() {
-            if case_sensitive {
-                current.push(character);
-            } else {
-                current.extend(character.to_lowercase());
-            }
-        } else if !current.is_empty() {
-            if seen.insert(current.clone()) {
-                tokens.push(std::mem::take(&mut current));
-            } else {
-                current.clear();
-            }
-        }
-    }
-    if !current.is_empty() && seen.insert(current.clone()) {
-        tokens.push(current);
-    }
-    tokens
 }
 
 fn stable_index_bytes(value: &IndexValue) -> Result<Vec<u8>, String> {

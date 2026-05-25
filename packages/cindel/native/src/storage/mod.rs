@@ -180,6 +180,24 @@ pub trait StorageEngine {
         collection: &str,
         documents: &[DocumentWrite],
     ) -> Result<(), String>;
+    fn put_many_indexed_with_change_tracking(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+    ) -> Result<(), String> {
+        self.put_many_indexed_with_options(collection, documents, track_changes, false)
+    }
+    fn put_many_indexed_with_options(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+        trust_schema_documents: bool,
+    ) -> Result<(), String> {
+        let _ = (track_changes, trust_schema_documents);
+        self.put_many_indexed(collection, documents)
+    }
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String>;
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String>;
     fn query_index_equal(
@@ -404,6 +422,39 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.put_many_indexed(collection, documents),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.put_many_indexed(collection, documents),
+        }
+    }
+
+    fn put_many_indexed_with_change_tracking(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+    ) -> Result<(), String> {
+        self.put_many_indexed_with_options(collection, documents, track_changes, false)
+    }
+
+    fn put_many_indexed_with_options(
+        &mut self,
+        collection: &str,
+        documents: &[DocumentWrite],
+        track_changes: bool,
+        trust_schema_documents: bool,
+    ) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.put_many_indexed_with_options(
+                collection,
+                documents,
+                track_changes,
+                trust_schema_documents,
+            ),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.put_many_indexed_with_options(
+                collection,
+                documents,
+                track_changes,
+                trust_schema_documents,
+            ),
         }
     }
 
