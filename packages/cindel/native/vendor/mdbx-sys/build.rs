@@ -108,11 +108,30 @@ fn main() {
         cc_builder.define("NDEBUG", "1");
     }
 
-    cc_builder.define("MDBX_TXN_CHECKOWNER", "0");
+    cc_builder
+        .define("MDBX_BUILD_CXX", "0")
+        .define("MDBX_BUILD_TOOLS", "0")
+        .define("MDBX_BUILD_SHARED_LIBRARY", "0")
+        .define("MDBX_TXN_CHECKOWNER", "0");
 
-    // __cpu_model is not available in musl or Android x86_64 PIC builds.
-    if target.ends_with("-musl") || target == "x86_64-linux-android" {
+    if target.contains("windows") {
+        cc_builder
+            .define("MDBX_LOCK_SUFFIX", "L\".lock\"")
+            .define("MDBX_WITHOUT_MSVC_CRT", "1")
+            .define("UNICODE", "1")
+            .define("HAVE_LIBM", "1");
+    } else {
+        cc_builder.define("MDBX_LOCK_SUFFIX", "\".lock\"");
+    }
+
+    // Keep libmdbx CPU dispatch conservative across Android/Linux builds, matching
+    // Isar's performance-oriented build profile and avoiding target-specific probes.
+    if target.ends_with("-musl") || target.contains("android") || target.contains("linux") {
         cc_builder.define("MDBX_HAVE_BUILTIN_CPU_SUPPORTS", "0");
+    }
+
+    if target.contains("apple") {
+        cc_builder.define("MDBX_APPLE_SPEED_INSTEADOF_DURABILITY", "1");
     }
 
     let cflags = cc_builder.get_compiler().cflags_env();

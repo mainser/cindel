@@ -5,6 +5,16 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.3.5
+
+- Removed the legacy native benchmark module and optional `benchmarks` Cargo
+  feature; local backend experiments now live outside committed package
+  sources.
+- Aligned the MDBX open profile with Isar's native engine by using a
+  `cindel.mdbx` no-subdir database file, `NoMetaSync`, coalescing, 1 MiB
+  minimum map size, 128 MiB default maximum map size, 5 MiB growth steps, and
+  20 MiB shrink threshold.
+
 ## 0.3.4
 
 - Removed the remaining default-runtime `serde_json` dependency from the native
@@ -15,8 +25,6 @@ while the core design settles.
   `WireIndexValue` bytes encoded as hex.
 - Removed Dart runtime `jsonDecode` usage from the FFI projection and aggregate
   paths while keeping public query APIs source-compatible.
-- Kept benchmark JSON reporting behind the optional native `benchmarks` feature;
-  the default native dependency tree no longer includes `serde_json`.
 - Bumped the native ABI to 17 for the final anti-JSON runtime contract.
 - Updated `cindel` and `cindel_flutter_libs` to `0.3.4`.
 - Updated the Todo example dependency constraints and build number for the ABI

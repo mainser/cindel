@@ -508,8 +508,11 @@ mature.
   - Confirmed runtime/core search has no `serde_json`, `jsonDecode`,
     `read_json`, `write_json`, or `stable_index_json` hits outside docs,
     changelog history, and generator string-literal escaping.
-  - Kept native benchmark JSON reporting behind the optional `benchmarks`
-    feature rather than the default runtime.
+  - Removed the legacy native benchmark module; local backend experiments now
+    live outside committed package sources.
+  - Aligned MDBX environment opening with Isar's native profile: no-subdir
+    database file, `NoMetaSync`, coalescing, 1 MiB minimum map size, 128 MiB
+    default maximum map size, 5 MiB growth steps, and 20 MiB shrink threshold.
   - Native ABI 17 marks the final anti-JSON runtime contract.
 - [ ] Deferred PERF-18: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized

@@ -156,6 +156,9 @@ final db = await Cindel.open(
 );
 ```
 
+Cindel keeps the public API directory-based. The default MDBX backend stores
+its physical database file as `cindel.mdbx` inside that directory.
+
 Open an in-memory database for tests or short-lived work:
 
 ```dart
@@ -565,14 +568,9 @@ data migration support is deferred until the optimized storage path settles.
 
 ## Benchmarks
 
-Run the backend comparison benchmark:
-
-```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --features benchmarks --bin cindel_bench -- --backend all --documents 10000 --query-repeats 1000
-```
-
-The benchmark prints CSV rows for open, schema registration, indexed writes,
-point reads, indexed queries, batch writes, and deletes.
+Committed package sources no longer ship the old native benchmark binary. Local
+backend experiments live outside the public package surface and should stay in
+ignored tooling or external benchmark apps.
 
 See `docs/backend_evaluation.md` for the current `libmdbx` decision record and
 benchmark evidence.

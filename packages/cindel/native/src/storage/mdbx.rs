@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libmdbx::{
-    Database, DatabaseOptions, NoWriteMap, Table, TableFlags, Transaction, WriteFlags, RO, RW,
+    Database, DatabaseOptions, Mode, NoWriteMap, ReadWriteOptions, SyncMode, Table, TableFlags,
+    Transaction, WriteFlags, RO, RW,
 };
 
 use crate::document_format::{binary_to_wire_value, read_binary_field};
@@ -33,7 +34,12 @@ use super::{
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
+const MDBX_FILE_NAME: &str = "cindel.mdbx";
 const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
+const MDBX_MIN_SIZE: isize = 1 << 20;
+const MDBX_DEFAULT_MAX_SIZE: isize = 128 << 20;
+const MDBX_GROWTH_STEP: isize = 5 << 20;
+const MDBX_SHRINK_THRESHOLD: isize = 20 << 20;
 
 pub struct MdbxStorage {
     state: SharedMdbxState,
@@ -251,16 +257,24 @@ impl MdbxWriteTransaction {
 
 impl MdbxStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
-        let (path, temporary_directory) = if directory == IN_MEMORY_DIRECTORY {
-            let path = temporary_mdbx_directory()?;
-            (path.clone(), Some(TemporaryDirectoryGuard { path }))
+        let (directory_path, temporary_directory) = if directory == IN_MEMORY_DIRECTORY {
+            let directory_path = temporary_mdbx_directory()?;
+            (
+                directory_path.clone(),
+                Some(TemporaryDirectoryGuard {
+                    path: directory_path,
+                }),
+            )
         } else {
             (PathBuf::from(directory), None)
         };
 
-        fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-        let path = path.canonicalize().map_err(|error| error.to_string())?;
-        let state = open_shared_state(&path)?;
+        fs::create_dir_all(&directory_path).map_err(|error| error.to_string())?;
+        let directory_path = directory_path
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let database_path = directory_path.join(MDBX_FILE_NAME);
+        let state = open_shared_state(&database_path)?;
 
         let storage = Self {
             state,
@@ -709,8 +723,18 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
         Database::<NoWriteMap>::open_with_options(
             path,
             DatabaseOptions {
+                permissions: Some(0o600),
                 max_tables: Some(2048),
+                no_sub_dir: true,
                 accede: true,
+                coalesce: true,
+                mode: Mode::ReadWrite(ReadWriteOptions {
+                    sync_mode: SyncMode::NoMetaSync,
+                    min_size: Some(MDBX_MIN_SIZE),
+                    max_size: Some(MDBX_DEFAULT_MAX_SIZE),
+                    growth_step: Some(MDBX_GROWTH_STEP),
+                    shrink_threshold: Some(MDBX_SHRINK_THRESHOLD),
+                }),
                 ..Default::default()
             },
         )

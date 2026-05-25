@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5
+
+- Removed the legacy native benchmark module and optional `benchmarks` Cargo
+  feature from the committed native package sources.
+- Aligned the MDBX open profile with Isar's native engine by storing the
+  physical database as `cindel.mdbx` with no-subdir mode, `NoMetaSync`,
+  coalescing, 1 MiB minimum map size, 128 MiB default maximum map size, 5 MiB
+  growth steps, and 20 MiB shrink threshold.
+
 ## 0.3.4
 
 - Removed the default-runtime `serde_json` dependency from the native Rust core.
@@ -9,8 +18,6 @@
   `WireIndexValue` bytes encoded as hex.
 - Removed Dart runtime `jsonDecode` usage from FFI projection and aggregate
   paths while keeping public query APIs source-compatible.
-- Kept benchmark JSON reporting isolated behind the optional native
-  `benchmarks` feature.
 - Bumped the native ABI to 17.
 
 ## 0.3.3
