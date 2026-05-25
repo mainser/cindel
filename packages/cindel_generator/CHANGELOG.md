@@ -5,6 +5,7 @@
 - Generated schema-specific typed binary document serializers for Cindel's
   `binary-v2` storage format.
 - Emitted binary storage type metadata for generated fields.
+- Generated direct binary document hydration readers for schema-backed models.
 
 ## 0.2.4
 

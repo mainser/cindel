@@ -6,6 +6,7 @@ export 'package:cindel_annotations/cindel_annotations.dart';
 
 export 'src/binary_document.dart'
     show
+        CindelSchemaBinaryDocumentReader,
         CindelBinaryFieldType,
         cindelDecodeBinaryDocument,
         cindelDecodeSchemaBinaryDocument,

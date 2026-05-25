@@ -1303,69 +1303,65 @@ CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
 }
 
 User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
-  final fields =
-      cindelDecodeSchemaBinaryDocument(bytes, const <CindelBinaryFieldType>[
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.boolValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.intValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.intValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.objectValue,
-        CindelBinaryFieldType.listValue,
-        CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.listValue,
-        CindelBinaryFieldType.intValue,
-        CindelBinaryFieldType.intValue,
-        CindelBinaryFieldType.listValue,
-        CindelBinaryFieldType.stringValue,
-      ]);
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 69);
   final object = User();
-  object.accessToken = fields[0] == null ? null : fields[0] as String?;
-  object.active = fields[1] == null ? null : fields[1] as bool?;
-  object.bio = fields[2] == null ? null : fields[2] as String?;
+  final Object? field0 = reader.readString(0, 0);
+  object.accessToken = field0 == null ? null : field0 as String?;
+  final Object? field1 = reader.readBool(1, 3);
+  object.active = field1 == null ? null : field1 as bool?;
+  final Object? field2 = reader.readString(2, 4);
+  object.bio = field2 == null ? null : field2 as String?;
+  final Object? field3 = reader.readInt(3, 7);
   object.createdAt = DateTime.fromMicrosecondsSinceEpoch(
-    fields[3] as int,
+    field3 as int,
     isUtc: true,
   );
-  object.displayName = fields[4] == null ? null : fields[4] as String?;
-  object.email = fields[5] as String;
-  object.id = fields[6] as int;
-  object.name = fields[7] as String;
+  final Object? field4 = reader.readString(4, 15);
+  object.displayName = field4 == null ? null : field4 as String?;
+  final Object? field5 = reader.readString(5, 18);
+  object.email = field5 as String;
+  final Object? field6 = reader.readInt(6, 21);
+  object.id = field6 as int;
+  final Object? field7 = reader.readString(7, 29);
+  object.name = field7 as String;
+  final Object? field8 = reader.readString(8, 32);
   object.plan = UserPlan.values.firstWhere(
-    (enumValue) => enumValue.code == fields[8],
+    (enumValue) => enumValue.code == field8,
   );
-  object.primaryRecipient = fields[9] == null
+  final Object? field9 = reader.readObject(9, 35);
+  object.primaryRecipient = field9 == null
       ? null
-      : _$RecipientFromCindelEmbedded(
-          (fields[9] as Map).cast<String, Object?>(),
-        );
-  object.recipients = fields[10] == null
+      : _$RecipientFromCindelEmbedded((field9 as Map).cast<String, Object?>());
+  final Object? field10 = reader.readList(10, 38);
+  object.recipients = field10 == null
       ? null
-      : (fields[10] as List<Object?>)
+      : (field10 as List<Object?>)
             .map(
               (value) => _$RecipientFromCindelEmbedded(
                 (value as Map).cast<String, Object?>(),
               ),
             )
             .toList(growable: false);
-  object.role = UserRole.values.byName(fields[11] as String);
-  object.scores = fields[12] == null
+  final Object? field11 = reader.readString(11, 41);
+  object.role = UserRole.values.byName(field11 as String);
+  final Object? field12 = reader.readList(12, 44);
+  object.scores = field12 == null
       ? null
-      : (fields[12] as List<Object?>)
+      : (field12 as List<Object?>)
             .map((value) => value as int)
             .toList(growable: false);
-  object.sessionLength = fields[13] == null
+  final Object? field13 = reader.readInt(13, 47);
+  object.sessionLength = field13 == null
       ? null
-      : Duration(microseconds: fields[13] as int);
-  object.status = UserStatus.values[fields[14] as int];
-  object.tags = (fields[15] as List<Object?>)
+      : Duration(microseconds: field13 as int);
+  final Object? field14 = reader.readInt(14, 55);
+  object.status = UserStatus.values[field14 as int];
+  final Object? field15 = reader.readList(15, 63);
+  object.tags = (field15 as List<Object?>)
       .map((value) => value as String)
       .toList(growable: false);
-  object.username = fields[16] == null ? null : fields[16] as String?;
+  final Object? field16 = reader.readString(16, 66);
+  object.username = field16 == null ? null : field16 as String?;
   return object;
 }
 

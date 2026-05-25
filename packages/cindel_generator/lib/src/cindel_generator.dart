@@ -272,25 +272,25 @@ String _emitCollection(_CollectionInfo collection) {
       '${collection.dartName} _\$${collection.dartName}'
       'FromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {',
     )
-    ..writeln('  final fields = cindelDecodeSchemaBinaryDocument(')
+    ..writeln('  final reader = CindelSchemaBinaryDocumentReader(')
     ..writeln('    bytes,')
-    ..writeln('    const <CindelBinaryFieldType>[');
-
-  for (final field in collection.binaryFields) {
-    buffer.writeln('      CindelBinaryFieldType.${field.binaryFieldType},');
-  }
-
-  buffer
-    ..writeln('    ],')
+    ..writeln('    staticSize: ${collection.binaryStaticSize},')
     ..writeln('  );')
     ..writeln('  final object = ${collection.dartName}();');
 
+  var staticOffset = 0;
   for (var index = 0; index < collection.binaryFields.length; index += 1) {
     final field = collection.binaryFields[index];
+    final storedValue = 'field$index';
+    buffer.writeln(
+      '  final Object? $storedValue = '
+      '${field.directBinaryReadExpression(index, staticOffset)};',
+    );
     buffer.writeln(
       '  object.${field.name} = '
-      '${field.fromStoredValueExpression('fields[$index]')};',
+      '${field.fromStoredValueExpression(storedValue)};',
     );
+    staticOffset += field.binaryStaticSize;
   }
 
   buffer
@@ -539,6 +539,13 @@ final class _CollectionInfo {
   bool get supportsNativeWriter {
     return binaryFields.every((field) => field.supportsNativeWriter);
   }
+
+  int get binaryStaticSize {
+    return binaryFields.fold<int>(
+      0,
+      (size, field) => size + field.binaryStaticSize,
+    );
+  }
 }
 
 void _emitFilterMethods(
@@ -783,6 +790,28 @@ final class _FieldInfo {
       final type => throw StateError('Unsupported native reader type `$type`.'),
     };
     return fromStoredValueExpression('reader.$method(documentIndex, $index)');
+  }
+
+  int get binaryStaticSize {
+    return switch (binaryType) {
+      'bool' => 1,
+      'int' || 'double' => 8,
+      'string' || 'list' || 'object' => 3,
+      final type => throw StateError('Unsupported binary type `$type`.'),
+    };
+  }
+
+  String directBinaryReadExpression(int index, int staticOffset) {
+    final method = switch (binaryType) {
+      'bool' => 'readBool',
+      'int' => 'readInt',
+      'double' => 'readDouble',
+      'string' => 'readString',
+      'list' => 'readList',
+      'object' => 'readObject',
+      final type => throw StateError('Unsupported binary type `$type`.'),
+    };
+    return 'reader.$method($index, $staticOffset)';
   }
 
   String fromDocumentExpression(String fieldLiteral) {

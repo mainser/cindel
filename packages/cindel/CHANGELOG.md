@@ -50,6 +50,8 @@
   generated document reader.
 - Skipped redundant query-plan presence checks during generated typed
   materialization.
+- Added generated direct binary document hydration without intermediate field
+  lists.
 - Changed the native release profile from size-optimized to speed-optimized.
 - Bumped the native ABI to 23.
 
