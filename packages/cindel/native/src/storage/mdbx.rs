@@ -650,16 +650,12 @@ impl MdbxStorage {
                         collection,
                         documents,
                     } => {
-                        for document in &documents {
-                            put_document_with_indexes(
-                                transaction,
-                                &tables,
-                                &collection,
-                                document.id,
-                                &document.bytes,
-                                &document.indexes,
-                            )?;
-                        }
+                        put_many_documents_with_indexes(
+                            transaction,
+                            &tables,
+                            &collection,
+                            &documents,
+                        )?;
                         if !documents.is_empty() {
                             let revision =
                                 bump_collection_revision(transaction, &tables, &collection)?;
@@ -1035,16 +1031,7 @@ impl StorageEngine for MdbxStorage {
 
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
-            for document in documents {
-                put_document_with_indexes(
-                    transaction,
-                    &tables,
-                    collection,
-                    document.id,
-                    &document.bytes,
-                    &document.indexes,
-                )?;
-            }
+            put_many_documents_with_indexes(transaction, &tables, collection, documents)?;
             if !documents.is_empty() {
                 let revision = bump_collection_revision(transaction, &tables, collection)?;
                 merge_change_set(
@@ -2414,6 +2401,126 @@ fn put_document_with_indexes(
     Ok(())
 }
 
+struct PreparedIndexedDocument {
+    id: u64,
+    bytes: Vec<u8>,
+    indexes: Vec<IndexEntry>,
+    old_indexes: Option<Vec<IndexEntry>>,
+    persist_reverse_metadata: bool,
+}
+
+fn put_many_documents_with_indexes(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    documents: &[DocumentWrite],
+) -> Result<(), String> {
+    if documents.is_empty() {
+        return Ok(());
+    }
+
+    let schema = collection_schema(transaction, tables, collection)?;
+    if schema.is_none() {
+        for document in documents {
+            put_document_with_indexes(
+                transaction,
+                tables,
+                collection,
+                document.id,
+                &document.bytes,
+                &document.indexes,
+            )?;
+        }
+        return Ok(());
+    }
+
+    let unique_indexes = unique_index_names_from_schema(schema.as_ref());
+    let documents_table = create_documents_table(transaction, collection)?;
+    let mut prepared = Vec::with_capacity(documents.len());
+    let mut index_names = HashSet::new();
+
+    for document in documents {
+        let (stored_bytes, effective_indexes) =
+            encode_document_for_storage(schema.as_ref(), &document.bytes, &document.indexes)?;
+        let previous_bytes = ignore_not_found(
+            transaction.get::<Vec<u8>>(&documents_table, &document_table_key(document.id)),
+        )?;
+        let old_indexes = previous_bytes
+            .as_deref()
+            .map(|bytes| derive_indexes_from_stored_document(schema.as_ref(), bytes))
+            .transpose()?
+            .flatten();
+        let persist_reverse_metadata =
+            !can_derive_indexes_from_stored_document(schema.as_ref(), &stored_bytes);
+
+        for index in &effective_indexes {
+            index_names.insert(index.name.clone());
+        }
+        if let Some(old_indexes) = &old_indexes {
+            for index in old_indexes {
+                index_names.insert(index.name.clone());
+            }
+        }
+
+        prepared.push(PreparedIndexedDocument {
+            id: document.id,
+            bytes: stored_bytes,
+            indexes: effective_indexes,
+            old_indexes,
+            persist_reverse_metadata,
+        });
+    }
+
+    let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
+
+    for document in &prepared {
+        MdbxIndex::validate_unique(
+            transaction,
+            tables,
+            collection,
+            document.id,
+            &document.indexes,
+            &unique_indexes,
+        )?;
+        transaction
+            .put(
+                &documents_table,
+                document_table_key(document.id),
+                &document.bytes,
+                WriteFlags::UPSERT,
+            )
+            .map_err(|error| error.to_string())?;
+        MdbxIndex::replace_document_with_index_tables(
+            transaction,
+            tables,
+            collection,
+            document.id,
+            document.old_indexes.as_deref(),
+            &document.indexes,
+            &unique_indexes,
+            document.persist_reverse_metadata,
+            &index_tables,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn open_index_tables_for_names<'txn>(
+    transaction: &'txn Transaction<'_, RW, NoWriteMap>,
+    collection: &str,
+    index_names: &HashSet<String>,
+) -> Result<HashMap<String, Table<'txn>>, String> {
+    let mut tables = HashMap::with_capacity(index_names.len());
+    for name in index_names {
+        tables.insert(
+            name.clone(),
+            create_index_table(transaction, collection, name)?,
+        );
+    }
+    Ok(tables)
+}
+
 fn encode_document_for_storage(
     schema: Option<&CollectionSchemaManifest>,
     bytes: &[u8],
@@ -2758,6 +2865,58 @@ impl MdbxIndex {
         Ok(())
     }
 
+    fn replace_document_with_index_tables(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        tables: &MdbxTables<'_>,
+        collection: &str,
+        document_id: u64,
+        old_indexes: Option<&[IndexEntry]>,
+        new_indexes: &[IndexEntry],
+        unique_indexes: &HashSet<String>,
+        persist_reverse_metadata: bool,
+        index_tables: &HashMap<String, Table<'_>>,
+    ) -> Result<(), String> {
+        if let Some(indexes) = old_indexes {
+            Self::delete_entries_with_index_tables(
+                transaction,
+                collection,
+                document_id,
+                indexes,
+                index_tables,
+            )?;
+            let document_index_key = encode_document_key(collection, document_id);
+            ignore_not_found(transaction.del(&tables.document_indexes, document_index_key, None))?;
+        } else {
+            Self::delete_document(transaction, tables, collection, document_id, old_indexes)?;
+        }
+
+        for index in new_indexes {
+            Self::insert_entry_with_index_tables(
+                transaction,
+                collection,
+                document_id,
+                index,
+                unique_indexes.contains(index.name.as_str()),
+                index_tables,
+            )?;
+        }
+
+        let key = encode_document_key(collection, document_id);
+        if !persist_reverse_metadata || new_indexes.is_empty() {
+            ignore_not_found(transaction.del(&tables.document_indexes, key, None))?;
+        } else {
+            transaction
+                .put(
+                    &tables.document_indexes,
+                    key,
+                    encode_index_entry_metadata(document_id, new_indexes)?,
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn insert_entry(
         transaction: &Transaction<'_, RW, NoWriteMap>,
         _tables: &MdbxTables<'_>,
@@ -2771,6 +2930,37 @@ impl MdbxIndex {
         let document_id_bytes = document_id_key(document_id);
         transaction
             .put(&index_table, key, document_id_bytes, WriteFlags::UPSERT)
+            .map_err(|error| error.to_string())?;
+        if is_unique {
+            let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
+            let unique_table = create_unique_table(transaction, collection, &index.name)?;
+            transaction
+                .put(
+                    &unique_table,
+                    unique_key,
+                    document_id.to_be_bytes(),
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn insert_entry_with_index_tables(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        collection: &str,
+        document_id: u64,
+        index: &IndexEntry,
+        is_unique: bool,
+        index_tables: &HashMap<String, Table<'_>>,
+    ) -> Result<(), String> {
+        let key = Self::entry_key(collection, &index.name, &index.value)?;
+        let index_table = index_tables
+            .get(&index.name)
+            .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
+        let document_id_bytes = document_id_key(document_id);
+        transaction
+            .put(index_table, key, document_id_bytes, WriteFlags::UPSERT)
             .map_err(|error| error.to_string())?;
         if is_unique {
             let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
@@ -2825,6 +3015,28 @@ impl MdbxIndex {
             let index_table = create_index_table(transaction, collection, &index.name)?;
             let document_id_bytes = document_id_key(document_id);
             ignore_not_found(transaction.del(&index_table, key, Some(&document_id_bytes)))?;
+            let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
+            if let Ok(unique_table) = open_unique_table(transaction, collection, &index.name) {
+                ignore_not_found(transaction.del(&unique_table, unique_key, None))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_entries_with_index_tables(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        collection: &str,
+        document_id: u64,
+        indexes: &[IndexEntry],
+        index_tables: &HashMap<String, Table<'_>>,
+    ) -> Result<(), String> {
+        for index in indexes {
+            let key = Self::entry_key(collection, &index.name, &index.value)?;
+            let index_table = index_tables
+                .get(&index.name)
+                .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
+            let document_id_bytes = document_id_key(document_id);
+            ignore_not_found(transaction.del(index_table, key, Some(&document_id_bytes)))?;
             let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
             if let Ok(unique_table) = open_unique_table(transaction, collection, &index.name) {
                 ignore_not_found(transaction.del(&unique_table, unique_key, None))?;

@@ -25,6 +25,10 @@ while the core design settles.
   storage layout as `mdbx-v5`.
 - Removed MDBX reverse-index metadata writes from the schema-backed binary
   document path, marking the storage layout as `mdbx-v6`.
+- Optimized MDBX indexed batch writes by preparing document and index tables
+  once per native `putAll`.
+- Aligned native schema registration with generated binary document field
+  slots.
 
 ## 0.3.4
 

@@ -1940,7 +1940,8 @@ Uint8List _encodeSchemaManifest(
 }
 
 WireCollectionSchema _schemaWire(CindelCollectionSchema<dynamic> schema) {
-  final fields = schema.fields.toList(growable: false);
+  final fields = schema.fields.toList(growable: false)
+    ..sort((left, right) => left.name.compareTo(right.name));
   return WireCollectionSchema(
     name: schema.name,
     idField: schema.idField,
