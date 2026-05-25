@@ -608,7 +608,7 @@ where
     let expected_layout = if backend == "sqlite" {
         StorageLayoutVersion::SqliteV1
     } else {
-        StorageLayoutVersion::MdbxV4
+        StorageLayoutVersion::MdbxV6
     };
     let expected_document_format = DocumentFormatVersion::BinaryV2;
 

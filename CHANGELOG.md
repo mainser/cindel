@@ -21,6 +21,10 @@ while the core design settles.
 - Added schema-specific typed binary document storage aligned to Isar's
   static/dynamic layout.
 - Marked generated typed document storage as `binary-v2`.
+- Compacted MDBX index table names and table-local index keys, marking the
+  storage layout as `mdbx-v5`.
+- Removed MDBX reverse-index metadata writes from the schema-backed binary
+  document path, marking the storage layout as `mdbx-v6`.
 
 ## 0.3.4
 

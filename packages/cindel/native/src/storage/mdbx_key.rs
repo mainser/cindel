@@ -58,6 +58,41 @@ pub(crate) fn encode_unique_index_key(
     encode_index_equal_prefix(collection, index_name, value)
 }
 
+pub(crate) fn encode_table_index_value(value: &IndexValue) -> Result<Vec<u8>, String> {
+    let mut key = Vec::new();
+    push_table_index_value(&mut key, value)?;
+    Ok(key)
+}
+
+pub(crate) fn encode_table_index_range(
+    lower: Option<&IndexValue>,
+    upper: Option<&IndexValue>,
+) -> Result<MdbxKeyRange, String> {
+    let Some(kind) = range_kind(lower, upper)? else {
+        return Err("index range requires at least one bound".into());
+    };
+
+    let mut start = Vec::new();
+    let mut end_inclusive = Vec::new();
+
+    if let Some(lower) = lower {
+        push_table_index_value(&mut start, lower)?;
+    } else {
+        push_table_kind_lower_bound(&mut start, kind);
+    }
+
+    if let Some(upper) = upper {
+        push_table_index_value(&mut end_inclusive, upper)?;
+    } else {
+        push_table_kind_upper_bound(&mut end_inclusive, kind);
+    }
+
+    Ok(MdbxKeyRange {
+        start,
+        end_inclusive,
+    })
+}
+
 pub(crate) fn encode_collection_key(collection: &str) -> Vec<u8> {
     let mut key = Vec::new();
     push_text_segment(&mut key, collection);
@@ -200,6 +235,27 @@ fn push_index_value(key: &mut Vec<u8>, value: &IndexValue) -> Result<(), String>
     Ok(())
 }
 
+fn push_table_index_value(key: &mut Vec<u8>, value: &IndexValue) -> Result<(), String> {
+    match value {
+        IndexValue::Bool(value) => key.push(if *value { 2 } else { 1 }),
+        IndexValue::Int(value) => key.extend_from_slice(&encode_i64(*value)),
+        IndexValue::Double(value) => key.extend_from_slice(&encode_f64(*value)?),
+        IndexValue::String(value) => {
+            if value.is_empty() {
+                key.push(1);
+            } else {
+                key.extend_from_slice(value.as_bytes());
+            }
+        }
+        IndexValue::List(values) => {
+            for value in values {
+                push_table_index_value(key, value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn push_kind_lower_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
     key.push(kind.tag());
     match kind {
@@ -223,6 +279,22 @@ fn push_kind_upper_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
         }
         IndexValueKind::String => key.push(0xff),
         IndexValueKind::List => key.push(0xff),
+    }
+}
+
+fn push_table_kind_lower_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
+    match kind {
+        IndexValueKind::Bool => key.push(1),
+        IndexValueKind::Int | IndexValueKind::Double => key.extend_from_slice(&[0; 8]),
+        IndexValueKind::String | IndexValueKind::List => {}
+    }
+}
+
+fn push_table_kind_upper_bound(key: &mut Vec<u8>, kind: IndexValueKind) {
+    match kind {
+        IndexValueKind::Bool => key.push(2),
+        IndexValueKind::Int | IndexValueKind::Double => key.extend_from_slice(&[0xff; 8]),
+        IndexValueKind::String | IndexValueKind::List => key.push(0xff),
     }
 }
 
@@ -421,6 +493,65 @@ mod tests {
         encoded.dedup();
 
         assert_eq!(encoded.len(), 4);
+    }
+
+    #[test]
+    fn table_local_index_values_match_isar_like_single_field_shape() {
+        // Scenario: MDBX v5 stores each index in its own table.
+        // Covers:
+        // - No collection/index prefix in the key bytes.
+        // - No value-kind tag for schema-backed table-local index values.
+        // Expected: Simple single-field keys match the Isar-like shape.
+        assert_eq!(
+            encode_table_index_value(&IndexValue::String("title-7".into())).unwrap(),
+            b"title-7".to_vec()
+        );
+        assert_eq!(
+            encode_table_index_value(&IndexValue::String(String::new())).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            encode_table_index_value(&IndexValue::Int(3)).unwrap(),
+            encode_i64(3).to_vec()
+        );
+        assert_eq!(
+            encode_table_index_value(&IndexValue::Bool(false)).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            encode_table_index_value(&IndexValue::Bool(true)).unwrap(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn table_local_index_ranges_cover_compact_values() {
+        // Scenario: MDBX v5 range scans use table-local index values.
+        // Covers:
+        // - Inclusive numeric bounds without a synthetic document-id suffix.
+        // - One-sided string bounds used by prefix queries.
+        // Expected: Encoded values sort inside the requested compact range.
+        let range =
+            encode_table_index_range(Some(&IndexValue::Int(10)), Some(&IndexValue::Int(20)))
+                .unwrap();
+        let inside_lower = encode_table_index_value(&IndexValue::Int(10)).unwrap();
+        let inside_upper = encode_table_index_value(&IndexValue::Int(20)).unwrap();
+        let outside_high = encode_table_index_value(&IndexValue::Int(21)).unwrap();
+
+        assert!(range.start <= inside_lower);
+        assert!(inside_lower <= range.end_inclusive);
+        assert!(inside_upper <= range.end_inclusive);
+        assert!(outside_high > range.end_inclusive);
+
+        let open_upper =
+            encode_table_index_range(Some(&IndexValue::String("ab".into())), None).unwrap();
+        assert!(
+            encode_table_index_value(&IndexValue::String("ab".into())).unwrap() >= open_upper.start
+        );
+        assert!(
+            encode_table_index_value(&IndexValue::String("zz".into())).unwrap()
+                <= open_upper.end_inclusive
+        );
     }
 
     #[test]

@@ -23,8 +23,8 @@ use crate::wire::{
 };
 
 use super::mdbx_key::{
-    decode_key_document_id, encode_collection_key, encode_document_key, encode_index_equal_prefix,
-    encode_index_range, COLLECTION_REVISIONS_TABLE, SCHEMA_COLLECTIONS_TABLE,
+    decode_key_document_id, encode_collection_key, encode_document_key, encode_table_index_range,
+    encode_table_index_value, COLLECTION_REVISIONS_TABLE, SCHEMA_COLLECTIONS_TABLE,
     STORAGE_METADATA_TABLE,
 };
 use super::{
@@ -299,14 +299,14 @@ impl MdbxStorage {
         ensure_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV4,
+            StorageLayoutVersion::MdbxV6,
             DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV4,
+            StorageLayoutVersion::MdbxV6,
             DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
@@ -1155,7 +1155,7 @@ impl StorageEngine for MdbxStorage {
         lower: Option<&IndexValue>,
         upper: Option<&IndexValue>,
     ) -> Result<Vec<u64>, String> {
-        let range = encode_index_range("", "", lower, upper)?;
+        let range = encode_table_index_range(lower, upper)?;
         match self.active_write() {
             Some(transaction) => {
                 let ids = self.with_read_transaction(|transaction, tables| {
@@ -1657,11 +1657,11 @@ fn documents_table_name(collection: &str) -> String {
 }
 
 fn index_table_name(collection: &str, index: &str) -> String {
-    format!("v2:index:{collection}:{index}")
+    format!("i:{collection}:{index}")
 }
 
 fn unique_table_name(collection: &str, index: &str) -> String {
-    format!("v2:unique:{collection}:{index}")
+    format!("u:{collection}:{index}")
 }
 
 fn open_or_create_table<'txn>(
@@ -1678,7 +1678,7 @@ fn open_or_create_table<'txn>(
 }
 
 fn index_value_key(value: &IndexValue) -> Result<Vec<u8>, String> {
-    encode_index_equal_prefix("", "", value)
+    encode_table_index_value(value)
 }
 
 fn document_id_key(id: u64) -> [u8; 8] {
@@ -2375,6 +2375,16 @@ fn put_document_with_indexes(
     let unique_indexes = unique_index_names_from_schema(schema.as_ref());
     let (stored_bytes, effective_indexes) =
         encode_document_for_storage(schema.as_ref(), bytes, indexes)?;
+    let documents_table = create_documents_table(transaction, collection)?;
+    let previous_bytes =
+        ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)))?;
+    let old_indexes = previous_bytes
+        .as_deref()
+        .map(|bytes| derive_indexes_from_stored_document(schema.as_ref(), bytes))
+        .transpose()?
+        .flatten();
+    let persist_reverse_metadata =
+        !can_derive_indexes_from_stored_document(schema.as_ref(), &stored_bytes);
     MdbxIndex::validate_unique(
         transaction,
         tables,
@@ -2383,7 +2393,6 @@ fn put_document_with_indexes(
         &effective_indexes,
         &unique_indexes,
     )?;
-    let documents_table = create_documents_table(transaction, collection)?;
     transaction
         .put(
             &documents_table,
@@ -2397,8 +2406,10 @@ fn put_document_with_indexes(
         tables,
         collection,
         id,
+        old_indexes.as_deref(),
         &effective_indexes,
         &unique_indexes,
+        persist_reverse_metadata,
     )?;
     Ok(())
 }
@@ -2421,6 +2432,29 @@ fn encode_document_for_storage(
     Err("document storage requires GenericDocumentV1 or Cindel binary document bytes".into())
 }
 
+fn can_derive_indexes_from_stored_document(
+    schema: Option<&CollectionSchemaManifest>,
+    bytes: &[u8],
+) -> bool {
+    let Some(schema) = schema else {
+        return false;
+    };
+    validate_binary_document(schema, bytes).is_ok()
+}
+
+fn derive_indexes_from_stored_document(
+    schema: Option<&CollectionSchemaManifest>,
+    bytes: &[u8],
+) -> Result<Option<Vec<IndexEntry>>, String> {
+    let Some(schema) = schema else {
+        return Ok(None);
+    };
+    if validate_binary_document(schema, bytes).is_ok() {
+        return index_entries_from_binary_document(schema, bytes).map(Some);
+    }
+    Ok(None)
+}
+
 fn decode_document_for_read(
     _schema: Option<&CollectionSchemaManifest>,
     bytes: &[u8],
@@ -2434,14 +2468,20 @@ fn delete_document(
     collection: &str,
     id: u64,
 ) -> Result<bool, String> {
+    let schema = collection_schema(transaction, tables, collection)?;
+    let documents_table = create_documents_table(transaction, collection)?;
+    let previous_bytes =
+        ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)))?;
+    let Some(previous_bytes) = previous_bytes else {
+        return Ok(false);
+    };
+    let old_indexes = derive_indexes_from_stored_document(schema.as_ref(), &previous_bytes)?;
     let deleted = transaction
-        .del(
-            &create_documents_table(transaction, collection)?,
-            document_table_key(id),
-            None,
-        )
+        .del(&documents_table, document_table_key(id), None)
         .map_err(|error| error.to_string())?;
-    MdbxIndex::delete_document(transaction, tables, collection, id)?;
+    if deleted {
+        MdbxIndex::delete_document(transaction, tables, collection, id, old_indexes.as_deref())?;
+    }
     Ok(deleted)
 }
 
@@ -2472,8 +2512,10 @@ fn rebuild_indexes_in_transaction(
             tables,
             collection,
             document.id,
+            None,
             &indexes,
             &unique_indexes,
+            true,
         )?;
     }
     Ok(())
@@ -2595,6 +2637,8 @@ fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
         "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
         "mdbx-v3" => Ok(StorageLayoutVersion::MdbxV3),
         "mdbx-v4" => Ok(StorageLayoutVersion::MdbxV4),
+        "mdbx-v5" => Ok(StorageLayoutVersion::MdbxV5),
+        "mdbx-v6" => Ok(StorageLayoutVersion::MdbxV6),
         _ => Err(format!("unknown storage layout version `{value}`")),
     }
 }
@@ -2681,10 +2725,12 @@ impl MdbxIndex {
         tables: &MdbxTables<'_>,
         collection: &str,
         document_id: u64,
+        old_indexes: Option<&[IndexEntry]>,
         new_indexes: &[IndexEntry],
         unique_indexes: &HashSet<String>,
+        persist_reverse_metadata: bool,
     ) -> Result<(), String> {
-        Self::delete_document(transaction, tables, collection, document_id)?;
+        Self::delete_document(transaction, tables, collection, document_id, old_indexes)?;
         for index in new_indexes {
             Self::insert_entry(
                 transaction,
@@ -2697,7 +2743,7 @@ impl MdbxIndex {
         }
         let document_indexes = &tables.document_indexes;
         let key = encode_document_key(collection, document_id);
-        if new_indexes.is_empty() {
+        if !persist_reverse_metadata || new_indexes.is_empty() {
             ignore_not_found(transaction.del(document_indexes, key, None))?;
         } else {
             transaction
@@ -2746,7 +2792,15 @@ impl MdbxIndex {
         tables: &MdbxTables<'_>,
         collection: &str,
         document_id: u64,
+        known_indexes: Option<&[IndexEntry]>,
     ) -> Result<(), String> {
+        if let Some(indexes) = known_indexes {
+            Self::delete_entries(transaction, collection, document_id, indexes)?;
+            let document_index_key = encode_document_key(collection, document_id);
+            ignore_not_found(transaction.del(&tables.document_indexes, document_index_key, None))?;
+            return Ok(());
+        }
+
         let document_index_key = encode_document_key(collection, document_id);
         let Some(indexes) = ignore_not_found(
             transaction.get::<Vec<u8>>(&tables.document_indexes, &document_index_key),
@@ -2755,6 +2809,17 @@ impl MdbxIndex {
             return Ok(());
         };
         let indexes = decode_index_entry_metadata(&indexes)?;
+        Self::delete_entries(transaction, collection, document_id, &indexes)?;
+        ignore_not_found(transaction.del(&tables.document_indexes, document_index_key, None))?;
+        Ok(())
+    }
+
+    fn delete_entries(
+        transaction: &Transaction<'_, RW, NoWriteMap>,
+        collection: &str,
+        document_id: u64,
+        indexes: &[IndexEntry],
+    ) -> Result<(), String> {
         for index in indexes {
             let key = Self::entry_key(collection, &index.name, &index.value)?;
             let index_table = create_index_table(transaction, collection, &index.name)?;
@@ -2765,7 +2830,6 @@ impl MdbxIndex {
                 ignore_not_found(transaction.del(&unique_table, unique_key, None))?;
             }
         }
-        ignore_not_found(transaction.del(&tables.document_indexes, document_index_key, None))?;
         Ok(())
     }
 
@@ -2784,7 +2848,7 @@ impl MdbxIndex {
             .map(|key| decode_key_document_id(key))
             .collect::<Result<Vec<_>, _>>()?;
         for id in ids {
-            Self::delete_document(transaction, tables, collection, id)?;
+            Self::delete_document(transaction, tables, collection, id, None)?;
         }
         Ok(stats)
     }
@@ -3391,6 +3455,97 @@ mod tests {
     }
 
     #[test]
+    fn schema_binary_documents_delete_old_indexes_without_reverse_metadata() {
+        // Scenario: Schema-backed binary documents can derive old index entries
+        // from the previously stored document bytes.
+        // Covers:
+        // - No document_indexes write for the optimized typed binary path.
+        // - Update deletes old index keys before inserting new keys.
+        // - Delete cleans indexes without reverse metadata.
+        // Expected: Index queries stay correct and the reverse metadata table
+        // remains empty for the typed binary document.
+        let directory = TemporaryDirectory::new("binary_indexes_no_reverse");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        storage
+            .put_indexed(
+                "users",
+                1,
+                &user_document("old@example.com", 1, "Ana", 10),
+                &[],
+            )
+            .unwrap();
+
+        storage
+            .with_read_transaction(|transaction, tables| {
+                assert!(
+                    ignore_not_found(transaction.get::<Vec<u8>>(
+                        &tables.document_indexes,
+                        &encode_document_key("users", 1),
+                    ))?
+                    .is_none()
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        storage
+            .put_indexed(
+                "users",
+                1,
+                &user_document("new@example.com", 1, "Ana", 20),
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .query_index_equal(
+                    "users",
+                    "email",
+                    &IndexValue::String("old@example.com".into())
+                )
+                .unwrap(),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            storage
+                .query_index_equal(
+                    "users",
+                    "email",
+                    &IndexValue::String("new@example.com".into())
+                )
+                .unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            storage
+                .query_index_range(
+                    "users",
+                    "score",
+                    Some(&IndexValue::Int(0)),
+                    Some(&IndexValue::Int(10))
+                )
+                .unwrap(),
+            Vec::<u64>::new()
+        );
+
+        storage.delete("users", 1).unwrap();
+
+        assert_eq!(
+            storage
+                .query_index_equal(
+                    "users",
+                    "email",
+                    &IndexValue::String("new@example.com".into())
+                )
+                .unwrap(),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
     fn mdbx_index_boundary_replaces_deletes_clears_and_counts_entries() {
         // Scenario: PERF-02 moves MDBX index responsibilities behind an
         // internal boundary before changing the table layout.
@@ -3428,11 +3583,13 @@ mod tests {
                     tables,
                     "users",
                     1,
+                    None,
                     &[
                         index("email", IndexValue::String("old@example.com".into())),
                         index("score", IndexValue::Int(10)),
                     ],
                     &unique_indexes,
+                    true,
                 )?;
                 assert_eq!(
                     MdbxIndex::stats(transaction, tables, "users")?,
@@ -3457,11 +3614,13 @@ mod tests {
                     tables,
                     "users",
                     1,
+                    None,
                     &[
                         index("email", IndexValue::String("new@example.com".into())),
                         index("score", IndexValue::Int(20)),
                     ],
                     &unique_indexes,
+                    true,
                 )?;
                 assert_eq!(
                     scan_index_equal_ids(transaction, "users", "email", &old_email_prefix,)?,
@@ -3483,7 +3642,7 @@ mod tests {
         storage
             .with_write_transaction(|transaction, tables| {
                 let tables = &tables;
-                MdbxIndex::delete_document(transaction, tables, "users", 1)?;
+                MdbxIndex::delete_document(transaction, tables, "users", 1, None)?;
                 assert_eq!(
                     MdbxIndex::stats(transaction, tables, "users")?,
                     MdbxIndexStats {
@@ -3503,16 +3662,20 @@ mod tests {
                     tables,
                     "users",
                     1,
+                    None,
                     &[index("email", IndexValue::String("a@example.com".into()))],
                     &unique_indexes,
+                    true,
                 )?;
                 MdbxIndex::replace_document(
                     transaction,
                     tables,
                     "users",
                     2,
+                    None,
                     &[index("email", IndexValue::String("b@example.com".into()))],
                     &unique_indexes,
+                    true,
                 )?;
                 Ok(())
             })
