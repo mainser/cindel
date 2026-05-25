@@ -223,7 +223,25 @@ void main() {
 
       // Act.
       final bytes = UserSchema.toBinaryDocument!(user);
-      final storedValues = cindelDecodeBinaryDocument(bytes);
+      final storedValues = cindelDecodeSchemaBinaryDocument(bytes, const [
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.boolValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.objectValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.stringValue,
+      ]);
       final restored = UserSchema.fromBinaryDocument!(bytes);
 
       // Assert.

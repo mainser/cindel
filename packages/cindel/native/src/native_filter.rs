@@ -1,4 +1,4 @@
-use crate::document_format::{BinaryDocument, BinaryValue};
+use crate::document_format::{read_binary_field, BinaryValue};
 use crate::storage::CollectionSchemaManifest;
 use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
@@ -73,14 +73,13 @@ impl NativeFilter {
         schema: &CollectionSchemaManifest,
         bytes: &[u8],
     ) -> Result<bool, String> {
-        let document = BinaryDocument::parse(bytes)?;
-        self.matches_document(schema, &document)
+        self.matches_document(schema, bytes)
     }
 
     fn matches_document(
         &self,
         schema: &CollectionSchemaManifest,
-        document: &BinaryDocument<'_>,
+        bytes: &[u8],
     ) -> Result<bool, String> {
         match self {
             Self::Field {
@@ -88,17 +87,14 @@ impl NativeFilter {
                 operation,
                 value,
             } => {
-                let Some(index) = schema
+                if !schema
                     .fields
                     .iter()
-                    .position(|schema_field| schema_field.name == *field)
-                else {
-                    return Ok(false);
-                };
-                if index >= document.field_count() {
+                    .any(|schema_field| schema_field.name == *field)
+                {
                     return Ok(false);
                 }
-                match document.field_value(index)? {
+                match read_binary_field(schema, bytes, field)? {
                     Some(actual) => field_matches(&actual, *operation, value),
                     None => Ok(matches!(
                         operation,
@@ -108,7 +104,7 @@ impl NativeFilter {
             }
             Self::All { predicates } => {
                 for predicate in predicates {
-                    if !predicate.matches_document(schema, document)? {
+                    if !predicate.matches_document(schema, bytes)? {
                         return Ok(false);
                     }
                 }
@@ -116,13 +112,13 @@ impl NativeFilter {
             }
             Self::Any { predicates } => {
                 for predicate in predicates {
-                    if predicate.matches_document(schema, document)? {
+                    if predicate.matches_document(schema, bytes)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Self::Not { predicate } => Ok(!predicate.matches_document(schema, document)?),
+            Self::Not { predicate } => Ok(!predicate.matches_document(schema, bytes)?),
         }
     }
 }
@@ -297,6 +293,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "active".to_string(),
                     dart_type: "bool".to_string(),
+                    binary_type: "bool".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -306,6 +303,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "age".to_string(),
                     dart_type: "int".to_string(),
+                    binary_type: "int".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -315,6 +313,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "name".to_string(),
                     dart_type: "String".to_string(),
+                    binary_type: "string".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -324,6 +323,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "nickname".to_string(),
                     dart_type: "String?".to_string(),
+                    binary_type: "string".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -333,6 +333,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "tags".to_string(),
                     dart_type: "List<String>".to_string(),
+                    binary_type: "list".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -342,6 +343,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "profile".to_string(),
                     dart_type: "Recipient".to_string(),
+                    binary_type: "object".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,

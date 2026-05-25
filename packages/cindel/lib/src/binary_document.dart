@@ -6,6 +6,20 @@ const _formatVersion = 1;
 const _headerLength = 24;
 const _slotLength = 16;
 const _nullFlag = 0x01;
+const _compactNullBool = 0xff;
+const _compactNullInt = -9223372036854775808;
+const _compactNullDoubleBits = 0x7ff8000000000001;
+
+/// Schema-backed field types used by Cindel's compact generated document
+/// layout.
+enum CindelBinaryFieldType {
+  boolValue,
+  intValue,
+  doubleValue,
+  stringValue,
+  listValue,
+  objectValue,
+}
 
 enum _BinaryKind {
   nullValue(0),
@@ -121,6 +135,138 @@ List<Object?> cindelDecodeBinaryDocument(Uint8List bytes) {
     for (var index = 0; index < document.fieldCount; index += 1)
       document.fieldValue(index),
   ];
+}
+
+/// Encodes generated field values using the schema-specific static/dynamic
+/// layout used by the optimized typed path.
+Uint8List cindelEncodeSchemaBinaryDocument(
+  List<Object?> fields,
+  List<CindelBinaryFieldType> fieldTypes,
+) {
+  if (fields.length != fieldTypes.length) {
+    throw ArgumentError.value(
+      fields.length,
+      'fields',
+      'Field count must match field type count.',
+    );
+  }
+  final staticSize = fieldTypes.fold<int>(
+    0,
+    (size, type) => size + _compactStaticSize(type),
+  );
+  if (staticSize > 0xffffff) {
+    throw ArgumentError.value(staticSize, 'fieldTypes', 'Static size too big.');
+  }
+
+  final staticBytes = Uint8List(3 + staticSize);
+  _writeUint24(staticBytes, 0, staticSize);
+  final dynamicBytes = BytesBuilder(copy: false);
+  var staticOffset = 0;
+  for (var index = 0; index < fields.length; index += 1) {
+    final value = fields[index];
+    final type = fieldTypes[index];
+    switch (type) {
+      case CindelBinaryFieldType.boolValue:
+        staticBytes[3 + staticOffset] = value == null
+            ? _compactNullBool
+            : (value as bool ? 1 : 0);
+      case CindelBinaryFieldType.intValue:
+        final stored = value as int?;
+        if (stored == _compactNullInt) {
+          throw ArgumentError.value(
+            stored,
+            'fields',
+            'The compact int null sentinel cannot be stored.',
+          );
+        }
+        staticBytes.buffer.asByteData().setInt64(
+          3 + staticOffset,
+          stored ?? _compactNullInt,
+          Endian.little,
+        );
+      case CindelBinaryFieldType.doubleValue:
+        final stored = value as double?;
+        if (stored != null && !stored.isFinite) {
+          throw ArgumentError.value(stored, 'fields', 'Must be finite.');
+        }
+        if (stored == null) {
+          staticBytes.buffer.asByteData().setUint64(
+            3 + staticOffset,
+            _compactNullDoubleBits,
+            Endian.little,
+          );
+        } else {
+          staticBytes.buffer.asByteData().setFloat64(
+            3 + staticOffset,
+            stored,
+            Endian.little,
+          );
+        }
+      case CindelBinaryFieldType.stringValue:
+        _writeCompactDynamic(
+          staticBytes,
+          staticOffset,
+          staticSize,
+          dynamicBytes,
+          value == null
+              ? null
+              : Uint8List.fromList(utf8.encode(value as String)),
+        );
+      case CindelBinaryFieldType.listValue:
+        _writeCompactDynamic(
+          staticBytes,
+          staticOffset,
+          staticSize,
+          dynamicBytes,
+          value == null ? null : _encodeList((value as List).cast<Object?>()),
+        );
+      case CindelBinaryFieldType.objectValue:
+        _writeCompactDynamic(
+          staticBytes,
+          staticOffset,
+          staticSize,
+          dynamicBytes,
+          value == null
+              ? null
+              : _encodeObject((value as Map).cast<String, Object?>()),
+        );
+    }
+    staticOffset += _compactStaticSize(type);
+  }
+  return Uint8List.fromList([...staticBytes, ...dynamicBytes.toBytes()]);
+}
+
+/// Decodes schema-specific compact generated document bytes.
+List<Object?> cindelDecodeSchemaBinaryDocument(
+  Uint8List bytes,
+  List<CindelBinaryFieldType> fieldTypes,
+) {
+  if (_hasLegacyMagic(bytes)) {
+    return cindelDecodeBinaryDocument(bytes);
+  }
+  if (bytes.length < 3) {
+    throw StateError('Compact binary document is shorter than the header.');
+  }
+  final staticSize = _readUint24(bytes, 0);
+  final expectedStaticSize = fieldTypes.fold<int>(
+    0,
+    (size, type) => size + _compactStaticSize(type),
+  );
+  if (staticSize != expectedStaticSize) {
+    throw StateError(
+      'Compact binary document static size does not match schema.',
+    );
+  }
+  if (bytes.length < 3 + staticSize) {
+    throw StateError('Compact binary document static section is truncated.');
+  }
+  var staticOffset = 0;
+  final values = <Object?>[];
+  for (final type in fieldTypes) {
+    values.add(_readCompactField(bytes, staticSize, staticOffset, type));
+    staticOffset += _compactStaticSize(type);
+  }
+  return values;
 }
 
 final class _BinaryValue {
@@ -491,4 +637,149 @@ double _readFloat64(Uint8List bytes, int offset) {
   return bytes.buffer
       .asByteData(bytes.offsetInBytes, bytes.lengthInBytes)
       .getFloat64(offset, Endian.little);
+}
+
+bool _hasLegacyMagic(Uint8List bytes) {
+  if (bytes.length < _magic.length) {
+    return false;
+  }
+  for (var index = 0; index < _magic.length; index += 1) {
+    if (bytes[index] != _magic[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+int _compactStaticSize(CindelBinaryFieldType type) {
+  return switch (type) {
+    CindelBinaryFieldType.boolValue => 1,
+    CindelBinaryFieldType.intValue => 8,
+    CindelBinaryFieldType.doubleValue => 8,
+    CindelBinaryFieldType.stringValue ||
+    CindelBinaryFieldType.listValue ||
+    CindelBinaryFieldType.objectValue => 3,
+  };
+}
+
+void _writeCompactDynamic(
+  Uint8List staticBytes,
+  int staticOffset,
+  int staticSize,
+  BytesBuilder dynamicBytes,
+  Uint8List? payload,
+) {
+  if (payload == null) {
+    _writeUint24(staticBytes, 3 + staticOffset, 0);
+    return;
+  }
+  if (payload.length > 0xffffff) {
+    throw ArgumentError.value(payload.length, 'payload', 'Payload too large.');
+  }
+  final offset = staticSize + dynamicBytes.length;
+  if (offset > 0xffffff) {
+    throw ArgumentError.value(offset, 'payload', 'Dynamic offset too large.');
+  }
+  _writeUint24(staticBytes, 3 + staticOffset, offset);
+  final header = Uint8List(3);
+  _writeUint24(header, 0, payload.length);
+  dynamicBytes
+    ..add(header)
+    ..add(payload);
+}
+
+Object? _readCompactField(
+  Uint8List bytes,
+  int staticSize,
+  int staticOffset,
+  CindelBinaryFieldType type,
+) {
+  final byteData = bytes.buffer.asByteData(
+    bytes.offsetInBytes,
+    bytes.lengthInBytes,
+  );
+  final absolute = 3 + staticOffset;
+  return switch (type) {
+    CindelBinaryFieldType.boolValue => switch (bytes[absolute]) {
+      _compactNullBool => null,
+      0 => false,
+      1 => true,
+      final value => throw StateError('Invalid compact bool byte `$value`.'),
+    },
+    CindelBinaryFieldType.intValue => switch (byteData.getInt64(
+      absolute,
+      Endian.little,
+    )) {
+      _compactNullInt => null,
+      final value => value,
+    },
+    CindelBinaryFieldType.doubleValue => _readCompactDouble(byteData, absolute),
+    CindelBinaryFieldType.stringValue => switch (_readCompactDynamic(
+      bytes,
+      staticSize,
+      staticOffset,
+    )) {
+      null => null,
+      final payload => utf8.decode(payload),
+    },
+    CindelBinaryFieldType.listValue => switch (_readCompactDynamic(
+      bytes,
+      staticSize,
+      staticOffset,
+    )) {
+      null => null,
+      final payload => _decodeList(payload),
+    },
+    CindelBinaryFieldType.objectValue => switch (_readCompactDynamic(
+      bytes,
+      staticSize,
+      staticOffset,
+    )) {
+      null => null,
+      final payload => _decodeObject(payload),
+    },
+  };
+}
+
+double? _readCompactDouble(ByteData byteData, int offset) {
+  final bits = byteData.getUint64(offset, Endian.little);
+  if (bits == _compactNullDoubleBits) {
+    return null;
+  }
+  return byteData.getFloat64(offset, Endian.little);
+}
+
+Uint8List? _readCompactDynamic(
+  Uint8List bytes,
+  int staticSize,
+  int staticOffset,
+) {
+  final relative = _readUint24(bytes, 3 + staticOffset);
+  if (relative == 0) {
+    return null;
+  }
+  if (relative < staticSize) {
+    throw StateError('Compact dynamic field points into static section.');
+  }
+  final header = 3 + relative;
+  if (header + 3 > bytes.length) {
+    throw StateError('Compact dynamic field length is truncated.');
+  }
+  final length = _readUint24(bytes, header);
+  final start = header + 3;
+  final end = start + length;
+  if (end > bytes.length) {
+    throw StateError('Compact dynamic field payload is truncated.');
+  }
+  return Uint8List.sublistView(bytes, start, end);
+}
+
+void _writeUint24(Uint8List bytes, int offset, int value) {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >> 8) & 0xff;
+  bytes[offset + 2] = (value >> 16) & 0xff;
+}
+
+int _readUint24(Uint8List bytes, int offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
 }

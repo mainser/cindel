@@ -74,6 +74,7 @@ String _emitCollection(_CollectionInfo collection) {
       ..writeln('    CindelFieldSchema(')
       ..writeln('      name: ${_stringLiteral(field.name)},')
       ..writeln('      dartType: ${_stringLiteral(field.dartType)},')
+      ..writeln('      binaryType: ${_stringLiteral(field.binaryType)},')
       ..writeln('      isId: ${field.isId},')
       ..writeln('      isIndexed: ${field.isIndexed},')
       ..writeln('      isIndexUnique: ${field.isIndexUnique},')
@@ -235,21 +236,41 @@ String _emitCollection(_CollectionInfo collection) {
       '_\$${collection.dartName}ToCindelBinaryDocument('
       '${collection.dartName} object) {',
     )
-    ..writeln('  return cindelEncodeBinaryDocument(<Object?>[');
+    ..writeln('  return cindelEncodeSchemaBinaryDocument(')
+    ..writeln('    <Object?>[');
 
   for (final field in collection.binaryFields) {
     buffer.writeln('    ${field.toDocumentExpression},');
   }
 
   buffer
-    ..writeln('  ]);')
+    ..writeln('    ],')
+    ..writeln('    const <CindelBinaryFieldType>[');
+
+  for (final field in collection.binaryFields) {
+    buffer.writeln('      CindelBinaryFieldType.${field.binaryFieldType},');
+  }
+
+  buffer
+    ..writeln('    ],')
+    ..writeln('  );')
     ..writeln('}')
     ..writeln()
     ..writeln(
       '${collection.dartName} _\$${collection.dartName}'
       'FromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {',
     )
-    ..writeln('  final fields = cindelDecodeBinaryDocument(bytes);')
+    ..writeln('  final fields = cindelDecodeSchemaBinaryDocument(')
+    ..writeln('    bytes,')
+    ..writeln('    const <CindelBinaryFieldType>[');
+
+  for (final field in collection.binaryFields) {
+    buffer.writeln('      CindelBinaryFieldType.${field.binaryFieldType},');
+  }
+
+  buffer
+    ..writeln('    ],')
+    ..writeln('  );')
     ..writeln('  final object = ${collection.dartName}();');
 
   for (var index = 0; index < collection.binaryFields.length; index += 1) {
@@ -652,6 +673,10 @@ final class _FieldInfo {
     return type.toStoredExpression('object.$name');
   }
 
+  String get binaryType => type.binaryType;
+
+  String get binaryFieldType => type.binaryFieldType;
+
   String fromDocumentExpression(String fieldLiteral) {
     return type.fromStoredExpression('document[$fieldLiteral]');
   }
@@ -1043,6 +1068,34 @@ final class _PersistedType {
 
   bool get supportsWordIndex => supportsCaseInsensitiveIndex;
 
+  String get binaryType {
+    return switch (kind) {
+      _PersistedTypeKind.primitive => switch (_normalizeDartType(dartType)) {
+        'bool' => 'bool',
+        'int' => 'int',
+        'double' => 'double',
+        'String' => 'string',
+        final type => throw StateError('Unsupported primitive `$type`.'),
+      },
+      _PersistedTypeKind.dateTime || _PersistedTypeKind.duration => 'int',
+      _PersistedTypeKind.enumeration => enumInfo!.binaryType,
+      _PersistedTypeKind.embedded => 'object',
+      _PersistedTypeKind.list => 'list',
+    };
+  }
+
+  String get binaryFieldType {
+    return switch (binaryType) {
+      'bool' => 'boolValue',
+      'int' => 'intValue',
+      'double' => 'doubleValue',
+      'string' => 'stringValue',
+      'list' => 'listValue',
+      'object' => 'objectValue',
+      final type => throw StateError('Unsupported binary type `$type`.'),
+    };
+  }
+
   bool get supportsRangeQueries {
     final normalized = _normalizeDartType(dartType);
     return kind == _PersistedTypeKind.primitive &&
@@ -1180,6 +1233,7 @@ final class _EnumInfo {
     required this.enumType,
     required this.strategy,
     this.valueField,
+    this.valueFieldType,
   });
 
   static _EnumInfo? from(FieldElement element) {
@@ -1241,6 +1295,7 @@ final class _EnumInfo {
       _ => CindelEnumType.name,
     };
     final valueField = reader.peek('valueField')?.stringValue;
+    String? valueFieldType;
     if (strategy == CindelEnumType.value) {
       if (valueField == null || valueField.trim().isEmpty) {
         throw InvalidGenerationSourceError(
@@ -1258,8 +1313,8 @@ final class _EnumInfo {
           element: field,
         );
       }
-      final storedType = _normalizeDartType(enumField.type.getDisplayString());
-      if (!_primitiveTypes.contains(storedType)) {
+      valueFieldType = _normalizeDartType(enumField.type.getDisplayString());
+      if (!_primitiveTypes.contains(valueFieldType)) {
         throw InvalidGenerationSourceError(
           'Enum custom value `${enumElement.name}.$valueField` must be int, '
           'double, String, or bool.',
@@ -1271,12 +1326,28 @@ final class _EnumInfo {
       enumType: enumElement.name ?? enumElement.displayName,
       strategy: strategy,
       valueField: valueField,
+      valueFieldType: valueFieldType,
     );
   }
 
   final String enumType;
   final CindelEnumType strategy;
   final String? valueField;
+  final String? valueFieldType;
+
+  String get binaryType {
+    return switch (strategy) {
+      CindelEnumType.name => 'string',
+      CindelEnumType.ordinal => 'int',
+      CindelEnumType.value => switch (valueFieldType) {
+        'bool' => 'bool',
+        'int' => 'int',
+        'double' => 'double',
+        'String' => 'string',
+        final type => throw StateError('Unsupported enum value type `$type`.'),
+      },
+    };
+  }
 
   String _toStoredExpression(String expression) {
     return switch (strategy) {

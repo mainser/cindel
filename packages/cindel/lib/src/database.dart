@@ -1112,6 +1112,7 @@ class CindelDatabase {
             CindelFieldSchema(
               name: field.name,
               dartType: field.dartType,
+              binaryType: field.binaryType,
               isId: field.isId,
               isIndexed: field.isIndexed,
               isIndexUnique: field.isIndexUnique,
@@ -1293,6 +1294,7 @@ class CindelDatabase {
           CindelFieldSchema(
             name: field.name,
             dartType: field.dartType,
+            binaryType: field.binaryType,
             isId: field.isId,
             isIndexed: field.isIndexed,
             isIndexUnique: field.isIndexUnique,
@@ -1447,6 +1449,7 @@ class CindelDatabase {
     return CindelFieldSchema(
       name: schemaField.name,
       dartType: schemaField.dartType,
+      binaryType: schemaField.binaryType,
       isId: schemaField.isId,
       isIndexed: schemaField.isIndexed,
       isIndexUnique: schemaField.isIndexUnique,
@@ -1946,6 +1949,7 @@ WireCollectionSchema _schemaWire(CindelCollectionSchema<dynamic> schema) {
         WireFieldSchema(
           name: field.name,
           typeName: field.dartType,
+          binaryType: field.binaryType ?? field.dartType,
           indexType: field.indexType.name,
           isId: field.isId,
           isIndexed: field.isIndexed,

@@ -44,6 +44,7 @@ impl StorageLayoutVersion {
 pub enum DocumentFormatVersion {
     JsonV1,
     BinaryV1,
+    BinaryV2,
 }
 
 impl DocumentFormatVersion {
@@ -51,6 +52,7 @@ impl DocumentFormatVersion {
         match self {
             Self::JsonV1 => "json-v1",
             Self::BinaryV1 => "binary-v1",
+            Self::BinaryV2 => "binary-v2",
         }
     }
 }
@@ -279,6 +281,7 @@ fn collection_to_wire(collection: &CollectionSchemaManifest) -> WireCollectionSc
             .map(|field| WireFieldSchema {
                 name: field.name.clone(),
                 type_name: field.dart_type.clone(),
+                binary_type: field.binary_type.clone(),
                 index_type: field.index_type.clone(),
                 is_id: field.is_id,
                 is_indexed: field.is_indexed,
@@ -310,6 +313,7 @@ fn collection_from_wire(collection: WireCollectionSchema) -> CollectionSchemaMan
             .map(|field| FieldSchemaManifest {
                 name: field.name,
                 dart_type: field.type_name,
+                binary_type: field.binary_type,
                 is_id: field.is_id,
                 is_indexed: field.is_indexed,
                 is_index_unique: field.is_unique,
@@ -406,6 +410,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "id".to_string(),
                     dart_type: "int".to_string(),
+                    binary_type: "int".to_string(),
                     is_id: true,
                     is_indexed: false,
                     is_index_unique: false,
@@ -415,6 +420,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "email".to_string(),
                     dart_type: "String".to_string(),
+                    binary_type: "string".to_string(),
                     is_id: false,
                     is_indexed: true,
                     is_index_unique: true,

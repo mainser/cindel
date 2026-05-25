@@ -105,13 +105,13 @@ impl SqliteStorage {
         ensure_storage_metadata(
             &self.connection,
             StorageLayoutVersion::SqliteV1,
-            DocumentFormatVersion::BinaryV1,
+            DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_storage_metadata(
             &self.connection,
             StorageLayoutVersion::SqliteV1,
-            DocumentFormatVersion::BinaryV1,
+            DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_schema_metadata_records(&self.connection)
@@ -930,7 +930,7 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
         )
         .optional()
         .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| DocumentFormatVersion::BinaryV1.as_str().to_string());
+        .unwrap_or_else(|| DocumentFormatVersion::BinaryV2.as_str().to_string());
     let schema_metadata_format = connection
         .query_row(
             "SELECT value FROM storage_metadata WHERE key = 'schema_metadata_format'",
@@ -966,6 +966,7 @@ fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
     match value {
         "json-v1" => Ok(DocumentFormatVersion::JsonV1),
         "binary-v1" => Ok(DocumentFormatVersion::BinaryV1),
+        "binary-v2" => Ok(DocumentFormatVersion::BinaryV2),
         _ => Err(format!("unknown document format version `{value}`")),
     }
 }
@@ -2500,6 +2501,7 @@ mod tests {
         FieldSchemaManifest {
             name: name.to_string(),
             dart_type: dart_type.to_string(),
+            binary_type: dart_type.to_string(),
             is_id,
             is_indexed,
             is_index_unique: false,

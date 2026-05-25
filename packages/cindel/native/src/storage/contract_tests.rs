@@ -610,7 +610,7 @@ where
     } else {
         StorageLayoutVersion::MdbxV4
     };
-    let expected_document_format = DocumentFormatVersion::BinaryV1;
+    let expected_document_format = DocumentFormatVersion::BinaryV2;
 
     assert_eq!(metadata.layout, expected_layout);
     assert_eq!(metadata.document_format, expected_document_format);
@@ -935,6 +935,7 @@ fn field(name: &str, dart_type: &str, is_id: bool, is_indexed: bool) -> FieldSch
     FieldSchemaManifest {
         name: name.to_string(),
         dart_type: dart_type.to_string(),
+        binary_type: dart_type.to_string(),
         is_id,
         is_indexed,
         is_index_unique: false,

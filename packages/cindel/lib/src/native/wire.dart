@@ -500,6 +500,7 @@ final class WireFieldSchema {
   const WireFieldSchema({
     required this.name,
     required this.typeName,
+    required this.binaryType,
     required this.indexType,
     required this.isId,
     required this.isIndexed,
@@ -510,6 +511,7 @@ final class WireFieldSchema {
 
   final String name;
   final String typeName;
+  final String binaryType;
   final String indexType;
   final bool isId;
   final bool isIndexed;
@@ -522,6 +524,7 @@ final class WireFieldSchema {
       other is WireFieldSchema &&
       other.name == name &&
       other.typeName == typeName &&
+      other.binaryType == binaryType &&
       other.indexType == indexType &&
       other.isId == isId &&
       other.isIndexed == isIndexed &&
@@ -533,6 +536,7 @@ final class WireFieldSchema {
   int get hashCode => Object.hash(
     name,
     typeName,
+    binaryType,
     indexType,
     isId,
     isIndexed,
@@ -917,6 +921,7 @@ Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
     for (final field in collection.fields) {
       writer.writeString(field.name);
       writer.writeString(field.typeName);
+      writer.writeString(field.binaryType);
       writer.writeString(field.indexType);
       writer.writeBool(field.isId);
       writer.writeBool(field.isIndexed);
@@ -953,6 +958,7 @@ WireSchemaManifest decodeSchemaManifest(Uint8List bytes) {
         WireFieldSchema(
           name: reader.readString(),
           typeName: reader.readString(),
+          binaryType: reader.readString(),
           indexType: reader.readString(),
           isId: reader.readBool(),
           isIndexed: reader.readBool(),

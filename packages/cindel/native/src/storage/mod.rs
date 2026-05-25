@@ -98,6 +98,7 @@ pub struct CompositeIndexSchemaManifest {
 pub struct FieldSchemaManifest {
     pub name: String,
     pub dart_type: String,
+    pub binary_type: String,
     pub is_id: bool,
     pub is_indexed: bool,
     #[serde(default)]

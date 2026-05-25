@@ -12,6 +12,9 @@ const FORMAT_VERSION: u16 = 1;
 const HEADER_LEN: usize = 24;
 const SLOT_LEN: usize = 16;
 const NULL_FLAG: u8 = 0x01;
+const COMPACT_NULL_BOOL: u8 = 0xff;
+const COMPACT_NULL_INT: i64 = i64::MIN;
+const COMPACT_NULL_DOUBLE_BITS: u64 = 0x7ff8_0000_0000_0001;
 const MAX_OBJECT_SIZE: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +44,45 @@ enum BinaryKind {
     Enum = 8,
     Embedded = 9,
     Object = 10,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompactFieldType {
+    Bool,
+    Int,
+    Double,
+    String,
+    List,
+    Object,
+}
+
+impl CompactFieldType {
+    fn from_field(field: &FieldSchemaManifest) -> Result<Self, String> {
+        let normalized = field
+            .binary_type
+            .strip_suffix('?')
+            .unwrap_or(&field.binary_type);
+        match normalized {
+            "bool" => Ok(Self::Bool),
+            "int" => Ok(Self::Int),
+            "double" => Ok(Self::Double),
+            "string" | "String" => Ok(Self::String),
+            "list" => Ok(Self::List),
+            "object" => Ok(Self::Object),
+            other => Err(format!(
+                "field `{}.{}` has unsupported binary type `{other}`",
+                field.name, field.name
+            )),
+        }
+    }
+
+    fn static_size(self) -> usize {
+        match self {
+            Self::Bool => 1,
+            Self::Int | Self::Double => 8,
+            Self::String | Self::List | Self::Object => 3,
+        }
+    }
 }
 
 impl BinaryKind {
@@ -266,6 +308,121 @@ impl<'a> BinaryDocument<'a> {
     fn dynamic_payload(&self, slot: FieldSlot) -> Result<&'a [u8], String> {
         let range = self.dynamic_range(slot)?;
         Ok(&self.bytes[range])
+    }
+}
+
+struct CompactBinaryDocument<'a> {
+    bytes: &'a [u8],
+    static_size: usize,
+    field_offsets: Vec<(CompactFieldType, usize)>,
+}
+
+impl<'a> CompactBinaryDocument<'a> {
+    fn parse(schema: &CollectionSchemaManifest, bytes: &'a [u8]) -> Result<Self, String> {
+        if bytes.len() > MAX_OBJECT_SIZE {
+            return Err("compact binary document exceeds the maximum object size".into());
+        }
+        if bytes.len() < 3 {
+            return Err("compact binary document is shorter than the header".into());
+        }
+        let static_size = read_u24(bytes, 0)? as usize;
+        let mut expected_static_size = 0usize;
+        let mut field_offsets = Vec::with_capacity(schema.fields.len());
+        for field in &schema.fields {
+            let field_type = CompactFieldType::from_field(field)?;
+            field_offsets.push((field_type, expected_static_size));
+            expected_static_size = expected_static_size
+                .checked_add(field_type.static_size())
+                .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+        }
+        if static_size != expected_static_size {
+            return Err("compact binary document static size does not match schema".into());
+        }
+        if bytes.len() < 3 + static_size {
+            return Err("compact binary document static section is truncated".into());
+        }
+        Ok(Self {
+            bytes,
+            static_size,
+            field_offsets,
+        })
+    }
+
+    fn field_count(&self) -> usize {
+        self.field_offsets.len()
+    }
+
+    fn field_value(&self, index: usize) -> Result<Option<BinaryValue>, String> {
+        let (field_type, offset) = self
+            .field_offsets
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        let absolute = 3 + offset;
+        match field_type {
+            CompactFieldType::Bool => match self.bytes[absolute] {
+                COMPACT_NULL_BOOL => Ok(None),
+                0 => Ok(Some(BinaryValue::Bool(false))),
+                1 => Ok(Some(BinaryValue::Bool(true))),
+                value => Err(format!("invalid compact bool byte `{value}`")),
+            },
+            CompactFieldType::Int => {
+                let value = read_i64(self.bytes, absolute)?;
+                if value == COMPACT_NULL_INT {
+                    Ok(None)
+                } else {
+                    Ok(Some(BinaryValue::Int(value)))
+                }
+            }
+            CompactFieldType::Double => {
+                let bits = read_u64(self.bytes, absolute)?;
+                if bits == COMPACT_NULL_DOUBLE_BITS {
+                    Ok(None)
+                } else {
+                    Ok(Some(BinaryValue::Double(f64::from_bits(bits))))
+                }
+            }
+            CompactFieldType::String => {
+                let Some(payload) = self.dynamic_payload(offset)? else {
+                    return Ok(None);
+                };
+                Ok(Some(BinaryValue::String(decode_utf8(payload)?)))
+            }
+            CompactFieldType::List => {
+                let Some(payload) = self.dynamic_payload(offset)? else {
+                    return Ok(None);
+                };
+                Ok(Some(BinaryValue::List(decode_list(payload)?)))
+            }
+            CompactFieldType::Object => {
+                let Some(payload) = self.dynamic_payload(offset)? else {
+                    return Ok(None);
+                };
+                Ok(Some(BinaryValue::Object(decode_object(payload)?)))
+            }
+        }
+    }
+
+    fn dynamic_payload(&self, static_offset: usize) -> Result<Option<&'a [u8]>, String> {
+        let relative = read_u24(self.bytes, 3 + static_offset)? as usize;
+        if relative == 0 {
+            return Ok(None);
+        }
+        if relative < self.static_size {
+            return Err("compact dynamic field points into static section".into());
+        }
+        let length_offset = 3 + relative;
+        let len = read_u24(self.bytes, length_offset)? as usize;
+        let start = length_offset
+            .checked_add(3)
+            .ok_or_else(|| "compact dynamic field offset overflows".to_string())?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| "compact dynamic field length overflows".to_string())?;
+        if end > self.bytes.len() {
+            return Err("compact dynamic field payload is truncated".into());
+        }
+        Ok(Some(&self.bytes[start..end]))
     }
 }
 
@@ -529,7 +686,6 @@ pub(crate) fn read_binary_field(
     bytes: &[u8],
     field: &str,
 ) -> Result<Option<BinaryValue>, String> {
-    let document = BinaryDocument::parse(bytes)?;
     let Some(index) = schema
         .fields
         .iter()
@@ -540,10 +696,37 @@ pub(crate) fn read_binary_field(
             schema.name
         ));
     };
+    read_binary_field_at(schema, bytes, index)
+}
+
+pub(crate) fn read_binary_field_at(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    index: usize,
+) -> Result<Option<BinaryValue>, String> {
+    if bytes.starts_with(MAGIC) {
+        let document = BinaryDocument::parse(bytes)?;
+        if index >= document.field_count() {
+            return Ok(None);
+        }
+        return document.field_value(index);
+    }
+    let document = CompactBinaryDocument::parse(schema, bytes)?;
     if index >= document.field_count() {
         return Ok(None);
     }
     document.field_value(index)
+}
+
+pub(crate) fn validate_binary_document(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if bytes.starts_with(MAGIC) {
+        BinaryDocument::parse(bytes).map(|_| ())
+    } else {
+        CompactBinaryDocument::parse(schema, bytes).map(|_| ())
+    }
 }
 
 pub(crate) fn binary_to_wire_value(value: Option<&BinaryValue>) -> Result<WireValue, String> {
@@ -583,16 +766,13 @@ pub(crate) fn index_entries_from_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
 ) -> Result<Vec<IndexEntry>, String> {
-    let document = BinaryDocument::parse(bytes)?;
+    validate_binary_document(schema, bytes)?;
     let mut entries = Vec::new();
     for (index, field) in schema.fields.iter().enumerate() {
         if !field.is_indexed {
             continue;
         }
-        if index >= document.field_count() {
-            continue;
-        }
-        let Some(value) = document.field_value(index)? else {
+        let Some(value) = read_binary_field_at(schema, bytes, index)? else {
             continue;
         };
         if field.index_type == "words" {
@@ -648,11 +828,7 @@ pub(crate) fn index_entries_from_binary_document(
                     composite.name, field_name
                 ));
             };
-            if field_index >= document.field_count() {
-                values.clear();
-                break;
-            }
-            let Some(value) = document.field_value(field_index)? else {
+            let Some(value) = read_binary_field_at(schema, bytes, field_index)? else {
                 values.clear();
                 break;
             };
@@ -833,6 +1009,18 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
+fn read_u24(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let bytes = read_slice(bytes, offset, 3)?;
+    Ok(bytes[0] as u32 | ((bytes[1] as u32) << 8) | ((bytes[2] as u32) << 16))
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, String> {
+    let bytes = read_slice(bytes, offset, 8)?;
+    Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+        "binary u64 value must be 8 bytes".to_string()
+    })?))
+}
+
 fn read_i64(bytes: &[u8], offset: usize) -> Result<i64, String> {
     let bytes = read_slice(bytes, offset, 8)?;
     Ok(i64::from_le_bytes(bytes.try_into().map_err(|_| {
@@ -941,6 +1129,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "id".to_string(),
                     dart_type: "int".to_string(),
+                    binary_type: "int".to_string(),
                     is_id: true,
                     is_indexed: false,
                     is_index_unique: false,
@@ -950,6 +1139,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "name".to_string(),
                     dart_type: "String".to_string(),
+                    binary_type: "string".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,
@@ -959,6 +1149,7 @@ mod tests {
                 FieldSchemaManifest {
                     name: "nickname".to_string(),
                     dart_type: "String?".to_string(),
+                    binary_type: "string".to_string(),
                     is_id: false,
                     is_indexed: false,
                     is_index_unique: false,

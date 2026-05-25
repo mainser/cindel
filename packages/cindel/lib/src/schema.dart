@@ -78,6 +78,7 @@ final class CindelFieldSchema {
     required this.dartType,
     required this.isId,
     required this.isIndexed,
+    this.binaryType,
     this.isIndexUnique = false,
     this.indexCaseSensitive = true,
     this.indexType = CindelIndexType.value,
@@ -88,6 +89,9 @@ final class CindelFieldSchema {
 
   /// The Dart type as written by the analyzer.
   final String dartType;
+
+  /// The schema-backed binary storage type used by generated serializers.
+  final String? binaryType;
 
   /// Whether this field stores the Cindel document id.
   final bool isId;

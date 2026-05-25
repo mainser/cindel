@@ -11,9 +11,10 @@ use libmdbx::{
     Transaction, WriteFlags, RO, RW,
 };
 
-use crate::document_format::{binary_to_wire_value, read_binary_field};
+use crate::document_format::{binary_to_wire_value, read_binary_field, read_binary_field_at};
 use crate::document_format::{
-    index_entries_from_binary_document, validate_generic_document, BinaryDocument, BinaryValue,
+    index_entries_from_binary_document, validate_binary_document, validate_generic_document,
+    BinaryValue,
 };
 use crate::native_filter::NativeFilter;
 use crate::wire::{
@@ -299,14 +300,14 @@ impl MdbxStorage {
             &transaction,
             &tables,
             StorageLayoutVersion::MdbxV4,
-            DocumentFormatVersion::BinaryV1,
+            DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_storage_metadata(
             &transaction,
             &tables,
             StorageLayoutVersion::MdbxV4,
-            DocumentFormatVersion::BinaryV1,
+            DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_binary_metadata_records(&transaction, &tables)?;
@@ -1892,16 +1893,9 @@ fn sort_planned_documents(
     let mut keyed = documents
         .iter()
         .map(|document| {
-            let binary = BinaryDocument::parse(&document.bytes)?;
             let values = sort_fields
                 .iter()
-                .map(|(index, _)| {
-                    if *index >= binary.field_count() {
-                        Ok(None)
-                    } else {
-                        binary.field_value(*index)
-                    }
-                })
+                .map(|(index, _)| read_binary_field_at(schema, &document.bytes, *index))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok((
                 document.id,
@@ -2417,7 +2411,7 @@ fn encode_document_for_storage(
     let Some(schema) = schema else {
         return Ok((bytes.to_vec(), indexes.to_vec()));
     };
-    if BinaryDocument::parse(bytes).is_ok() {
+    if validate_binary_document(schema, bytes).is_ok() {
         let indexes = index_entries_from_binary_document(schema, bytes)?;
         return Ok((bytes.to_vec(), indexes));
     }
@@ -2566,7 +2560,7 @@ where
     let layout = read_metadata_value(transaction, tables, "storage_layout")?
         .unwrap_or_else(|| StorageLayoutVersion::MdbxV1.as_str().to_string());
     let document_format = read_metadata_value(transaction, tables, "document_format")?
-        .unwrap_or_else(|| DocumentFormatVersion::BinaryV1.as_str().to_string());
+        .unwrap_or_else(|| DocumentFormatVersion::BinaryV2.as_str().to_string());
     let schema_metadata_format =
         read_metadata_value(transaction, tables, "schema_metadata_format")?
             .unwrap_or_else(|| SchemaMetadataVersion::BinaryV1.as_str().to_string());
@@ -2609,6 +2603,7 @@ fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
     match value {
         "json-v1" => Ok(DocumentFormatVersion::JsonV1),
         "binary-v1" => Ok(DocumentFormatVersion::BinaryV1),
+        "binary-v2" => Ok(DocumentFormatVersion::BinaryV2),
         _ => Err(format!("unknown document format version `{value}`")),
     }
 }
@@ -3288,7 +3283,7 @@ mod tests {
                     )
                     .map_err(|error| error.to_string())?
                     .expect("document must exist");
-                BinaryDocument::parse(&raw).map(|_| ())
+                validate_binary_document(&schema_manifest().collections[0], &raw)
             })
             .unwrap();
         assert_eq!(storage.document_ids("users").unwrap(), vec![1, 2]);
@@ -3591,6 +3586,7 @@ mod tests {
         FieldSchemaManifest {
             name: name.to_string(),
             dart_type: dart_type.to_string(),
+            binary_type: dart_type.to_string(),
             is_id,
             is_indexed,
             is_index_unique: false,

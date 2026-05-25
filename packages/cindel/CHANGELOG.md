@@ -12,6 +12,9 @@
 - Removed `MDBX_ACCEDE` from the default MDBX open flags.
 - Shortened MDBX document table names and marked the storage layout as
   `mdbx-v4`.
+- Added schema-specific typed binary document storage aligned to Isar's
+  static/dynamic layout.
+- Marked generated typed document storage as `binary-v2`.
 
 ## 0.3.4
 

@@ -16,6 +16,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "id",
       dartType: "int",
+      binaryType: "int",
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
@@ -25,6 +26,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "name",
       dartType: "String",
+      binaryType: "string",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -34,6 +36,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "email",
       dartType: "String",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -43,6 +46,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "username",
       dartType: "String?",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: true,
@@ -52,6 +56,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "displayName",
       dartType: "String?",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -61,6 +66,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "accessToken",
       dartType: "String?",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -70,6 +76,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "bio",
       dartType: "String?",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -79,6 +86,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "active",
       dartType: "bool?",
+      binaryType: "bool",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -88,6 +96,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "createdAt",
       dartType: "DateTime",
+      binaryType: "int",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -97,6 +106,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "sessionLength",
       dartType: "Duration?",
+      binaryType: "int",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -106,6 +116,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "tags",
       dartType: "List<String>",
+      binaryType: "list",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -115,6 +126,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "scores",
       dartType: "List<int>?",
+      binaryType: "list",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -124,6 +136,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "role",
       dartType: "UserRole",
+      binaryType: "string",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -133,6 +146,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "status",
       dartType: "UserStatus",
+      binaryType: "int",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -142,6 +156,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "plan",
       dartType: "UserPlan",
+      binaryType: "string",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -151,6 +166,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "primaryRecipient",
       dartType: "Recipient?",
+      binaryType: "object",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -160,6 +176,7 @@ final UserSchema = CindelCollectionSchema<User>(
     CindelFieldSchema(
       name: "recipients",
       dartType: "List<Recipient>?",
+      binaryType: "list",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -1238,33 +1255,73 @@ User _$UserFromCindelDocument(Map<String, Object?> document) {
 }
 
 CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
-  return cindelEncodeBinaryDocument(<Object?>[
-    object.accessToken,
-    object.active,
-    object.bio,
-    object.createdAt.microsecondsSinceEpoch,
-    object.displayName,
-    object.email,
-    object.id,
-    object.name,
-    object.plan.code,
-    object.primaryRecipient == null
-        ? null
-        : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient),
-    object.recipients
-        ?.map((value) => _$RecipientToCindelEmbedded(value))
-        .toList(growable: false),
-    object.role.name,
-    object.scores?.map((value) => value).toList(growable: false),
-    object.sessionLength?.inMicroseconds,
-    object.status.index,
-    object.tags.map((value) => value).toList(growable: false),
-    object.username,
-  ]);
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[
+      object.accessToken,
+      object.active,
+      object.bio,
+      object.createdAt.microsecondsSinceEpoch,
+      object.displayName,
+      object.email,
+      object.id,
+      object.name,
+      object.plan.code,
+      object.primaryRecipient == null
+          ? null
+          : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient),
+      object.recipients
+          ?.map((value) => _$RecipientToCindelEmbedded(value))
+          .toList(growable: false),
+      object.role.name,
+      object.scores?.map((value) => value).toList(growable: false),
+      object.sessionLength?.inMicroseconds,
+      object.status.index,
+      object.tags.map((value) => value).toList(growable: false),
+      object.username,
+    ],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.boolValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.objectValue,
+      CindelBinaryFieldType.listValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.listValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.listValue,
+      CindelBinaryFieldType.stringValue,
+    ],
+  );
 }
 
 User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
-  final fields = cindelDecodeBinaryDocument(bytes);
+  final fields =
+      cindelDecodeSchemaBinaryDocument(bytes, const <CindelBinaryFieldType>[
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.boolValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.objectValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.stringValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.intValue,
+        CindelBinaryFieldType.listValue,
+        CindelBinaryFieldType.stringValue,
+      ]);
   final object = User();
   object.accessToken = fields[0] == null ? null : fields[0] as String?;
   object.active = fields[1] == null ? null : fields[1] as bool?;

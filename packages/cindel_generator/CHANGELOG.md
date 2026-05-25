@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Generated schema-specific typed binary document serializers for Cindel's
+  `binary-v2` storage format.
+- Emitted binary storage type metadata for generated fields.
+
 ## 0.2.4
 
 - Restored analyzer 9 downgrade compatibility while keeping analyzer 10+
