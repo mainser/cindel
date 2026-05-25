@@ -40,6 +40,7 @@ const MDBX_MIN_SIZE: isize = 1 << 20;
 const MDBX_DEFAULT_MAX_SIZE: isize = 128 << 20;
 const MDBX_GROWTH_STEP: isize = 5 << 20;
 const MDBX_SHRINK_THRESHOLD: isize = 20 << 20;
+const MDBX_MAX_TABLES: u64 = 512;
 
 pub struct MdbxStorage {
     state: SharedMdbxState,
@@ -297,14 +298,14 @@ impl MdbxStorage {
         ensure_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV2,
+            StorageLayoutVersion::MdbxV3,
             DocumentFormatVersion::BinaryV1,
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_storage_metadata(
             &transaction,
             &tables,
-            StorageLayoutVersion::MdbxV2,
+            StorageLayoutVersion::MdbxV3,
             DocumentFormatVersion::BinaryV1,
             SchemaMetadataVersion::BinaryV1,
         )?;
@@ -724,7 +725,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
             path,
             DatabaseOptions {
                 permissions: Some(0o600),
-                max_tables: Some(2048),
+                max_tables: Some(MDBX_MAX_TABLES),
                 no_sub_dir: true,
                 accede: true,
                 coalesce: true,
@@ -857,7 +858,7 @@ impl StorageEngine for MdbxStorage {
                 return Ok(None);
             };
             let Some(bytes) = ignore_not_found(
-                transaction.get::<Vec<u8>>(&documents_table, &document_id_key(id)),
+                transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)),
             )?
             else {
                 return Ok(None);
@@ -879,7 +880,7 @@ impl StorageEngine for MdbxStorage {
             };
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
-                let bytes = transaction.get::<Vec<u8>>(&documents_table, &document_id_key(*id));
+                let bytes = transaction.get::<Vec<u8>>(&documents_table, &document_table_key(*id));
                 documents.push(
                     ignore_not_found(bytes)?
                         .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
@@ -903,7 +904,7 @@ impl StorageEngine for MdbxStorage {
             let Ok(documents_table) = open_documents_table(transaction, collection) else {
                 return Ok(None);
             };
-            ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_id_key(id)))
+            ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)))
         })
     }
 
@@ -928,7 +929,7 @@ impl StorageEngine for MdbxStorage {
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
                 documents.push(ignore_not_found(
-                    transaction.get::<Vec<u8>>(&documents_table, &document_id_key(*id)),
+                    transaction.get::<Vec<u8>>(&documents_table, &document_table_key(*id)),
                 )?);
             }
             Ok(documents)
@@ -1584,7 +1585,7 @@ fn create_documents_table<'txn>(
     open_or_create_table(
         transaction,
         &documents_table_name(collection),
-        TableFlags::default(),
+        TableFlags::INTEGER_KEY,
     )
 }
 
@@ -1681,6 +1682,17 @@ fn index_value_key(value: &IndexValue) -> Result<Vec<u8>, String> {
 
 fn document_id_key(id: u64) -> [u8; 8] {
     id.to_be_bytes()
+}
+
+fn document_table_key(id: u64) -> [u8; 8] {
+    id.to_ne_bytes()
+}
+
+fn decode_document_table_key(bytes: &[u8]) -> Result<u64, String> {
+    let bytes = bytes
+        .try_into()
+        .map_err(|_| "MDBX document key must be 8 bytes".to_string())?;
+    Ok(u64::from_ne_bytes(bytes))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2381,7 +2393,7 @@ fn put_document_with_indexes(
     transaction
         .put(
             &documents_table,
-            document_id_key(id),
+            document_table_key(id),
             &stored_bytes,
             WriteFlags::UPSERT,
         )
@@ -2431,7 +2443,7 @@ fn delete_document(
     let deleted = transaction
         .del(
             &create_documents_table(transaction, collection)?,
-            document_id_key(id),
+            document_table_key(id),
             None,
         )
         .map_err(|error| error.to_string())?;
@@ -2486,7 +2498,7 @@ where
     let exists = transaction
         .get::<Vec<u8>>(
             &open_documents_table(transaction, collection)?,
-            &document_id_key(id),
+            &document_table_key(id),
         )
         .map_err(|error| error.to_string())?
         .is_some();
@@ -2587,6 +2599,7 @@ fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
         "sqlite-v1" => Ok(StorageLayoutVersion::SqliteV1),
         "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
         "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
+        "mdbx-v3" => Ok(StorageLayoutVersion::MdbxV3),
         _ => Err(format!("unknown storage layout version `{value}`")),
     }
 }
@@ -2834,7 +2847,7 @@ where
     let mut ids = Vec::new();
     for row in cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
         let (key, _) = row.map_err(|error| error.to_string())?;
-        ids.push(decode_u64(&key)?);
+        ids.push(decode_document_table_key(&key)?);
     }
     Ok(ids)
 }
@@ -3270,7 +3283,7 @@ mod tests {
                 let raw = transaction
                     .get::<Vec<u8>>(
                         &open_documents_table(transaction, "users")?,
-                        &document_id_key(1),
+                        &document_table_key(1),
                     )
                     .map_err(|error| error.to_string())?
                     .expect("document must exist");

@@ -116,30 +116,34 @@ packages:
   cindel:
     dependency: "direct main"
     description:
-      path: "../../packages/cindel"
-      relative: true
-    source: path
+      name: cindel
+      sha256: c6311b44ad2ee4c27f62af3f1825692d76c1d453a53449c4e1c27da41096a7fa
+      url: "https://pub.dev"
+    source: hosted
     version: "0.3.4"
   cindel_annotations:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "../../packages/cindel_annotations"
-      relative: true
-    source: path
+      name: cindel_annotations
+      sha256: "1036f96e7d97b693c034c079dfca6abb8044c7de32bed3cb6938002d5b532346"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.2.1"
   cindel_flutter_libs:
     dependency: "direct main"
     description:
-      path: "../../packages/cindel_flutter_libs"
-      relative: true
-    source: path
+      name: cindel_flutter_libs
+      sha256: "088751c066985bedcb122a8f7b21115bf3a6de1de045b3a8b8f5d13a23a1084d"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.3.4"
   cindel_generator:
     dependency: "direct dev"
     description:
-      path: "../../packages/cindel_generator"
-      relative: true
-    source: path
+      name: cindel_generator
+      sha256: "743c7450f51b96b97d1e2a0343c56724e68a25936b1868722c857f123537a15e"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.2.4"
   cli_config:
     dependency: transitive
@@ -854,4 +858,4 @@ packages:
     version: "3.1.3"
 sdks:
   dart: ">=3.11.5 <4.0.0"
-  flutter: ">=3.38.4"
+  flutter: ">=3.41.0"

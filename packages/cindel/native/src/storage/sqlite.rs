@@ -955,6 +955,7 @@ fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
         "sqlite-v1" => Ok(StorageLayoutVersion::SqliteV1),
         "mdbx-v1" => Ok(StorageLayoutVersion::MdbxV1),
         "mdbx-v2" => Ok(StorageLayoutVersion::MdbxV2),
+        "mdbx-v3" => Ok(StorageLayoutVersion::MdbxV3),
         _ => Err(format!("unknown storage layout version `{value}`")),
     }
 }

@@ -8,6 +8,7 @@
   physical database as `cindel.mdbx` with no-subdir mode, `NoMetaSync`,
   coalescing, 1 MiB minimum map size, 128 MiB default maximum map size, 5 MiB
   growth steps, and 20 MiB shrink threshold.
+- Changed the MDBX default table limit from 2048 to 512.
 
 ## 0.3.4
 

@@ -24,6 +24,7 @@ pub enum StorageLayoutVersion {
     SqliteV1,
     MdbxV1,
     MdbxV2,
+    MdbxV3,
 }
 
 impl StorageLayoutVersion {
@@ -32,6 +33,7 @@ impl StorageLayoutVersion {
             Self::SqliteV1 => "sqlite-v1",
             Self::MdbxV1 => "mdbx-v1",
             Self::MdbxV2 => "mdbx-v2",
+            Self::MdbxV3 => "mdbx-v3",
         }
     }
 }
