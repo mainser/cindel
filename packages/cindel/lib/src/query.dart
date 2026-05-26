@@ -706,6 +706,7 @@ final class CindelQuery<T> {
         'int' => 1,
         'double' => 2,
         'string' => 3,
+        'list' => 4,
         _ => null,
       };
       if (value == null) {

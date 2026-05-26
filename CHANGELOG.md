@@ -7,6 +7,12 @@ while the core design settles.
 
 ## 0.4.1
 
+- Added Isar-style native list readers for generated typed hydration, so
+  primitive list fields no longer force query results back through generic Dart
+  binary document decoding.
+- Reduced unindexed MDBX `filter query` overhead by applying offset/limit while
+  iterating unsorted native query plans and evaluating string/list `contains`
+  filters directly from compact binary payloads.
 - Cached native function resolution across Cindel database openings.
 - Cached generated native field layouts for typed MDBX reads and writes.
 - Reduced MDBX query-plan `filter + sort` overhead by keeping sorted query

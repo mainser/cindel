@@ -884,6 +884,12 @@ final class _FieldInfo {
   }
 
   bool get supportsNativeReader {
+    if (binaryType == 'list') {
+      final element = type.elementType;
+      return element != null &&
+          element.kind == _PersistedTypeKind.primitive &&
+          element.supportsNativeWriterValue;
+    }
     return switch (binaryType) {
       'bool' || 'int' || 'double' || 'string' => true,
       _ => false,
@@ -974,6 +980,9 @@ $writeValue      }
   }
 
   String nativeReadExpression(int index) {
+    if (binaryType == 'list') {
+      return _nativeListReadExpression(index);
+    }
     final method = switch (binaryType) {
       'bool' => 'readBool',
       'int' => 'readInt',
@@ -982,6 +991,77 @@ $writeValue      }
       final type => throw StateError('Unsupported native reader type `$type`.'),
     };
     return fromStoredValueExpression('reader.$method(documentIndex, $index)');
+  }
+
+  String _nativeListReadExpression(int index) {
+    final element = type.elementType!;
+    final method = switch (element.binaryType) {
+      'bool' => 'readBool',
+      'int' => 'readInt',
+      'double' => 'readDouble',
+      'string' => 'readString',
+      final type => throw StateError(
+        'Unsupported native list reader element type `$type`.',
+      ),
+    };
+    final storedDefault = switch (element.binaryType) {
+      'bool' => 'false',
+      'int' => '0',
+      'double' => '0.0',
+      'string' => "''",
+      final type => throw StateError(
+        'Unsupported native list reader element type `$type`.',
+      ),
+    };
+    final fillValue = element.isNullable ? 'null' : storedDefault;
+    final storedValue = element.isNullable
+        ? 'listReader.$method(0, i)'
+        : 'listReader.$method(0, i) ?? $storedDefault';
+    final readValue = element.fromStoredExpression(storedValue);
+    if (isNullable) {
+      return '''
+(() {
+  final listReader = reader.readList(documentIndex, $index);
+  if (listReader == null) {
+    return null;
+  }
+  try {
+    final list = List<${element.dartType}>.filled(
+      listReader.length,
+      $fillValue,
+      growable: true,
+    );
+    for (var i = 0; i < listReader.length; i += 1) {
+      list[i] = $readValue;
+    }
+    return list;
+  } finally {
+    listReader.release();
+  }
+})()
+''';
+    }
+    return '''
+(() {
+  final listReader = reader.readList(documentIndex, $index);
+  if (listReader == null) {
+    return const <${element.dartType}>[];
+  }
+  try {
+    final list = List<${element.dartType}>.filled(
+      listReader.length,
+      $fillValue,
+      growable: true,
+    );
+    for (var i = 0; i < listReader.length; i += 1) {
+      list[i] = $readValue;
+    }
+    return list;
+  } finally {
+    listReader.release();
+  }
+})()
+''';
   }
 
   int get binaryStaticSize {

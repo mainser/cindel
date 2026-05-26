@@ -541,10 +541,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     };
     let all_present = documents.iter().all(Option::is_some);
     Box::into_raw(Box::new(CindelNativeDocumentReader {
-        layout,
-        documents,
-        all_present,
-        trusted_static_size: true,
+        mode: CindelNativeDocumentReaderMode::Batch {
+            layout,
+            documents,
+            all_present,
+            trusted_static_size: true,
+        },
         string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
@@ -578,10 +580,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
-        layout,
-        documents: documents.into_iter().map(Some).collect(),
-        all_present: true,
-        trusted_static_size: true,
+        mode: CindelNativeDocumentReaderMode::Batch {
+            layout,
+            documents: documents.into_iter().map(Some).collect(),
+            all_present: true,
+            trusted_static_size: true,
+        },
         string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
@@ -593,7 +597,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_len(
     let Some(reader) = reader.as_ref() else {
         return 0;
     };
-    reader.documents.len()
+    reader.len()
 }
 
 #[no_mangle]
@@ -604,13 +608,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_is_present(
     let Some(reader) = reader.as_ref() else {
         return false;
     };
-    if reader.all_present {
-        return document_index < reader.documents.len();
-    }
-    reader
-        .documents
-        .get(document_index)
-        .is_some_and(Option::is_some)
+    reader.is_present(document_index)
 }
 
 #[no_mangle]
@@ -730,6 +728,27 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_string(
         .borrow_mut()
         .intern_id(field_index as usize, bytes);
     true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_list(
+    reader: *const CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+) -> *mut CindelNativeDocumentReader {
+    let Some(reader) = reader.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    let Some(raw_list) = reader.read_list(document_index, field_index as usize) else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        mode: CindelNativeDocumentReaderMode::RawList {
+            bytes: raw_list.bytes,
+            entries: raw_list.entries,
+        },
+        string_cache: RefCell::new(NativeStringCache::default()),
+    }))
 }
 
 #[no_mangle]
@@ -1671,12 +1690,45 @@ enum NativeBatchWriterMode {
 }
 
 pub struct CindelNativeDocumentReader {
-    layout: NativeBatchLayout,
-    documents: Vec<Option<Vec<u8>>>,
-    all_present: bool,
-    trusted_static_size: bool,
+    mode: CindelNativeDocumentReaderMode,
     string_cache: RefCell<NativeStringCache>,
 }
+
+enum CindelNativeDocumentReaderMode {
+    Batch {
+        layout: NativeBatchLayout,
+        documents: Vec<Option<Vec<u8>>>,
+        all_present: bool,
+        trusted_static_size: bool,
+    },
+    RawList {
+        bytes: Vec<u8>,
+        entries: Vec<NativeRawListEntry>,
+    },
+}
+
+struct NativeRawListEntry {
+    kind: u8,
+    is_null: bool,
+    payload_start: usize,
+    payload_len: usize,
+}
+
+struct NativeRawList {
+    bytes: Vec<u8>,
+    entries: Vec<NativeRawListEntry>,
+}
+
+const NATIVE_VALUE_NULL: u8 = 0;
+const NATIVE_VALUE_BOOL: u8 = 1;
+const NATIVE_VALUE_INT: u8 = 2;
+const NATIVE_VALUE_DOUBLE: u8 = 3;
+const NATIVE_VALUE_STRING: u8 = 4;
+const NATIVE_VALUE_DATETIME: u8 = 5;
+const NATIVE_VALUE_DURATION: u8 = 6;
+const NATIVE_VALUE_LIST: u8 = 7;
+const NATIVE_VALUE_ENUM: u8 = 8;
+const NATIVE_VALUE_NULL_FLAG: u8 = 0x01;
 
 #[derive(Default)]
 struct NativeStringCache {
@@ -2062,78 +2114,237 @@ fn write_list_record(
 }
 
 impl CindelNativeDocumentReader {
+    fn len(&self) -> usize {
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { documents, .. } => documents.len(),
+            CindelNativeDocumentReaderMode::RawList { entries, .. } => entries.len(),
+        }
+    }
+
+    fn is_present(&self, document_index: usize) -> bool {
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch {
+                documents,
+                all_present,
+                ..
+            } => {
+                if *all_present {
+                    document_index < documents.len()
+                } else {
+                    documents.get(document_index).is_some_and(Option::is_some)
+                }
+            }
+            CindelNativeDocumentReaderMode::RawList { entries, .. } => {
+                document_index < entries.len()
+            }
+        }
+    }
+
     fn read_bool(&self, document_index: usize, field_index: usize) -> Option<bool> {
-        self.layout
-            .require_field(field_index, NativeBatchFieldType::Bool)?;
-        let bytes = self.document_bytes(document_index)?;
-        let offset = self.layout.absolute_offset(field_index)?;
-        match *bytes.get(offset)? {
-            0 => Some(false),
-            1 => Some(true),
-            _ => None,
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+                layout.require_field(field_index, NativeBatchFieldType::Bool)?;
+                let bytes = self.document_bytes(document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                match *bytes.get(offset)? {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                }
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_BOOL || entry.payload_len != 1 {
+                    return None;
+                }
+                Some(*bytes.get(entry.payload_start)? != 0)
+            }
         }
     }
 
     fn read_int(&self, document_index: usize, field_index: usize) -> Option<i64> {
-        self.layout
-            .require_field(field_index, NativeBatchFieldType::Int)?;
-        let bytes = self.document_bytes(document_index)?;
-        let offset = self.layout.absolute_offset(field_index)?;
-        let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
-        if value == i64::MIN {
-            None
-        } else {
-            Some(value)
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+                layout.require_field(field_index, NativeBatchFieldType::Int)?;
+                let bytes = self.document_bytes(document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value == i64::MIN {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null
+                    || !matches!(
+                        entry.kind,
+                        NATIVE_VALUE_INT | NATIVE_VALUE_DATETIME | NATIVE_VALUE_DURATION
+                    )
+                    || entry.payload_len != 8
+                {
+                    return None;
+                }
+                Some(i64::from_le_bytes(
+                    bytes
+                        .get(entry.payload_start..entry.payload_start + 8)?
+                        .try_into()
+                        .ok()?,
+                ))
+            }
         }
     }
 
     fn read_double(&self, document_index: usize, field_index: usize) -> Option<f64> {
-        self.layout
-            .require_field(field_index, NativeBatchFieldType::Double)?;
-        let bytes = self.document_bytes(document_index)?;
-        let offset = self.layout.absolute_offset(field_index)?;
-        let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
-        if value.is_finite() {
-            Some(value)
-        } else {
-            None
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+                layout.require_field(field_index, NativeBatchFieldType::Double)?;
+                let bytes = self.document_bytes(document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value.is_finite() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_DOUBLE || entry.payload_len != 8 {
+                    return None;
+                }
+                let value = f64::from_le_bytes(
+                    bytes
+                        .get(entry.payload_start..entry.payload_start + 8)?
+                        .try_into()
+                        .ok()?,
+                );
+                if value.is_finite() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
         }
     }
 
     fn read_bytes(&self, document_index: usize, field_index: usize) -> Option<&[u8]> {
-        match self.layout.field_type(field_index)? {
-            NativeBatchFieldType::String
-            | NativeBatchFieldType::List
-            | NativeBatchFieldType::Object => {}
-            _ => return None,
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+                match layout.field_type(field_index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return None,
+                }
+                let bytes = self.document_bytes(document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let relative = read_u24(bytes, offset)?;
+                if relative == 0 {
+                    return None;
+                }
+                let header_offset = 3usize.checked_add(relative)?;
+                let len = read_u24(bytes, header_offset)?;
+                let start = header_offset.checked_add(3)?;
+                let end = start.checked_add(len)?;
+                bytes.get(start..end)
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null || !matches!(entry.kind, NATIVE_VALUE_STRING | NATIVE_VALUE_ENUM) {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                bytes.get(entry.payload_start..end)
+            }
         }
-        let bytes = self.document_bytes(document_index)?;
-        let offset = self.layout.absolute_offset(field_index)?;
-        let relative = read_u24(bytes, offset)?;
-        if relative == 0 {
-            return None;
+    }
+
+    fn read_list(&self, document_index: usize, field_index: usize) -> Option<NativeRawList> {
+        match &self.mode {
+            CindelNativeDocumentReaderMode::Batch { .. } => {
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_LIST {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                parse_native_raw_list(bytes.get(entry.payload_start..end)?).ok()
+            }
         }
-        let header_offset = 3usize.checked_add(relative)?;
-        let len = read_u24(bytes, header_offset)?;
-        let start = header_offset.checked_add(3)?;
-        let end = start.checked_add(len)?;
-        bytes.get(start..end)
     }
 
     fn document_bytes(&self, document_index: usize) -> Option<&[u8]> {
-        let bytes = self.documents.get(document_index)?.as_deref()?;
-        if self.trusted_static_size {
-            return Some(bytes);
-        }
-        let static_size = read_u24(bytes, 0)?;
-        if static_size != self.layout.static_size {
+        let CindelNativeDocumentReaderMode::Batch {
+            layout,
+            documents,
+            trusted_static_size,
+            ..
+        } = &self.mode
+        else {
             return None;
-        }
-        if bytes.len() < 3 + static_size {
-            return None;
+        };
+        let bytes = documents.get(document_index)?.as_deref()?;
+        if !*trusted_static_size {
+            let static_size = read_u24(bytes, 0)?;
+            if static_size != layout.static_size {
+                return None;
+            }
+            if bytes.len() < 3 + static_size {
+                return None;
+            }
         }
         Some(bytes)
     }
+}
+
+fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
+    let count = read_u32_le(bytes, 0)? as usize;
+    let mut offset = 4usize;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let header = read_native_slice(bytes, offset, 8)?;
+        let kind = header[0];
+        let flags = header[1];
+        let payload_len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        offset += 8;
+        let payload_start = offset;
+        let payload_end = payload_start
+            .checked_add(payload_len)
+            .ok_or_else(|| "native list value payload offset overflow".to_string())?;
+        read_native_slice(bytes, payload_start, payload_len)?;
+        offset = payload_end;
+        entries.push(NativeRawListEntry {
+            kind,
+            is_null: flags & NATIVE_VALUE_NULL_FLAG != 0 || kind == NATIVE_VALUE_NULL,
+            payload_start,
+            payload_len,
+        });
+    }
+    if offset != bytes.len() {
+        return Err("native list contains trailing bytes".into());
+    }
+    Ok(NativeRawList {
+        bytes: bytes.to_vec(),
+        entries,
+    })
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let bytes = read_native_slice(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_native_slice(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], String> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| "native list offset overflow".to_string())?;
+    bytes
+        .get(offset..end)
+        .ok_or_else(|| "native list is truncated".to_string())
 }
 
 impl NativeBatchLayout {

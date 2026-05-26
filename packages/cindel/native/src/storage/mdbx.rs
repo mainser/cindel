@@ -469,6 +469,12 @@ impl MdbxStorage {
             .transpose()?;
 
         if let Some(documents) =
+            self.execute_query_plan_borrowed_unsorted(collection, plan, &schema, filter.as_ref())?
+        {
+            return Ok(documents);
+        }
+
+        if let Some(documents) =
             self.execute_query_plan_borrowed_sorted(collection, plan, &schema, filter.as_ref())?
         {
             return Ok(documents);
@@ -507,6 +513,65 @@ impl MdbxStorage {
             plan.offset as usize,
             plan.limit.map(|value| value as usize),
         ))
+    }
+
+    fn execute_query_plan_borrowed_unsorted(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        schema: &CollectionSchemaManifest,
+        filter: Option<&NativeFilter>,
+    ) -> Result<Option<Vec<PlannedDocument>>, String> {
+        if self.active_write().is_some()
+            || !plan.sorts.is_empty()
+            || !plan.distinct_fields.is_empty()
+            || !matches!(plan.source, WireQuerySource::All { .. })
+        {
+            return Ok(None);
+        }
+
+        let offset = plan.offset as usize;
+        let limit = plan.limit.map(|value| value as usize);
+
+        self.with_read_transaction(|transaction, _tables| {
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
+            let mut planned = Vec::new();
+            let mut matched = 0usize;
+            let mut position = 0usize;
+
+            for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+                let (key, bytes) = row.map_err(|error| error.to_string())?;
+                if let Some(filter) = filter {
+                    if !filter.matches(schema, bytes.as_ref())? {
+                        position += 1;
+                        continue;
+                    }
+                }
+                if matched < offset {
+                    matched += 1;
+                    position += 1;
+                    continue;
+                }
+                if limit.is_some_and(|limit| planned.len() >= limit) {
+                    break;
+                }
+                planned.push(PlannedDocument {
+                    id: decode_document_table_key(&key)?,
+                    bytes: bytes.into_owned(),
+                    position,
+                });
+                matched += 1;
+                position += 1;
+            }
+            Ok(planned)
+        })
+        .map(Some)
     }
 
     fn execute_query_plan_borrowed_sorted(

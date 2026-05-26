@@ -59,6 +59,9 @@ abstract interface class CindelNativeDocumentWriter {
 
 /// Reader used by generated typed deserializers for native binary documents.
 abstract interface class CindelNativeDocumentReader {
+  /// Number of documents or list values exposed by this reader.
+  int get length;
+
   /// Whether the document at [documentIndex] exists.
   bool isPresent(int documentIndex);
 
@@ -73,6 +76,12 @@ abstract interface class CindelNativeDocumentReader {
 
   /// Reads a nullable string value.
   String? readString(int documentIndex, int fieldIndex);
+
+  /// Reads a nested list value as a child reader.
+  CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex);
+
+  /// Releases native memory held by this reader.
+  void release();
 }
 
 /// Generated metadata for a Cindel collection.

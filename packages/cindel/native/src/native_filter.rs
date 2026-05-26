@@ -1,4 +1,4 @@
-use crate::document_format::{read_binary_field, BinaryValue};
+use crate::document_format::{read_binary_field, read_binary_field_payload, BinaryValue};
 use crate::storage::CollectionSchemaManifest;
 use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
@@ -94,6 +94,9 @@ impl NativeFilter {
                 {
                     return Ok(false);
                 }
+                if let Some(matches) = raw_field_matches(schema, bytes, field, *operation, value)? {
+                    return Ok(matches);
+                }
                 match read_binary_field(schema, bytes, field)? {
                     Some(actual) => field_matches(&actual, *operation, value),
                     None => Ok(matches!(
@@ -121,6 +124,73 @@ impl NativeFilter {
             Self::Not { predicate } => Ok(!predicate.matches_document(schema, bytes)?),
         }
     }
+}
+
+fn raw_field_matches(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    field: &str,
+    operation: FieldFilterOperation,
+    expected: &WireValue,
+) -> Result<Option<bool>, String> {
+    if !matches!(operation, FieldFilterOperation::Contains) {
+        return Ok(None);
+    }
+    let WireValue::String(expected) = expected else {
+        return Ok(None);
+    };
+    let Some((binary_type, payload)) = read_binary_field_payload(schema, bytes, field)? else {
+        return Ok(Some(false));
+    };
+    let expected = expected.as_bytes();
+    match binary_type {
+        "string" | "String" => Ok(Some(bytes_contains(payload, expected))),
+        "list" => Ok(Some(raw_string_list_contains(payload, expected)?)),
+        _ => Ok(None),
+    }
+}
+
+fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || (needle.len() <= haystack.len()
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle))
+}
+
+fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, String> {
+    let count = read_u32_le(bytes, 0)? as usize;
+    let mut offset = 4usize;
+    for _ in 0..count {
+        let header = read_slice(bytes, offset, 8)?;
+        let kind = header[0];
+        let flags = header[1];
+        let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        offset += 8;
+        let payload = read_slice(bytes, offset, len)?;
+        offset += len;
+        if flags & 0x01 == 0 && matches!(kind, 4 | 8) && payload == expected {
+            return Ok(true);
+        }
+    }
+    if offset != bytes.len() {
+        return Err("binary list contains trailing bytes".into());
+    }
+    Ok(false)
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let bytes = read_slice(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_slice(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], String> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| "binary list offset overflow".to_string())?;
+    bytes
+        .get(offset..end)
+        .ok_or_else(|| "binary list is truncated".to_string())
 }
 
 impl FieldFilterOperation {

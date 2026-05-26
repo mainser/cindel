@@ -733,7 +733,7 @@ fn encode_object(entries: &[(String, Option<BinaryValue>)]) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
-fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
+pub(crate) fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
     let count = read_u32(bytes, 0)? as usize;
     let mut offset = 4;
     let mut values = Vec::with_capacity(count);
@@ -835,6 +835,46 @@ pub(crate) fn read_binary_field(
     read_binary_field_at(schema, bytes, index)
 }
 
+pub(crate) fn read_binary_field_payload<'a>(
+    schema: &'a CollectionSchemaManifest,
+    bytes: &'a [u8],
+    field: &str,
+) -> Result<Option<(&'a str, &'a [u8])>, String> {
+    let (index, field_type, static_offset, static_size, binary_type) =
+        prepared_field_layout(schema, field)?;
+    let normalized_type = normalized_binary_type(binary_type);
+    if bytes.starts_with(MAGIC) {
+        let document = BinaryDocument::parse(bytes)?;
+        let Some(range) = document.field_payload_range(index)? else {
+            return Ok(None);
+        };
+        return Ok(Some((normalized_type, &bytes[range])));
+    }
+    validate_prepared_compact_document(bytes, static_size)?;
+    let payload = match field_type {
+        CompactFieldType::Bool => match bytes[3 + static_offset] {
+            COMPACT_NULL_BOOL => return Ok(None),
+            _ => &bytes[3 + static_offset..3 + static_offset + 1],
+        },
+        CompactFieldType::Int | CompactFieldType::Double => {
+            let start = 3 + static_offset;
+            &bytes[start..start + 8]
+        }
+        CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object => {
+            let document = CompactBinaryDocument {
+                bytes,
+                static_size,
+                field_offsets: Vec::new(),
+            };
+            let Some(payload) = document.dynamic_payload(static_offset)? else {
+                return Ok(None);
+            };
+            payload
+        }
+    };
+    Ok(Some((normalized_type, payload)))
+}
+
 pub(crate) fn read_binary_field_at(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
@@ -852,6 +892,36 @@ pub(crate) fn read_binary_field_at(
         return Ok(None);
     }
     document.field_value(index)
+}
+
+fn prepared_field_layout<'a>(
+    schema: &'a CollectionSchemaManifest,
+    field: &str,
+) -> Result<(usize, CompactFieldType, usize, usize, &'a str), String> {
+    let mut static_size = 0usize;
+    let mut target = None;
+    for (index, schema_field) in schema.fields.iter().enumerate() {
+        let field_type = CompactFieldType::from_field(schema_field)?;
+        if schema_field.name == field {
+            target = Some((
+                index,
+                field_type,
+                static_size,
+                schema_field.binary_type.as_str(),
+            ));
+        }
+        static_size = static_size
+            .checked_add(field_type.static_size())
+            .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+    }
+    let Some((index, field_type, static_offset, binary_type)) = target else {
+        return Err(format!("field `{field}` is not part of `{}`", schema.name));
+    };
+    Ok((index, field_type, static_offset, static_size, binary_type))
+}
+
+fn normalized_binary_type(binary_type: &str) -> &str {
+    binary_type.strip_suffix('?').unwrap_or(binary_type)
 }
 
 pub(crate) fn read_binary_sort_key_at(

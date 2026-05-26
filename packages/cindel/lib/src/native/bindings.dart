@@ -1200,6 +1200,10 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Bool> _stringIsAscii;
   final Pointer<Uint64> _stringInternId;
   final Map<int, String> _internedStrings = {};
+  bool _released = false;
+
+  @override
+  int get length => _functions.nativeDocumentReaderLen(_reader);
 
   @override
   bool isPresent(int documentIndex) {
@@ -1273,7 +1277,25 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
     return value;
   }
 
+  @override
+  CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) {
+    final listReader = _functions.nativeDocumentReaderReadList(
+      _reader,
+      documentIndex,
+      fieldIndex,
+    );
+    if (listReader == nullptr) {
+      return null;
+    }
+    return _CindelNativeDocumentReader(_functions, listReader);
+  }
+
+  @override
   void release() {
+    if (_released) {
+      return;
+    }
+    _released = true;
     _functions.nativeDocumentReaderFree(_reader);
     calloc
       ..free(_boolValue)
@@ -1436,6 +1458,9 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Uint64>,
   )
   get nativeDocumentReaderReadString;
+
+  Pointer<Void> Function(Pointer<Void>, int, int)
+  get nativeDocumentReaderReadList;
 
   void Function(Pointer<Void>) get nativeDocumentReaderFree;
 
@@ -1970,6 +1995,11 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Uint64>,
             )
           >('cindel_native_document_reader_read_string', isLeaf: true),
+      nativeDocumentReaderReadList = library
+          .lookupFunction<
+            Pointer<Void> Function(Pointer<Void>, Size, Uint32),
+            Pointer<Void> Function(Pointer<Void>, int, int)
+          >('cindel_native_document_reader_read_list'),
       nativeDocumentReaderFree = library
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -2653,6 +2683,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   nativeDocumentReaderReadString;
 
   @override
+  final Pointer<Void> Function(Pointer<Void>, int, int)
+  nativeDocumentReaderReadList;
+
+  @override
   final void Function(Pointer<Void>) nativeDocumentReaderFree;
 
   @override
@@ -3106,6 +3140,10 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Uint64>,
   )
   get nativeDocumentReaderReadString => _cindelNativeDocumentReaderReadString;
+
+  @override
+  Pointer<Void> Function(Pointer<Void>, int, int)
+  get nativeDocumentReaderReadList => _cindelNativeDocumentReaderReadList;
 
   @override
   void Function(Pointer<Void>) get nativeDocumentReaderFree =>
@@ -3848,6 +3886,16 @@ external bool _cindelNativeDocumentReaderReadString(
   Pointer<Size> outLength,
   Pointer<Bool> outIsAscii,
   Pointer<Uint64> outInternId,
+);
+
+@Native<Pointer<Void> Function(Pointer<Void>, Size, Uint32)>(
+  symbol: 'cindel_native_document_reader_read_list',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelNativeDocumentReaderReadList(
+  Pointer<Void> reader,
+  int documentIndex,
+  int fieldIndex,
 );
 
 @Native<Void Function(Pointer<Void>)>(
