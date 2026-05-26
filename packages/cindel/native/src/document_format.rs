@@ -32,6 +32,29 @@ pub(crate) enum BinaryValue {
     Object(Vec<(String, Option<BinaryValue>)>),
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum BinarySortKey {
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    StringRange(Range<usize>),
+    Owned(BinaryValue),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreparedBinarySortField {
+    index: usize,
+    field_type: CompactFieldType,
+    static_offset: usize,
+    static_size: usize,
+}
+
+impl PreparedBinarySortField {
+    pub(crate) fn is_compact_string(&self) -> bool {
+        self.field_type == CompactFieldType::String
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BinaryKind {
     Null = 0,
@@ -404,6 +427,49 @@ impl<'a> CompactBinaryDocument<'a> {
         }
     }
 
+    fn field_sort_key(&self, index: usize) -> Result<Option<BinarySortKey>, String> {
+        let (field_type, offset) = self
+            .field_offsets
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        let absolute = 3 + offset;
+        match field_type {
+            CompactFieldType::Bool => match self.bytes[absolute] {
+                COMPACT_NULL_BOOL => Ok(None),
+                0 => Ok(Some(BinarySortKey::Bool(false))),
+                1 => Ok(Some(BinarySortKey::Bool(true))),
+                value => Err(format!("invalid compact bool byte `{value}`")),
+            },
+            CompactFieldType::Int => {
+                let value = read_i64(self.bytes, absolute)?;
+                if value == COMPACT_NULL_INT {
+                    Ok(None)
+                } else {
+                    Ok(Some(BinarySortKey::Int(value)))
+                }
+            }
+            CompactFieldType::Double => {
+                let bits = read_u64(self.bytes, absolute)?;
+                if bits == COMPACT_NULL_DOUBLE_BITS {
+                    Ok(None)
+                } else {
+                    Ok(Some(BinarySortKey::Double(f64::from_bits(bits))))
+                }
+            }
+            CompactFieldType::String => {
+                let Some(range) = self.dynamic_payload_range(offset)? else {
+                    return Ok(None);
+                };
+                decode_utf8(&self.bytes[range.clone()])?;
+                Ok(Some(BinarySortKey::StringRange(range)))
+            }
+            CompactFieldType::List | CompactFieldType::Object => {
+                Ok(self.field_value(index)?.map(BinarySortKey::Owned))
+            }
+        }
+    }
+
     fn string_payload(&self, index: usize) -> Result<Option<&'a str>, String> {
         let (field_type, offset) = self
             .field_offsets
@@ -421,7 +487,7 @@ impl<'a> CompactBinaryDocument<'a> {
             .map_err(|error| format!("invalid UTF-8 string: {error}"))
     }
 
-    fn dynamic_payload(&self, static_offset: usize) -> Result<Option<&'a [u8]>, String> {
+    fn dynamic_payload_range(&self, static_offset: usize) -> Result<Option<Range<usize>>, String> {
         let relative = read_u24(self.bytes, 3 + static_offset)? as usize;
         if relative == 0 {
             return Ok(None);
@@ -440,7 +506,13 @@ impl<'a> CompactBinaryDocument<'a> {
         if end > self.bytes.len() {
             return Err("compact dynamic field payload is truncated".into());
         }
-        Ok(Some(&self.bytes[start..end]))
+        Ok(Some(start..end))
+    }
+
+    fn dynamic_payload(&self, static_offset: usize) -> Result<Option<&'a [u8]>, String> {
+        Ok(self
+            .dynamic_payload_range(static_offset)?
+            .map(|range| &self.bytes[range]))
     }
 }
 
@@ -747,6 +819,219 @@ pub(crate) fn read_binary_field_at(
         return Ok(None);
     }
     document.field_value(index)
+}
+
+pub(crate) fn read_binary_sort_key_at(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    index: usize,
+) -> Result<Option<BinarySortKey>, String> {
+    if bytes.starts_with(MAGIC) {
+        let document = BinaryDocument::parse(bytes)?;
+        if index >= document.field_count() {
+            return Ok(None);
+        }
+        return document
+            .field_value(index)
+            .map(|value| value.map(BinarySortKey::Owned));
+    }
+    let document = CompactBinaryDocument::parse(schema, bytes)?;
+    if index >= document.field_count() {
+        return Ok(None);
+    }
+    document.field_sort_key(index)
+}
+
+pub(crate) fn prepare_binary_sort_field(
+    schema: &CollectionSchemaManifest,
+    index: usize,
+) -> Result<PreparedBinarySortField, String> {
+    let mut static_offset = 0usize;
+    for (field_index, field) in schema.fields.iter().enumerate() {
+        let field_type = CompactFieldType::from_field(field)?;
+        let field_static_size = field_type.static_size();
+        if field_index == index {
+            return Ok(PreparedBinarySortField {
+                index,
+                field_type,
+                static_offset,
+                static_size: schema_binary_static_size(schema)?,
+            });
+        }
+        static_offset = static_offset
+            .checked_add(field_static_size)
+            .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+    }
+    Err(format!("field index `{index}` is out of bounds"))
+}
+
+pub(crate) fn read_prepared_binary_sort_key(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    field: &PreparedBinarySortField,
+) -> Result<Option<BinarySortKey>, String> {
+    if bytes.starts_with(MAGIC) {
+        return read_binary_sort_key_at(schema, bytes, field.index);
+    }
+    if bytes.len() > MAX_OBJECT_SIZE {
+        return Err("compact binary document exceeds the maximum object size".into());
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let static_size = read_u24(bytes, 0)? as usize;
+    if static_size != field.static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    read_compact_prepared_sort_key(bytes, field)
+}
+
+pub(crate) fn read_prepared_binary_string_sort_range(
+    bytes: &[u8],
+    field: &PreparedBinarySortField,
+) -> Result<Option<Option<Range<usize>>>, String> {
+    if !field.is_compact_string() || bytes.starts_with(MAGIC) {
+        return Ok(None);
+    }
+    validate_prepared_compact_document(bytes, field.static_size)?;
+    let range = compact_dynamic_payload_range(bytes, field.static_size, field.static_offset)?;
+    if let Some(range) = &range {
+        decode_utf8(&bytes[range.clone()])?;
+    }
+    Ok(Some(range))
+}
+
+fn validate_prepared_compact_document(bytes: &[u8], static_size: usize) -> Result<(), String> {
+    if bytes.len() > MAX_OBJECT_SIZE {
+        return Err("compact binary document exceeds the maximum object size".into());
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let document_static_size = read_u24(bytes, 0)? as usize;
+    if document_static_size != static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    Ok(())
+}
+
+fn read_compact_prepared_sort_key(
+    bytes: &[u8],
+    field: &PreparedBinarySortField,
+) -> Result<Option<BinarySortKey>, String> {
+    let absolute = 3 + field.static_offset;
+    match field.field_type {
+        CompactFieldType::Bool => match bytes[absolute] {
+            COMPACT_NULL_BOOL => Ok(None),
+            0 => Ok(Some(BinarySortKey::Bool(false))),
+            1 => Ok(Some(BinarySortKey::Bool(true))),
+            value => Err(format!("invalid compact bool byte `{value}`")),
+        },
+        CompactFieldType::Int => {
+            let value = read_i64(bytes, absolute)?;
+            if value == COMPACT_NULL_INT {
+                Ok(None)
+            } else {
+                Ok(Some(BinarySortKey::Int(value)))
+            }
+        }
+        CompactFieldType::Double => {
+            let bits = read_u64(bytes, absolute)?;
+            if bits == COMPACT_NULL_DOUBLE_BITS {
+                Ok(None)
+            } else {
+                Ok(Some(BinarySortKey::Double(f64::from_bits(bits))))
+            }
+        }
+        CompactFieldType::String => {
+            let Some(range) =
+                compact_dynamic_payload_range(bytes, field.static_size, field.static_offset)?
+            else {
+                return Ok(None);
+            };
+            decode_utf8(&bytes[range.clone()])?;
+            Ok(Some(BinarySortKey::StringRange(range)))
+        }
+        CompactFieldType::List | CompactFieldType::Object => {
+            read_binary_field_at_placeholder(bytes, field)
+        }
+    }
+}
+
+fn read_binary_field_at_placeholder(
+    bytes: &[u8],
+    field: &PreparedBinarySortField,
+) -> Result<Option<BinarySortKey>, String> {
+    let document = CompactBinaryDocument {
+        bytes,
+        static_size: field.static_size,
+        field_offsets: Vec::new(),
+    };
+    match field.field_type {
+        CompactFieldType::List => {
+            let Some(payload) = document.dynamic_payload(field.static_offset)? else {
+                return Ok(None);
+            };
+            Ok(Some(BinarySortKey::Owned(BinaryValue::List(decode_list(
+                payload,
+            )?))))
+        }
+        CompactFieldType::Object => {
+            let Some(payload) = document.dynamic_payload(field.static_offset)? else {
+                return Ok(None);
+            };
+            Ok(Some(BinarySortKey::Owned(BinaryValue::Object(
+                decode_object(payload)?,
+            ))))
+        }
+        CompactFieldType::Bool
+        | CompactFieldType::Int
+        | CompactFieldType::Double
+        | CompactFieldType::String => unreachable!("scalar compact sort keys are handled directly"),
+    }
+}
+
+fn compact_dynamic_payload_range(
+    bytes: &[u8],
+    static_size: usize,
+    static_offset: usize,
+) -> Result<Option<Range<usize>>, String> {
+    let relative = read_u24(bytes, 3 + static_offset)? as usize;
+    if relative == 0 {
+        return Ok(None);
+    }
+    if relative < static_size {
+        return Err("compact dynamic field points into static section".into());
+    }
+    let length_offset = 3 + relative;
+    let len = read_u24(bytes, length_offset)? as usize;
+    let start = length_offset
+        .checked_add(3)
+        .ok_or_else(|| "compact dynamic field offset overflows".to_string())?;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| "compact dynamic field length overflows".to_string())?;
+    if end > bytes.len() {
+        return Err("compact dynamic field payload is truncated".into());
+    }
+    Ok(Some(start..end))
+}
+
+fn schema_binary_static_size(schema: &CollectionSchemaManifest) -> Result<usize, String> {
+    let mut static_size = 0usize;
+    for field in &schema.fields {
+        let field_type = CompactFieldType::from_field(field)?;
+        static_size = static_size
+            .checked_add(field_type.static_size())
+            .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+    }
+    Ok(static_size)
 }
 
 pub(crate) fn validate_binary_document(

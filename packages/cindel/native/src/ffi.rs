@@ -6,8 +6,8 @@ use crate::wire::{
     decode_document_write_batch, decode_field_updates, decode_id_list, decode_index_entry_list,
     decode_index_value, decode_indexed_document_write_batch, decode_query_plan,
     encode_change_set_list, encode_id_list, encode_scalar, WireChangeSet,
-    WireDocumentWrite as WireBatchDocumentWrite,
-    WireIndexEntry as WireBatchIndexEntry, WireIndexValue as WireBatchIndexValue,
+    WireDocumentWrite as WireBatchDocumentWrite, WireIndexEntry as WireBatchIndexEntry,
+    WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
 use std::cell::RefCell;
@@ -460,6 +460,8 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         layout,
         documents,
+        all_present: false,
+        trusted_static_size: false,
         string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
@@ -495,6 +497,8 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         layout,
         documents: documents.into_iter().map(Some).collect(),
+        all_present: true,
+        trusted_static_size: true,
         string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
@@ -517,6 +521,9 @@ pub unsafe extern "C" fn cindel_native_document_reader_is_present(
     let Some(reader) = reader.as_ref() else {
         return false;
     };
+    if reader.all_present {
+        return document_index < reader.documents.len();
+    }
     reader
         .documents
         .get(document_index)
@@ -1573,6 +1580,8 @@ pub struct CindelNativeBatchWriter {
 pub struct CindelNativeDocumentReader {
     layout: NativeBatchLayout,
     documents: Vec<Option<Vec<u8>>>,
+    all_present: bool,
+    trusted_static_size: bool,
     string_cache: RefCell<NativeStringCache>,
 }
 
@@ -1827,6 +1836,9 @@ impl CindelNativeDocumentReader {
 
     fn document_bytes(&self, document_index: usize) -> Option<&[u8]> {
         let bytes = self.documents.get(document_index)?.as_deref()?;
+        if self.trusted_static_size {
+            return Some(bytes);
+        }
         let static_size = read_u24(bytes, 0)?;
         if static_size != self.layout.static_size {
             return None;

@@ -13,11 +13,13 @@ use libmdbx::{
 
 use crate::document_format::{
     apply_prepared_binary_field_updates, binary_to_wire_value, prepare_binary_field_updates,
-    read_binary_field, read_binary_field_at, PreparedBinaryFieldUpdates,
+    prepare_binary_sort_field, read_binary_field, read_binary_field_at,
+    read_prepared_binary_sort_key, read_prepared_binary_string_sort_range,
+    PreparedBinaryFieldUpdates, PreparedBinarySortField,
 };
 use crate::document_format::{
     for_each_index_entry_from_binary_document, index_entries_from_binary_document,
-    validate_binary_document, validate_generic_document, BinaryValue,
+    validate_binary_document, validate_generic_document, BinarySortKey, BinaryValue,
 };
 use crate::native_filter::NativeFilter;
 use crate::wire::{
@@ -63,6 +65,25 @@ struct PlannedDocument {
     id: u64,
     bytes: Vec<u8>,
     position: usize,
+}
+
+struct BorrowedPlannedDocument<'a> {
+    id: u64,
+    bytes: Cow<'a, [u8]>,
+    position: usize,
+    sort_values: BorrowedSortValues,
+}
+
+enum BorrowedSortValues {
+    One(Option<BinarySortKey>),
+    OneStringRange(Option<std::ops::Range<usize>>),
+    Many(Vec<Option<BinarySortKey>>),
+}
+
+struct QuerySortField {
+    index: usize,
+    ascending: bool,
+    prepared: PreparedBinarySortField,
 }
 
 type SharedMdbxState = Arc<MdbxSharedState>;
@@ -415,16 +436,22 @@ impl MdbxStorage {
         plan: &WireQueryPlan,
     ) -> Result<Vec<PlannedDocument>, String> {
         let schema = self.required_schema(collection)?;
-        let mut ids = self.query_plan_source_ids(collection, &plan.source)?;
-        if query_source_dedupes(&plan.source) {
-            dedupe_ids(&mut ids);
-        }
-
         let filter = plan
             .filter
             .as_ref()
             .map(|bytes| NativeFilter::decode(bytes))
             .transpose()?;
+
+        if let Some(documents) =
+            self.execute_query_plan_borrowed_sorted(collection, plan, &schema, filter.as_ref())?
+        {
+            return Ok(documents);
+        }
+
+        let mut ids = self.query_plan_source_ids(collection, &plan.source)?;
+        if query_source_dedupes(&plan.source) {
+            dedupe_ids(&mut ids);
+        }
         let documents = self.get_many_stored(collection, &ids)?;
         let mut planned = Vec::new();
         for (position, (id, document)) in ids.into_iter().zip(documents).enumerate() {
@@ -454,6 +481,159 @@ impl MdbxStorage {
             plan.offset as usize,
             plan.limit.map(|value| value as usize),
         ))
+    }
+
+    fn execute_query_plan_borrowed_sorted(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        schema: &CollectionSchemaManifest,
+        filter: Option<&NativeFilter>,
+    ) -> Result<Option<Vec<PlannedDocument>>, String> {
+        if self.active_write().is_some()
+            || plan.sorts.is_empty()
+            || !plan.distinct_fields.is_empty()
+        {
+            return Ok(None);
+        }
+
+        let sort_fields = query_sort_fields(schema, &plan.sorts)?;
+        let offset = plan.offset as usize;
+        let limit = plan.limit.map(|value| value as usize);
+
+        self.with_read_transaction(|transaction, tables| {
+            let _ = tables;
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
+            let mut planned = Vec::new();
+            let mut seen = query_source_dedupes(&plan.source).then(HashSet::new);
+            let mut position = 0usize;
+
+            match &plan.source {
+                WireQuerySource::All { .. } => {
+                    for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+                        let (key, bytes) = row.map_err(|error| error.to_string())?;
+                        let id = decode_document_table_key(&key)?;
+                        push_borrowed_planned_document(
+                            schema,
+                            filter,
+                            &sort_fields,
+                            &mut planned,
+                            id,
+                            bytes,
+                            position,
+                        )?;
+                        position += 1;
+                    }
+                }
+                WireQuerySource::IndexEqual {
+                    index_name, value, ..
+                } => {
+                    let value = wire_index_value_to_storage(value)?;
+                    let key = index_value_key(&value)?;
+                    let Ok(index_table) = open_index_table(transaction, collection, index_name)
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    let mut index_cursor = transaction
+                        .cursor(&index_table)
+                        .map_err(|error| error.to_string())?;
+                    for row in index_cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&key) {
+                        let (entry_key, value) = row.map_err(|error| error.to_string())?;
+                        if entry_key.as_ref() != key {
+                            break;
+                        }
+                        let id = decode_u64(&value)?;
+                        if let Some(seen) = &mut seen {
+                            if !seen.insert(id) {
+                                continue;
+                            }
+                        }
+                        let Some(bytes) = ignore_not_found(
+                            documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                        )?
+                        else {
+                            position += 1;
+                            continue;
+                        };
+                        push_borrowed_planned_document(
+                            schema,
+                            filter,
+                            &sort_fields,
+                            &mut planned,
+                            id,
+                            bytes,
+                            position,
+                        )?;
+                        position += 1;
+                    }
+                }
+                WireQuerySource::IndexRange {
+                    index_name,
+                    lower,
+                    upper,
+                    ..
+                } => {
+                    let lower = lower
+                        .as_ref()
+                        .map(wire_index_value_to_storage)
+                        .transpose()?;
+                    let upper = upper
+                        .as_ref()
+                        .map(wire_index_value_to_storage)
+                        .transpose()?;
+                    let range = encode_table_index_range(lower.as_ref(), upper.as_ref())?;
+                    let Ok(index_table) = open_index_table(transaction, collection, index_name)
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    let mut index_cursor = transaction
+                        .cursor(&index_table)
+                        .map_err(|error| error.to_string())?;
+                    for row in index_cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&range.start)
+                    {
+                        let (key, value) = row.map_err(|error| error.to_string())?;
+                        if key.as_ref() > range.end_inclusive.as_slice() {
+                            break;
+                        }
+                        let id = decode_u64(&value)?;
+                        if let Some(seen) = &mut seen {
+                            if !seen.insert(id) {
+                                continue;
+                            }
+                        }
+                        let Some(bytes) = ignore_not_found(
+                            documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                        )?
+                        else {
+                            position += 1;
+                            continue;
+                        };
+                        push_borrowed_planned_document(
+                            schema,
+                            filter,
+                            &sort_fields,
+                            &mut planned,
+                            id,
+                            bytes,
+                            position,
+                        )?;
+                        position += 1;
+                    }
+                }
+            }
+
+            let order = borrowed_planned_document_order(&planned, &sort_fields);
+            Ok(window_ordered_borrowed_planned_documents(
+                planned, order, offset, limit,
+            ))
+        })
+        .map(Some)
     }
 
     fn query_plan_source_ids(
@@ -1471,15 +1651,13 @@ impl StorageEngine for MdbxStorage {
         let schema = self.required_schema(collection)?;
         let update_touches_index = updates_touch_index(&schema, updates)?;
         let prepared_updates = prepare_binary_field_updates(&schema, updates)?;
-        if let Some(ids) =
-            self.query_plan_update_direct_nonindexed(
-                collection,
-                plan,
-                &schema,
-                &prepared_updates,
-                update_touches_index,
-            )?
-        {
+        if let Some(ids) = self.query_plan_update_direct_nonindexed(
+            collection,
+            plan,
+            &schema,
+            &prepared_updates,
+            update_touches_index,
+        )? {
             return Ok(ids);
         }
 
@@ -2086,28 +2264,13 @@ fn sort_planned_documents(
     documents: &mut [PlannedDocument],
     sorts: &[crate::wire::WireQuerySort],
 ) -> Result<(), String> {
-    let sort_fields = sorts
-        .iter()
-        .map(|sort| {
-            schema
-                .fields
-                .iter()
-                .position(|field| field.name == sort.field)
-                .map(|index| (index, sort.ascending))
-                .ok_or_else(|| {
-                    format!(
-                        "field `{}` is not declared in schema `{}`",
-                        sort.field, schema.name
-                    )
-                })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let sort_fields = query_sort_fields(schema, sorts)?;
     let mut keyed = documents
         .iter()
         .map(|document| {
             let values = sort_fields
                 .iter()
-                .map(|(index, _)| read_binary_field_at(schema, &document.bytes, *index))
+                .map(|sort_field| read_binary_field_at(schema, &document.bytes, sort_field.index))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok((
                 document.id,
@@ -2118,11 +2281,11 @@ fn sort_planned_documents(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    keyed.sort_by(|left, right| {
-        for (index, (_, ascending)) in sort_fields.iter().enumerate() {
+    keyed.sort_unstable_by(|left, right| {
+        for (index, sort_field) in sort_fields.iter().enumerate() {
             let ordering = compare_binary_values(left.3[index].as_ref(), right.3[index].as_ref());
             if ordering != Ordering::Equal {
-                return if *ascending {
+                return if sort_field.ascending {
                     ordering
                 } else {
                     ordering.reverse()
@@ -2140,6 +2303,224 @@ fn sort_planned_documents(
         };
     }
     Ok(())
+}
+
+fn query_sort_fields(
+    schema: &CollectionSchemaManifest,
+    sorts: &[crate::wire::WireQuerySort],
+) -> Result<Vec<QuerySortField>, String> {
+    sorts
+        .iter()
+        .map(|sort| {
+            let index = schema
+                .fields
+                .iter()
+                .position(|field| field.name == sort.field)
+                .ok_or_else(|| {
+                    format!(
+                        "field `{}` is not declared in schema `{}`",
+                        sort.field, schema.name
+                    )
+                })?;
+            Ok(QuerySortField {
+                index,
+                ascending: sort.ascending,
+                prepared: prepare_binary_sort_field(schema, index)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()
+}
+
+fn push_borrowed_planned_document<'a>(
+    schema: &CollectionSchemaManifest,
+    filter: Option<&NativeFilter>,
+    sort_fields: &[QuerySortField],
+    planned: &mut Vec<BorrowedPlannedDocument<'a>>,
+    id: u64,
+    bytes: Cow<'a, [u8]>,
+    position: usize,
+) -> Result<(), String> {
+    if let Some(filter) = filter {
+        if !filter.matches(schema, bytes.as_ref())? {
+            return Ok(());
+        }
+    }
+    let sort_values = if let [sort_field] = sort_fields {
+        if let Some(range) =
+            read_prepared_binary_string_sort_range(bytes.as_ref(), &sort_field.prepared)?
+        {
+            BorrowedSortValues::OneStringRange(range)
+        } else {
+            BorrowedSortValues::One(read_prepared_binary_sort_key(
+                schema,
+                bytes.as_ref(),
+                &sort_field.prepared,
+            )?)
+        }
+    } else {
+        BorrowedSortValues::Many(
+            sort_fields
+                .iter()
+                .map(|sort_field| {
+                    read_prepared_binary_sort_key(schema, bytes.as_ref(), &sort_field.prepared)
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )
+    };
+    planned.push(BorrowedPlannedDocument {
+        id,
+        bytes,
+        position,
+        sort_values,
+    });
+    Ok(())
+}
+
+fn borrowed_planned_document_order(
+    documents: &[BorrowedPlannedDocument<'_>],
+    sort_fields: &[QuerySortField],
+) -> Vec<usize> {
+    let mut order = (0..documents.len()).collect::<Vec<_>>();
+    order.sort_unstable_by(|left, right| {
+        let left = &documents[*left];
+        let right = &documents[*right];
+        for (index, sort_field) in sort_fields.iter().enumerate() {
+            let ordering = compare_borrowed_sort_values(left, right, index);
+            if ordering != Ordering::Equal {
+                return if sort_field.ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                };
+            }
+        }
+        left.position.cmp(&right.position)
+    });
+    order
+}
+
+fn borrowed_sort_value<'a>(
+    document: &'a BorrowedPlannedDocument<'_>,
+    index: usize,
+) -> Option<&'a BinarySortKey> {
+    match &document.sort_values {
+        BorrowedSortValues::One(value) => value.as_ref(),
+        BorrowedSortValues::OneStringRange(_) => None,
+        BorrowedSortValues::Many(values) => values[index].as_ref(),
+    }
+}
+
+fn compare_borrowed_sort_values(
+    left: &BorrowedPlannedDocument<'_>,
+    right: &BorrowedPlannedDocument<'_>,
+    index: usize,
+) -> Ordering {
+    match (&left.sort_values, &right.sort_values, index) {
+        (
+            BorrowedSortValues::OneStringRange(left_range),
+            BorrowedSortValues::OneStringRange(right_range),
+            0,
+        ) => compare_optional_bytes(
+            left_range
+                .as_ref()
+                .map(|range| &left.bytes.as_ref()[range.clone()]),
+            right_range
+                .as_ref()
+                .map(|range| &right.bytes.as_ref()[range.clone()]),
+        ),
+        _ => compare_binary_sort_keys(
+            borrowed_sort_value(left, index),
+            left.bytes.as_ref(),
+            borrowed_sort_value(right, index),
+            right.bytes.as_ref(),
+        ),
+    }
+}
+
+fn compare_optional_bytes(left: Option<&[u8]>, right: Option<&[u8]>) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(left), Some(right)) => left.cmp(right),
+    }
+}
+
+fn compare_binary_sort_keys(
+    left: Option<&BinarySortKey>,
+    left_bytes: &[u8],
+    right: Option<&BinarySortKey>,
+    right_bytes: &[u8],
+) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(left), Some(right)) => {
+            if let (Some(left), Some(right)) =
+                (binary_sort_key_number(left), binary_sort_key_number(right))
+            {
+                return left.total_cmp(&right);
+            }
+            match (
+                binary_sort_key_string_bytes(left, left_bytes),
+                binary_sort_key_string_bytes(right, right_bytes),
+            ) {
+                (Some(left), Some(right)) => return left.cmp(right),
+                _ => {}
+            }
+            match (binary_sort_key_bool(left), binary_sort_key_bool(right)) {
+                (Some(left), Some(right)) => return left.cmp(&right),
+                _ => {}
+            }
+            binary_sort_key_distinct_key(left, left_bytes)
+                .cmp(&binary_sort_key_distinct_key(right, right_bytes))
+        }
+    }
+}
+
+fn binary_sort_key_number(value: &BinarySortKey) -> Option<f64> {
+    match value {
+        BinarySortKey::Int(value) => Some(*value as f64),
+        BinarySortKey::Double(value) if value.is_finite() => Some(*value),
+        BinarySortKey::Owned(value) => binary_number(value),
+        BinarySortKey::Bool(_) | BinarySortKey::Double(_) | BinarySortKey::StringRange(_) => None,
+    }
+}
+
+fn binary_sort_key_string_bytes<'a>(value: &'a BinarySortKey, bytes: &'a [u8]) -> Option<&'a [u8]> {
+    match value {
+        BinarySortKey::StringRange(range) => Some(&bytes[range.clone()]),
+        BinarySortKey::Owned(BinaryValue::String(value))
+        | BinarySortKey::Owned(BinaryValue::Enum(value)) => Some(value.as_bytes()),
+        BinarySortKey::Bool(_)
+        | BinarySortKey::Int(_)
+        | BinarySortKey::Double(_)
+        | BinarySortKey::Owned(_) => None,
+    }
+}
+
+fn binary_sort_key_bool(value: &BinarySortKey) -> Option<bool> {
+    match value {
+        BinarySortKey::Bool(value) => Some(*value),
+        BinarySortKey::Owned(BinaryValue::Bool(value)) => Some(*value),
+        BinarySortKey::Int(_)
+        | BinarySortKey::Double(_)
+        | BinarySortKey::StringRange(_)
+        | BinarySortKey::Owned(_) => None,
+    }
+}
+
+fn binary_sort_key_distinct_key(value: &BinarySortKey, bytes: &[u8]) -> String {
+    match value {
+        BinarySortKey::StringRange(range) => {
+            format!("String:{}", String::from_utf8_lossy(&bytes[range.clone()]))
+        }
+        BinarySortKey::Bool(value) => format!("bool:{value}"),
+        BinarySortKey::Int(value) => format!("int:{value}"),
+        BinarySortKey::Double(value) => format!("double:{value}"),
+        BinarySortKey::Owned(value) => binary_distinct_key(Some(value)),
+    }
 }
 
 fn compare_binary_values(left: Option<&BinaryValue>, right: Option<&BinaryValue>) -> Ordering {
@@ -2161,6 +2542,32 @@ fn compare_binary_values(left: Option<&BinaryValue>, right: Option<&BinaryValue>
             }
         }
     }
+}
+
+fn window_ordered_borrowed_planned_documents(
+    documents: Vec<BorrowedPlannedDocument<'_>>,
+    order: Vec<usize>,
+    offset: usize,
+    limit: Option<usize>,
+) -> Vec<PlannedDocument> {
+    if offset >= order.len() {
+        return Vec::new();
+    }
+    let end = limit
+        .map(|limit| offset.saturating_add(limit).min(order.len()))
+        .unwrap_or(order.len());
+    let mut documents = documents.into_iter().map(Some).collect::<Vec<_>>();
+    order
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .filter_map(|index| documents[index].take())
+        .map(|document| PlannedDocument {
+            id: document.id,
+            bytes: document.bytes.into_owned(),
+            position: document.position,
+        })
+        .collect()
 }
 
 fn distinct_planned_documents(
