@@ -6,6 +6,8 @@ import 'database.dart';
 import 'query.dart';
 import 'schema.dart';
 
+final _nativeFieldTypesCache = Expando<Uint8List>('cindelNativeFieldTypes');
+
 /// Adds typed collection access to [CindelDatabase].
 extension CindelTypedCollectionAccess on CindelDatabase {
   /// Returns typed generated access for [schema].
@@ -283,6 +285,10 @@ final class CindelTypedCollection<T> {
   }
 
   Uint8List? _nativeFieldTypes() {
+    final cached = _nativeFieldTypesCache[schema];
+    if (cached != null) {
+      return cached;
+    }
     final fields = schema.fields.toList(growable: false)
       ..sort((left, right) => left.name.compareTo(right.name));
     final bytes = Uint8List(fields.length);
@@ -300,6 +306,7 @@ final class CindelTypedCollection<T> {
       }
       bytes[i] = value;
     }
+    _nativeFieldTypesCache[schema] = bytes;
     return bytes;
   }
 

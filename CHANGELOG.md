@@ -8,6 +8,7 @@ while the core design settles.
 ## 0.4.1
 
 - Cached native function resolution across Cindel database openings.
+- Cached generated native field layouts for typed MDBX reads and writes.
 - Allowed generated schemas to hydrate immutable explicit-id collection models
   through constructor parameters.
 - Fixed geometry and table count settings.
