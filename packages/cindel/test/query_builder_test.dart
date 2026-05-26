@@ -287,6 +287,37 @@ void main() {
       expect(inactiveUsers.map((user) => user.name), ['Cid']);
     });
 
+    // Scenario: A generated filter equality targets an indexed field.
+    // Covers:
+    // - [CindelQuery.whereMatches] recognizing an indexed equality predicate.
+    // - Same public results as the generated indexed where helper.
+    // Expected: Filter syntax keeps Isar-like ergonomics while using index
+    // semantics that match the where path.
+    test('uses indexed equality for filter-only indexed fields.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final filterUsers = await database.users
+          .filter()
+          .emailEqualTo('team@example.com')
+          .sortByName()
+          .findAll();
+      final whereUsers = await database.users
+          .where()
+          .emailEqualTo('team@example.com')
+          .sortByName()
+          .findAll();
+
+      // Assert.
+      expect(filterUsers.map((user) => user.name), ['Ana', 'Cid']);
+      expect(
+        filterUsers.map((user) => user.id),
+        whereUsers.map((user) => user.id),
+      );
+    });
+
     // Scenario: An indexed where clause is followed by a non-indexed filter.
     // Covers:
     // - Execution order: indexed where first, Dart filter second.

@@ -393,6 +393,11 @@ final class CindelQuery<T> {
 
   /// Returns a new query that filters the current query result by [predicate].
   CindelQuery<T> whereMatches(CindelFilterPredicate predicate) {
+    final indexedQuery = _indexedEqualityQuery(predicate);
+    if (indexedQuery != null) {
+      return indexedQuery;
+    }
+
     final existing = _filter;
     return _copyWith(
       filter: existing == null
@@ -979,6 +984,60 @@ final class CindelQuery<T> {
       return false;
     }
     return true;
+  }
+
+  CindelQuery<T>? _indexedEqualityQuery(CindelFilterPredicate predicate) {
+    if (_filter != null ||
+        _sourceFilter != null ||
+        _nativeSource is! CindelNativeAllQuerySource ||
+        predicate is! _FieldFilterPredicate ||
+        predicate.operation != _FilterOperation.equalTo ||
+        predicate.expected == null) {
+      return null;
+    }
+
+    final field = _indexedEqualityField(predicate);
+    if (field == null) {
+      return null;
+    }
+    final value = predicate.expected!;
+    return CindelQuery._(
+      database: _database,
+      schema: _schema,
+      readDocuments: () =>
+          _database.queryEqual(_schema.name, field.name, value),
+      readIds: field.indexType == CindelIndexType.hash
+          ? null
+          : () => _database.queryEqualIds(_schema.name, field.name, value),
+      nativeSource: CindelNativeIndexEqualQuerySource(
+        indexName: field.name,
+        value: value,
+        dedupe: false,
+      ),
+      sortKeys: _sortKeys,
+      distinctFields: _distinctFields,
+      offset: _offset,
+      limit: _limit,
+    );
+  }
+
+  CindelFieldSchema? _indexedEqualityField(_FieldFilterPredicate predicate) {
+    for (final field in _schema.fields) {
+      if (field.name != predicate.field || !field.isIndexed) {
+        continue;
+      }
+      if (field.indexType == CindelIndexType.multiEntry ||
+          field.indexType == CindelIndexType.words) {
+        return null;
+      }
+      if (!field.indexCaseSensitive &&
+          field.binaryType == 'string' &&
+          predicate.expected is String) {
+        return null;
+      }
+      return field;
+    }
+    return null;
   }
 
   CindelQuery<T> _copyWith({
