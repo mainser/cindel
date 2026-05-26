@@ -3441,6 +3441,16 @@ fn delete_many_documents(
         return Ok(deleted_ids);
     }
 
+    if let Some(index) = direct_bool_delete_index(&schema) {
+        return delete_many_documents_with_bool_index(
+            transaction,
+            collection,
+            ids,
+            documents_cursor,
+            &index,
+        );
+    }
+
     let unique_indexes = unique_index_names_from_schema(Some(&schema));
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
     let mut index_cursors = index_tables
@@ -3477,6 +3487,132 @@ fn delete_many_documents(
     drop(index_cursors);
     drop(documents_cursor);
     Ok(deleted_ids)
+}
+
+struct DirectBoolDeleteIndex {
+    name: String,
+    static_offset: usize,
+    static_size: usize,
+}
+
+fn direct_bool_delete_index(schema: &CollectionSchemaManifest) -> Option<DirectBoolDeleteIndex> {
+    if !schema.composite_indexes.is_empty() {
+        return None;
+    }
+    let mut indexed_field = None;
+    let mut static_offset = 0usize;
+    let mut static_size = 0usize;
+    for field in &schema.fields {
+        let field_size = compact_field_static_size(&field.binary_type)?;
+        if field.is_indexed {
+            if indexed_field.is_some()
+                || field.is_index_unique
+                || field.index_type != "value"
+                || normalized_binary_type(&field.binary_type) != "bool"
+            {
+                return None;
+            }
+            indexed_field = Some((field.name.clone(), static_offset));
+        }
+        static_offset = static_offset.checked_add(field_size)?;
+        static_size = static_size.checked_add(field_size)?;
+    }
+    indexed_field.map(|(name, static_offset)| DirectBoolDeleteIndex {
+        name,
+        static_offset,
+        static_size,
+    })
+}
+
+fn delete_many_documents_with_bool_index(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    collection: &str,
+    ids: &[u64],
+    mut documents_cursor: libmdbx::Cursor<'_, RW>,
+    index: &DirectBoolDeleteIndex,
+) -> Result<Vec<u64>, String> {
+    let index_table = create_index_table(transaction, collection, &index.name)?;
+    let mut index_cursor = transaction
+        .cursor(&index_table)
+        .map_err(|error| error.to_string())?;
+    let mut deleted_ids = Vec::with_capacity(ids.len());
+
+    for id in ids {
+        let previous_bytes =
+            ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_table_key(*id)))?;
+        let Some(previous_bytes) = previous_bytes else {
+            continue;
+        };
+        let key = direct_bool_index_key(&previous_bytes, index)?;
+        let document_id_bytes = document_id_key(*id);
+        if let Some(key) = key {
+            if index_cursor
+                .get_both::<Vec<u8>>(&key, &document_id_bytes)
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                index_cursor
+                    .del(WriteFlags::empty())
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        documents_cursor
+            .del(WriteFlags::empty())
+            .map_err(|error| error.to_string())?;
+        deleted_ids.push(*id);
+    }
+
+    drop(index_cursor);
+    drop(documents_cursor);
+    Ok(deleted_ids)
+}
+
+fn direct_bool_index_key(
+    bytes: &[u8],
+    index: &DirectBoolDeleteIndex,
+) -> Result<Option<[u8; 1]>, String> {
+    if bytes.starts_with(b"CDBF") {
+        return Err("legacy binary document format is not supported by direct bool delete".into());
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let static_size = read_compact_u24(bytes, 0)? as usize;
+    if static_size != index.static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    let value = *bytes
+        .get(3 + index.static_offset)
+        .ok_or_else(|| "compact bool index is outside the static section".to_string())?;
+    match value {
+        0 => Ok(Some([1])),
+        1 => Ok(Some([2])),
+        0xff => Ok(None),
+        value => Err(format!("invalid compact bool byte `{value}`")),
+    }
+}
+
+fn compact_field_static_size(binary_type: &str) -> Option<usize> {
+    match normalized_binary_type(binary_type) {
+        "bool" => Some(1),
+        "int" | "double" => Some(8),
+        "string" | "String" | "list" | "object" => Some(3),
+        _ => None,
+    }
+}
+
+fn read_compact_u24(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let slice = bytes
+        .get(offset..offset + 3)
+        .ok_or_else(|| "u24 read is out of bounds".to_string())?;
+    Ok(u32::from(slice[0]) | (u32::from(slice[1]) << 8) | (u32::from(slice[2]) << 16))
+}
+
+fn normalized_binary_type(binary_type: &str) -> &str {
+    binary_type.strip_suffix('?').unwrap_or(binary_type)
 }
 
 #[allow(dead_code)]

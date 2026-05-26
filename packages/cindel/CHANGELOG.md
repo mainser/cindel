@@ -7,6 +7,9 @@
 - Reduced MDBX query-plan `filter + sort` overhead by keeping sorted query
   documents in borrowed native storage form longer and specializing compact
   string sort keys.
+- Reduced MDBX batch delete overhead for compact documents with one simple
+  non-unique bool value index by deleting the index entry directly with
+  prepared cursors.
 - Added native query-plan updates for compact MDBX binary documents, matching
   Isar-style property updates without Dart object hydration.
 - Fixed geometry and table count settings.
