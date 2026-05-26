@@ -1304,35 +1304,55 @@ CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
 
 User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
   final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 69);
-  final object = User();
   final Object? field0 = reader.readString(0, 0);
-  object.accessToken = field0 == null ? null : field0 as String?;
   final Object? field1 = reader.readBool(1, 3);
-  object.active = field1 == null ? null : field1 as bool?;
   final Object? field2 = reader.readString(2, 4);
-  object.bio = field2 == null ? null : field2 as String?;
   final Object? field3 = reader.readInt(3, 7);
+  final Object? field4 = reader.readString(4, 15);
+  final Object? field5 = reader.readString(5, 18);
+  final Object? field6 = reader.readInt(6, 21);
+  final Object? field7 = reader.readString(7, 29);
+  final Object? field8 = reader.readString(8, 32);
+  final Object? field9 = reader.readObject(9, 35);
+  final Object? field10 = reader.readList(10, 38);
+  final Object? field11 = reader.readString(11, 41);
+  final Object? field12 = reader.readList(12, 44);
+  final Object? field13 = reader.readInt(13, 47);
+  final Object? field14 = reader.readInt(14, 55);
+  final Object? field15 = reader.readList(15, 63);
+  final Object? field16 = reader.readString(16, 66);
+  final object = User();
+  object.id = field6 as int;
+  object.name = field7 as String;
+  object.email = field5 as String;
+  object.username = field16 == null ? null : field16 as String?;
+  object.displayName = field4 == null ? null : field4 as String?;
+  object.accessToken = field0 == null ? null : field0 as String?;
+  object.bio = field2 == null ? null : field2 as String?;
+  object.active = field1 == null ? null : field1 as bool?;
   object.createdAt = DateTime.fromMicrosecondsSinceEpoch(
     field3 as int,
     isUtc: true,
   );
-  final Object? field4 = reader.readString(4, 15);
-  object.displayName = field4 == null ? null : field4 as String?;
-  final Object? field5 = reader.readString(5, 18);
-  object.email = field5 as String;
-  final Object? field6 = reader.readInt(6, 21);
-  object.id = field6 as int;
-  final Object? field7 = reader.readString(7, 29);
-  object.name = field7 as String;
-  final Object? field8 = reader.readString(8, 32);
+  object.sessionLength = field13 == null
+      ? null
+      : Duration(microseconds: field13 as int);
+  object.tags = (field15 as List<Object?>)
+      .map((value) => value as String)
+      .toList(growable: false);
+  object.scores = field12 == null
+      ? null
+      : (field12 as List<Object?>)
+            .map((value) => value as int)
+            .toList(growable: false);
+  object.role = UserRole.values.byName(field11 as String);
+  object.status = UserStatus.values[field14 as int];
   object.plan = UserPlan.values.firstWhere(
     (enumValue) => enumValue.code == field8,
   );
-  final Object? field9 = reader.readObject(9, 35);
   object.primaryRecipient = field9 == null
       ? null
       : _$RecipientFromCindelEmbedded((field9 as Map).cast<String, Object?>());
-  final Object? field10 = reader.readList(10, 38);
   object.recipients = field10 == null
       ? null
       : (field10 as List<Object?>)
@@ -1342,26 +1362,6 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
               ),
             )
             .toList(growable: false);
-  final Object? field11 = reader.readString(11, 41);
-  object.role = UserRole.values.byName(field11 as String);
-  final Object? field12 = reader.readList(12, 44);
-  object.scores = field12 == null
-      ? null
-      : (field12 as List<Object?>)
-            .map((value) => value as int)
-            .toList(growable: false);
-  final Object? field13 = reader.readInt(13, 47);
-  object.sessionLength = field13 == null
-      ? null
-      : Duration(microseconds: field13 as int);
-  final Object? field14 = reader.readInt(14, 55);
-  object.status = UserStatus.values[field14 as int];
-  final Object? field15 = reader.readList(15, 63);
-  object.tags = (field15 as List<Object?>)
-      .map((value) => value as String)
-      .toList(growable: false);
-  final Object? field16 = reader.readString(16, 66);
-  object.username = field16 == null ? null : field16 as String?;
   return object;
 }
 
@@ -1413,4 +1413,311 @@ RecipientMetadata _$RecipientMetadataFromCindelEmbedded(
       ? null
       : document["label"] as String?;
   return object;
+}
+
+// ignore_for_file: non_constant_identifier_names
+
+final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(
+  name: "immutableUsers",
+  dartName: "ImmutableUser",
+  idField: "id",
+  fields: <CindelFieldSchema>[
+    CindelFieldSchema(
+      name: "id",
+      dartType: "int",
+      binaryType: "int",
+      isId: true,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "email",
+      dartType: "String",
+      binaryType: "string",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "active",
+      dartType: "bool",
+      binaryType: "bool",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+  ],
+  compositeIndexes: <CindelCompositeIndexSchema>[],
+  toDocument: _$ImmutableUserToCindelDocument,
+  fromDocument: _$ImmutableUserFromCindelDocument,
+  toBinaryDocument: _$ImmutableUserToCindelBinaryDocument,
+  fromBinaryDocument: _$ImmutableUserFromCindelBinaryDocument,
+  writeNativeDocument: _$ImmutableUserWriteCindelNativeDocument,
+  readNativeDocument: _$ImmutableUserReadCindelNativeDocument,
+  getId: _$ImmutableUserGetCindelId,
+);
+
+extension ImmutableUserCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<ImmutableUser> get immutableUsers =>
+      typedCollection(ImmutableUserSchema);
+}
+
+extension ImmutableUserCindelQueryAccess
+    on CindelTypedCollection<ImmutableUser> {
+  ImmutableUserQueryWhere where() => ImmutableUserQueryWhere(this);
+
+  ImmutableUserQueryFilter filter() => ImmutableUserQueryFilter(
+    CindelQuery.all(database: database, schema: ImmutableUserSchema),
+  );
+}
+
+extension ImmutableUserCindelQueryFilterAccess on CindelQuery<ImmutableUser> {
+  ImmutableUserQueryFilter filter() => ImmutableUserQueryFilter(this);
+}
+
+extension ImmutableUserCindelQueryModifierAccess on CindelQuery<ImmutableUser> {
+  CindelQuery<ImmutableUser> sortById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("id", order: order);
+  }
+
+  CindelQuery<ImmutableUser> sortByIdDesc() {
+    return sortBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> thenById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("id", order: order);
+  }
+
+  CindelQuery<ImmutableUser> thenByIdDesc() {
+    return thenBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> distinctById() {
+    return distinctBy("id");
+  }
+
+  CindelPropertyQuery<ImmutableUser, int> idProperty() {
+    return property<int>("id");
+  }
+
+  CindelQuery<ImmutableUser> sortByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("email", order: order);
+  }
+
+  CindelQuery<ImmutableUser> sortByEmailDesc() {
+    return sortBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> thenByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("email", order: order);
+  }
+
+  CindelQuery<ImmutableUser> thenByEmailDesc() {
+    return thenBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> distinctByEmail() {
+    return distinctBy("email");
+  }
+
+  CindelPropertyQuery<ImmutableUser, String> emailProperty() {
+    return property<String>("email");
+  }
+
+  CindelQuery<ImmutableUser> sortByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("active", order: order);
+  }
+
+  CindelQuery<ImmutableUser> sortByActiveDesc() {
+    return sortBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> thenByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("active", order: order);
+  }
+
+  CindelQuery<ImmutableUser> thenByActiveDesc() {
+    return thenBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ImmutableUser> distinctByActive() {
+    return distinctBy("active");
+  }
+
+  CindelPropertyQuery<ImmutableUser, bool> activeProperty() {
+    return property<bool>("active");
+  }
+}
+
+final class ImmutableUserQueryWhere {
+  const ImmutableUserQueryWhere(this._collection);
+
+  final CindelTypedCollection<ImmutableUser> _collection;
+
+  CindelQuery<ImmutableUser> emailEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ImmutableUserSchema,
+      field: "email",
+      value: value,
+    );
+  }
+
+  CindelQuery<ImmutableUser> emailStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: ImmutableUserSchema,
+      field: "email",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<ImmutableUser> emailBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ImmutableUserSchema,
+      field: "email",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
+final class ImmutableUserQueryFilter {
+  const ImmutableUserQueryFilter(this._query);
+
+  final CindelQuery<ImmutableUser> _query;
+
+  CindelQuery<ImmutableUser> idEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  }
+
+  CindelQuery<ImmutableUser> idGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").greaterThan(value));
+  }
+
+  CindelQuery<ImmutableUser> idGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<ImmutableUser> idLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("id").lessThan(value));
+  }
+
+  CindelQuery<ImmutableUser> idLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("id").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<ImmutableUser> idBetween(int? lower, int? upper) {
+    return _query.whereMatches(CindelFilter.field("id").between(lower, upper));
+  }
+
+  CindelQuery<ImmutableUser> emailEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("email").equalTo(value));
+  }
+
+  CindelQuery<ImmutableUser> emailContains(String value) {
+    return _query.whereMatches(CindelFilter.field("email").contains(value));
+  }
+
+  CindelQuery<ImmutableUser> emailStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").startsWith(value));
+  }
+
+  CindelQuery<ImmutableUser> emailEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").endsWith(value));
+  }
+
+  CindelQuery<ImmutableUser> activeEqualTo(bool value) {
+    return _query.whereMatches(CindelFilter.field("active").equalTo(value));
+  }
+}
+
+Map<String, Object?> _$ImmutableUserToCindelDocument(ImmutableUser object) {
+  return <String, Object?>{
+    "id": object.id,
+    "email": object.email,
+    "active": object.active,
+  };
+}
+
+ImmutableUser _$ImmutableUserFromCindelDocument(Map<String, Object?> document) {
+  return ImmutableUser(
+    id: document["id"] as int,
+    email: document["email"] as String,
+    active: document["active"] as bool,
+  );
+}
+
+CindelBinaryDocumentBytes _$ImmutableUserToCindelBinaryDocument(
+  ImmutableUser object,
+) {
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[object.active, object.email, object.id],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.boolValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+    ],
+  );
+}
+
+ImmutableUser _$ImmutableUserFromCindelBinaryDocument(
+  CindelBinaryDocumentBytes bytes,
+) {
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 12);
+  final Object? field0 = reader.readBool(0, 0);
+  final Object? field1 = reader.readString(1, 1);
+  final Object? field2 = reader.readInt(2, 4);
+  return ImmutableUser(
+    id: field2 as int,
+    email: field1 as String,
+    active: field0 as bool,
+  );
+}
+
+void _$ImmutableUserWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  ImmutableUser object,
+) {
+  writer.writeBool(0, object.active);
+  writer.writeString(1, object.email);
+  writer.writeInt(2, object.id);
+}
+
+ImmutableUser _$ImmutableUserReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return ImmutableUser(
+    id: reader.readInt(documentIndex, 2) as int,
+    email: reader.readString(documentIndex, 1) as String,
+    active: reader.readBool(documentIndex, 0) as bool,
+  );
+}
+
+int _$ImmutableUserGetCindelId(ImmutableUser object) {
+  return object.id;
 }

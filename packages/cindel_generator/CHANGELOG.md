@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Allowed generated schemas to hydrate immutable explicit-id collection models
+  through constructor parameters and omit auto-increment setters when `id` is
+  final.
+
 ## 0.4.0
 
 - Generated schema-specific compact document writers and readers for the

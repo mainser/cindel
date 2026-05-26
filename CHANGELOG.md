@@ -7,6 +7,9 @@ while the core design settles.
 
 ## 0.4.1
 
+- Cached native function resolution across Cindel database openings.
+- Allowed generated schemas to hydrate immutable explicit-id collection models
+  through constructor parameters.
 - Fixed geometry and table count settings.
 - Raised the MDBX default map limit to support large batch updates and deletes
   without forcing application-level chunking.

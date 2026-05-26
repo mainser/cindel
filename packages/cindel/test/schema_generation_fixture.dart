@@ -57,6 +57,22 @@ class User {
   String transientNote = '';
 }
 
+@Collection(name: 'immutableUsers')
+class ImmutableUser {
+  const ImmutableUser({
+    required this.id,
+    required this.email,
+    required this.active,
+  });
+
+  final Id id;
+
+  @index
+  final String email;
+
+  final bool active;
+}
+
 @embedded
 class Recipient {
   String? name;

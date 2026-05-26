@@ -12,8 +12,9 @@ import 'wire.dart';
 const _assetId = 'package:cindel/src/native/bindings.dart';
 
 final class CindelNativeBindings {
-  CindelNativeBindings() : _functions = _CindelNativeFunctions.resolve();
+  CindelNativeBindings() : _functions = _resolvedFunctions;
 
+  static final _resolvedFunctions = _CindelNativeFunctions.resolve();
   final _CindelNativeFunctions _functions;
 
   int get abiVersion => _functions.abiVersion();

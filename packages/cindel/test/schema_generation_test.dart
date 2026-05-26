@@ -282,6 +282,35 @@ void main() {
       expect(user.id, 42);
     });
 
+    // Scenario: A generated schema hydrates an immutable explicit-id model.
+    // Covers:
+    // - Constructor-based generated hydration for final persisted fields.
+    // - Omission of auto-increment id setter metadata when id is final.
+    // Expected: The immutable model round-trips and does not expose setId.
+    test('supports immutable explicit-id collection models.', () {
+      // Arrange.
+      const user = ImmutableUser(
+        id: 7,
+        email: 'immutable@example.com',
+        active: true,
+      );
+
+      // Act.
+      final document = ImmutableUserSchema.toDocument(user);
+      final restored = ImmutableUserSchema.fromDocument(document);
+
+      // Assert.
+      expect(ImmutableUserSchema.setId, isNull);
+      expect(document, {
+        'id': 7,
+        'email': 'immutable@example.com',
+        'active': true,
+      });
+      expect(restored.id, 7);
+      expect(restored.email, 'immutable@example.com');
+      expect(restored.active, isTrue);
+    });
+
     // Scenario: A generated schema persists expanded Dart field shapes.
     // Covers:
     // - Native in-memory persistence of encoded DateTime and Duration values.

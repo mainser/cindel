@@ -122,9 +122,11 @@ String _emitCollection(_CollectionInfo collection) {
       '_\$${collection.dartName}ReadCindelNativeDocument,',
     );
   }
+  buffer.writeln('  getId: _\$${collection.dartName}GetCindelId,');
+  if (collection.canSetId) {
+    buffer.writeln('  setId: _\$${collection.dartName}SetCindelId,');
+  }
   buffer
-    ..writeln('  getId: _\$${collection.dartName}GetCindelId,')
-    ..writeln('  setId: _\$${collection.dartName}SetCindelId,')
     ..writeln(');')
     ..writeln()
     ..writeln(
@@ -229,18 +231,13 @@ String _emitCollection(_CollectionInfo collection) {
       'FromCindelDocument(',
     )
     ..writeln('  Map<String, Object?> document,')
-    ..writeln(') {')
-    ..writeln('  final object = ${collection.dartName}();');
-
-  for (final field in collection.fields) {
-    buffer.writeln(
-      '  object.${field.name} = '
-      '${field.fromDocumentExpression(_stringLiteral(field.name))};',
-    );
-  }
-
+    ..writeln(') {');
+  _emitObjectHydration(
+    buffer,
+    collection,
+    (field) => field.fromDocumentExpression(_stringLiteral(field.name)),
+  );
   buffer
-    ..writeln('  return object;')
     ..writeln('}')
     ..writeln()
     ..writeln(
@@ -275,10 +272,10 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('  final reader = CindelSchemaBinaryDocumentReader(')
     ..writeln('    bytes,')
     ..writeln('    staticSize: ${collection.binaryStaticSize},')
-    ..writeln('  );')
-    ..writeln('  final object = ${collection.dartName}();');
+    ..writeln('  );');
 
   var staticOffset = 0;
+  final binaryReadValues = <_FieldInfo, String>{};
   for (var index = 0; index < collection.binaryFields.length; index += 1) {
     final field = collection.binaryFields[index];
     final storedValue = 'field$index';
@@ -286,15 +283,16 @@ String _emitCollection(_CollectionInfo collection) {
       '  final Object? $storedValue = '
       '${field.directBinaryReadExpression(index, staticOffset)};',
     );
-    buffer.writeln(
-      '  object.${field.name} = '
-      '${field.fromStoredValueExpression(storedValue)};',
-    );
+    binaryReadValues[field] = field.fromStoredValueExpression(storedValue);
     staticOffset += field.binaryStaticSize;
   }
 
+  _emitObjectHydration(
+    buffer,
+    collection,
+    (field) => binaryReadValues[field]!,
+  );
   buffer
-    ..writeln('  return object;')
     ..writeln('}')
     ..writeln();
 
@@ -318,16 +316,18 @@ String _emitCollection(_CollectionInfo collection) {
       )
       ..writeln('  CindelNativeDocumentReader reader,')
       ..writeln('  int documentIndex,')
-      ..writeln(') {')
-      ..writeln('  final object = ${collection.dartName}();');
+      ..writeln(') {');
+    final nativeReadValues = <_FieldInfo, String>{};
     for (var index = 0; index < collection.binaryFields.length; index += 1) {
       final field = collection.binaryFields[index];
-      buffer.writeln(
-        '  object.${field.name} = ${field.nativeReadExpression(index)};',
-      );
+      nativeReadValues[field] = field.nativeReadExpression(index);
     }
+    _emitObjectHydration(
+      buffer,
+      collection,
+      (field) => nativeReadValues[field]!,
+    );
     buffer
-      ..writeln('  return object;')
       ..writeln('}')
       ..writeln();
   }
@@ -338,20 +338,51 @@ String _emitCollection(_CollectionInfo collection) {
       '${collection.dartName} object) {',
     )
     ..writeln('  return object.${collection.idField.name};')
-    ..writeln('}')
-    ..writeln()
-    ..writeln(
-      'void _\$${collection.dartName}SetCindelId('
-      '${collection.dartName} object, int id) {',
-    )
-    ..writeln('  object.${collection.idField.name} = id;')
     ..writeln('}');
+  if (collection.canSetId) {
+    buffer
+      ..writeln()
+      ..writeln(
+        'void _\$${collection.dartName}SetCindelId('
+        '${collection.dartName} object, int id) {',
+      )
+      ..writeln('  object.${collection.idField.name} = id;')
+      ..writeln('}');
+  }
 
   for (final embedded in collection.embeddedTypes) {
     _emitEmbeddedHelpers(buffer, embedded);
   }
 
   return buffer.toString();
+}
+
+void _emitObjectHydration(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  String Function(_FieldInfo field) expressionFor,
+) {
+  final constructor = collection.constructor;
+  if (constructor != null) {
+    buffer
+      ..writeln('  return ${collection.dartName}(');
+    for (final parameter in constructor.parameters) {
+      final expression = expressionFor(parameter.field);
+      if (parameter.isNamed) {
+        buffer.writeln('    ${parameter.name}: $expression,');
+      } else {
+        buffer.writeln('    $expression,');
+      }
+    }
+    buffer.writeln('  );');
+    return;
+  }
+
+  buffer.writeln('  final object = ${collection.dartName}();');
+  for (final field in collection.fields) {
+    buffer.writeln('  object.${field.name} = ${expressionFor(field)};');
+  }
+  buffer.writeln('  return object;');
 }
 
 void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
@@ -453,6 +484,7 @@ final class _CollectionInfo {
     required this.fields,
     required this.compositeIndexes,
     required this.embeddedTypes,
+    required this.constructor,
   });
 
   factory _CollectionInfo.from(
@@ -485,9 +517,19 @@ final class _CollectionInfo {
       (constructor) =>
           constructor.name == 'new' && constructor.formalParameters.isEmpty,
     );
-    if (!hasDefaultConstructor) {
+    final fieldConstructor = _ConstructorInfo.from(element, fields);
+    final needsConstructor = fields.any((field) => !field.isAssignable);
+    if (!hasDefaultConstructor && fieldConstructor == null) {
       throw InvalidGenerationSourceError(
-        '@collection classes need an unnamed constructor with no parameters.',
+        '@collection classes need an unnamed constructor with no parameters '
+        'or parameters for every persisted field.',
+        element: element,
+      );
+    }
+    if (needsConstructor && fieldConstructor == null) {
+      throw InvalidGenerationSourceError(
+        '@collection classes with final persisted fields need an unnamed '
+        'constructor parameter for every persisted field.',
         element: element,
       );
     }
@@ -511,6 +553,9 @@ final class _CollectionInfo {
       fields: fields,
       compositeIndexes: compositeIndexes,
       embeddedTypes: _collectEmbeddedTypes(fields),
+      constructor: needsConstructor || !hasDefaultConstructor
+          ? fieldConstructor
+          : null,
     );
   }
 
@@ -522,6 +567,7 @@ final class _CollectionInfo {
   final List<_FieldInfo> fields;
   final List<_CompositeIndexInfo> compositeIndexes;
   final List<_EmbeddedInfo> embeddedTypes;
+  final _ConstructorInfo? constructor;
 
   String get queryWhereName => '${dartName}QueryWhere';
 
@@ -546,6 +592,8 @@ final class _CollectionInfo {
       (size, field) => size + field.binaryStaticSize,
     );
   }
+
+  bool get canSetId => idField.isAssignable;
 }
 
 void _emitFilterMethods(
@@ -650,11 +698,94 @@ void _emitFilterMethods(
   }
 }
 
+final class _ConstructorInfo {
+  const _ConstructorInfo(this.parameters);
+
+  static _ConstructorInfo? from(
+    ClassElement element,
+    List<_FieldInfo> fields,
+  ) {
+    final constructors = element.constructors
+        .where(
+          (constructor) =>
+              constructor.name == 'new' &&
+              constructor.formalParameters.isNotEmpty,
+        )
+        .toList(growable: false);
+    if (constructors.isEmpty) {
+      return null;
+    }
+    final constructor = constructors.single;
+
+    final fieldsByName = {for (final field in fields) field.name: field};
+    final parameters = <_ConstructorParameterInfo>[];
+    final seenFields = <String>{};
+    for (final parameter in constructor.formalParameters) {
+      final name = parameter.name ?? parameter.displayName;
+      final field = fieldsByName[name];
+      if (field == null) {
+        throw InvalidGenerationSourceError(
+          'Constructor parameter `$name` does not match a persisted field.',
+          element: parameter,
+        );
+      }
+      if (!seenFields.add(field.name)) {
+        throw InvalidGenerationSourceError(
+          'Constructor field `${field.name}` is declared more than once.',
+          element: parameter,
+        );
+      }
+      final parameterType = parameter.type.getDisplayString();
+      if (parameterType != field.dartType) {
+        throw InvalidGenerationSourceError(
+          'Constructor parameter `$name` must have type `${field.dartType}`.',
+          element: parameter,
+        );
+      }
+      parameters.add(
+        _ConstructorParameterInfo(
+          name: name,
+          field: field,
+          isNamed: parameter.isNamed,
+        ),
+      );
+    }
+
+    final missingFields = fields
+        .where((field) => !seenFields.contains(field.name))
+        .map((field) => field.name)
+        .toList(growable: false);
+    if (missingFields.isNotEmpty) {
+      throw InvalidGenerationSourceError(
+        'Constructor is missing persisted fields: ${missingFields.join(', ')}.',
+        element: constructor,
+      );
+    }
+
+    return _ConstructorInfo(parameters);
+  }
+
+  final List<_ConstructorParameterInfo> parameters;
+}
+
+final class _ConstructorParameterInfo {
+  const _ConstructorParameterInfo({
+    required this.name,
+    required this.field,
+    required this.isNamed,
+  });
+
+  final String name;
+  final _FieldInfo field;
+  final bool isNamed;
+}
+
 final class _FieldInfo {
   _FieldInfo({
     required this.name,
     required this.dartType,
     required this.type,
+    required this.isAssignable,
     required this.isId,
     required this.isIndexed,
     required this.isIndexUnique,
@@ -712,6 +843,7 @@ final class _FieldInfo {
       name: name,
       dartType: dartType,
       type: type,
+      isAssignable: !element.isFinal && !element.isConst,
       isId: name == 'id',
       isIndexed: index != null,
       isIndexUnique: index?.unique ?? false,
@@ -723,6 +855,7 @@ final class _FieldInfo {
   final String name;
   final String dartType;
   final _PersistedType type;
+  final bool isAssignable;
   final bool isId;
   final bool isIndexed;
   final bool isIndexUnique;
@@ -767,7 +900,7 @@ final class _FieldInfo {
     };
     final expression = toDocumentExpression;
     if (!isNullable) {
-      return '  writer.$method($index, $expression as $castType);\n';
+      return '  writer.$method($index, $expression);\n';
     }
     return '''
   {

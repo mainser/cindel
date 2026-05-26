@@ -2,6 +2,7 @@
 
 ## 0.4.1
 
+- Cached native function resolution across Cindel database openings.
 - Fixed geometry and table count settings.
 - Raised the MDBX default map limit to support large batch updates and deletes
   without forcing application-level chunking.
