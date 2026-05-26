@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    23
+    24
 }
 
 #[no_mangle]
@@ -46,6 +46,33 @@ pub unsafe extern "C" fn cindel_open_with_backend(
     };
 
     match CindelEngine::open_with_backend(directory, backend) {
+        Ok(engine) => Box::into_raw(Box::new(engine)),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_open_with_backend_and_schemas(
+    directory_ptr: *const u8,
+    directory_len: usize,
+    backend: u32,
+    schemas_ptr: *const u8,
+    schemas_len: usize,
+) -> *mut CindelEngine {
+    let Some(directory) = read_str(directory_ptr, directory_len) else {
+        return std::ptr::null_mut();
+    };
+    let Some(backend) = decode_backend(backend) else {
+        return std::ptr::null_mut();
+    };
+    let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
+        return std::ptr::null_mut();
+    };
+
+    match CindelEngine::open_with_backend_and_schemas(directory, backend, &manifest) {
         Ok(engine) => Box::into_raw(Box::new(engine)),
         Err(_) => std::ptr::null_mut(),
     }

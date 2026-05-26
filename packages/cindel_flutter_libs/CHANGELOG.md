@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Regenerated the Windows native runtime library for Cindel native ABI 24 with
+  MDBX schema registration during native open.
+- Kept MDBX and SQLite compiled into the Windows binary, with MDBX as the
+  default backend.
+
 ## 0.4.0
 
 - Regenerated Windows, Android, and Linux native runtime libraries for Cindel

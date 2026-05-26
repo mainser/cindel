@@ -26,6 +26,16 @@ impl CindelEngine {
         })
     }
 
+    pub fn open_with_backend_and_schemas(
+        directory: &str,
+        backend: StorageBackendKind,
+        manifest: &SchemaManifest,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            storage: StorageBackend::open_with_schemas(backend, directory, manifest)?,
+        })
+    }
+
     pub fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
         self.storage.get(collection, id)
     }
@@ -259,6 +269,7 @@ impl CindelEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
     fn opens_sqlite_through_backend_selection_boundary() {
@@ -301,5 +312,48 @@ mod tests {
         let stored = engine.get("users", 1).unwrap().unwrap();
 
         assert_eq!(stored, br#"{"name":"Ana"}"#);
+    }
+
+    #[cfg(feature = "mdbx")]
+    #[test]
+    fn opens_mdbx_with_schema_manifest_during_open() {
+        let manifest = SchemaManifest {
+            collections: vec![CollectionSchemaManifest {
+                name: "users".into(),
+                id_field: "id".into(),
+                fields: vec![
+                    FieldSchemaManifest {
+                        name: "id".into(),
+                        dart_type: "int".into(),
+                        binary_type: "int".into(),
+                        is_id: true,
+                        is_indexed: false,
+                        is_index_unique: false,
+                        index_case_sensitive: true,
+                        index_type: "value".into(),
+                    },
+                    FieldSchemaManifest {
+                        name: "active".into(),
+                        dart_type: "bool".into(),
+                        binary_type: "bool".into(),
+                        is_id: false,
+                        is_indexed: true,
+                        is_index_unique: false,
+                        index_case_sensitive: true,
+                        index_type: "value".into(),
+                    },
+                ],
+                composite_indexes: Vec::new(),
+            }],
+        };
+
+        let engine = CindelEngine::open_with_backend_and_schemas(
+            ":memory:",
+            StorageBackendKind::Mdbx,
+            &manifest,
+        )
+        .unwrap();
+
+        assert_eq!(engine.schema_version("users").unwrap(), Some(1));
     }
 }

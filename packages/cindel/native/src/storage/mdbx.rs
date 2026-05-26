@@ -283,6 +283,18 @@ impl MdbxWriteTransaction {
 
 impl MdbxStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
+        Self::open_with_optional_schemas(directory, None)
+    }
+
+    pub fn open_with_schemas(directory: &str, manifest: &SchemaManifest) -> Result<Self, String> {
+        validate_schema_manifest(manifest)?;
+        Self::open_with_optional_schemas(directory, Some(manifest))
+    }
+
+    fn open_with_optional_schemas(
+        directory: &str,
+        manifest: Option<&SchemaManifest>,
+    ) -> Result<Self, String> {
         let (directory_path, temporary_directory) = if directory == IN_MEMORY_DIRECTORY {
             let directory_path = temporary_mdbx_directory()?;
             (
@@ -308,11 +320,11 @@ impl MdbxStorage {
             last_change_sets: Vec::new(),
             _temporary_directory: temporary_directory,
         };
-        storage.initialize()?;
+        storage.initialize(manifest)?;
         Ok(storage)
     }
 
-    fn initialize(&self) -> Result<(), String> {
+    fn initialize(&self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
         let transaction = self
             .state
             .database
@@ -335,10 +347,24 @@ impl MdbxStorage {
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_binary_metadata_records(&transaction, &tables)?;
+        if let Some(manifest) = manifest {
+            for collection in &manifest.collections {
+                register_collection_schema(
+                    &transaction,
+                    &tables,
+                    collection,
+                    SchemaRegistrationMode::Compatible,
+                )?;
+            }
+        }
         transaction
             .commit()
             .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Some(manifest) = manifest {
+            self.cache_schema_manifest(manifest)?;
+        }
+        Ok(())
     }
 
     fn with_read_transaction<T>(

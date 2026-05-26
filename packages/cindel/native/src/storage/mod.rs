@@ -39,6 +39,24 @@ impl StorageBackend {
             StorageBackendKind::Mdbx => Ok(Self::Mdbx(MdbxStorage::open(directory)?)),
         }
     }
+
+    pub fn open_with_schemas(
+        kind: StorageBackendKind,
+        directory: &str,
+        manifest: &SchemaManifest,
+    ) -> Result<Self, String> {
+        match kind {
+            StorageBackendKind::Sqlite => {
+                let mut storage = SqliteStorage::open(directory)?;
+                storage.register_schemas(manifest)?;
+                Ok(Self::Sqlite(storage))
+            }
+            #[cfg(feature = "mdbx")]
+            StorageBackendKind::Mdbx => Ok(Self::Mdbx(MdbxStorage::open_with_schemas(
+                directory, manifest,
+            )?)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]

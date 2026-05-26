@@ -41,6 +41,30 @@ final class CindelNativeBindings {
     });
   }
 
+  Pointer<Void> openWithSchemas(
+    String directory,
+    Uint8List schemas, {
+    int backend = 1,
+  }) {
+    return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
+      return _withNativeBytes(schemas, (schemasPointer, schemasLength) {
+        try {
+          return _functions.openWithBackendAndSchemas(
+            directoryPointer,
+            directoryLength,
+            backend,
+            schemasPointer,
+            schemasLength,
+          );
+        } on ArgumentError {
+          return nullptr;
+        } on OSError {
+          return nullptr;
+        }
+      });
+    });
+  }
+
   void close(Pointer<Void> handle) => _functions.close(handle);
 
   void beginReadTransaction(Pointer<Void> handle) {
@@ -1271,6 +1295,14 @@ abstract interface class _CindelNativeFunctions {
     int backend,
   );
 
+  Pointer<Void> openWithBackendAndSchemas(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+    Pointer<Uint8> schemas,
+    int schemasLength,
+  );
+
   void Function(Pointer<Void>) get close;
 
   int Function(Pointer<Void>) get beginReadTransaction;
@@ -2381,6 +2413,42 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     return _openWithBackend(directory, length, backend);
   }
 
+  late final Pointer<Void> Function(
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  _openWithBackendAndSchemas = _library
+      .lookupFunction<
+        Pointer<Void> Function(
+          Pointer<Uint8>,
+          Size,
+          Uint32,
+          Pointer<Uint8>,
+          Size,
+        ),
+        Pointer<Void> Function(Pointer<Uint8>, int, int, Pointer<Uint8>, int)
+      >('cindel_open_with_backend_and_schemas');
+
+  @override
+  Pointer<Void> openWithBackendAndSchemas(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+    Pointer<Uint8> schemas,
+    int schemasLength,
+  ) {
+    return _openWithBackendAndSchemas(
+      directory,
+      length,
+      backend,
+      schemas,
+      schemasLength,
+    );
+  }
+
   @override
   final void Function(Pointer<Void>) close;
 
@@ -2802,6 +2870,23 @@ final class _NativeAssetCindelNativeFunctions
     int backend,
   ) {
     return _cindelOpenWithBackend(directory, length, backend);
+  }
+
+  @override
+  Pointer<Void> openWithBackendAndSchemas(
+    Pointer<Uint8> directory,
+    int length,
+    int backend,
+    Pointer<Uint8> schemas,
+    int schemasLength,
+  ) {
+    return _cindelOpenWithBackendAndSchemas(
+      directory,
+      length,
+      backend,
+      schemas,
+      schemasLength,
+    );
   }
 
   @override
@@ -3300,6 +3385,17 @@ external Pointer<Void> _cindelOpenWithBackend(
   Pointer<Uint8> directory,
   int directoryLen,
   int backend,
+);
+
+@Native<
+  Pointer<Void> Function(Pointer<Uint8>, Size, Uint32, Pointer<Uint8>, Size)
+>(symbol: 'cindel_open_with_backend_and_schemas', assetId: _assetId)
+external Pointer<Void> _cindelOpenWithBackendAndSchemas(
+  Pointer<Uint8> directory,
+  int directoryLen,
+  int backend,
+  Pointer<Uint8> schemas,
+  int schemasLen,
 );
 
 @Native<Void Function(Pointer<Void>)>(

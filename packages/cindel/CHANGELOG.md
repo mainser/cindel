@@ -3,6 +3,8 @@
 ## 0.4.1
 
 - Cached native function resolution across Cindel database openings.
+- Registered schemas during MDBX native open so typed opens avoid the extra
+  Dart-to-native schema registration round trip.
 - Cached generated native field layouts for typed MDBX reads and writes.
 - Reduced MDBX query-plan `filter + sort` overhead by keeping sorted query
   documents in borrowed native storage form longer and specializing compact
@@ -37,6 +39,7 @@
   batch updates.
 - Reduced native batch writer reallocations by reusing observed document
   capacity for subsequent documents.
+- Bumped the native ABI to 24.
 
 ## 0.4.0
 
