@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.5
+## 0.4.0
 
 - Removed the legacy native benchmark module and optional `benchmarks` Cargo
   feature from the committed native package sources.
@@ -52,6 +52,9 @@
   materialization.
 - Added generated direct binary document hydration without intermediate field
   lists.
+- Optimized lazy collection and query watchers to avoid eager snapshot
+  hydration.
+- Aligned typed query watcher emissions with potential-change notifications.
 - Changed the native release profile from size-optimized to speed-optimized.
 - Bumped the native ABI to 23.
 

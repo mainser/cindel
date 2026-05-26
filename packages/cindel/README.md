@@ -8,12 +8,12 @@ transactions, watchers, and a compact Rust native runtime behind Dart FFI.
 
 ```yaml
 dependencies:
-  cindel: ^0.3.4
-  cindel_flutter_libs: ^0.3.4
+  cindel: ^0.4.0
+  cindel_flutter_libs: ^0.4.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.2.4
+  cindel_generator: ^0.4.0
 ```
 
 Define a collection:
@@ -94,7 +94,7 @@ until their native binaries are generated and validated.
 
 ## Release Status
 
-Cindel is still pre-1.0.0. The `0.3.4` package line ships MDBX as the default
+Cindel is still pre-1.0.0. The `0.4.0` package line ships MDBX as the default
 backend, SQLite as an explicit compatibility backend, and CindelWireV1 binary
 payloads for ids, indexed writes, filters, schema metadata, native query plans,
 local watcher change sets, projection rows, and aggregate scalars. The default

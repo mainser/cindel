@@ -726,7 +726,7 @@ class CindelDatabase {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    return watchCollection(
+    return watchCollectionChanges(
       collection,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,

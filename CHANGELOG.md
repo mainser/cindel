@@ -5,7 +5,7 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
-## 0.3.5
+## 0.4.0
 
 - Removed the legacy native benchmark module and optional `benchmarks` Cargo
   feature; local backend experiments now live outside committed package
@@ -58,8 +58,13 @@ while the core design settles.
   materialization.
 - Added generated direct binary document hydration without intermediate field
   lists.
+- Optimized lazy collection and query watchers to avoid eager snapshot
+  hydration.
+- Aligned typed query watcher emissions with potential-change notifications.
 - Changed the native release profile from size-optimized to speed-optimized.
 - Bumped the native ABI to 23.
+- Updated all publishable packages and the Todo example to the `0.4.0`
+  release line.
 
 ## 0.3.4
 

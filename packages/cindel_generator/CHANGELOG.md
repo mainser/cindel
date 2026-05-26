@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Generated schema-specific compact document writers and readers for the
+  optimized typed MDBX path.
+- Updated the annotations dependency constraint to `^0.4.0`.
+
 ## 0.2.5
 
 - Generated schema-specific typed binary document serializers for Cindel's

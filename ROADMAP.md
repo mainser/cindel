@@ -220,7 +220,7 @@ next layer is added.
 
 - [x] Query watchers.
   - Watch an indexed query result.
-  - Emit only when the query result changes.
+  - Emit potential query changes through the typed watcher surface.
 - [x] Lazy watchers.
   - Object lazy watcher.
   - Collection lazy watcher.
@@ -231,8 +231,8 @@ next layer is added.
   - Emit `null` when deleted.
 - [x] Watcher efficiency.
   - Revision-based collection invalidation.
-  - Query result comparison.
-  - Tests for unchanged query results.
+  - Native local change-set invalidation.
+  - Lazy watcher paths avoid eager snapshot hydration.
 
 ## Schema Evolution
 
@@ -577,18 +577,19 @@ mature.
 
 ## Current Focus
 
-The current implementation focus is the anti-JSON optimization line for
-`0.3.x`. Cindel now has the typed query pipeline, index variants, word-token
-indexes, expanded generated serialization, embedded value-object persistence,
-query/lazy watchers, binary MDBX document storage, and MDBX as the default
-backend with SQLite as an explicit fallback. CindelWireV1 now removes JSON from
-id lists, basic batches, index values, indexed write metadata, unique checks,
-stable hash-index canonicalization, native filters, manual documents, schema
-metadata, common native query plan execution, watcher change sets, projection
-rows, and aggregate scalar results. The default native runtime no longer
-depends on `serde_json`. The next work can focus on external-handle
-notification strategy, isolate execution, maintenance APIs, and future public
-migration tooling without changing the public watcher or query surfaces.
+The current implementation focus is the `0.4.x` optimized MDBX release line.
+Cindel now has the typed query pipeline, index variants, word-token indexes,
+expanded generated serialization, embedded value-object persistence,
+query/lazy watchers, schema-specific compact binary MDBX document storage, and
+MDBX as the default backend with SQLite as an explicit fallback. CindelWireV1
+now removes JSON from id lists, basic batches, index values, indexed write
+metadata, unique checks, stable hash-index canonicalization, native filters,
+manual documents, schema metadata, common native query plan execution, watcher
+change sets, projection rows, and aggregate scalar results. The default native
+runtime no longer depends on `serde_json`. The next work can focus on
+external-handle notification strategy, isolate execution, maintenance APIs, and
+future public migration tooling without changing the public watcher or query
+surfaces.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

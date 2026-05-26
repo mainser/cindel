@@ -507,7 +507,7 @@ final class CindelQuery<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    return _watchMatchingDocuments(
+    return _watchMatchingIds(
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
     ).map((_) {});
@@ -594,6 +594,37 @@ final class CindelQuery<T> {
       matchingDocuments = _windowDocuments(matchingDocuments, _offset, _limit);
     }
     return matchingDocuments;
+  }
+
+  Future<List<int>> _matchingIds() async {
+    if (_sortKeys.isEmpty &&
+        _distinctFields.isEmpty &&
+        _offset == 0 &&
+        _limit == null) {
+      final nativeFilter = _nativeFilter;
+      final readIds = _readIds;
+      if (nativeFilter != null && readIds != null && _canUseNativeFilter) {
+        final candidateIds = await readIds();
+        return _database.queryNativeFilterIds(
+          _schema.name,
+          candidateIds,
+          nativeFilter,
+        );
+      }
+
+      final filter = _filter;
+      if (filter == null && _sourceFilter == null && readIds != null) {
+        return readIds();
+      }
+    }
+
+    final nativePlan = _nativePlan();
+    if (nativePlan != null && _nativeFilter == null) {
+      return _database.queryNativePlanIds(_schema.name, nativePlan);
+    }
+
+    final documents = await _matchingDocuments();
+    return documents.map(_idFromDocument).toList(growable: false);
   }
 
   Future<List<T>>? _matchingNativeObjects() {
@@ -716,7 +747,6 @@ final class CindelQuery<T> {
     late final StreamController<List<CindelDocument>> controller;
     StreamSubscription<CindelChangeSet>? subscription;
     var hasSnapshot = false;
-    List<CindelDocument>? previousDocuments;
     Set<int> previousIds = const {};
     var isReading = false;
     var needsRead = false;
@@ -762,7 +792,6 @@ final class CindelQuery<T> {
           final documentIds = documents.map(_idFromDocument).toSet();
           if (!hasSnapshot) {
             hasSnapshot = true;
-            previousDocuments = documents;
             previousIds = documentIds;
             if (fireImmediately) {
               controller.add(documents);
@@ -770,12 +799,6 @@ final class CindelQuery<T> {
             continue;
           }
 
-          final previous = previousDocuments;
-          if (previous != null && _documentListsEqual(previous, documents)) {
-            previousIds = documentIds;
-            continue;
-          }
-          previousDocuments = documents;
           previousIds = documentIds;
           controller.add(documents);
         } while (needsRead && !controller.isClosed);
@@ -789,6 +812,99 @@ final class CindelQuery<T> {
     }
 
     controller = StreamController<List<CindelDocument>>(
+      onListen: () {
+        subscription = _database
+            .watchCollectionChanges(
+              _schema.name,
+              pollInterval: pollInterval,
+              fireImmediately: true,
+            )
+            .listen(
+              (change) => unawaited(readAndMaybeEmit(change)),
+              onError: controller.addError,
+              onDone: controller.close,
+            );
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
+  }
+
+  Stream<List<int>> _watchMatchingIds({
+    required Duration pollInterval,
+    required bool fireImmediately,
+  }) {
+    late final StreamController<List<int>> controller;
+    StreamSubscription<CindelChangeSet>? subscription;
+    var hasSnapshot = false;
+    Set<int> previousIdSet = const {};
+    var isReading = false;
+    var needsRead = false;
+
+    bool canSkipLocalChange(CindelChangeSet change) {
+      if (change.isExternal) {
+        return false;
+      }
+      final changedIds = change.documentIds;
+      if (changedIds == null) {
+        return false;
+      }
+      if (changedIds.any(previousIdSet.contains)) {
+        return false;
+      }
+      if (change.hasUnknownDocuments) {
+        return false;
+      }
+      for (final document in change.documents.values) {
+        if (_matchesBeforeWindow(document)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    Future<void> readAndMaybeEmit(CindelChangeSet change) async {
+      if (hasSnapshot && canSkipLocalChange(change)) {
+        return;
+      }
+      if (isReading) {
+        needsRead = true;
+        return;
+      }
+      isReading = true;
+      try {
+        do {
+          needsRead = false;
+          final ids = await _matchingIds();
+          if (controller.isClosed) {
+            return;
+          }
+          final idSet = ids.toSet();
+          if (!hasSnapshot) {
+            hasSnapshot = true;
+            previousIdSet = idSet;
+            if (fireImmediately) {
+              controller.add(ids);
+            }
+            continue;
+          }
+
+          previousIdSet = idSet;
+          controller.add(ids);
+        } while (needsRead && !controller.isClosed);
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        isReading = false;
+      }
+    }
+
+    controller = StreamController<List<int>>(
       onListen: () {
         subscription = _database
             .watchCollectionChanges(
@@ -1291,53 +1407,6 @@ String _distinctKey(CindelDocument document, List<String> fields) {
   return fields
       .map((field) => '${document[field].runtimeType}:${document[field]}')
       .join('\u0001');
-}
-
-bool _documentListsEqual(
-  List<CindelDocument> left,
-  List<CindelDocument> right,
-) {
-  if (left.length != right.length) {
-    return false;
-  }
-  for (var index = 0; index < left.length; index += 1) {
-    if (!_jsonLikeEquals(left[index], right[index])) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool _jsonLikeEquals(Object? left, Object? right) {
-  if (identical(left, right)) {
-    return true;
-  }
-  if (left is Map && right is Map) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (final entry in left.entries) {
-      if (!right.containsKey(entry.key)) {
-        return false;
-      }
-      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (left is List && right is List) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (var index = 0; index < left.length; index += 1) {
-      if (!_jsonLikeEquals(left[index], right[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return left == right;
 }
 
 List<CindelDocument> _windowDocuments(

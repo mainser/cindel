@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Aligned the annotations package with the coordinated Cindel `0.4.0` release
+  line.
+
 ## 0.2.1
 
 - Added `CompositeIndex` metadata for collection-level composite indexes.
