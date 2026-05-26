@@ -15,6 +15,10 @@ while the core design settles.
 - Reduced MDBX batch delete overhead for compact documents with one simple
   non-unique bool value index by deleting the index entry directly with
   prepared cursors.
+- Reused one MDBX document cursor for batched `getAll` reads instead of
+  opening a table lookup for every requested id.
+- Trusted compact static layout metadata for generated MDBX `getAll` readers,
+  matching the native query-plan reader path.
 - Added native query-plan updates for compact MDBX binary documents, matching
   Isar-style property updates without Dart object hydration.
 - Allowed generated schemas to hydrate immutable explicit-id collection models

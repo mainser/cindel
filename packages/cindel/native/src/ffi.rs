@@ -457,11 +457,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     let Ok(documents) = engine.get_many_stored(collection, &ids) else {
         return std::ptr::null_mut();
     };
+    let all_present = documents.iter().all(Option::is_some);
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         layout,
         documents,
-        all_present: false,
-        trusted_static_size: false,
+        all_present,
+        trusted_static_size: true,
         string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }

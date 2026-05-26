@@ -1135,9 +1135,12 @@ impl StorageEngine for MdbxStorage {
                 Ok(table) => table,
                 Err(_) => return Ok(vec![None; ids.len()]),
             };
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
-                let bytes = transaction.get::<Vec<u8>>(&documents_table, &document_table_key(*id));
+                let bytes = documents_cursor.set::<Vec<u8>>(&document_table_key(*id));
                 documents.push(
                     ignore_not_found(bytes)?
                         .map(|bytes| decode_document_for_read(schema.as_ref(), &bytes))
@@ -1183,10 +1186,13 @@ impl StorageEngine for MdbxStorage {
                 Ok(table) => table,
                 Err(_) => return Ok(vec![None; ids.len()]),
             };
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
             let mut documents = Vec::with_capacity(ids.len());
             for id in ids {
                 documents.push(ignore_not_found(
-                    transaction.get::<Vec<u8>>(&documents_table, &document_table_key(*id)),
+                    documents_cursor.set::<Vec<u8>>(&document_table_key(*id)),
                 )?);
             }
             Ok(documents)

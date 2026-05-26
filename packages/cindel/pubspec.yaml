@@ -8,9 +8,11 @@ documentation: https://github.com/mainser/Cindel/tree/main/packages/cindel#readm
 topics:
   - database
   - nosql
+  - storage
+  - cindel
+  - encryption
   - flutter
   - ffi
-  - local-storage
 
 platforms:
   android:
