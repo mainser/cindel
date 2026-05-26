@@ -38,7 +38,7 @@ const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const MDBX_FILE_NAME: &str = "cindel.mdbx";
 const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
 const MDBX_MIN_SIZE: isize = 1 << 20;
-const MDBX_DEFAULT_MAX_SIZE: isize = 128 << 20;
+const MDBX_DEFAULT_MAX_SIZE: isize = 1 << 30;
 const MDBX_GROWTH_STEP: isize = 5 << 20;
 const MDBX_SHRINK_THRESHOLD: isize = 20 << 20;
 const MDBX_MAX_TABLES: u64 = 512;
@@ -677,12 +677,8 @@ impl MdbxStorage {
                         }
                     }
                     MdbxWriteOperation::DeleteMany { collection, ids } => {
-                        let mut deleted_ids = Vec::new();
-                        for id in ids {
-                            if delete_document(transaction, &tables, &collection, id)? {
-                                deleted_ids.push(id);
-                            }
-                        }
+                        let deleted_ids =
+                            delete_many_documents(transaction, &tables, &collection, &ids)?;
                         if !deleted_ids.is_empty() {
                             let revision =
                                 bump_collection_revision(transaction, &tables, &collection)?;
@@ -1123,12 +1119,7 @@ impl StorageEngine for MdbxStorage {
 
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
-            let mut deleted_ids = Vec::new();
-            for id in ids {
-                if delete_document(transaction, &tables, collection, *id)? {
-                    deleted_ids.push(*id);
-                }
-            }
+            let deleted_ids = delete_many_documents(transaction, &tables, collection, ids)?;
             if !deleted_ids.is_empty() {
                 let revision = bump_collection_revision(transaction, &tables, collection)?;
                 merge_change_set(&mut change_sets, collection, revision, deleted_ids);
@@ -2413,14 +2404,21 @@ fn put_document_with_indexes(
         ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)))?;
     let old_indexes = previous_index_state(schema.as_ref(), previous_bytes.as_deref())?;
     let persist_reverse_metadata = !can_derive_new_indexes;
-    MdbxIndex::validate_unique(
-        transaction,
-        tables,
-        collection,
-        id,
-        &effective_indexes,
-        &unique_indexes,
-    )?;
+    let indexes_unchanged = can_derive_new_indexes
+        && matches!(
+            &old_indexes,
+            PreviousIndexState::Derived(indexes) if indexes == &effective_indexes
+        );
+    if !indexes_unchanged {
+        MdbxIndex::validate_unique(
+            transaction,
+            tables,
+            collection,
+            id,
+            &effective_indexes,
+            &unique_indexes,
+        )?;
+    }
     transaction
         .put(
             &documents_table,
@@ -2429,35 +2427,37 @@ fn put_document_with_indexes(
             WriteFlags::UPSERT,
         )
         .map_err(|error| error.to_string())?;
-    let remove_reverse_metadata = matches!(old_indexes, PreviousIndexState::ReverseMetadata);
-    match old_indexes {
-        PreviousIndexState::Missing => {}
-        PreviousIndexState::Derived(indexes) => {
-            MdbxIndex::delete_entries(transaction, collection, id, &indexes)?;
+    if !indexes_unchanged {
+        let remove_reverse_metadata = matches!(old_indexes, PreviousIndexState::ReverseMetadata);
+        match old_indexes {
+            PreviousIndexState::Missing => {}
+            PreviousIndexState::Derived(indexes) => {
+                MdbxIndex::delete_entries(transaction, collection, id, &indexes)?;
+            }
+            PreviousIndexState::ReverseMetadata => {
+                MdbxIndex::delete_document(transaction, tables, collection, id, None)?;
+            }
         }
-        PreviousIndexState::ReverseMetadata => {
-            MdbxIndex::delete_document(transaction, tables, collection, id, None)?;
+        for index in &effective_indexes {
+            MdbxIndex::insert_entry(
+                transaction,
+                tables,
+                collection,
+                id,
+                index,
+                unique_indexes.contains(index.name.as_str()),
+            )?;
         }
-    }
-    for index in &effective_indexes {
-        MdbxIndex::insert_entry(
+        MdbxIndex::write_reverse_metadata(
             transaction,
             tables,
             collection,
             id,
-            index,
-            unique_indexes.contains(index.name.as_str()),
+            &effective_indexes,
+            persist_reverse_metadata,
+            remove_reverse_metadata,
         )?;
     }
-    MdbxIndex::write_reverse_metadata(
-        transaction,
-        tables,
-        collection,
-        id,
-        &effective_indexes,
-        persist_reverse_metadata,
-        remove_reverse_metadata,
-    )?;
     Ok(())
 }
 
@@ -2547,6 +2547,118 @@ fn put_many_documents_with_indexes(
                 documents_cursor.set::<Vec<u8>>(&document_table_key(document.id)),
             )?;
             let old_indexes = previous_index_state(Some(schema), previous_bytes.as_deref())?;
+            let mut derived_new_indexes = None;
+            let indexes_unchanged = match &old_indexes {
+                PreviousIndexState::Derived(indexes) => {
+                    let next_indexes = index_entries_from_binary_document(schema, &document.bytes)?;
+                    let unchanged = indexes == &next_indexes;
+                    derived_new_indexes = Some(next_indexes);
+                    unchanged
+                }
+                PreviousIndexState::Missing | PreviousIndexState::ReverseMetadata => false,
+            };
+            if !indexes_unchanged {
+                match old_indexes {
+                    PreviousIndexState::Missing => {}
+                    PreviousIndexState::Derived(indexes) => {
+                        MdbxIndex::delete_entries_with_index_cursors(
+                            transaction,
+                            collection,
+                            document.id,
+                            &indexes,
+                            &unique_indexes,
+                            &index_tables,
+                            &mut index_cursors,
+                        )?;
+                    }
+                    PreviousIndexState::ReverseMetadata => MdbxIndex::delete_document(
+                        transaction,
+                        tables,
+                        collection,
+                        document.id,
+                        None,
+                    )?,
+                }
+            }
+            documents_cursor
+                .put(
+                    &document_table_key(document.id),
+                    &document.bytes,
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+            if !indexes_unchanged {
+                if let Some(indexes) = derived_new_indexes {
+                    for index in indexes {
+                        encode_table_index_value_into(&index.value, &mut index_key_buffer)?;
+                        let cursor_index = index_tables.position(&index.name).ok_or_else(|| {
+                            format!("missing prepared MDBX index table `{}`", index.name)
+                        })?;
+                        let document_id_bytes = document_id_key(document.id);
+                        index_cursors[cursor_index]
+                            .put(
+                                index_key_buffer.as_slice(),
+                                &document_id_bytes,
+                                WriteFlags::UPSERT,
+                            )
+                            .map_err(|error| error.to_string())?;
+                    }
+                } else {
+                    for_each_index_entry_from_binary_document(
+                        schema,
+                        &document.bytes,
+                        |name, value| {
+                            encode_table_index_value_into(&value, &mut index_key_buffer)?;
+                            let cursor_index = index_tables.position(name).ok_or_else(|| {
+                                format!("missing prepared MDBX index table `{name}`")
+                            })?;
+                            let document_id_bytes = document_id_key(document.id);
+                            index_cursors[cursor_index]
+                                .put(
+                                    index_key_buffer.as_slice(),
+                                    &document_id_bytes,
+                                    WriteFlags::UPSERT,
+                                )
+                                .map_err(|error| error.to_string())
+                        },
+                    )?;
+                }
+            }
+            continue;
+        }
+
+        let (stored_bytes, effective_indexes, can_derive_new_indexes) =
+            encode_document_for_storage(Some(schema), &document.bytes, &document.indexes)?;
+        let previous_bytes =
+            ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_table_key(document.id)))?;
+        let old_indexes = previous_index_state(Some(schema), previous_bytes.as_deref())?;
+        let persist_reverse_metadata = !can_derive_new_indexes;
+        let indexes_unchanged = can_derive_new_indexes
+            && matches!(
+                &old_indexes,
+                PreviousIndexState::Derived(indexes) if indexes == &effective_indexes
+            );
+
+        if !indexes_unchanged {
+            MdbxIndex::validate_unique(
+                transaction,
+                tables,
+                collection,
+                document.id,
+                &effective_indexes,
+                &unique_indexes,
+            )?;
+        }
+        documents_cursor
+            .put(
+                &document_table_key(document.id),
+                &stored_bytes,
+                WriteFlags::UPSERT,
+            )
+            .map_err(|error| error.to_string())?;
+        if !indexes_unchanged {
+            let remove_reverse_metadata =
+                matches!(old_indexes, PreviousIndexState::ReverseMetadata);
             match old_indexes {
                 PreviousIndexState::Missing => {}
                 PreviousIndexState::Derived(indexes) => {
@@ -2564,101 +2676,38 @@ fn put_many_documents_with_indexes(
                     MdbxIndex::delete_document(transaction, tables, collection, document.id, None)?;
                 }
             }
-            documents_cursor
-                .put(
-                    &document_table_key(document.id),
-                    &document.bytes,
-                    WriteFlags::UPSERT,
-                )
-                .map_err(|error| error.to_string())?;
-            for_each_index_entry_from_binary_document(schema, &document.bytes, |name, value| {
-                encode_table_index_value_into(&value, &mut index_key_buffer)?;
+            for index in &effective_indexes {
+                let key = MdbxIndex::entry_key(collection, &index.name, &index.value)?;
                 let cursor_index = index_tables
-                    .position(name)
-                    .ok_or_else(|| format!("missing prepared MDBX index table `{name}`"))?;
+                    .position(&index.name)
+                    .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
                 let document_id_bytes = document_id_key(document.id);
                 index_cursors[cursor_index]
-                    .put(
-                        index_key_buffer.as_slice(),
-                        &document_id_bytes,
-                        WriteFlags::UPSERT,
-                    )
-                    .map_err(|error| error.to_string())
-            })?;
-            continue;
-        }
-
-        let (stored_bytes, effective_indexes, can_derive_new_indexes) =
-            encode_document_for_storage(Some(schema), &document.bytes, &document.indexes)?;
-        let previous_bytes =
-            ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_table_key(document.id)))?;
-        let old_indexes = previous_index_state(Some(schema), previous_bytes.as_deref())?;
-        let persist_reverse_metadata = !can_derive_new_indexes;
-
-        MdbxIndex::validate_unique(
-            transaction,
-            tables,
-            collection,
-            document.id,
-            &effective_indexes,
-            &unique_indexes,
-        )?;
-        documents_cursor
-            .put(
-                &document_table_key(document.id),
-                &stored_bytes,
-                WriteFlags::UPSERT,
-            )
-            .map_err(|error| error.to_string())?;
-        let remove_reverse_metadata = matches!(old_indexes, PreviousIndexState::ReverseMetadata);
-        match old_indexes {
-            PreviousIndexState::Missing => {}
-            PreviousIndexState::Derived(indexes) => {
-                MdbxIndex::delete_entries_with_index_cursors(
-                    transaction,
-                    collection,
-                    document.id,
-                    &indexes,
-                    &unique_indexes,
-                    &index_tables,
-                    &mut index_cursors,
-                )?;
-            }
-            PreviousIndexState::ReverseMetadata => {
-                MdbxIndex::delete_document(transaction, tables, collection, document.id, None)?;
-            }
-        }
-        for index in &effective_indexes {
-            let key = MdbxIndex::entry_key(collection, &index.name, &index.value)?;
-            let cursor_index = index_tables
-                .position(&index.name)
-                .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
-            let document_id_bytes = document_id_key(document.id);
-            index_cursors[cursor_index]
-                .put(&key, &document_id_bytes, WriteFlags::UPSERT)
-                .map_err(|error| error.to_string())?;
-            if unique_indexes.contains(index.name.as_str()) {
-                let unique_key = MdbxIndex::unique_key(collection, &index.name, &index.value)?;
-                let unique_table = create_unique_table(transaction, collection, &index.name)?;
-                transaction
-                    .put(
-                        &unique_table,
-                        unique_key,
-                        document.id.to_be_bytes(),
-                        WriteFlags::UPSERT,
-                    )
+                    .put(&key, &document_id_bytes, WriteFlags::UPSERT)
                     .map_err(|error| error.to_string())?;
+                if unique_indexes.contains(index.name.as_str()) {
+                    let unique_key = MdbxIndex::unique_key(collection, &index.name, &index.value)?;
+                    let unique_table = create_unique_table(transaction, collection, &index.name)?;
+                    transaction
+                        .put(
+                            &unique_table,
+                            unique_key,
+                            document.id.to_be_bytes(),
+                            WriteFlags::UPSERT,
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
             }
+            MdbxIndex::write_reverse_metadata(
+                transaction,
+                tables,
+                collection,
+                document.id,
+                &effective_indexes,
+                persist_reverse_metadata,
+                remove_reverse_metadata,
+            )?;
         }
-        MdbxIndex::write_reverse_metadata(
-            transaction,
-            tables,
-            collection,
-            document.id,
-            &effective_indexes,
-            persist_reverse_metadata,
-            remove_reverse_metadata,
-        )?;
     }
 
     drop(index_cursors);
@@ -2751,6 +2800,69 @@ fn delete_document(
         MdbxIndex::delete_document(transaction, tables, collection, id, old_indexes.as_deref())?;
     }
     Ok(deleted)
+}
+
+fn delete_many_documents(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    ids: &[u64],
+) -> Result<Vec<u64>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let Some(schema) = collection_schema(transaction, tables, collection)? else {
+        let mut deleted_ids = Vec::new();
+        for id in ids {
+            if delete_document(transaction, tables, collection, *id)? {
+                deleted_ids.push(*id);
+            }
+        }
+        return Ok(deleted_ids);
+    };
+
+    let documents_table = create_documents_table(transaction, collection)?;
+    let mut documents_cursor = transaction
+        .cursor(&documents_table)
+        .map_err(|error| error.to_string())?;
+    let unique_indexes = unique_index_names_from_schema(Some(&schema));
+    let index_names = index_names_from_schema(&schema);
+    let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
+    let mut index_cursors = index_tables
+        .tables
+        .iter()
+        .map(|(_, table)| transaction.cursor(table).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut deleted_ids = Vec::with_capacity(ids.len());
+
+    for id in ids {
+        let previous_bytes =
+            ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_table_key(*id)))?;
+        let Some(previous_bytes) = previous_bytes else {
+            continue;
+        };
+        match derive_indexes_from_stored_document(Some(&schema), &previous_bytes)? {
+            Some(indexes) => MdbxIndex::delete_entries_with_index_cursors(
+                transaction,
+                collection,
+                *id,
+                &indexes,
+                &unique_indexes,
+                &index_tables,
+                &mut index_cursors,
+            )?,
+            None => MdbxIndex::delete_document(transaction, tables, collection, *id, None)?,
+        }
+        documents_cursor
+            .del(WriteFlags::empty())
+            .map_err(|error| error.to_string())?;
+        deleted_ids.push(*id);
+    }
+
+    drop(index_cursors);
+    drop(documents_cursor);
+    Ok(deleted_ids)
 }
 
 #[allow(dead_code)]

@@ -8,6 +8,11 @@ while the core design settles.
 ## 0.4.1
 
 - Fixed geometry and table count settings.
+- Raised the MDBX default map limit to support large batch updates and deletes
+  without forcing application-level chunking.
+- Skipped MDBX index rewrites when schema-backed binary updates leave derived
+  index entries unchanged.
+- Reused MDBX cursors while cleaning indexes during schema-backed batch deletes.
 - Reused MDBX document cursors during native batch writes.
 - Reduced schema binary document encode overhead by avoiding per-dynamic-field
   header allocations.
@@ -16,6 +21,8 @@ while the core design settles.
 - Reused prepared MDBX index cursors during schema-backed batch writes.
 - Deleted schema-backed MDBX index entries through positioned cursors during
   batch updates.
+- Reduced native batch writer reallocations by reusing observed document
+  capacity for subsequent documents.
 
 ## 0.4.0
 

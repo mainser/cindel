@@ -1523,6 +1523,7 @@ pub struct CindelNativeBatchWriter {
     layout: NativeBatchLayout,
     documents: Vec<DocumentWrite>,
     current: Option<NativeBatchDocumentBuilder>,
+    document_capacity_hint: usize,
     failed: bool,
 }
 
@@ -1583,10 +1584,12 @@ struct NativeBatchDocumentBuilder {
 impl CindelNativeBatchWriter {
     fn new(field_type_bytes: &[u8], capacity: usize) -> Result<Self, String> {
         let layout = NativeBatchLayout::new(field_type_bytes)?;
+        let document_capacity_hint = layout.null_static_bytes.len();
         Ok(Self {
             layout,
             documents: Vec::with_capacity(capacity),
             current: None,
+            document_capacity_hint,
             failed: false,
         })
     }
@@ -1604,7 +1607,8 @@ impl CindelNativeBatchWriter {
         if self.current.is_some() {
             return Err("native batch writer already has an open document".into());
         }
-        let bytes = self.layout.null_static_bytes.clone();
+        let mut bytes = Vec::with_capacity(self.document_capacity_hint);
+        bytes.extend_from_slice(&self.layout.null_static_bytes);
         self.current = Some(NativeBatchDocumentBuilder { id, bytes });
         Ok(())
     }
@@ -1678,6 +1682,7 @@ impl CindelNativeBatchWriter {
         let Some(current) = self.current.take() else {
             return Err("native batch writer has no open document".into());
         };
+        self.document_capacity_hint = self.document_capacity_hint.max(current.bytes.len());
         self.documents.push(DocumentWrite {
             id: current.id,
             bytes: current.bytes,
