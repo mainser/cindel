@@ -18,6 +18,8 @@ while the core design settles.
   without forcing application-level chunking.
 - Skipped MDBX index rewrites when schema-backed binary updates leave derived
   index entries unchanged.
+- Skipped MDBX index derivation during schema-backed batch deletes when the
+  collection schema declares no indexes.
 - Reused MDBX cursors while cleaning indexes during schema-backed batch deletes.
 - Reused MDBX document cursors during native batch writes.
 - Reduced schema binary document encode overhead by avoiding per-dynamic-field

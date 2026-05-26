@@ -3014,8 +3014,27 @@ fn delete_many_documents(
     let mut documents_cursor = transaction
         .cursor(&documents_table)
         .map_err(|error| error.to_string())?;
-    let unique_indexes = unique_index_names_from_schema(Some(&schema));
     let index_names = index_names_from_schema(&schema);
+    if index_names.is_empty() {
+        let mut deleted_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            if documents_cursor
+                .set::<Vec<u8>>(&document_table_key(*id))
+                .map_err(|error| error.to_string())?
+                .is_none()
+            {
+                continue;
+            }
+            documents_cursor
+                .del(WriteFlags::empty())
+                .map_err(|error| error.to_string())?;
+            deleted_ids.push(*id);
+        }
+        drop(documents_cursor);
+        return Ok(deleted_ids);
+    }
+
+    let unique_indexes = unique_index_names_from_schema(Some(&schema));
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
     let mut index_cursors = index_tables
         .tables
