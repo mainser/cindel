@@ -117,34 +117,34 @@ packages:
     dependency: "direct main"
     description:
       name: cindel
-      sha256: c6311b44ad2ee4c27f62af3f1825692d76c1d453a53449c4e1c27da41096a7fa
+      sha256: "642da74e6b5d5c17d83ab03d74f8ac94ff11fe8486facb34b718b8c0c13e01e9"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.4"
+    version: "0.4.0"
   cindel_annotations:
     dependency: transitive
     description:
       name: cindel_annotations
-      sha256: "1036f96e7d97b693c034c079dfca6abb8044c7de32bed3cb6938002d5b532346"
+      sha256: bc7c2ec7829bb8db00df064ada2ee0f6f32f26e32c93078fa9a978a41c11153a
       url: "https://pub.dev"
     source: hosted
-    version: "0.2.1"
+    version: "0.4.0"
   cindel_flutter_libs:
     dependency: "direct main"
     description:
       name: cindel_flutter_libs
-      sha256: "088751c066985bedcb122a8f7b21115bf3a6de1de045b3a8b8f5d13a23a1084d"
+      sha256: "4fea21cf5891b89274a34553faa5648988e2db0810504ee153a5585b5f29559b"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.4"
+    version: "0.4.0"
   cindel_generator:
     dependency: "direct dev"
     description:
       name: cindel_generator
-      sha256: "743c7450f51b96b97d1e2a0343c56724e68a25936b1868722c857f123537a15e"
+      sha256: fb3c187bf7f6b4ff45f9c6888f4dc13895827feae874d4711a4ae64638b86515
       url: "https://pub.dev"
     source: hosted
-    version: "0.2.4"
+    version: "0.4.0"
   cli_config:
     dependency: transitive
     description:

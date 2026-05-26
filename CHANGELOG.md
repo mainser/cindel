@@ -5,6 +5,13 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.4.1
+
+- Aligned raw MDBX benchmark defaults with Isar-controlled geometry and table
+  count settings.
+- Reused MDBX document cursors during native batch writes, matching Isar's
+  hot insert path more closely.
+
 ## 0.4.0
 
 - Removed the legacy native benchmark module and optional `benchmarks` Cargo

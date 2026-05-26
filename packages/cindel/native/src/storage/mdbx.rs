@@ -1701,14 +1701,14 @@ fn document_id_key(id: u64) -> [u8; 8] {
 }
 
 fn document_table_key(id: u64) -> [u8; 8] {
-    id.to_ne_bytes()
+    id.to_le_bytes()
 }
 
 fn decode_document_table_key(bytes: &[u8]) -> Result<u64, String> {
     let bytes = bytes
         .try_into()
         .map_err(|_| "MDBX document key must be 8 bytes".to_string())?;
-    Ok(u64::from_ne_bytes(bytes))
+    Ok(u64::from_le_bytes(bytes))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2495,16 +2495,19 @@ fn put_many_documents_with_indexes(
     if schema.is_none() {
         if documents.iter().all(|document| document.indexes.is_empty()) {
             let documents_table = create_documents_table(transaction, collection)?;
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
             for document in documents {
-                transaction
+                documents_cursor
                     .put(
-                        &documents_table,
-                        document_table_key(document.id),
+                        &document_table_key(document.id),
                         &document.bytes,
                         WriteFlags::UPSERT,
                     )
                     .map_err(|error| error.to_string())?;
             }
+            drop(documents_cursor);
             return Ok(());
         }
         for document in documents {
@@ -2523,6 +2526,9 @@ fn put_many_documents_with_indexes(
     let schema = schema.as_ref().expect("schema checked above");
     let unique_indexes = unique_index_names_from_schema(Some(schema));
     let documents_table = create_documents_table(transaction, collection)?;
+    let mut documents_cursor = transaction
+        .cursor(&documents_table)
+        .map_err(|error| error.to_string())?;
     let index_names = index_names_from_schema(schema);
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
     let mut index_key_buffer = Vec::with_capacity(64);
@@ -2533,7 +2539,7 @@ fn put_many_documents_with_indexes(
             && (trust_schema_documents || validate_binary_document(schema, &document.bytes).is_ok())
         {
             let previous_bytes = ignore_not_found(
-                transaction.get::<Vec<u8>>(&documents_table, &document_table_key(document.id)),
+                documents_cursor.set::<Vec<u8>>(&document_table_key(document.id)),
             )?;
             let old_indexes = previous_index_state(Some(schema), previous_bytes.as_deref())?;
             match old_indexes {
@@ -2552,10 +2558,9 @@ fn put_many_documents_with_indexes(
                     MdbxIndex::delete_document(transaction, tables, collection, document.id, None)?;
                 }
             }
-            transaction
+            documents_cursor
                 .put(
-                    &documents_table,
-                    document_table_key(document.id),
+                    &document_table_key(document.id),
                     &document.bytes,
                     WriteFlags::UPSERT,
                 )
@@ -2577,9 +2582,8 @@ fn put_many_documents_with_indexes(
 
         let (stored_bytes, effective_indexes, can_derive_new_indexes) =
             encode_document_for_storage(Some(schema), &document.bytes, &document.indexes)?;
-        let previous_bytes = ignore_not_found(
-            transaction.get::<Vec<u8>>(&documents_table, &document_table_key(document.id)),
-        )?;
+        let previous_bytes =
+            ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_table_key(document.id)))?;
         let old_indexes = previous_index_state(Some(schema), previous_bytes.as_deref())?;
         let persist_reverse_metadata = !can_derive_new_indexes;
 
@@ -2591,10 +2595,9 @@ fn put_many_documents_with_indexes(
             &effective_indexes,
             &unique_indexes,
         )?;
-        transaction
+        documents_cursor
             .put(
-                &documents_table,
-                document_table_key(document.id),
+                &document_table_key(document.id),
                 &stored_bytes,
                 WriteFlags::UPSERT,
             )
@@ -2637,6 +2640,7 @@ fn put_many_documents_with_indexes(
         )?;
     }
 
+    drop(documents_cursor);
     Ok(())
 }
 
@@ -3505,6 +3509,25 @@ mod tests {
 
         assert!(result.is_ok(), "{:?}", result.err());
         assert!(Path::new(directory.path()).exists());
+    }
+
+    #[test]
+    fn document_table_keys_match_mdbx_integer_key_ordering() {
+        // Scenario: MDBX document tables use INTEGER_KEY ordering.
+        // Covers:
+        // - Little-endian integer id bytes for positive Cindel ids.
+        // - Round-trip decoding used by collection scans.
+        // Expected: The encoded integer keys preserve document id order.
+        let first = u64::from_le_bytes(document_table_key(1));
+        let second = u64::from_le_bytes(document_table_key(2));
+        let tenth = u64::from_le_bytes(document_table_key(10));
+
+        assert!(first < second);
+        assert!(second < tenth);
+        assert_eq!(
+            decode_document_table_key(&document_table_key(10)).unwrap(),
+            10
+        );
     }
 
     #[test]

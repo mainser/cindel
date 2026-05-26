@@ -1,0 +1,869 @@
+# Cindel Public API
+
+This document describes the public Dart API exported by
+`package:cindel/cindel.dart`.
+
+Cindel is still pre-1.0. The API is usable, but some names and advanced
+storage behavior can still change before the stable line.
+
+## Import
+
+```dart
+import 'package:cindel/cindel.dart';
+```
+
+This single import exposes:
+
+- database opening and manual document APIs,
+- schema annotations re-exported from `cindel_annotations`,
+- generated typed collection/query APIs,
+- query/filter helpers,
+- watcher helpers,
+- transaction helpers,
+- generated binary document helpers used by the generator.
+
+## Opening Databases
+
+### `Cindel.open`
+
+Opens a persistent database in a directory.
+
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [TodoModelSchema],
+);
+```
+
+Parameters:
+
+- `directory`: filesystem directory for the database.
+- `schemas`: generated collection schemas to register.
+- `backend`: storage backend. Defaults to `CindelStorageBackend.mdbx`.
+
+Throws:
+
+- `ArgumentError` when `directory` is empty.
+- `StateError` when the native engine cannot be opened.
+- schema errors when registered schemas are incompatible with stored metadata.
+
+### `Cindel.openInMemory`
+
+Opens a short-lived in-memory database.
+
+```dart
+final db = await Cindel.openInMemory(schemas: [TodoModelSchema]);
+```
+
+This is intended for tests and temporary work. Data is discarded when the
+database is closed.
+
+### `CindelStorageBackend`
+
+```dart
+enum CindelStorageBackend {
+  sqlite,
+  mdbx,
+}
+```
+
+- `mdbx`: default backend for new databases.
+- `sqlite`: explicit compatibility backend.
+
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [TodoModelSchema],
+  backend: CindelStorageBackend.sqlite,
+);
+```
+
+The default backend is exposed as:
+
+```dart
+const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
+```
+
+## Closing Databases
+
+### `CindelDatabase.close`
+
+```dart
+await db.close();
+```
+
+Closing more than once is safe. Closing rolls back an active transaction and
+closes active watchers.
+
+## Manual Document API
+
+The manual API works with `CindelDocument`:
+
+```dart
+typedef CindelDocument = Map<String, Object?>;
+```
+
+Supported values:
+
+- `null`
+- `String`
+- `bool`
+- `int`
+- finite `double`
+- `List<Object?>`
+- `Map<String, Object?>`
+
+Unsupported values throw `ArgumentError`.
+
+### `put`
+
+Stores one document by collection and id.
+
+```dart
+await db.put('todos', 1, {
+  'title': 'Ship docs',
+  'completed': false,
+});
+```
+
+### `putAll` / `putMany`
+
+Stores many documents atomically.
+
+```dart
+await db.putAll('todos', {
+  1: {'title': 'A'},
+  2: {'title': 'B'},
+});
+```
+
+`putMany` is an alias for `putAll`.
+
+### `get`
+
+Returns one document or `null`.
+
+```dart
+final todo = await db.get('todos', 1);
+```
+
+### `getAll`
+
+Returns documents in the same order as the requested ids. Missing documents are
+returned as `null`.
+
+```dart
+final todos = await db.getAll('todos', [2, 1, 404]);
+```
+
+### `documentsByIds`
+
+Returns existing documents for ids, preserving input order for documents that
+exist.
+
+```dart
+final todos = await db.documentsByIds('todos', [1, 2]);
+```
+
+### `documentIds`
+
+Returns every id in a collection, ordered ascending.
+
+```dart
+final ids = await db.documentIds('todos');
+```
+
+### `queryAll`
+
+Returns every document in a collection, ordered by id.
+
+```dart
+final allTodos = await db.queryAll('todos');
+```
+
+### `delete`
+
+Deletes one document if it exists.
+
+```dart
+await db.delete('todos', 1);
+```
+
+### `deleteAll`
+
+Deletes many documents atomically.
+
+```dart
+await db.deleteAll('todos', [1, 2, 3]);
+```
+
+## Native Id Allocation
+
+### `allocateId`
+
+Allocates the next native id for a collection.
+
+```dart
+final id = await db.allocateId('todos');
+```
+
+Generated typed APIs use this when an object id is `autoIncrement`.
+
+## Transactions
+
+### `readTxn`
+
+Runs reads inside a native read transaction.
+
+```dart
+final todos = await db.readTxn(() async {
+  return db.queryAll('todos');
+});
+```
+
+Write operations inside `readTxn` throw `StateError`.
+
+### `writeTxn`
+
+Runs writes inside a native write transaction.
+
+```dart
+await db.writeTxn(() async {
+  await db.put('todos', 1, {'title': 'A'});
+  await db.put('todos', 2, {'title': 'B'});
+});
+```
+
+If the callback throws, native changes are rolled back and watchers are not
+notified.
+
+Nested explicit transactions are rejected.
+
+## Schema Annotations
+
+Cindel annotations are re-exported by `package:cindel/cindel.dart`.
+
+### `@Collection`
+
+Marks a class as a persisted root collection.
+
+```dart
+@Collection(name: 'todos')
+class TodoModel {
+  TodoModel();
+
+  Id id = autoIncrement;
+
+  @index
+  late String title;
+}
+```
+
+When `name` is omitted, the generator derives a lower-camel-case collection
+name from the class name.
+
+### `@Embedded`
+
+Marks a class as an embedded value object stored inside a parent document.
+
+```dart
+@Embedded()
+class Address {
+  Address();
+
+  late String city;
+}
+```
+
+### `@Index` and `@index`
+
+Marks a field as indexed.
+
+```dart
+@index
+late String title;
+
+@Index(unique: true)
+late String email;
+
+@Index(caseSensitive: false)
+late String normalizedName;
+
+@Index(type: CindelIndexType.words, caseSensitive: false)
+late String titleWords;
+
+@Index(type: CindelIndexType.multiEntry)
+late List<String> tags;
+```
+
+### `@Collection(indexes: [...])` and `CompositeIndex`
+
+Declares collection-level composite indexes.
+
+```dart
+@Collection(
+  name: 'todos',
+  indexes: [
+    CompositeIndex(['completed', 'createdAtMicros']),
+  ],
+)
+class TodoModel {
+  TodoModel();
+
+  Id id = autoIncrement;
+  late bool completed;
+  late int createdAtMicros;
+}
+```
+
+### `@Enumerated`
+
+Controls enum persistence.
+
+```dart
+@Enumerated(CindelEnumType.name)
+late TodoStatus status;
+```
+
+Strategies:
+
+- `CindelEnumType.name`
+- `CindelEnumType.ordinal`
+- `CindelEnumType.value`
+
+### `@ignore`
+
+Excludes a field from persistence.
+
+```dart
+@ignore
+String transientText = '';
+```
+
+### `Id` and `autoIncrement`
+
+```dart
+Id id = autoIncrement;
+```
+
+`Id` is an alias for `int`. `autoIncrement` is a sentinel used by generated
+typed writes to request a native id.
+
+## Generated Typed API
+
+Generated code creates:
+
+- a `CindelCollectionSchema<T>` constant,
+- a database extension getter,
+- typed collection helpers,
+- typed where/filter helpers,
+- sort/distinct/property helpers,
+- serializers and binary document readers/writers.
+
+Example:
+
+```dart
+@Collection(name: 'todos')
+class TodoModel {
+  TodoModel();
+
+  Id id = autoIncrement;
+
+  @index
+  late String title;
+
+  late bool completed;
+}
+```
+
+Generated usage:
+
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [TodoModelSchema],
+);
+
+await db.todos.put(todo);
+final saved = await db.todos.get(todo.id);
+final matches = await db.todos.where().titleEqualTo('Ship docs').findAll();
+```
+
+## `CindelTypedCollection<T>`
+
+Typed collections are usually accessed through generated extension getters such
+as `db.todos`.
+
+### `all`
+
+Starts a query over the whole collection.
+
+```dart
+final todos = await db.todos.all().findAll();
+```
+
+### `put`
+
+Stores one typed object.
+
+```dart
+await db.todos.put(todo);
+```
+
+If the id field is `autoIncrement`, Cindel allocates and assigns a native id
+before writing.
+
+### `putAll` / `putMany`
+
+Stores many typed objects atomically.
+
+```dart
+await db.todos.putAll(todos);
+```
+
+`putMany` is an alias for `putAll`.
+
+### `get`
+
+Returns one typed object or `null`.
+
+```dart
+final todo = await db.todos.get(1);
+```
+
+### `getAll`
+
+Returns typed objects in requested id order. Missing objects are `null`.
+
+```dart
+final todos = await db.todos.getAll([1, 2, 404]);
+```
+
+### `delete`
+
+Deletes one object by id.
+
+```dart
+await db.todos.delete(1);
+```
+
+### `deleteAll`
+
+Deletes many objects atomically.
+
+```dart
+await db.todos.deleteAll([1, 2, 3]);
+```
+
+## Queries
+
+### Starting Queries
+
+Generated where helpers create indexed queries:
+
+```dart
+final done = await db.todos.where().completedEqualTo(true).findAll();
+final recent = await db.todos.where().createdAtMicrosBetween(a, b).findAll();
+final tagged = await db.todos.where().tagsContains('urgent').findAll();
+```
+
+Manual query factories are also public:
+
+```dart
+final query = CindelQuery.equal(
+  database: db,
+  schema: TodoModelSchema,
+  field: 'title',
+  value: 'Ship docs',
+);
+```
+
+Available factories:
+
+- `CindelQuery.all`
+- `CindelQuery.equal`
+- `CindelQuery.compositeEqual`
+- `CindelQuery.range`
+- `CindelQuery.stringStartsWith`
+- `CindelQuery.wordsContain`
+- `CindelQuery.wordsStartWith`
+
+### Filters
+
+Filters are applied with `whereMatches`.
+
+```dart
+final matches = await db.todos
+    .all()
+    .whereMatches(CindelFilter.field('title').contains('ship'))
+    .findAll();
+```
+
+Field predicates:
+
+- `equalTo`
+- `greaterThan`
+- `greaterThanOrEqualTo`
+- `lessThan`
+- `lessThanOrEqualTo`
+- `between`
+- `contains`
+- `startsWith`
+- `endsWith`
+
+Boolean composition:
+
+```dart
+final predicate = CindelFilter.all([
+  CindelFilter.field('completed').equalTo(false),
+  CindelFilter.field('title').contains('ship'),
+]);
+
+final any = CindelFilter.any([
+  CindelFilter.field('title').contains('ship'),
+  CindelFilter.field('title').contains('release'),
+]);
+
+final notDone = CindelFilter.not(
+  CindelFilter.field('completed').equalTo(true),
+);
+```
+
+### Sorting
+
+```dart
+final sorted = await db.todos
+    .all()
+    .sortBy('createdAtMicros', order: CindelSortOrder.descending)
+    .thenBy('title')
+    .findAll();
+```
+
+Generated helpers normally expose typed wrappers such as `sortByTitle()`.
+
+### Distinct
+
+```dart
+final distinctTitles = await db.todos.all().distinctBy('title').findAll();
+
+final distinctPairs = await db.todos
+    .all()
+    .distinctByFields(['completed', 'title'])
+    .findAll();
+```
+
+### Offset and Limit
+
+```dart
+final page = await db.todos.all().offset(20).limit(10).findAll();
+```
+
+### Query Results
+
+```dart
+final all = await query.findAll();
+final first = await query.findFirst();
+final count = await query.count();
+```
+
+### Query Deletes
+
+```dart
+final deletedOne = await query.deleteFirst();
+final deletedCount = await query.deleteAll();
+```
+
+`deleteFirst` returns `true` when an object was deleted.
+`deleteAll` returns the number of deleted objects.
+
+## Property Queries
+
+### Single Property
+
+```dart
+final titles = await db.todos.all().property<String>('title').findAll();
+final firstTitle = await db.todos.all().property<String>('title').findFirst();
+```
+
+Generated code normally exposes helpers such as:
+
+```dart
+final titles = await db.todos.all().titleProperty().findAll();
+```
+
+### Aggregates
+
+```dart
+final count = await db.todos.all().createdAtMicrosProperty().count();
+final min = await db.todos.all().createdAtMicrosProperty().min();
+final max = await db.todos.all().createdAtMicrosProperty().max();
+final sum = await db.todos.all().createdAtMicrosProperty().sum();
+final average = await db.todos.all().createdAtMicrosProperty().average();
+```
+
+Aggregates are supported for property queries. Unsupported values throw when an
+operation requires comparable or numeric values.
+
+### Multiple Properties
+
+```dart
+final rows = await db.todos
+    .all()
+    .properties(['id', 'title'])
+    .findAll();
+```
+
+Rows are returned as `CindelDocument` maps.
+
+## Watchers
+
+Cindel watchers emit after committed changes. Local writes notify watchers
+directly, while polling remains as the fallback for changes from another
+database handle.
+
+The default polling interval is:
+
+```dart
+const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
+```
+
+### Manual Document Watchers
+
+```dart
+final sub = db.watchDocument('todos', 1).listen((document) {
+  // document is CindelDocument? 
+});
+```
+
+Options:
+
+- `pollInterval`
+- `fireImmediately`
+
+### Manual Lazy Document Watchers
+
+```dart
+final sub = db.watchDocumentLazy('todos', 1).listen((_) {
+  // document may have changed
+});
+```
+
+### Manual Collection Watchers
+
+```dart
+final sub = db.watchCollection('todos').listen((documents) {
+  // documents is List<CindelDocument>
+});
+```
+
+### Manual Lazy Collection Watchers
+
+```dart
+final sub = db.watchCollectionLazy('todos').listen((_) {
+  // collection may have changed
+});
+```
+
+### Native Change-Set Watcher
+
+```dart
+final sub = db.watchCollectionChanges('todos').listen((change) {
+  print(change.documentIds);
+});
+```
+
+`CindelChangeSet` exposes:
+
+- `collection`
+- `documentIds`
+- `documents`
+- `hasUnknownDocuments`
+- `isExternal`
+- `revision`
+- `mayAffectDocument(id)`
+
+### Typed Object Watchers
+
+```dart
+final sub = db.todos.watchObject(1).listen((todo) {
+  // todo is TodoModel?
+});
+```
+
+### Typed Lazy Object Watchers
+
+```dart
+final sub = db.todos.watchObjectLazy(1).listen((_) {});
+```
+
+### Typed Collection Watchers
+
+```dart
+final sub = db.todos.watchCollection().listen((todos) {});
+```
+
+### Typed Lazy Collection Watchers
+
+```dart
+final sub = db.todos.watchCollectionLazy().listen((_) {});
+```
+
+### Query Watchers
+
+```dart
+final sub = db.todos
+    .where()
+    .completedEqualTo(false)
+    .watch()
+    .listen((todos) {});
+```
+
+### Lazy Query Watchers
+
+```dart
+final sub = db.todos
+    .where()
+    .completedEqualTo(false)
+    .watchLazy()
+    .listen((_) {});
+```
+
+## Text Helpers
+
+### `Cindel.splitWords`
+
+Splits text the same way Cindel word indexes do.
+
+```dart
+final tokens = Cindel.splitWords('Ship the docs!', caseSensitive: false);
+```
+
+This is useful when debugging `CindelIndexType.words` behavior.
+
+## Schema Metadata API
+
+### `CindelCollectionSchema<T>`
+
+Generated metadata for a collection.
+
+Important fields:
+
+- `name`
+- `dartName`
+- `idField`
+- `fields`
+- `compositeIndexes`
+- `toDocument`
+- `fromDocument`
+- `toBinaryDocument`
+- `fromBinaryDocument`
+- `getId`
+- `writeNativeDocument`
+- `readNativeDocument`
+- `setId`
+
+Most applications do not construct schemas manually. They pass generated
+schemas to `Cindel.open`.
+
+### `CindelFieldSchema`
+
+Generated metadata for one persisted field.
+
+Important fields:
+
+- `name`
+- `dartType`
+- `binaryType`
+- `isId`
+- `isIndexed`
+- `isIndexUnique`
+- `indexCaseSensitive`
+- `indexType`
+
+### `CindelCompositeIndexSchema`
+
+Generated metadata for one composite index.
+
+Important fields:
+
+- `name`
+- `fields`
+- `isUnique`
+- `caseSensitive`
+
+### `schemaVersion`
+
+Returns the registered schema version for a collection, or `null` when the
+collection has no registered schema.
+
+```dart
+final version = await db.schemaVersion('todos');
+```
+
+## Generated Binary Document Helpers
+
+These helpers are exported because generated code uses them. Most application
+code should not call them directly.
+
+### Types
+
+```dart
+typedef CindelBinaryDocumentBytes = Uint8List;
+
+enum CindelBinaryFieldType {
+  boolValue,
+  intValue,
+  doubleValue,
+  stringValue,
+  listValue,
+  objectValue,
+}
+```
+
+### Generic generated binary format
+
+```dart
+final bytes = cindelEncodeBinaryDocument(fields);
+final fields = cindelDecodeBinaryDocument(bytes);
+```
+
+### Schema-specific compact binary format
+
+```dart
+final bytes = cindelEncodeSchemaBinaryDocument(fields, fieldTypes);
+final fields = cindelDecodeSchemaBinaryDocument(bytes, fieldTypes);
+```
+
+### `CindelSchemaBinaryDocumentReader`
+
+Reader used by generated direct binary hydration.
+
+Applications normally interact with typed objects instead of this reader.
+
+## Public But Generator-Oriented Native Query Plan Types
+
+The following types are exported through the public library but are primarily
+used by generated query helpers and internal typed query plumbing:
+
+- `CindelNativeQuerySource`
+- `CindelNativeAllQuerySource`
+- `CindelNativeIndexEqualQuerySource`
+- `CindelNativeCompositeEqualQuerySource`
+- `CindelNativeIndexRangeQuerySource`
+- `CindelNativeQuerySort`
+- `CindelNativeQueryPlan`
+
+Application code should prefer generated query helpers.
+
+## Current Limits
+
+The current public API does not yet include:
+
+- partial update helpers such as Isar-style `updateAll(field: value)`,
+- `exists()` query result helper,
+- dynamic modifiers such as `optional`, `anyOf`, or `allOf`,
+- public migration/export tooling,
+- web backend support,
+- packaged iOS/macOS native binaries.
+
+SQLite remains selectable, but MDBX is the default optimized backend.

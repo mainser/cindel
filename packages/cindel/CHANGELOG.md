@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Aligned raw MDBX benchmark defaults with Isar-controlled geometry and table
+  count settings.
+- Reused MDBX document cursors during native batch writes, matching Isar's
+  hot insert path more closely.
+
 ## 0.4.0
 
 - Removed the legacy native benchmark module and optional `benchmarks` Cargo
