@@ -772,10 +772,10 @@ void _writeCompactDynamic(
     throw ArgumentError.value(offset, 'payload', 'Dynamic offset too large.');
   }
   _writeUint24(staticBytes, 3 + staticOffset, offset);
-  final header = Uint8List(3);
-  _writeUint24(header, 0, payload.length);
   dynamicBytes
-    ..add(header)
+    ..addByte(payload.length & 0xff)
+    ..addByte((payload.length >> 8) & 0xff)
+    ..addByte((payload.length >> 16) & 0xff)
     ..add(payload);
 }
 

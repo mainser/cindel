@@ -11,6 +11,11 @@ while the core design settles.
   count settings.
 - Reused MDBX document cursors during native batch writes, matching Isar's
   hot insert path more closely.
+- Reduced schema binary document encode overhead by avoiding per-dynamic-field
+  header allocations.
+- Reduced compact binary string index preparation by reading string payloads
+  directly instead of materializing and cloning intermediate values.
+- Reused prepared MDBX index cursors during schema-backed batch writes.
 
 ## 0.4.0
 

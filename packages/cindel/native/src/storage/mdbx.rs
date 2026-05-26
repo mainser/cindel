@@ -2531,6 +2531,11 @@ fn put_many_documents_with_indexes(
         .map_err(|error| error.to_string())?;
     let index_names = index_names_from_schema(schema);
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
+    let mut index_cursors = index_tables
+        .tables
+        .iter()
+        .map(|(_, table)| transaction.cursor(table).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut index_key_buffer = Vec::with_capacity(64);
 
     for document in documents {
@@ -2566,16 +2571,18 @@ fn put_many_documents_with_indexes(
                 )
                 .map_err(|error| error.to_string())?;
             for_each_index_entry_from_binary_document(schema, &document.bytes, |name, value| {
-                MdbxIndex::insert_value_with_index_tables_buffered(
-                    transaction,
-                    collection,
-                    document.id,
-                    name,
-                    &value,
-                    false,
-                    &index_tables,
-                    &mut index_key_buffer,
-                )
+                encode_table_index_value_into(&value, &mut index_key_buffer)?;
+                let cursor_index = index_tables
+                    .position(name)
+                    .ok_or_else(|| format!("missing prepared MDBX index table `{name}`"))?;
+                let document_id_bytes = document_id_key(document.id);
+                index_cursors[cursor_index]
+                    .put(
+                        index_key_buffer.as_slice(),
+                        &document_id_bytes,
+                        WriteFlags::UPSERT,
+                    )
+                    .map_err(|error| error.to_string())
             })?;
             continue;
         }
@@ -2620,14 +2627,26 @@ fn put_many_documents_with_indexes(
             }
         }
         for index in &effective_indexes {
-            MdbxIndex::insert_entry_with_index_tables(
-                transaction,
-                collection,
-                document.id,
-                index,
-                unique_indexes.contains(index.name.as_str()),
-                &index_tables,
-            )?;
+            let key = MdbxIndex::entry_key(collection, &index.name, &index.value)?;
+            let cursor_index = index_tables
+                .position(&index.name)
+                .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
+            let document_id_bytes = document_id_key(document.id);
+            index_cursors[cursor_index]
+                .put(&key, &document_id_bytes, WriteFlags::UPSERT)
+                .map_err(|error| error.to_string())?;
+            if unique_indexes.contains(index.name.as_str()) {
+                let unique_key = MdbxIndex::unique_key(collection, &index.name, &index.value)?;
+                let unique_table = create_unique_table(transaction, collection, &index.name)?;
+                transaction
+                    .put(
+                        &unique_table,
+                        unique_key,
+                        document.id.to_be_bytes(),
+                        WriteFlags::UPSERT,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
         }
         MdbxIndex::write_reverse_metadata(
             transaction,
@@ -2640,6 +2659,7 @@ fn put_many_documents_with_indexes(
         )?;
     }
 
+    drop(index_cursors);
     drop(documents_cursor);
     Ok(())
 }
@@ -2653,6 +2673,12 @@ impl<'txn> PreparedIndexTables<'txn> {
         self.tables
             .iter()
             .find_map(|(table_name, table)| (table_name == name).then_some(table))
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.tables
+            .iter()
+            .position(|(table_name, _)| table_name == name)
     }
 }
 
@@ -3046,75 +3072,6 @@ impl MdbxIndex {
         if is_unique {
             let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
             let unique_table = create_unique_table(transaction, collection, &index.name)?;
-            transaction
-                .put(
-                    &unique_table,
-                    unique_key,
-                    document_id.to_be_bytes(),
-                    WriteFlags::UPSERT,
-                )
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn insert_entry_with_index_tables(
-        transaction: &Transaction<'_, RW, NoWriteMap>,
-        collection: &str,
-        document_id: u64,
-        index: &IndexEntry,
-        is_unique: bool,
-        index_tables: &PreparedIndexTables<'_>,
-    ) -> Result<(), String> {
-        let key = Self::entry_key(collection, &index.name, &index.value)?;
-        let index_table = index_tables
-            .get(&index.name)
-            .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
-        let document_id_bytes = document_id_key(document_id);
-        transaction
-            .put(index_table, key, document_id_bytes, WriteFlags::UPSERT)
-            .map_err(|error| error.to_string())?;
-        if is_unique {
-            let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
-            let unique_table = create_unique_table(transaction, collection, &index.name)?;
-            transaction
-                .put(
-                    &unique_table,
-                    unique_key,
-                    document_id.to_be_bytes(),
-                    WriteFlags::UPSERT,
-                )
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn insert_value_with_index_tables_buffered(
-        transaction: &Transaction<'_, RW, NoWriteMap>,
-        collection: &str,
-        document_id: u64,
-        index_name: &str,
-        value: &IndexValue,
-        is_unique: bool,
-        index_tables: &PreparedIndexTables<'_>,
-        key_buffer: &mut Vec<u8>,
-    ) -> Result<(), String> {
-        encode_table_index_value_into(value, key_buffer)?;
-        let index_table = index_tables
-            .get(index_name)
-            .ok_or_else(|| format!("missing prepared MDBX index table `{index_name}`"))?;
-        let document_id_bytes = document_id_key(document_id);
-        transaction
-            .put(
-                index_table,
-                key_buffer.as_slice(),
-                document_id_bytes,
-                WriteFlags::UPSERT,
-            )
-            .map_err(|error| error.to_string())?;
-        if is_unique {
-            let unique_key = Self::unique_key(collection, index_name, value)?;
-            let unique_table = create_unique_table(transaction, collection, index_name)?;
             transaction
                 .put(
                     &unique_table,

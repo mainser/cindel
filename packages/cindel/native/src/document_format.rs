@@ -824,6 +824,13 @@ pub(crate) fn for_each_index_entry_from_binary_document(
             })?;
             continue;
         }
+        if compact_field_is_string(field) && field.index_type != "multiEntry" {
+            let Some(text) = document.string_payload(index)? else {
+                continue;
+            };
+            callback(&field.name, string_index_value(field, text)?)?;
+            continue;
+        }
         let Some(value) = document.field_value(index)? else {
             continue;
         };
@@ -843,13 +850,21 @@ pub(crate) fn for_each_index_entry_from_binary_document(
                     composite.name, field_name
                 ));
             };
-            let Some(value) = document.field_value(field_index)? else {
-                values.clear();
-                break;
-            };
             let mut indexed_field = field.clone();
             indexed_field.index_case_sensitive = composite.case_sensitive;
-            values.push(binary_to_index_value(&indexed_field, &value)?);
+            if compact_field_is_string(field) {
+                let Some(text) = document.string_payload(field_index)? else {
+                    values.clear();
+                    break;
+                };
+                values.push(string_index_value(&indexed_field, text)?);
+            } else {
+                let Some(value) = document.field_value(field_index)? else {
+                    values.clear();
+                    break;
+                };
+                values.push(binary_to_index_value(&indexed_field, &value)?);
+            }
         }
         if values.len() == composite.fields.len() {
             callback(&composite.name, IndexValue::List(values))?;
@@ -874,6 +889,16 @@ fn index_entries_from_compact_binary_document(
             push_word_index_entries(&mut entries, &field.name, text, field.index_case_sensitive);
             continue;
         }
+        if compact_field_is_string(field) && field.index_type != "multiEntry" {
+            let Some(text) = document.string_payload(index)? else {
+                continue;
+            };
+            entries.push(IndexEntry {
+                name: field.name.clone(),
+                value: string_index_value(field, text)?,
+            });
+            continue;
+        }
         let Some(value) = document.field_value(index)? else {
             continue;
         };
@@ -893,13 +918,21 @@ fn index_entries_from_compact_binary_document(
                     composite.name, field_name
                 ));
             };
-            let Some(value) = document.field_value(field_index)? else {
-                values.clear();
-                break;
-            };
             let mut indexed_field = field.clone();
             indexed_field.index_case_sensitive = composite.case_sensitive;
-            values.push(binary_to_index_value(&indexed_field, &value)?);
+            if compact_field_is_string(field) {
+                let Some(text) = document.string_payload(field_index)? else {
+                    values.clear();
+                    break;
+                };
+                values.push(string_index_value(&indexed_field, text)?);
+            } else {
+                let Some(value) = document.field_value(field_index)? else {
+                    values.clear();
+                    break;
+                };
+                values.push(binary_to_index_value(&indexed_field, &value)?);
+            }
         }
         if values.len() == composite.fields.len() {
             entries.push(IndexEntry {
@@ -1173,6 +1206,18 @@ fn indexed_string(value: &str, case_sensitive: bool) -> String {
     } else {
         value.to_lowercase()
     }
+}
+
+fn string_index_value(field: &FieldSchemaManifest, value: &str) -> Result<IndexValue, String> {
+    let mut index_value = IndexValue::String(indexed_string(value, field.index_case_sensitive));
+    if field.index_type == "hash" {
+        index_value = IndexValue::Int(stable_hash_bytes(&stable_index_bytes(&index_value)?));
+    }
+    Ok(index_value)
+}
+
+fn compact_field_is_string(field: &FieldSchemaManifest) -> bool {
+    matches!(non_nullable_type(&field.binary_type), "string" | "String")
 }
 
 fn non_nullable_type(dart_type: &str) -> &str {
