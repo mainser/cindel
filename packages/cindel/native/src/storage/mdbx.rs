@@ -2550,13 +2550,14 @@ fn put_many_documents_with_indexes(
             match old_indexes {
                 PreviousIndexState::Missing => {}
                 PreviousIndexState::Derived(indexes) => {
-                    MdbxIndex::delete_entries_with_index_tables(
+                    MdbxIndex::delete_entries_with_index_cursors(
                         transaction,
                         collection,
                         document.id,
                         &indexes,
                         &unique_indexes,
                         &index_tables,
+                        &mut index_cursors,
                     )?;
                 }
                 PreviousIndexState::ReverseMetadata => {
@@ -2613,13 +2614,14 @@ fn put_many_documents_with_indexes(
         match old_indexes {
             PreviousIndexState::Missing => {}
             PreviousIndexState::Derived(indexes) => {
-                MdbxIndex::delete_entries_with_index_tables(
+                MdbxIndex::delete_entries_with_index_cursors(
                     transaction,
                     collection,
                     document.id,
                     &indexes,
                     &unique_indexes,
                     &index_tables,
+                    &mut index_cursors,
                 )?;
             }
             PreviousIndexState::ReverseMetadata => {
@@ -2669,12 +2671,6 @@ struct PreparedIndexTables<'txn> {
 }
 
 impl<'txn> PreparedIndexTables<'txn> {
-    fn get(&self, name: &str) -> Option<&Table<'txn>> {
-        self.tables
-            .iter()
-            .find_map(|(table_name, table)| (table_name == name).then_some(table))
-    }
-
     fn position(&self, name: &str) -> Option<usize> {
         self.tables
             .iter()
@@ -3130,21 +3126,30 @@ impl MdbxIndex {
         Ok(())
     }
 
-    fn delete_entries_with_index_tables(
+    fn delete_entries_with_index_cursors(
         transaction: &Transaction<'_, RW, NoWriteMap>,
         collection: &str,
         document_id: u64,
         indexes: &[IndexEntry],
         unique_indexes: &HashSet<String>,
         index_tables: &PreparedIndexTables<'_>,
+        index_cursors: &mut [libmdbx::Cursor<'_, RW>],
     ) -> Result<(), String> {
         for index in indexes {
             let key = Self::entry_key(collection, &index.name, &index.value)?;
-            let index_table = index_tables
-                .get(&index.name)
+            let cursor_index = index_tables
+                .position(&index.name)
                 .ok_or_else(|| format!("missing prepared MDBX index table `{}`", index.name))?;
             let document_id_bytes = document_id_key(document_id);
-            ignore_not_found(transaction.del(index_table, key, Some(&document_id_bytes)))?;
+            if index_cursors[cursor_index]
+                .get_both::<Vec<u8>>(&key, &document_id_bytes)
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                index_cursors[cursor_index]
+                    .del(WriteFlags::empty())
+                    .map_err(|error| error.to_string())?;
+            }
             if unique_indexes.contains(index.name.as_str()) {
                 let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
                 if let Ok(unique_table) = open_unique_table(transaction, collection, &index.name) {

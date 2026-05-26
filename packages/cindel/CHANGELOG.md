@@ -2,15 +2,15 @@
 
 ## 0.4.1
 
-- Aligned raw MDBX benchmark defaults with Isar-controlled geometry and table
-  count settings.
-- Reused MDBX document cursors during native batch writes, matching Isar's
-  hot insert path more closely.
+- Fixed geometry and table count settings.
+- Reused MDBX document cursors during native batch writes.
 - Reduced schema binary document encode overhead by avoiding per-dynamic-field
   header allocations.
 - Reduced compact binary string index preparation by reading string payloads
   directly instead of materializing and cloning intermediate values.
 - Reused prepared MDBX index cursors during schema-backed batch writes.
+- Deleted schema-backed MDBX index entries through positioned cursors during
+  batch updates.
 
 ## 0.4.0
 
