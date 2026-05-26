@@ -19,6 +19,9 @@ while the core design settles.
   opening a table lookup for every requested id.
 - Trusted compact static layout metadata for generated MDBX `getAll` readers,
   matching the native query-plan reader path.
+- Added a direct MDBX query-update path for simple non-unique bool value
+  indexes, updating compact document bytes in place and moving the index entry
+  with positioned cursors.
 - Added native query-plan updates for compact MDBX binary documents, matching
   Isar-style property updates without Dart object hydration.
 - Allowed generated schemas to hydrate immutable explicit-id collection models

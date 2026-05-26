@@ -1,0 +1,11 @@
+[package]
+name = "cindel_mutate_compare"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libmdbx = { version = "0.6.6", default-features = false }
+
+[patch.crates-io]
+mdbx-sys = { path = "../../../packages/cindel/native/vendor/mdbx-sys" }

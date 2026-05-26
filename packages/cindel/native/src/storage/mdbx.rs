@@ -754,6 +754,96 @@ impl MdbxStorage {
         Ok(Some(ids))
     }
 
+    fn query_plan_update_direct_bool_index(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        schema: &CollectionSchemaManifest,
+        updates: &[(String, WireValue)],
+    ) -> Result<Option<Vec<u64>>, String> {
+        if self.active_write().is_some()
+            || plan.filter.is_some()
+            || !plan.sorts.is_empty()
+            || !plan.distinct_fields.is_empty()
+            || plan.offset != 0
+            || plan.limit.is_some()
+        {
+            return Ok(None);
+        }
+        let Some(update) = direct_bool_index_update(schema, plan, updates) else {
+            return Ok(None);
+        };
+
+        let mut ids = self.query_plan_source_ids(collection, &plan.source)?;
+        if query_source_dedupes(&plan.source) {
+            dedupe_ids(&mut ids);
+        }
+        if ids.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
+        let mut updated_ids = Vec::with_capacity(ids.len());
+        let mut change_sets = Vec::new();
+        self.with_write_transaction(|transaction, tables| {
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(()),
+            };
+            let index_table = create_index_table(transaction, collection, &update.name)?;
+            let mut documents_cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
+            let mut index_cursor = transaction
+                .cursor(&index_table)
+                .map_err(|error| error.to_string())?;
+
+            for id in &ids {
+                let document_key = document_table_key(*id);
+                let Some(mut bytes) =
+                    ignore_not_found(documents_cursor.set::<Vec<u8>>(&document_key))?
+                else {
+                    continue;
+                };
+                write_direct_bool_update(&mut bytes, &update)?;
+                documents_cursor
+                    .put(&document_key, &bytes, WriteFlags::CURRENT)
+                    .map_err(|error| error.to_string())?;
+                if update.old_key != update.new_key {
+                    let document_id_bytes = document_id_key(*id);
+                    if index_cursor
+                        .get_both::<Vec<u8>>(&update.old_key, &document_id_bytes)
+                        .map_err(|error| error.to_string())?
+                        .is_some()
+                    {
+                        index_cursor
+                            .del(WriteFlags::empty())
+                            .map_err(|error| error.to_string())?;
+                    }
+                    index_cursor
+                        .put(&update.new_key, &document_id_bytes, WriteFlags::UPSERT)
+                        .map_err(|error| error.to_string())?;
+                }
+                updated_ids.push(*id);
+            }
+            drop(index_cursor);
+            drop(documents_cursor);
+
+            if updated_ids.is_empty() {
+                return Ok(());
+            }
+            let revision = bump_collection_revision(transaction, &tables, collection)?;
+            merge_change_set(
+                &mut change_sets,
+                collection,
+                revision,
+                updated_ids.iter().copied(),
+            );
+            Ok(())
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(Some(updated_ids))
+    }
+
     fn ensure_can_write(&self) -> Result<(), String> {
         match self.active_transaction {
             Some(MdbxActiveTransaction::Read) => {
@@ -1657,6 +1747,11 @@ impl StorageEngine for MdbxStorage {
         let schema = self.required_schema(collection)?;
         let update_touches_index = updates_touch_index(&schema, updates)?;
         let prepared_updates = prepare_binary_field_updates(&schema, updates)?;
+        if let Some(ids) =
+            self.query_plan_update_direct_bool_index(collection, plan, &schema, updates)?
+        {
+            return Ok(ids);
+        }
         if let Some(ids) = self.query_plan_update_direct_nonindexed(
             collection,
             plan,
@@ -2234,6 +2329,92 @@ fn updates_touch_index(
         }
     }
     Ok(false)
+}
+
+struct DirectBoolIndexUpdate {
+    name: String,
+    static_offset: usize,
+    static_size: usize,
+    old_key: [u8; 1],
+    new_key: [u8; 1],
+    new_value: bool,
+}
+
+fn direct_bool_index_update(
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+    updates: &[(String, WireValue)],
+) -> Option<DirectBoolIndexUpdate> {
+    let WireQuerySource::IndexEqual {
+        index_name,
+        value: WireIndexValue::Bool(old_value),
+        dedupe: false,
+    } = &plan.source
+    else {
+        return None;
+    };
+    let [(field_name, WireValue::Bool(new_value))] = updates else {
+        return None;
+    };
+    if field_name != index_name
+        || schema
+            .composite_indexes
+            .iter()
+            .any(|index| index.fields.iter().any(|field| field == field_name))
+    {
+        return None;
+    }
+
+    let mut static_offset = 0usize;
+    let mut static_size = 0usize;
+    let mut target_offset = None;
+    for field in &schema.fields {
+        let field_size = compact_field_static_size(&field.binary_type)?;
+        if field.name == *field_name {
+            if !field.is_indexed
+                || field.is_index_unique
+                || field.index_type != "value"
+                || normalized_binary_type(&field.binary_type) != "bool"
+            {
+                return None;
+            }
+            target_offset = Some(static_offset);
+        }
+        static_offset = static_offset.checked_add(field_size)?;
+        static_size = static_size.checked_add(field_size)?;
+    }
+    target_offset.map(|static_offset| DirectBoolIndexUpdate {
+        name: field_name.clone(),
+        static_offset,
+        static_size,
+        old_key: [if *old_value { 2 } else { 1 }],
+        new_key: [if *new_value { 2 } else { 1 }],
+        new_value: *new_value,
+    })
+}
+
+fn write_direct_bool_update(
+    bytes: &mut [u8],
+    update: &DirectBoolIndexUpdate,
+) -> Result<(), String> {
+    if bytes.starts_with(b"CDBF") {
+        return Err("legacy binary document format is not supported by direct bool update".into());
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let static_size = read_compact_u24(bytes, 0)? as usize;
+    if static_size != update.static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    let slot = bytes
+        .get_mut(3 + update.static_offset)
+        .ok_or_else(|| "compact bool update is outside the static section".to_string())?;
+    *slot = u8::from(update.new_value);
+    Ok(())
 }
 
 fn query_source_dedupes(source: &WireQuerySource) -> bool {
