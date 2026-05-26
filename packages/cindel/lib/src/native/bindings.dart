@@ -245,9 +245,8 @@ final class CindelNativeBindings {
       final nativeWriter = _CindelNativeDocumentWriter(_functions, writer);
       try {
         for (var i = 0; i < objects.length; i += 1) {
-          _functions.nativeBatchWriterBeginDocument(writer, ids[i]);
           writeDocument(nativeWriter, objects[i]);
-          _functions.nativeBatchWriterEndDocument(writer);
+          _functions.nativeBatchWriterSaveDocument(writer, ids[i]);
         }
       } finally {
         nativeWriter.release();
@@ -311,9 +310,8 @@ final class CindelNativeBindings {
               'Bulk writes cannot contain duplicate ids.',
             );
           }
-          _functions.nativeBatchWriterBeginDocument(writer, id);
           writeDocument(nativeWriter, object);
-          _functions.nativeBatchWriterEndDocument(writer);
+          _functions.nativeBatchWriterSaveDocument(writer, id);
         }
       } finally {
         nativeWriter.release();
@@ -1094,6 +1092,32 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
     }
   }
 
+  @override
+  CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
+    final writer = _functions.nativeBatchWriterBeginList(
+      _writer,
+      fieldIndex,
+      length,
+    );
+    if (writer == nullptr) {
+      throw StateError('Native Cindel list writer allocation failed.');
+    }
+    return _CindelNativeDocumentWriter(_functions, writer);
+  }
+
+  @override
+  void endList(CindelNativeDocumentWriter listWriter) {
+    if (listWriter is! _CindelNativeDocumentWriter) {
+      throw ArgumentError.value(
+        listWriter,
+        'listWriter',
+        'Must be a Cindel native list writer.',
+      );
+    }
+    _functions.nativeBatchWriterEndList(_writer, listWriter._writer);
+    listWriter.release();
+  }
+
   void release() {
     _stringBytes.free();
   }
@@ -1124,18 +1148,6 @@ final class _ReusableNativeBytes {
   int capacity;
 
   void withUtf8String(String value, void Function(Pointer<Uint8>, int) action) {
-    var isAscii = true;
-    for (var i = 0; i < value.length; i += 1) {
-      if (value.codeUnitAt(i) > 0x7f) {
-        isAscii = false;
-        break;
-      }
-    }
-    if (!isAscii) {
-      withBytes(utf8.encode(value), action);
-      return;
-    }
-
     if (value.length > capacity) {
       calloc.free(pointer);
       capacity = value.length;
@@ -1143,7 +1155,12 @@ final class _ReusableNativeBytes {
     }
     final list = pointer.asTypedList(value.length);
     for (var i = 0; i < value.length; i += 1) {
-      list[i] = value.codeUnitAt(i);
+      final codeUnit = value.codeUnitAt(i);
+      if (codeUnit > 0x7f) {
+        withBytes(utf8.encode(value), action);
+        return;
+      }
+      list[i] = codeUnit;
     }
     action(pointer, value.length);
   }
@@ -1353,6 +1370,13 @@ abstract interface class _CindelNativeFunctions {
 
   void Function(Pointer<Void>, int, Pointer<Uint8>, int)
   get nativeBatchWriterWriteBytes;
+
+  Pointer<Void> Function(Pointer<Void>, int, int)
+  get nativeBatchWriterBeginList;
+
+  void Function(Pointer<Void>, Pointer<Void>) get nativeBatchWriterEndList;
+
+  void Function(Pointer<Void>, int) get nativeBatchWriterSaveDocument;
 
   void Function(Pointer<Void>) get nativeBatchWriterEndDocument;
 
@@ -1800,6 +1824,21 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
             void Function(Pointer<Void>, int, Pointer<Uint8>, int)
           >('cindel_native_batch_writer_write_bytes', isLeaf: true),
+      nativeBatchWriterBeginList = library
+          .lookupFunction<
+            Pointer<Void> Function(Pointer<Void>, Uint32, Size),
+            Pointer<Void> Function(Pointer<Void>, int, int)
+          >('cindel_native_batch_writer_begin_list', isLeaf: true),
+      nativeBatchWriterEndList = library
+          .lookupFunction<
+            Void Function(Pointer<Void>, Pointer<Void>),
+            void Function(Pointer<Void>, Pointer<Void>)
+          >('cindel_native_batch_writer_end_list', isLeaf: true),
+      nativeBatchWriterSaveDocument = library
+          .lookupFunction<
+            Void Function(Pointer<Void>, Uint64),
+            void Function(Pointer<Void>, int)
+          >('cindel_native_batch_writer_save_document', isLeaf: true),
       nativeBatchWriterEndDocument = library
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -2526,6 +2565,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   nativeBatchWriterWriteBytes;
 
   @override
+  final Pointer<Void> Function(Pointer<Void>, int, int)
+  nativeBatchWriterBeginList;
+
+  @override
+  final void Function(Pointer<Void>, Pointer<Void>) nativeBatchWriterEndList;
+
+  @override
+  final void Function(Pointer<Void>, int) nativeBatchWriterSaveDocument;
+
+  @override
   final void Function(Pointer<Void>) nativeBatchWriterEndDocument;
 
   @override
@@ -2967,6 +3016,18 @@ final class _NativeAssetCindelNativeFunctions
   @override
   void Function(Pointer<Void>, int, Pointer<Uint8>, int)
   get nativeBatchWriterWriteBytes => _cindelNativeBatchWriterWriteBytes;
+
+  @override
+  Pointer<Void> Function(Pointer<Void>, int, int)
+  get nativeBatchWriterBeginList => _cindelNativeBatchWriterBeginList;
+
+  @override
+  void Function(Pointer<Void>, Pointer<Void>) get nativeBatchWriterEndList =>
+      _cindelNativeBatchWriterEndList;
+
+  @override
+  void Function(Pointer<Void>, int) get nativeBatchWriterSaveDocument =>
+      _cindelNativeBatchWriterSaveDocument;
 
   @override
   void Function(Pointer<Void>) get nativeBatchWriterEndDocument =>
@@ -3581,6 +3642,34 @@ external void _cindelNativeBatchWriterWriteBytes(
   int fieldIndex,
   Pointer<Uint8> bytes,
   int bytesLen,
+);
+
+@Native<Pointer<Void> Function(Pointer<Void>, Uint32, Size)>(
+  symbol: 'cindel_native_batch_writer_begin_list',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelNativeBatchWriterBeginList(
+  Pointer<Void> writer,
+  int fieldIndex,
+  int length,
+);
+
+@Native<Void Function(Pointer<Void>, Pointer<Void>)>(
+  symbol: 'cindel_native_batch_writer_end_list',
+  assetId: _assetId,
+)
+external void _cindelNativeBatchWriterEndList(
+  Pointer<Void> writer,
+  Pointer<Void> listWriter,
+);
+
+@Native<Void Function(Pointer<Void>, Uint64)>(
+  symbol: 'cindel_native_batch_writer_save_document',
+  assetId: _assetId,
+)
+external void _cindelNativeBatchWriterSaveDocument(
+  Pointer<Void> writer,
+  int id,
 );
 
 @Native<Void Function(Pointer<Void>)>(

@@ -49,6 +49,12 @@ abstract interface class CindelNativeDocumentWriter {
 
   /// Writes a string value to [fieldIndex].
   void writeString(int fieldIndex, String value);
+
+  /// Starts writing a list value to [fieldIndex].
+  CindelNativeDocumentWriter beginList(int fieldIndex, int length);
+
+  /// Finishes a list value started with [beginList].
+  void endList(CindelNativeDocumentWriter listWriter);
 }
 
 /// Reader used by generated typed deserializers for native binary documents.

@@ -117,6 +117,8 @@ String _emitCollection(_CollectionInfo collection) {
       '  writeNativeDocument: '
       '_\$${collection.dartName}WriteCindelNativeDocument,',
     );
+  }
+  if (collection.supportsNativeReader) {
     buffer.writeln(
       '  readNativeDocument: '
       '_\$${collection.dartName}ReadCindelNativeDocument,',
@@ -287,11 +289,7 @@ String _emitCollection(_CollectionInfo collection) {
     staticOffset += field.binaryStaticSize;
   }
 
-  _emitObjectHydration(
-    buffer,
-    collection,
-    (field) => binaryReadValues[field]!,
-  );
+  _emitObjectHydration(buffer, collection, (field) => binaryReadValues[field]!);
   buffer
     ..writeln('}')
     ..writeln();
@@ -308,7 +306,9 @@ String _emitCollection(_CollectionInfo collection) {
     buffer
       ..writeln('}')
       ..writeln();
+  }
 
+  if (collection.supportsNativeReader) {
     buffer
       ..writeln(
         '${collection.dartName} _\$${collection.dartName}'
@@ -364,8 +364,7 @@ void _emitObjectHydration(
 ) {
   final constructor = collection.constructor;
   if (constructor != null) {
-    buffer
-      ..writeln('  return ${collection.dartName}(');
+    buffer..writeln('  return ${collection.dartName}(');
     for (final parameter in constructor.parameters) {
       final expression = expressionFor(parameter.field);
       if (parameter.isNamed) {
@@ -586,6 +585,10 @@ final class _CollectionInfo {
     return binaryFields.every((field) => field.supportsNativeWriter);
   }
 
+  bool get supportsNativeReader {
+    return binaryFields.every((field) => field.supportsNativeReader);
+  }
+
   int get binaryStaticSize {
     return binaryFields.fold<int>(
       0,
@@ -701,10 +704,7 @@ void _emitFilterMethods(
 final class _ConstructorInfo {
   const _ConstructorInfo(this.parameters);
 
-  static _ConstructorInfo? from(
-    ClassElement element,
-    List<_FieldInfo> fields,
-  ) {
+  static _ConstructorInfo? from(ClassElement element, List<_FieldInfo> fields) {
     final constructors = element.constructors
         .where(
           (constructor) =>
@@ -877,6 +877,13 @@ final class _FieldInfo {
   String get binaryFieldType => type.binaryFieldType;
 
   bool get supportsNativeWriter {
+    if (binaryType != 'list') {
+      return supportsNativeReader;
+    }
+    return type.elementType?.supportsNativeWriterValue ?? false;
+  }
+
+  bool get supportsNativeReader {
     return switch (binaryType) {
       'bool' || 'int' || 'double' || 'string' => true,
       _ => false,
@@ -884,6 +891,9 @@ final class _FieldInfo {
   }
 
   String nativeWriteStatement(int index) {
+    if (binaryType == 'list') {
+      return _nativeListWriteStatement(index);
+    }
     final method = switch (binaryType) {
       'bool' => 'writeBool',
       'int' => 'writeInt',
@@ -898,7 +908,7 @@ final class _FieldInfo {
       'string' => 'String',
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
-    final expression = toDocumentExpression;
+    final expression = 'object.$name';
     if (!isNullable) {
       return '  writer.$method($index, $expression);\n';
     }
@@ -909,6 +919,55 @@ final class _FieldInfo {
       writer.writeNull($index);
     } else {
       writer.$method($index, value as $castType);
+    }
+  }
+''';
+  }
+
+  String _nativeListWriteStatement(int index) {
+    final element = type.elementType!;
+    final method = switch (element.binaryType) {
+      'bool' => 'writeBool',
+      'int' => 'writeInt',
+      'double' => 'writeDouble',
+      'string' => 'writeString',
+      final type => throw StateError(
+        'Unsupported native list writer element type `$type`.',
+      ),
+    };
+    final value = element.toStoredExpression('list[i]');
+    final writeValue = element.isNullable
+        ? '''
+        final value = $value;
+        if (value == null) {
+          listWriter.writeNull(i);
+        } else {
+          listWriter.$method(i, value);
+        }
+'''
+        : '        listWriter.$method(i, $value);\n';
+    final expression = toDocumentExpression;
+    if (!isNullable) {
+      return '''
+  {
+    final list = $expression;
+    final listWriter = writer.beginList($index, list.length);
+    for (var i = 0; i < list.length; i += 1) {
+$writeValue    }
+    writer.endList(listWriter);
+  }
+''';
+    }
+    return '''
+  {
+    final list = $expression;
+    if (list == null) {
+      writer.writeNull($index);
+    } else {
+      final listWriter = writer.beginList($index, list.length);
+      for (var i = 0; i < list.length; i += 1) {
+$writeValue      }
+      writer.endList(listWriter);
     }
   }
 ''';
@@ -1363,6 +1422,13 @@ final class _PersistedType {
       'list' => 'listValue',
       'object' => 'objectValue',
       final type => throw StateError('Unsupported binary type `$type`.'),
+    };
+  }
+
+  bool get supportsNativeWriterValue {
+    return switch (binaryType) {
+      'bool' || 'int' || 'double' || 'string' => true,
+      _ => false,
     };
   }
 

@@ -683,6 +683,39 @@ fn encode_list(values: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+pub(crate) fn write_list(values: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
+    encode_list(values)
+}
+
+pub(crate) fn write_value_record(value: &Option<BinaryValue>) -> Result<Vec<u8>, String> {
+    encode_value_record(value)
+}
+
+pub(crate) fn write_string_value_record(payload: &[u8]) -> Result<Vec<u8>, String> {
+    let mut record = Vec::new();
+    record.push(BinaryKind::String as u8);
+    record.push(0);
+    push_u16(&mut record, 0);
+    push_u32(
+        &mut record,
+        checked_u32(payload.len(), "value payload length")?,
+    );
+    record.extend_from_slice(payload);
+    Ok(record)
+}
+
+pub(crate) fn write_list_records(records: &[Option<Vec<u8>>]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, checked_u32(records.len(), "list length")?);
+    for record in records {
+        match record {
+            Some(record) => bytes.extend_from_slice(record),
+            None => bytes.extend_from_slice(&encode_value_record(&None)?),
+        }
+    }
+    Ok(bytes)
+}
+
 fn encode_object(entries: &[(String, Option<BinaryValue>)]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     push_u32(

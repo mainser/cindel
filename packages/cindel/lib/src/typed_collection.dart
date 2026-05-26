@@ -299,6 +299,8 @@ final class CindelTypedCollection<T> {
         'int' => 1,
         'double' => 2,
         'string' => 3,
+        'list' => 4,
+        'object' => 5,
         _ => null,
       };
       if (value == null) {

@@ -1,3 +1,6 @@
+use crate::document_format::{
+    write_list_records, write_string_value_record, write_value_record, BinaryValue,
+};
 use crate::engine::CindelEngine;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
@@ -14,7 +17,7 @@ use std::cell::RefCell;
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    24
+    25
 }
 
 #[no_mangle]
@@ -378,6 +381,57 @@ pub unsafe extern "C" fn cindel_native_batch_writer_write_bytes(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_begin_list(
+    writer: *mut CindelNativeBatchWriter,
+    index: u32,
+    length: usize,
+) -> *mut CindelNativeBatchWriter {
+    let Some(writer) = writer.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    if writer.failed {
+        return std::ptr::null_mut();
+    }
+    match writer.begin_list(index as usize, length) {
+        Ok(list_writer) => Box::into_raw(Box::new(list_writer)),
+        Err(_) => {
+            writer.failed = true;
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_end_list(
+    writer: *mut CindelNativeBatchWriter,
+    list_writer: *mut CindelNativeBatchWriter,
+) {
+    let Some(writer) = writer.as_mut() else {
+        if !list_writer.is_null() {
+            drop(Box::from_raw(list_writer));
+        }
+        return;
+    };
+    if list_writer.is_null() {
+        writer.failed = true;
+        return;
+    }
+    let list_writer = *Box::from_raw(list_writer);
+    writer.record(|writer| writer.end_list(list_writer));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_save_document(
+    writer: *mut CindelNativeBatchWriter,
+    id: u64,
+) {
+    let Some(writer) = writer.as_mut() else {
+        return;
+    };
+    writer.record(|writer| writer.save_document(id));
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_batch_writer_end_document(
     writer: *mut CindelNativeBatchWriter,
 ) {
@@ -406,10 +460,13 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish(
         return -1;
     };
     let writer = Box::from_raw(writer);
-    if writer.failed || writer.current.is_some() {
+    if writer.failed {
         return -1;
     }
-    match engine.put_many_indexed(collection, &writer.documents) {
+    let Ok(documents) = writer.take_documents() else {
+        return -1;
+    };
+    match engine.put_many_indexed(collection, &documents) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -435,15 +492,13 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish_with_options(
         return -1;
     };
     let writer = Box::from_raw(writer);
-    if writer.failed || writer.current.is_some() {
+    if writer.failed {
         return -1;
     }
-    match engine.put_many_indexed_with_options(
-        collection,
-        &writer.documents,
-        track_changes != 0,
-        true,
-    ) {
+    let Ok(documents) = writer.take_documents() else {
+        return -1;
+    };
+    match engine.put_many_indexed_with_options(collection, &documents, track_changes != 0, true) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -1598,11 +1653,21 @@ enum NativeBatchFieldType {
 }
 
 pub struct CindelNativeBatchWriter {
-    layout: NativeBatchLayout,
-    documents: Vec<DocumentWrite>,
-    current: Option<NativeBatchDocumentBuilder>,
-    document_capacity_hint: usize,
+    mode: NativeBatchWriterMode,
     failed: bool,
+}
+
+enum NativeBatchWriterMode {
+    Batch {
+        layout: NativeBatchLayout,
+        documents: Vec<DocumentWrite>,
+        current: Option<NativeBatchDocumentBuilder>,
+        document_capacity_hint: usize,
+    },
+    List {
+        parent_index: usize,
+        records: Vec<Option<Vec<u8>>>,
+    },
 }
 
 pub struct CindelNativeDocumentReader {
@@ -1666,12 +1731,24 @@ impl CindelNativeBatchWriter {
         let layout = NativeBatchLayout::new(field_type_bytes)?;
         let document_capacity_hint = layout.null_static_bytes.len();
         Ok(Self {
-            layout,
-            documents: Vec::with_capacity(capacity),
-            current: None,
-            document_capacity_hint,
+            mode: NativeBatchWriterMode::Batch {
+                layout,
+                documents: Vec::with_capacity(capacity),
+                current: None,
+                document_capacity_hint,
+            },
             failed: false,
         })
+    }
+
+    fn new_list(parent_index: usize, length: usize) -> Self {
+        Self {
+            mode: NativeBatchWriterMode::List {
+                parent_index,
+                records: vec![None; length],
+            },
+            failed: false,
+        }
     }
 
     fn record(&mut self, action: impl FnOnce(&mut Self) -> Result<(), String>) {
@@ -1684,105 +1761,262 @@ impl CindelNativeBatchWriter {
     }
 
     fn begin_document(&mut self, id: u64) -> Result<(), String> {
-        if self.current.is_some() {
-            return Err("native batch writer already has an open document".into());
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                layout,
+                current,
+                document_capacity_hint,
+                ..
+            } => {
+                if current.is_some() {
+                    return Err("native batch writer already has an open document".into());
+                }
+                let mut bytes = Vec::with_capacity(*document_capacity_hint);
+                bytes.extend_from_slice(&layout.null_static_bytes);
+                *current = Some(NativeBatchDocumentBuilder { id, bytes });
+                Ok(())
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer cannot begin a document".into())
+            }
         }
-        let mut bytes = Vec::with_capacity(self.document_capacity_hint);
-        bytes.extend_from_slice(&self.layout.null_static_bytes);
-        self.current = Some(NativeBatchDocumentBuilder { id, bytes });
-        Ok(())
     }
 
     fn write_null(&mut self, index: usize) -> Result<(), String> {
-        let (field_types, offsets) = (&self.layout.field_types, &self.layout.offsets);
-        let Some(current) = self.current.as_mut() else {
-            return Err("native batch writer has no open document".into());
-        };
-        write_null_for_field(field_types, offsets, &mut current.bytes, index)
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                layout, current, ..
+            } => {
+                let Some(current) = current.as_mut() else {
+                    return Err("native batch writer has no open document".into());
+                };
+                write_null_for_field(
+                    &layout.field_types,
+                    &layout.offsets,
+                    &mut current.bytes,
+                    index,
+                )
+            }
+            NativeBatchWriterMode::List { records, .. } => {
+                let Some(value) = records.get_mut(index) else {
+                    return Err(format!(
+                        "native list writer index `{index}` is out of range"
+                    ));
+                };
+                *value = None;
+                Ok(())
+            }
+        }
     }
 
     fn write_bool(&mut self, index: usize, value: bool) -> Result<(), String> {
-        self.require_field(index, NativeBatchFieldType::Bool)?;
-        let offset = self.absolute_offset(index)?;
-        let current = self.current_mut()?;
-        current.bytes[offset] = if value { 1 } else { 0 };
-        Ok(())
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch { .. } => {
+                self.require_field(index, NativeBatchFieldType::Bool)?;
+                let offset = self.absolute_offset(index)?;
+                let current = self.current_mut()?;
+                current.bytes[offset] = if value { 1 } else { 0 };
+                Ok(())
+            }
+            NativeBatchWriterMode::List { records, .. } => {
+                write_list_value_record(records, index, Some(BinaryValue::Bool(value)))
+            }
+        }
     }
 
     fn write_int(&mut self, index: usize, value: i64) -> Result<(), String> {
-        self.require_field(index, NativeBatchFieldType::Int)?;
         if value == i64::MIN {
             return Err("native batch writer cannot store the int null sentinel".into());
         }
-        let offset = self.absolute_offset(index)?;
-        let current = self.current_mut()?;
-        current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-        Ok(())
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch { .. } => {
+                self.require_field(index, NativeBatchFieldType::Int)?;
+                let offset = self.absolute_offset(index)?;
+                let current = self.current_mut()?;
+                current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                Ok(())
+            }
+            NativeBatchWriterMode::List { records, .. } => {
+                write_list_value_record(records, index, Some(BinaryValue::Int(value)))
+            }
+        }
     }
 
     fn write_double(&mut self, index: usize, value: f64) -> Result<(), String> {
-        self.require_field(index, NativeBatchFieldType::Double)?;
         if !value.is_finite() {
             return Err("native batch writer double values must be finite".into());
         }
-        let offset = self.absolute_offset(index)?;
-        let current = self.current_mut()?;
-        current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-        Ok(())
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch { .. } => {
+                self.require_field(index, NativeBatchFieldType::Double)?;
+                let offset = self.absolute_offset(index)?;
+                let current = self.current_mut()?;
+                current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                Ok(())
+            }
+            NativeBatchWriterMode::List { records, .. } => {
+                write_list_value_record(records, index, Some(BinaryValue::Double(value)))
+            }
+        }
     }
 
     fn write_bytes(&mut self, index: usize, payload: &[u8]) -> Result<(), String> {
-        match self.field_type(index)? {
-            NativeBatchFieldType::String
-            | NativeBatchFieldType::List
-            | NativeBatchFieldType::Object => {}
-            _ => return Err("native batch writer expected a dynamic field".into()),
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                layout, current, ..
+            } => {
+                match layout.field_type_result(index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return Err("native batch writer expected a dynamic field".into()),
+                }
+                if payload.len() > 0x00ff_ffff {
+                    return Err("native batch writer dynamic payload is too large".into());
+                }
+                let static_size = layout.static_size;
+                let offset = layout.absolute_offset_result(index)?;
+                let Some(current) = current.as_mut() else {
+                    return Err("native batch writer has no open document".into());
+                };
+                let relative = static_size
+                    .checked_add(current.bytes.len().saturating_sub(3 + static_size))
+                    .ok_or_else(|| "native batch writer dynamic offset overflow".to_string())?;
+                if relative > 0x00ff_ffff {
+                    return Err("native batch writer dynamic offset is too large".into());
+                }
+                write_u24(&mut current.bytes, offset, relative)?;
+                let mut header = [0u8; 3];
+                write_u24(&mut header, 0, payload.len())?;
+                current.bytes.extend_from_slice(&header);
+                current.bytes.extend_from_slice(payload);
+                Ok(())
+            }
+            NativeBatchWriterMode::List { records, .. } => {
+                let record = write_string_value_record(payload)?;
+                write_list_record(records, index, record)
+            }
         }
-        if payload.len() > 0x00ff_ffff {
-            return Err("native batch writer dynamic payload is too large".into());
-        }
-        let static_size = self.layout.static_size;
-        let offset = self.absolute_offset(index)?;
-        let current = self.current_mut()?;
-        let relative = static_size
-            .checked_add(current.bytes.len().saturating_sub(3 + static_size))
-            .ok_or_else(|| "native batch writer dynamic offset overflow".to_string())?;
-        if relative > 0x00ff_ffff {
-            return Err("native batch writer dynamic offset is too large".into());
-        }
-        write_u24(&mut current.bytes, offset, relative)?;
-        let mut header = [0u8; 3];
-        write_u24(&mut header, 0, payload.len())?;
-        current.bytes.extend_from_slice(&header);
-        current.bytes.extend_from_slice(payload);
-        Ok(())
+    }
+
+    fn begin_list(&mut self, index: usize, length: usize) -> Result<Self, String> {
+        self.require_field(index, NativeBatchFieldType::List)?;
+        Ok(Self::new_list(index, length))
+    }
+
+    fn end_list(&mut self, list_writer: Self) -> Result<(), String> {
+        let NativeBatchWriterMode::List {
+            parent_index,
+            records,
+        } = list_writer.mode
+        else {
+            return Err("native batch writer expected a list writer".into());
+        };
+        let bytes = write_list_records(&records)?;
+        self.write_bytes(parent_index, &bytes)
     }
 
     fn end_document(&mut self) -> Result<(), String> {
-        let Some(current) = self.current.take() else {
-            return Err("native batch writer has no open document".into());
-        };
-        self.document_capacity_hint = self.document_capacity_hint.max(current.bytes.len());
-        self.documents.push(DocumentWrite {
-            id: current.id,
-            bytes: current.bytes,
-            indexes: Vec::new(),
-        });
-        Ok(())
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                documents,
+                current,
+                document_capacity_hint,
+                ..
+            } => {
+                let Some(current) = current.take() else {
+                    return Err("native batch writer has no open document".into());
+                };
+                *document_capacity_hint = (*document_capacity_hint).max(current.bytes.len());
+                documents.push(DocumentWrite {
+                    id: current.id,
+                    bytes: current.bytes,
+                    indexes: Vec::new(),
+                });
+                Ok(())
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer cannot end a document".into())
+            }
+        }
+    }
+
+    fn save_document(&mut self, id: u64) -> Result<(), String> {
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                layout,
+                documents,
+                current,
+                document_capacity_hint,
+            } => {
+                let current = if let Some(current) = current.take() {
+                    current
+                } else {
+                    let mut bytes = Vec::with_capacity(*document_capacity_hint);
+                    bytes.extend_from_slice(&layout.null_static_bytes);
+                    NativeBatchDocumentBuilder { id, bytes }
+                };
+                *document_capacity_hint = (*document_capacity_hint).max(current.bytes.len());
+                documents.push(DocumentWrite {
+                    id,
+                    bytes: current.bytes,
+                    indexes: Vec::new(),
+                });
+                Ok(())
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer cannot save a document".into())
+            }
+        }
+    }
+
+    fn take_documents(self) -> Result<Vec<DocumentWrite>, String> {
+        match self.mode {
+            NativeBatchWriterMode::Batch {
+                documents, current, ..
+            } => {
+                if current.is_some() {
+                    Err("native batch writer has an open document".into())
+                } else {
+                    Ok(documents)
+                }
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native batch writer expected a document writer".into())
+            }
+        }
     }
 
     fn current_mut(&mut self) -> Result<&mut NativeBatchDocumentBuilder, String> {
-        self.current
-            .as_mut()
-            .ok_or_else(|| "native batch writer has no open document".to_string())
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch {
+                layout,
+                current,
+                document_capacity_hint,
+                ..
+            } => {
+                if current.is_none() {
+                    let mut bytes = Vec::with_capacity(*document_capacity_hint);
+                    bytes.extend_from_slice(&layout.null_static_bytes);
+                    *current = Some(NativeBatchDocumentBuilder { id: 0, bytes });
+                }
+                current
+                    .as_mut()
+                    .ok_or_else(|| "native batch writer has no open document".to_string())
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer has no current document".into())
+            }
+        }
     }
 
     fn field_type(&self, index: usize) -> Result<NativeBatchFieldType, String> {
-        self.layout
-            .field_types
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("native batch writer field index `{index}` is out of range"))
+        match &self.mode {
+            NativeBatchWriterMode::Batch { layout, .. } => layout.field_type_result(index),
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer fields are dynamically typed".into())
+            }
+        }
     }
 
     fn require_field(&self, index: usize, expected: NativeBatchFieldType) -> Result<(), String> {
@@ -1795,12 +2029,36 @@ impl CindelNativeBatchWriter {
     }
 
     fn absolute_offset(&self, index: usize) -> Result<usize, String> {
-        self.layout
-            .offsets
-            .get(index)
-            .map(|offset| 3 + *offset)
-            .ok_or_else(|| format!("native batch writer field index `{index}` is out of range"))
+        match &self.mode {
+            NativeBatchWriterMode::Batch { layout, .. } => layout.absolute_offset_result(index),
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer fields have no static offsets".into())
+            }
+        }
     }
+}
+
+fn write_list_value_record(
+    records: &mut [Option<Vec<u8>>],
+    index: usize,
+    value: Option<BinaryValue>,
+) -> Result<(), String> {
+    let record = write_value_record(&value)?;
+    write_list_record(records, index, record)
+}
+
+fn write_list_record(
+    records: &mut [Option<Vec<u8>>],
+    index: usize,
+    record: Vec<u8>,
+) -> Result<(), String> {
+    let Some(slot) = records.get_mut(index) else {
+        return Err(format!(
+            "native list writer index `{index}` is out of range"
+        ));
+    };
+    *slot = Some(record);
+    Ok(())
 }
 
 impl CindelNativeDocumentReader {
@@ -1921,6 +2179,16 @@ impl NativeBatchLayout {
 
     fn absolute_offset(&self, index: usize) -> Option<usize> {
         self.offsets.get(index).map(|offset| 3 + *offset)
+    }
+
+    fn field_type_result(&self, index: usize) -> Result<NativeBatchFieldType, String> {
+        self.field_type(index)
+            .ok_or_else(|| format!("native batch writer field index `{index}` is out of range"))
+    }
+
+    fn absolute_offset_result(&self, index: usize) -> Result<usize, String> {
+        self.absolute_offset(index)
+            .ok_or_else(|| format!("native batch writer field index `{index}` is out of range"))
     }
 }
 

@@ -39,7 +39,9 @@
   batch updates.
 - Reduced native batch writer reallocations by reusing observed document
   capacity for subsequent documents.
-- Bumped the native ABI to 24.
+- Added Isar-style nested native list writers for generated typed MDBX batch
+  inserts, including direct string value-record writing for primitive lists.
+- Bumped the native ABI to 25.
 
 ## 0.4.0
 
