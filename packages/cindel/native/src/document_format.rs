@@ -444,6 +444,19 @@ impl<'a> CompactBinaryDocument<'a> {
     }
 }
 
+pub(crate) struct PreparedBinaryFieldUpdates {
+    static_size: usize,
+    updates: Vec<PreparedBinaryFieldUpdate>,
+}
+
+struct PreparedBinaryFieldUpdate {
+    field_name: String,
+    field_type: CompactFieldType,
+    static_offset: usize,
+    nullable: bool,
+    value: WireValue,
+}
+
 pub(crate) fn validate_generic_document(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < 8 {
         return Err("generic document is shorter than the header".into());
@@ -745,6 +758,159 @@ pub(crate) fn validate_binary_document(
     } else {
         CompactBinaryDocument::parse(schema, bytes).map(|_| ())
     }
+}
+
+pub(crate) fn update_binary_fields(
+    schema: &CollectionSchemaManifest,
+    bytes: &mut [u8],
+    updates: &[(String, WireValue)],
+) -> Result<(), String> {
+    let prepared = prepare_binary_field_updates(schema, updates)?;
+    apply_prepared_binary_field_updates(bytes, &prepared)
+}
+
+pub(crate) fn prepare_binary_field_updates(
+    schema: &CollectionSchemaManifest,
+    updates: &[(String, WireValue)],
+) -> Result<PreparedBinaryFieldUpdates, String> {
+    let mut static_size = 0usize;
+    let mut field_offsets = Vec::with_capacity(schema.fields.len());
+    for field in &schema.fields {
+        let field_type = CompactFieldType::from_field(field)?;
+        field_offsets.push((field_type, static_size));
+        static_size = static_size
+            .checked_add(field_type.static_size())
+            .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+    }
+    let mut prepared = Vec::with_capacity(updates.len());
+    for (field_name, value) in updates {
+        let Some((field_index, field)) = schema
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| &field.name == field_name)
+        else {
+            return Err(format!(
+                "field `{field_name}` is not declared in schema `{}`",
+                schema.name
+            ));
+        };
+        if field.is_id {
+            return Err(format!(
+                "query updates cannot change id field `{}`",
+                field.name
+            ));
+        }
+        let (field_type, static_offset) = field_offsets
+            .get(field_index)
+            .copied()
+            .ok_or_else(|| format!("field `{field_name}` is out of bounds"))?;
+        validate_prepared_binary_update(field, field_type, value)?;
+        prepared.push(PreparedBinaryFieldUpdate {
+            field_name: field_name.clone(),
+            field_type,
+            static_offset,
+            nullable: is_nullable_field(field),
+            value: value.clone(),
+        });
+    }
+    Ok(PreparedBinaryFieldUpdates {
+        static_size,
+        updates: prepared,
+    })
+}
+
+pub(crate) fn apply_prepared_binary_field_updates(
+    bytes: &mut [u8],
+    prepared: &PreparedBinaryFieldUpdates,
+) -> Result<(), String> {
+    if bytes.starts_with(MAGIC) {
+        return Err("query updates require compact Cindel binary documents".into());
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let static_size = read_u24(bytes, 0)? as usize;
+    if static_size != prepared.static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    for update in &prepared.updates {
+        let absolute = 3 + update.static_offset;
+        match (update.field_type, &update.value) {
+            (CompactFieldType::Bool, WireValue::Null) if update.nullable => {
+                bytes[absolute] = COMPACT_NULL_BOOL;
+            }
+            (CompactFieldType::Bool, WireValue::Bool(value)) => {
+                bytes[absolute] = u8::from(*value);
+            }
+            (CompactFieldType::Int, WireValue::Null) if update.nullable => {
+                bytes[absolute..absolute + 8].copy_from_slice(&COMPACT_NULL_INT.to_le_bytes());
+            }
+            (CompactFieldType::Int, WireValue::Int(value)) => {
+                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            (CompactFieldType::Double, WireValue::Null) if update.nullable => {
+                bytes[absolute..absolute + 8]
+                    .copy_from_slice(&COMPACT_NULL_DOUBLE_BITS.to_le_bytes());
+            }
+            (CompactFieldType::Double, WireValue::Double(value)) if value.is_finite() => {
+                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            (CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object, _) => {
+                return Err(format!(
+                    "query updates for dynamic field `{}` are not supported yet",
+                    update.field_name
+                ));
+            }
+            (_, WireValue::Null) => {
+                return Err(format!("field `{}` is not nullable", update.field_name));
+            }
+            _ => {
+                return Err(format!(
+                    "query update value does not match field `{}`",
+                    update.field_name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_prepared_binary_update(
+    field: &FieldSchemaManifest,
+    field_type: CompactFieldType,
+    value: &WireValue,
+) -> Result<(), String> {
+    match (field_type, value) {
+        (CompactFieldType::Bool, WireValue::Null)
+        | (CompactFieldType::Int, WireValue::Null)
+        | (CompactFieldType::Double, WireValue::Null)
+            if is_nullable_field(field) =>
+        {
+            Ok(())
+        }
+        (CompactFieldType::Bool, WireValue::Bool(_))
+        | (CompactFieldType::Int, WireValue::Int(_)) => Ok(()),
+        (CompactFieldType::Double, WireValue::Double(value)) if value.is_finite() => Ok(()),
+        (CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object, _) => {
+            Err(format!(
+                "query updates for dynamic field `{}` are not supported yet",
+                field.name
+            ))
+        }
+        (_, WireValue::Null) => Err(format!("field `{}` is not nullable", field.name)),
+        _ => Err(format!(
+            "query update value does not match field `{}`",
+            field.name
+        )),
+    }
+}
+
+fn is_nullable_field(field: &FieldSchemaManifest) -> bool {
+    field.dart_type.ends_with('?') || field.binary_type.ends_with('?')
 }
 
 pub(crate) fn binary_to_wire_value(value: Option<&BinaryValue>) -> Result<WireValue, String> {

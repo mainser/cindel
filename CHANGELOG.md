@@ -9,6 +9,8 @@ while the core design settles.
 
 - Cached native function resolution across Cindel database openings.
 - Cached generated native field layouts for typed MDBX reads and writes.
+- Added native query-plan updates for compact MDBX binary documents, matching
+  Isar-style property updates without Dart object hydration.
 - Allowed generated schemas to hydrate immutable explicit-id collection models
   through constructor parameters.
 - Fixed geometry and table count settings.

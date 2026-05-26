@@ -228,6 +228,45 @@ void main() {
       expect(soloUser?.name, 'Ben');
     });
 
+    // Scenario: A filter-only query updates a compact native bool field.
+    // Covers:
+    // - [CindelQuery.updateAll].
+    // - Native query-plan update count.
+    // - MDBX compact document update without Dart object hydration.
+    // Expected: Matching documents are updated and the returned count matches.
+    test('updates all matching native typed query results.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(
+        schemas: [ImmutableUserSchema],
+        backend: CindelStorageBackend.mdbx,
+      );
+      addTearDown(database.close);
+      await database.immutableUsers.putAll([
+        const ImmutableUser(id: 1, email: 'a@example.com', active: true),
+        const ImmutableUser(id: 2, email: 'b@example.com', active: false),
+        const ImmutableUser(id: 3, email: 'c@example.com', active: true),
+      ]);
+
+      // Act.
+      final updated = await database.immutableUsers
+          .filter()
+          .activeEqualTo(true)
+          .updateAll({'active': false});
+      final activeCount = await database.immutableUsers
+          .filter()
+          .activeEqualTo(true)
+          .count();
+      final inactive = await database.immutableUsers
+          .filter()
+          .activeEqualTo(false)
+          .findAll();
+
+      // Assert.
+      expect(updated, 2);
+      expect(activeCount, 0);
+      expect(inactive.map((user) => user.id), [1, 2, 3]);
+    });
+
     // Scenario: A generated filter starts from the whole collection.
     // Covers:
     // - Generated [UserQueryFilter.activeEqualTo].

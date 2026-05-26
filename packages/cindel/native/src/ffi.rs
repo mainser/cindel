@@ -3,9 +3,10 @@ use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
 };
 use crate::wire::{
-    decode_document_write_batch, decode_id_list, decode_index_entry_list, decode_index_value,
-    decode_indexed_document_write_batch, decode_query_plan, encode_change_set_list, encode_id_list,
-    encode_scalar, WireChangeSet, WireDocumentWrite as WireBatchDocumentWrite,
+    decode_document_write_batch, decode_field_updates, decode_id_list, decode_index_entry_list,
+    decode_index_value, decode_indexed_document_write_batch, decode_query_plan,
+    encode_change_set_list, encode_id_list, encode_scalar, WireChangeSet,
+    WireDocumentWrite as WireBatchDocumentWrite,
     WireIndexEntry as WireBatchIndexEntry, WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
@@ -1413,6 +1414,48 @@ pub unsafe extern "C" fn cindel_query_plan_delete(
 
     match engine.query_plan_delete(collection, &plan) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_query_plan_update(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    updates_ptr: *const u8,
+    updates_len: usize,
+    out_count: *mut u64,
+) -> i32 {
+    if out_count.is_null() {
+        return -1;
+    }
+
+    *out_count = 0;
+
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+        return -1;
+    };
+    let Some(updates_bytes) = read_bytes(updates_ptr, updates_len) else {
+        return -1;
+    };
+    let Ok(updates) = decode_field_updates(updates_bytes) else {
+        return -1;
+    };
+
+    match engine.query_plan_update(collection, &plan, &updates) {
+        Ok(ids) => {
+            *out_count = ids.len() as u64;
+            0
+        }
         Err(_) => -1,
     }
 }

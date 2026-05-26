@@ -4,6 +4,8 @@
 
 - Cached native function resolution across Cindel database openings.
 - Cached generated native field layouts for typed MDBX reads and writes.
+- Added native query-plan updates for compact MDBX binary documents, matching
+  Isar-style property updates without Dart object hydration.
 - Fixed geometry and table count settings.
 - Raised the MDBX default map limit to support large batch updates and deletes
   without forcing application-level chunking.

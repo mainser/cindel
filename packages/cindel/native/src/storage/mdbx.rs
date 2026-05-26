@@ -11,7 +11,10 @@ use libmdbx::{
     Transaction, WriteFlags, RO, RW,
 };
 
-use crate::document_format::{binary_to_wire_value, read_binary_field, read_binary_field_at};
+use crate::document_format::{
+    apply_prepared_binary_field_updates, binary_to_wire_value, prepare_binary_field_updates,
+    read_binary_field, read_binary_field_at, PreparedBinaryFieldUpdates,
+};
 use crate::document_format::{
     for_each_index_entry_from_binary_document, index_entries_from_binary_document,
     validate_binary_document, validate_generic_document, BinaryValue,
@@ -19,7 +22,7 @@ use crate::document_format::{
 use crate::native_filter::NativeFilter;
 use crate::wire::{
     encode_projection_rows, encode_scalar, WireIndexValue, WireProjectionRows, WireQueryPlan,
-    WireQuerySource, WireScalar,
+    WireQuerySource, WireScalar, WireValue,
 };
 
 use super::mdbx_key::{
@@ -489,6 +492,86 @@ impl MdbxStorage {
                 )
             }
         }
+    }
+
+    fn query_plan_update_direct_nonindexed(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        schema: &CollectionSchemaManifest,
+        updates: &PreparedBinaryFieldUpdates,
+        update_touches_index: bool,
+    ) -> Result<Option<Vec<u64>>, String> {
+        if self.active_write().is_some()
+            || update_touches_index
+            || !matches!(plan.source, WireQuerySource::All { .. })
+            || !plan.sorts.is_empty()
+            || !plan.distinct_fields.is_empty()
+        {
+            return Ok(None);
+        }
+
+        let filter = plan
+            .filter
+            .as_ref()
+            .map(|bytes| NativeFilter::decode(bytes))
+            .transpose()?;
+        let offset = plan.offset as usize;
+        let limit = plan.limit.map(|value| value as usize);
+        let mut ids = Vec::new();
+        let mut change_sets = Vec::new();
+
+        self.with_write_transaction(|transaction, tables| {
+            let documents_table = match open_documents_table(transaction, collection) {
+                Ok(table) => table,
+                Err(_) => return Ok(()),
+            };
+            let mut cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
+            let mut skipped = 0usize;
+            let mut current = cursor
+                .first::<Vec<u8>, Vec<u8>>()
+                .map_err(|error| error.to_string())?;
+            while let Some((key, mut bytes)) = current {
+                if let Some(filter) = &filter {
+                    if !filter.matches(schema, &bytes)? {
+                        current = cursor
+                            .next::<Vec<u8>, Vec<u8>>()
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                }
+                if skipped < offset {
+                    skipped += 1;
+                    current = cursor
+                        .next::<Vec<u8>, Vec<u8>>()
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
+                if limit.is_some_and(|limit| ids.len() >= limit) {
+                    break;
+                }
+                apply_prepared_binary_field_updates(&mut bytes, updates)?;
+                cursor
+                    .put(&key, &bytes, WriteFlags::CURRENT)
+                    .map_err(|error| error.to_string())?;
+                ids.push(decode_document_table_key(&key)?);
+                current = cursor
+                    .next::<Vec<u8>, Vec<u8>>()
+                    .map_err(|error| error.to_string())?;
+            }
+            drop(cursor);
+
+            if ids.is_empty() {
+                return Ok(());
+            }
+            let revision = bump_collection_revision(transaction, &tables, collection)?;
+            merge_change_set(&mut change_sets, collection, revision, ids.iter().copied());
+            Ok(())
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(Some(ids))
     }
 
     fn ensure_can_write(&self) -> Result<(), String> {
@@ -1374,6 +1457,81 @@ impl StorageEngine for MdbxStorage {
         Ok(ids)
     }
 
+    fn query_plan_update(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        updates: &[(String, WireValue)],
+    ) -> Result<Vec<u64>, String> {
+        self.ensure_can_write()?;
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let schema = self.required_schema(collection)?;
+        let update_touches_index = updates_touch_index(&schema, updates)?;
+        let prepared_updates = prepare_binary_field_updates(&schema, updates)?;
+        if let Some(ids) =
+            self.query_plan_update_direct_nonindexed(
+                collection,
+                plan,
+                &schema,
+                &prepared_updates,
+                update_touches_index,
+            )?
+        {
+            return Ok(ids);
+        }
+
+        let planned = self.execute_query_plan(collection, plan)?;
+        if planned.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut documents = Vec::with_capacity(planned.len());
+        for mut document in planned {
+            apply_prepared_binary_field_updates(&mut document.bytes, &prepared_updates)?;
+            documents.push(DocumentWrite {
+                id: document.id,
+                bytes: document.bytes,
+                indexes: Vec::new(),
+            });
+        }
+
+        if self.active_write_mut().is_some() || update_touches_index {
+            self.put_many_indexed_with_options(collection, &documents, true, true)?;
+            return Ok(documents.into_iter().map(|document| document.id).collect());
+        }
+
+        let mut change_sets = Vec::new();
+        self.with_write_transaction(|transaction, tables| {
+            let documents_table = create_documents_table(transaction, collection)?;
+            let mut cursor = transaction
+                .cursor(&documents_table)
+                .map_err(|error| error.to_string())?;
+            for document in &documents {
+                cursor
+                    .put(
+                        &document_table_key(document.id),
+                        &document.bytes,
+                        WriteFlags::UPSERT,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            drop(cursor);
+            let revision = bump_collection_revision(transaction, &tables, collection)?;
+            merge_change_set(
+                &mut change_sets,
+                collection,
+                revision,
+                documents.iter().map(|document| document.id),
+            );
+            Ok(())
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(documents.into_iter().map(|document| document.id).collect())
+    }
+
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.with_read_transaction(|transaction, tables| {
             transaction
@@ -1862,6 +2020,36 @@ fn ensure_schema_field(schema: &CollectionSchemaManifest, field: &str) -> Result
             schema.name
         ))
     }
+}
+
+fn updates_touch_index(
+    schema: &CollectionSchemaManifest,
+    updates: &[(String, WireValue)],
+) -> Result<bool, String> {
+    for (field, _) in updates {
+        let Some(schema_field) = schema
+            .fields
+            .iter()
+            .find(|schema_field| &schema_field.name == field)
+        else {
+            return Err(format!(
+                "field `{field}` is not declared in schema `{}`",
+                schema.name
+            ));
+        };
+        if schema_field.is_id {
+            return Err(format!("query updates cannot change id field `{field}`"));
+        }
+        if schema_field.is_indexed
+            || schema
+                .composite_indexes
+                .iter()
+                .any(|index| index.fields.iter().any(|index_field| index_field == field))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn query_source_dedupes(source: &WireQuerySource) -> bool {

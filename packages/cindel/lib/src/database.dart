@@ -1082,6 +1082,30 @@ class CindelDatabase {
     return ids;
   }
 
+  Future<int> updateNativePlan(
+    String collection,
+    CindelNativeQueryPlan plan,
+    Map<String, WireValue> updates,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkBinaryBackend();
+    _checkCollection(collection);
+    if (updates.isEmpty) {
+      return 0;
+    }
+    final count = _bindings.queryPlanUpdate(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+      encodeFieldUpdates(updates),
+    );
+    if (count > 0) {
+      _markNativeCollectionChanged(CindelChangeSet.external(collection));
+    }
+    return count;
+  }
+
   /// Returns the persisted schema version for [collection], or `null`.
   ///
   /// A schema starts at version `1` when first registered. Compatible additive

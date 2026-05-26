@@ -910,6 +910,18 @@ WireProjectionRows decodeProjectionRows(Uint8List bytes) {
   );
 }
 
+Uint8List encodeFieldUpdates(Map<String, WireValue> updates) {
+  final entries = updates.entries.toList(growable: false)
+    ..sort((left, right) => left.key.compareTo(right.key));
+  final writer = CindelWireWriter();
+  writer.writeLength(entries.length);
+  for (final entry in entries) {
+    writer.writeString(entry.key);
+    writer.writeValue(entry.value);
+  }
+  return writer.finish();
+}
+
 Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
   final writer = CindelWireWriter();
   writer.writeUint32(manifest.version);

@@ -368,6 +368,18 @@ pub(crate) fn decode_projection_rows(bytes: &[u8]) -> Result<WireProjectionRows,
     })
 }
 
+pub(crate) fn decode_field_updates(bytes: &[u8]) -> Result<Vec<(String, WireValue)>, String> {
+    let mut reader = Reader::new(bytes);
+    let count = reader.read_len()?;
+    reader.ensure_item_count(count, 5)?;
+    let mut updates = Vec::with_capacity(count);
+    for _ in 0..count {
+        updates.push((reader.read_string()?, reader.read_value()?));
+    }
+    reader.finish()?;
+    Ok(updates)
+}
+
 pub(crate) fn encode_schema_manifest(manifest: &WireSchemaManifest) -> Result<Vec<u8>, String> {
     let mut writer = Writer::new();
     writer.write_u32(manifest.version);

@@ -296,6 +296,15 @@ pub trait StorageEngine {
         let _ = (collection, plan);
         Err("native query plan deletes are not supported by this storage backend".into())
     }
+    fn query_plan_update(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        updates: &[(String, crate::wire::WireValue)],
+    ) -> Result<Vec<u64>, String> {
+        let _ = (collection, plan, updates);
+        Err("native query plan updates are not supported by this storage backend".into())
+    }
 
     fn verify_storage(
         &self,
@@ -663,6 +672,19 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.query_plan_delete(collection, plan),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.query_plan_delete(collection, plan),
+        }
+    }
+
+    fn query_plan_update(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        updates: &[(String, crate::wire::WireValue)],
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_update(collection, plan, updates),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.query_plan_update(collection, plan, updates),
         }
     }
 }

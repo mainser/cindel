@@ -226,6 +226,15 @@ impl CindelEngine {
         self.storage.query_plan_delete(collection, plan)
     }
 
+    pub(crate) fn query_plan_update(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        updates: &[(String, crate::wire::WireValue)],
+    ) -> Result<Vec<u64>, String> {
+        self.storage.query_plan_update(collection, plan, updates)
+    }
+
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         self.storage.collection_revision(collection)
     }

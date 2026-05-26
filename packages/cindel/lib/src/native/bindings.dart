@@ -986,6 +986,40 @@ final class CindelNativeBindings {
       'query plan delete',
     );
   }
+
+  int queryPlanUpdate(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List plan,
+    Uint8List updates,
+  ) {
+    final outCount = calloc<Uint64>();
+    try {
+      final status = _withNativeUtf8Bytes(collection, (
+        collectionPointer,
+        collectionLength,
+      ) {
+        return _withNativeBytes(plan, (planPointer, planLength) {
+          return _withNativeBytes(updates, (updatesPointer, updatesLength) {
+            return _functions.queryPlanUpdate(
+              handle,
+              collectionPointer,
+              collectionLength,
+              planPointer,
+              planLength,
+              updatesPointer,
+              updatesLength,
+              outCount,
+            );
+          });
+        });
+      });
+      _checkStatus(status, 'query plan update');
+      return outCount.value;
+    } finally {
+      calloc.free(outCount);
+    }
+  }
 }
 
 final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
@@ -1556,6 +1590,18 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get queryPlanDelete;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint64>,
+  )
+  get queryPlanUpdate;
 
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }
@@ -2282,6 +2328,29 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_query_plan_delete'),
+      queryPlanUpdate = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint64>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint64>,
+            )
+          >('cindel_query_plan_update'),
       freeBuffer = library
           .lookupFunction<
             Void Function(Pointer<Uint8>, Size),
@@ -2700,6 +2769,19 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   queryPlanDelete;
 
   @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint64>,
+  )
+  queryPlanUpdate;
+
+  @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }
 
@@ -3113,6 +3195,19 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Size>,
   )
   get queryPlanDelete => _cindelQueryPlanDelete;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint64>,
+  )
+  get queryPlanUpdate => _cindelQueryPlanUpdate;
 
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
@@ -4002,6 +4097,29 @@ external int _cindelQueryPlanDelete(
   int planLen,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint64>,
+  )
+>(symbol: 'cindel_query_plan_update', assetId: _assetId)
+external int _cindelQueryPlanUpdate(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> plan,
+  int planLen,
+  Pointer<Uint8> updates,
+  int updatesLen,
+  Pointer<Uint64> outCount,
 );
 
 @Native<Void Function(Pointer<Uint8>, Size)>(

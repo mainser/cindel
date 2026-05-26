@@ -563,6 +563,49 @@ final class CindelQuery<T> {
     return ids.length;
   }
 
+  /// Updates the first object matching this query using native property writes.
+  Future<bool> updateFirst(Map<String, Object?> changes) async {
+    final count = await _updateNative(changes, limitOverride: 1);
+    return count > 0;
+  }
+
+  /// Updates every object matching this query using native property writes.
+  Future<int> updateAll(Map<String, Object?> changes) async {
+    return _updateNative(changes);
+  }
+
+  Future<int> _updateNative(
+    Map<String, Object?> changes, {
+    int? limitOverride,
+  }) async {
+    if (changes.isEmpty) {
+      return 0;
+    }
+    final nativePlan = _nativePlan(limitOverride: limitOverride);
+    if (nativePlan == null) {
+      throw UnsupportedError(
+        'Native query updates require the MDBX binary query planner.',
+      );
+    }
+    final updates = <String, WireValue>{};
+    for (final entry in changes.entries) {
+      final field = _schemaField(_schema, entry.key);
+      if (field.isId) {
+        throw ArgumentError.value(entry.key, 'changes', 'Cannot update id.');
+      }
+      final value = entry.value;
+      if (!_isNativeFilterValue(value)) {
+        throw ArgumentError.value(
+          value,
+          entry.key,
+          'Native query updates support null, bool, int, double, String, List, and Map values.',
+        );
+      }
+      updates[field.name] = _nativeFilterValue(value);
+    }
+    return _database.updateNativePlan(_schema.name, nativePlan, updates);
+  }
+
   int _idFromDocument(CindelDocument document) {
     final value = document[_schema.idField];
     if (value is int) {
