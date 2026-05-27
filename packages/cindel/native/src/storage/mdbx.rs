@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libmdbx::{
-    Database, DatabaseOptions, Mode, NoWriteMap, ReadWriteOptions, SyncMode, Table, TableFlags,
-    Transaction, WriteFlags, RO, RW,
+    Cursor, Database, DatabaseOptions, Mode, NoWriteMap, ReadWriteOptions, SyncMode, Table,
+    TableFlags, Transaction, WriteFlags, RO, RW,
 };
 
 use crate::document_format::{
@@ -53,6 +53,60 @@ pub struct MdbxStorage {
     active_transaction: Option<MdbxActiveTransaction>,
     last_change_sets: Vec<StorageChangeSet>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
+}
+
+pub(crate) struct MdbxCursorDocumentReader {
+    cursor: Cursor<'static, RO>,
+    _transaction: Transaction<'static, RO, NoWriteMap>,
+    ids: Vec<u64>,
+    current_index: Option<usize>,
+    current_present: bool,
+    current_bytes: Vec<u8>,
+}
+
+impl MdbxCursorDocumentReader {
+    pub(crate) fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub(crate) fn is_present(&mut self, document_index: usize) -> Result<bool, String> {
+        self.load(document_index)?;
+        Ok(self.current_present)
+    }
+
+    pub(crate) fn document_bytes(
+        &mut self,
+        document_index: usize,
+    ) -> Result<Option<&[u8]>, String> {
+        self.load(document_index)?;
+        if self.current_present {
+            Ok(Some(&self.current_bytes))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn load(&mut self, document_index: usize) -> Result<(), String> {
+        if self.current_index == Some(document_index) {
+            return Ok(());
+        }
+        self.current_index = Some(document_index);
+        self.current_present = false;
+        self.current_bytes.clear();
+        let Some(id) = self.ids.get(document_index).copied() else {
+            return Ok(());
+        };
+        let bytes = ignore_not_found(
+            self.cursor
+                .set::<Cow<'_, [u8]>>(&document_table_key(id))
+                .map_err(|error| error.to_string()),
+        )?;
+        if let Some(bytes) = bytes {
+            self.current_bytes.extend_from_slice(bytes.as_ref());
+            self.current_present = true;
+        }
+        Ok(())
+    }
 }
 
 struct MdbxSharedState {
@@ -383,6 +437,45 @@ impl MdbxStorage {
         let result = action(&transaction, tables)?;
         transaction.commit().map_err(|error| error.to_string())?;
         Ok(result)
+    }
+
+    pub(crate) fn cursor_document_reader(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<MdbxCursorDocumentReader, String> {
+        if self.active_write().is_some() {
+            return Err("cursor document reader does not support active write transactions".into());
+        }
+        let transaction = self
+            .state
+            .database
+            .begin_ro_txn()
+            .map_err(|error| error.to_string())?;
+        let documents_table = open_documents_table(&transaction, collection)?;
+        let cursor = transaction
+            .cursor(&documents_table)
+            .map_err(|error| error.to_string())?;
+
+        // The libmdbx cursor internally owns a cloned transaction handle and
+        // only carries the Rust transaction lifetime as a marker. Keep the
+        // transaction in the reader and drop the cursor before it.
+        let transaction = unsafe {
+            std::mem::transmute::<
+                Transaction<'_, RO, NoWriteMap>,
+                Transaction<'static, RO, NoWriteMap>,
+            >(transaction)
+        };
+        let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
+
+        Ok(MdbxCursorDocumentReader {
+            cursor,
+            _transaction: transaction,
+            ids: ids.to_vec(),
+            current_index: None,
+            current_present: false,
+            current_bytes: Vec::new(),
+        })
     }
 
     fn with_write_transaction<T>(

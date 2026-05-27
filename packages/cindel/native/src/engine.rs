@@ -1,3 +1,5 @@
+#[cfg(feature = "mdbx")]
+use crate::storage::MdbxCursorDocumentReader;
 use crate::storage::{
     DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackend, StorageBackendKind,
     StorageChangeSet, StorageEngine,
@@ -54,6 +56,15 @@ impl CindelEngine {
         ids: &[u64],
     ) -> Result<Vec<Option<Vec<u8>>>, String> {
         self.storage.get_many_stored(collection, ids)
+    }
+
+    #[cfg(feature = "mdbx")]
+    pub(crate) fn mdbx_cursor_document_reader(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<MdbxCursorDocumentReader, String> {
+        self.storage.mdbx_cursor_document_reader(collection, ids)
     }
 
     pub fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {

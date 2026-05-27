@@ -3,6 +3,8 @@ use crate::document_format::{
     write_value_record, BinaryValue,
 };
 use crate::engine::CindelEngine;
+#[cfg(feature = "mdbx")]
+use crate::storage::MdbxCursorDocumentReader;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
 };
@@ -535,6 +537,13 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     let Ok(layout) = NativeBatchLayout::new(field_type_bytes) else {
         return std::ptr::null_mut();
     };
+    #[cfg(feature = "mdbx")]
+    if let Ok(cursor) = engine.mdbx_cursor_document_reader(collection, &ids) {
+        return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            mode: CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor },
+        }));
+    }
+
     let Ok(documents) = engine.get_many_stored(collection, &ids) else {
         return std::ptr::null_mut();
     };
@@ -599,10 +608,10 @@ pub unsafe extern "C" fn cindel_native_document_reader_len(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_is_present(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
 ) -> bool {
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     reader.is_present(document_index)
@@ -610,12 +619,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_is_present(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_bool(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
     out_value: *mut bool,
 ) -> bool {
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     let Some(value) = reader.read_bool(document_index, field_index as usize) else {
@@ -631,7 +640,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bool(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_int(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
     out_value: *mut i64,
@@ -639,7 +648,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_int(
     if out_value.is_null() {
         return false;
     }
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     let Some(value) = reader.read_int(document_index, field_index as usize) else {
@@ -651,12 +660,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_int(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_double(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
     out_value: *mut f64,
 ) -> bool {
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     let Some(value) = reader.read_double(document_index, field_index as usize) else {
@@ -672,7 +681,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_double(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
     out_ptr: *mut *const u8,
@@ -683,7 +692,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
     }
     *out_ptr = std::ptr::null();
     *out_len = 0;
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
@@ -696,7 +705,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_string(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
     out_ptr: *mut *const u8,
@@ -711,7 +720,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_string(
     *out_len = 0;
     *out_is_ascii = false;
     *out_intern_id = 0;
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return false;
     };
     let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
@@ -725,11 +734,11 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_string(
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_list(
-    reader: *const CindelNativeDocumentReader,
+    reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
 ) -> *mut CindelNativeDocumentReader {
-    let Some(reader) = reader.as_ref() else {
+    let Some(reader) = reader.as_mut() else {
         return std::ptr::null_mut();
     };
     let Some(raw_list) = reader.read_list(document_index, field_index as usize) else {
@@ -1700,6 +1709,11 @@ enum CindelNativeDocumentReaderMode {
         all_present: bool,
         trusted_static_size: bool,
     },
+    #[cfg(feature = "mdbx")]
+    MdbxCursor {
+        layout: NativeBatchLayout,
+        cursor: MdbxCursorDocumentReader,
+    },
     RawList {
         bytes: Vec<u8>,
         entries: Vec<NativeRawListEntry>,
@@ -2125,12 +2139,14 @@ impl CindelNativeDocumentReader {
     fn len(&self) -> usize {
         match &self.mode {
             CindelNativeDocumentReaderMode::Batch { documents, .. } => documents.len(),
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor.len(),
             CindelNativeDocumentReaderMode::RawList { entries, .. } => entries.len(),
         }
     }
 
-    fn is_present(&self, document_index: usize) -> bool {
-        match &self.mode {
+    fn is_present(&mut self, document_index: usize) -> bool {
+        match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch {
                 documents,
                 all_present,
@@ -2142,17 +2158,38 @@ impl CindelNativeDocumentReader {
                     documents.get(document_index).is_some_and(Option::is_some)
                 }
             }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
+                cursor.is_present(document_index).unwrap_or(false)
+            }
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
                 document_index < entries.len()
             }
         }
     }
 
-    fn read_bool(&self, document_index: usize, field_index: usize) -> Option<bool> {
-        match &self.mode {
-            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+    fn read_bool(&mut self, document_index: usize, field_index: usize) -> Option<bool> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch {
+                layout,
+                documents,
+                trusted_static_size,
+                ..
+            } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
-                let bytes = self.document_bytes(document_index)?;
+                let bytes =
+                    batch_document_bytes(layout, documents, *trusted_static_size, document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                match *bytes.get(offset)? {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Bool)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
                 match *bytes.get(offset)? {
                     0 => Some(false),
@@ -2170,11 +2207,29 @@ impl CindelNativeDocumentReader {
         }
     }
 
-    fn read_int(&self, document_index: usize, field_index: usize) -> Option<i64> {
-        match &self.mode {
-            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+    fn read_int(&mut self, document_index: usize, field_index: usize) -> Option<i64> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch {
+                layout,
+                documents,
+                trusted_static_size,
+                ..
+            } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
-                let bytes = self.document_bytes(document_index)?;
+                let bytes =
+                    batch_document_bytes(layout, documents, *trusted_static_size, document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value == i64::MIN {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Int)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value == i64::MIN {
@@ -2204,11 +2259,29 @@ impl CindelNativeDocumentReader {
         }
     }
 
-    fn read_double(&self, document_index: usize, field_index: usize) -> Option<f64> {
-        match &self.mode {
-            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+    fn read_double(&mut self, document_index: usize, field_index: usize) -> Option<f64> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch {
+                layout,
+                documents,
+                trusted_static_size,
+                ..
+            } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
-                let bytes = self.document_bytes(document_index)?;
+                let bytes =
+                    batch_document_bytes(layout, documents, *trusted_static_size, document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value.is_finite() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Double)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value.is_finite() {
@@ -2237,16 +2310,42 @@ impl CindelNativeDocumentReader {
         }
     }
 
-    fn read_bytes(&self, document_index: usize, field_index: usize) -> Option<&[u8]> {
-        match &self.mode {
-            CindelNativeDocumentReaderMode::Batch { layout, .. } => {
+    fn read_bytes(&mut self, document_index: usize, field_index: usize) -> Option<&[u8]> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch {
+                layout,
+                documents,
+                trusted_static_size,
+                ..
+            } => {
                 match layout.field_type(field_index)? {
                     NativeBatchFieldType::String
                     | NativeBatchFieldType::List
                     | NativeBatchFieldType::Object => {}
                     _ => return None,
                 }
-                let bytes = self.document_bytes(document_index)?;
+                let bytes =
+                    batch_document_bytes(layout, documents, *trusted_static_size, document_index)?;
+                let offset = layout.absolute_offset(field_index)?;
+                let relative = read_u24(bytes, offset)?;
+                if relative == 0 {
+                    return None;
+                }
+                let header_offset = 3usize.checked_add(relative)?;
+                let len = read_u24(bytes, header_offset)?;
+                let start = header_offset.checked_add(3)?;
+                let end = start.checked_add(len)?;
+                bytes.get(start..end)
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                match layout.field_type(field_index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return None,
+                }
+                let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
                 let relative = read_u24(bytes, offset)?;
                 if relative == 0 {
@@ -2269,9 +2368,13 @@ impl CindelNativeDocumentReader {
         }
     }
 
-    fn read_list(&self, document_index: usize, field_index: usize) -> Option<NativeRawList> {
-        match &self.mode {
+    fn read_list(&mut self, document_index: usize, field_index: usize) -> Option<NativeRawList> {
+        match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { .. } => {
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { .. } => {
                 parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
@@ -2284,29 +2387,25 @@ impl CindelNativeDocumentReader {
             }
         }
     }
+}
 
-    fn document_bytes(&self, document_index: usize) -> Option<&[u8]> {
-        let CindelNativeDocumentReaderMode::Batch {
-            layout,
-            documents,
-            trusted_static_size,
-            ..
-        } = &self.mode
-        else {
+fn batch_document_bytes<'a>(
+    layout: &NativeBatchLayout,
+    documents: &'a [Option<Vec<u8>>],
+    trusted_static_size: bool,
+    document_index: usize,
+) -> Option<&'a [u8]> {
+    let bytes = documents.get(document_index)?.as_deref()?;
+    if !trusted_static_size {
+        let static_size = read_u24(bytes, 0)?;
+        if static_size != layout.static_size {
             return None;
-        };
-        let bytes = documents.get(document_index)?.as_deref()?;
-        if !*trusted_static_size {
-            let static_size = read_u24(bytes, 0)?;
-            if static_size != layout.static_size {
-                return None;
-            }
-            if bytes.len() < 3 + static_size {
-                return None;
-            }
         }
-        Some(bytes)
+        if bytes.len() < 3 + static_size {
+            return None;
+        }
     }
+    Some(bytes)
 }
 
 fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {

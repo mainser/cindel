@@ -5,6 +5,13 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.2
+
+- Improved typed MDBX `getAll` reads by keeping a native read cursor alive for
+  the batch reader, avoiding full batch materialization before Dart hydration.
+- Kept the existing batch reader as the fallback for non-MDBX paths and active
+  write transaction reads.
+
 ## 0.5.1
 
 - Updated `cindel` and `cindel_flutter_libs` to `0.5.1` so Flutter apps
