@@ -1,5 +1,6 @@
 use crate::document_format::{
-    write_list_records, write_string_value_record, write_value_record, BinaryValue,
+    write_compact_string_list_records, write_list_records, write_string_value_record,
+    write_value_record, BinaryValue,
 };
 use crate::engine::CindelEngine;
 use crate::storage::{
@@ -1686,7 +1687,15 @@ enum NativeBatchWriterMode {
     List {
         parent_index: usize,
         records: Vec<Option<Vec<u8>>>,
+        encoding: NativeListEncoding,
     },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NativeListEncoding {
+    Unknown,
+    Generic,
+    CompactString,
 }
 
 pub struct CindelNativeDocumentReader {
@@ -1798,6 +1807,7 @@ impl CindelNativeBatchWriter {
             mode: NativeBatchWriterMode::List {
                 parent_index,
                 records: vec![None; length],
+                encoding: NativeListEncoding::Unknown,
             },
             failed: false,
         }
@@ -1870,7 +1880,10 @@ impl CindelNativeBatchWriter {
                 current.bytes[offset] = if value { 1 } else { 0 };
                 Ok(())
             }
-            NativeBatchWriterMode::List { records, .. } => {
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => {
+                ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Bool(value)))
             }
         }
@@ -1888,7 +1901,10 @@ impl CindelNativeBatchWriter {
                 current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
                 Ok(())
             }
-            NativeBatchWriterMode::List { records, .. } => {
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => {
+                ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Int(value)))
             }
         }
@@ -1906,7 +1922,10 @@ impl CindelNativeBatchWriter {
                 current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
                 Ok(())
             }
-            NativeBatchWriterMode::List { records, .. } => {
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => {
+                ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Double(value)))
             }
         }
@@ -1944,9 +1963,17 @@ impl CindelNativeBatchWriter {
                 current.bytes.extend_from_slice(payload);
                 Ok(())
             }
-            NativeBatchWriterMode::List { records, .. } => {
-                let record = write_string_value_record(payload)?;
-                write_list_record(records, index, record)
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => match encoding {
+                NativeListEncoding::Unknown | NativeListEncoding::CompactString => {
+                    *encoding = NativeListEncoding::CompactString;
+                    write_list_record(records, index, payload.to_vec())
+                }
+                NativeListEncoding::Generic => {
+                    let record = write_string_value_record(payload)?;
+                    write_list_record(records, index, record)
+                }
             }
         }
     }
@@ -1960,11 +1987,16 @@ impl CindelNativeBatchWriter {
         let NativeBatchWriterMode::List {
             parent_index,
             records,
+            encoding,
         } = list_writer.mode
         else {
             return Err("native batch writer expected a list writer".into());
         };
-        let bytes = write_list_records(&records)?;
+        let bytes = if encoding == NativeListEncoding::CompactString {
+            write_compact_string_list_records(&records)?
+        } else {
+            write_list_records(&records)?
+        };
         self.write_bytes(parent_index, &bytes)
     }
 
@@ -2097,6 +2129,28 @@ fn write_list_value_record(
 ) -> Result<(), String> {
     let record = write_value_record(&value)?;
     write_list_record(records, index, record)
+}
+
+fn ensure_generic_list_records(
+    records: &mut [Option<Vec<u8>>],
+    encoding: &mut NativeListEncoding,
+) -> Result<(), String> {
+    match *encoding {
+        NativeListEncoding::Generic => Ok(()),
+        NativeListEncoding::Unknown => {
+            *encoding = NativeListEncoding::Generic;
+            Ok(())
+        }
+        NativeListEncoding::CompactString => {
+            for record in records.iter_mut() {
+                if let Some(payload) = record.take() {
+                    *record = Some(write_string_value_record(&payload)?);
+                }
+            }
+            *encoding = NativeListEncoding::Generic;
+            Ok(())
+        }
+    }
 }
 
 fn write_list_record(
@@ -2302,6 +2356,9 @@ impl CindelNativeDocumentReader {
 }
 
 fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
+    if is_native_compact_string_list(bytes)? {
+        return parse_native_compact_string_list(bytes);
+    }
     let count = read_u32_le(bytes, 0)? as usize;
     let mut offset = 4usize;
     let mut entries = Vec::with_capacity(count);
@@ -2333,9 +2390,69 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
     })
 }
 
+fn is_native_compact_string_list(bytes: &[u8]) -> Result<bool, String> {
+    if bytes.len() < 9 {
+        return Ok(false);
+    }
+    Ok(read_u32_le(bytes, 0)? == u32::MAX && bytes[4] == 1)
+}
+
+fn parse_native_compact_string_list(bytes: &[u8]) -> Result<NativeRawList, String> {
+    let count = read_u32_le(bytes, 5)? as usize;
+    let offsets_start = 9usize;
+    let offsets_len = count
+        .checked_mul(3)
+        .ok_or_else(|| "native compact string list offsets overflow".to_string())?;
+    read_native_slice(bytes, offsets_start, offsets_len)?;
+    let mut entries = Vec::with_capacity(count);
+    let mut max_end = offsets_start + offsets_len;
+    for index in 0..count {
+        let offset = read_u24_le(bytes, offsets_start + index * 3)? as usize;
+        if offset == 0 {
+            entries.push(NativeRawListEntry {
+                kind: NATIVE_VALUE_NULL,
+                is_null: true,
+                payload_start: 0,
+                payload_len: 0,
+            });
+            continue;
+        }
+        if offset < offsets_start + offsets_len {
+            return Err("native compact string list payload points into offsets".into());
+        }
+        let len = read_u24_le(bytes, offset)? as usize;
+        let payload_start = offset
+            .checked_add(3)
+            .ok_or_else(|| "native compact string list payload offset overflow".to_string())?;
+        let payload_end = payload_start
+            .checked_add(len)
+            .ok_or_else(|| "native compact string list payload length overflow".to_string())?;
+        read_native_slice(bytes, payload_start, len)?;
+        max_end = max_end.max(payload_end);
+        entries.push(NativeRawListEntry {
+            kind: NATIVE_VALUE_STRING,
+            is_null: false,
+            payload_start,
+            payload_len: len,
+        });
+    }
+    if max_end != bytes.len() {
+        return Err("native compact string list contains trailing bytes".into());
+    }
+    Ok(NativeRawList {
+        bytes: bytes.to_vec(),
+        entries,
+    })
+}
+
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
     let bytes = read_native_slice(bytes, offset, 4)?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_u24_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let bytes = read_native_slice(bytes, offset, 3)?;
+    Ok(bytes[0] as u32 | ((bytes[1] as u32) << 8) | ((bytes[2] as u32) << 16))
 }
 
 fn read_native_slice(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], String> {

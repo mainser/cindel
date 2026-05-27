@@ -16,6 +16,9 @@ const NULL_FLAG: u8 = 0x01;
 const COMPACT_NULL_BOOL: u8 = 0xff;
 const COMPACT_NULL_INT: i64 = i64::MIN;
 const COMPACT_NULL_DOUBLE_BITS: u64 = 0x7ff8_0000_0000_0001;
+const COMPACT_STRING_LIST_MARKER: u32 = u32::MAX;
+const COMPACT_STRING_LIST_KIND: u8 = 1;
+const COMPACT_STRING_LIST_HEADER_LEN: usize = 9;
 const MAX_OBJECT_SIZE: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -674,6 +677,54 @@ fn decode_value_record(bytes: &[u8], offset: &mut usize) -> Result<Option<Binary
     decode_payload(kind, payload).map(Some)
 }
 
+fn is_compact_string_list(bytes: &[u8]) -> bool {
+    bytes.len() >= COMPACT_STRING_LIST_HEADER_LEN
+        && read_u32(bytes, 0).ok() == Some(COMPACT_STRING_LIST_MARKER)
+        && bytes[4] == COMPACT_STRING_LIST_KIND
+}
+
+fn decode_compact_string_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
+    if !is_compact_string_list(bytes) {
+        return Err("binary list is not a compact string list".into());
+    }
+    let count = read_u32(bytes, 5)? as usize;
+    let offsets_start = COMPACT_STRING_LIST_HEADER_LEN;
+    let offsets_len = count
+        .checked_mul(3)
+        .ok_or_else(|| "compact string list offsets overflow".to_string())?;
+    read_slice(bytes, offsets_start, offsets_len)?;
+    let mut values = Vec::with_capacity(count);
+    let mut max_end = offsets_start + offsets_len;
+    for index in 0..count {
+        let offset = read_u24(bytes, offsets_start + index * 3)? as usize;
+        if offset == 0 {
+            values.push(None);
+            continue;
+        }
+        if offset < max_end {
+            return Err("compact string list payload points into offsets".into());
+        }
+        let len = read_u24(bytes, offset)? as usize;
+        let start = offset
+            .checked_add(3)
+            .ok_or_else(|| "compact string list payload offset overflow".to_string())?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| "compact string list payload length overflow".to_string())?;
+        let payload = read_slice(bytes, start, len)?;
+        max_end = max_end.max(end);
+        values.push(Some(BinaryValue::String(
+            str::from_utf8(payload)
+                .map_err(|_| "compact string list contains invalid utf-8".to_string())?
+                .to_string(),
+        )));
+    }
+    if max_end != bytes.len() {
+        return Err("compact string list contains trailing bytes".into());
+    }
+    Ok(values)
+}
+
 fn encode_list(values: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     push_u32(&mut bytes, checked_u32(values.len(), "list length")?);
@@ -702,6 +753,41 @@ pub(crate) fn write_string_value_record(payload: &[u8]) -> Result<Vec<u8>, Strin
     );
     record.extend_from_slice(payload);
     Ok(record)
+}
+
+pub(crate) fn write_compact_string_list_records(
+    records: &[Option<Vec<u8>>],
+) -> Result<Vec<u8>, String> {
+    let offsets_len = records
+        .len()
+        .checked_mul(3)
+        .ok_or_else(|| "compact string list offsets overflow".to_string())?;
+    let mut bytes = vec![0; COMPACT_STRING_LIST_HEADER_LEN + offsets_len];
+    push_u32_at(&mut bytes, 0, COMPACT_STRING_LIST_MARKER)?;
+    bytes[4] = COMPACT_STRING_LIST_KIND;
+    push_u32_at(
+        &mut bytes,
+        5,
+        checked_u32(records.len(), "compact string list length")?,
+    )?;
+    for (index, record) in records.iter().enumerate() {
+        let Some(payload) = record else {
+            continue;
+        };
+        let offset = checked_u32(bytes.len(), "compact string list offset")?;
+        if offset > 0x00ff_ffff {
+            return Err("compact string list offset is too large".into());
+        }
+        write_u24(&mut bytes, COMPACT_STRING_LIST_HEADER_LEN + index * 3, offset as usize)?;
+        if payload.len() > 0x00ff_ffff {
+            return Err("compact string list payload is too large".into());
+        }
+        let mut header = [0u8; 3];
+        write_u24(&mut header, 0, payload.len())?;
+        bytes.extend_from_slice(&header);
+        bytes.extend_from_slice(payload);
+    }
+    Ok(bytes)
 }
 
 pub(crate) fn write_list_records(records: &[Option<Vec<u8>>]) -> Result<Vec<u8>, String> {
@@ -734,6 +820,9 @@ fn encode_object(entries: &[(String, Option<BinaryValue>)]) -> Result<Vec<u8>, S
 }
 
 pub(crate) fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
+    if is_compact_string_list(bytes) {
+        return decode_compact_string_list(bytes);
+    }
     let count = read_u32(bytes, 0)? as usize;
     let mut offset = 4;
     let mut values = Vec::with_capacity(count);
@@ -1862,6 +1951,27 @@ fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
+fn push_u32_at(bytes: &mut [u8], offset: usize, value: u32) -> Result<(), String> {
+    let target = bytes
+        .get_mut(offset..offset + 4)
+        .ok_or_else(|| "binary document u32 write is out of range".to_string())?;
+    target.copy_from_slice(&value.to_le_bytes());
+    Ok(())
+}
+
+fn write_u24(bytes: &mut [u8], offset: usize, value: usize) -> Result<(), String> {
+    if value > 0x00ff_ffff {
+        return Err("binary document u24 value is too large".into());
+    }
+    let target = bytes
+        .get_mut(offset..offset + 3)
+        .ok_or_else(|| "binary document u24 write is out of range".to_string())?;
+    target[0] = (value & 0xff) as u8;
+    target[1] = ((value >> 8) & 0xff) as u8;
+    target[2] = ((value >> 16) & 0xff) as u8;
+    Ok(())
+}
+
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
     let bytes = read_slice(bytes, offset, 2)?;
     Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
@@ -1953,6 +2063,28 @@ mod tests {
         for (index, expected) in fields.iter().enumerate() {
             assert_eq!(&document.field_value(index).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn compact_string_lists_decode_like_value_records() {
+        // Scenario: Native typed writers store string lists with an Isar-like
+        // offset table instead of one generic value record per element.
+        // Expected: Readers still expose the same BinaryValue list shape.
+        let legacy = write_list(&[
+            Some(BinaryValue::String("time".to_string())),
+            Some(BinaryValue::String("river".to_string())),
+            None,
+        ])
+        .unwrap();
+        let compact = write_compact_string_list_records(&[
+            Some(b"time".to_vec()),
+            Some(b"river".to_vec()),
+            None,
+        ])
+        .unwrap();
+
+        assert!(compact.len() < legacy.len());
+        assert_eq!(decode_list(&compact).unwrap(), decode_list(&legacy).unwrap());
     }
 
     #[test]

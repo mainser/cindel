@@ -1047,12 +1047,21 @@ final class CindelNativeBindings {
 final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
   _CindelNativeDocumentWriter(this._functions, this._writer)
     : _stringBytes = _ReusableNativeBytes(256),
-      _largeStringCache = LinkedHashMap<String, Uint8List>();
+      _largeStringCache = LinkedHashMap<String, Uint8List>(),
+      _ownsBuffers = true;
+
+  _CindelNativeDocumentWriter._child(
+    this._functions,
+    this._writer,
+    this._stringBytes,
+    this._largeStringCache,
+  ) : _ownsBuffers = false;
 
   final _CindelNativeFunctions _functions;
   final Pointer<Void> _writer;
   final _ReusableNativeBytes _stringBytes;
   final LinkedHashMap<String, Uint8List> _largeStringCache;
+  final bool _ownsBuffers;
 
   @override
   void writeNull(int fieldIndex) {
@@ -1102,7 +1111,12 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
     if (writer == nullptr) {
       throw StateError('Native Cindel list writer allocation failed.');
     }
-    return _CindelNativeDocumentWriter(_functions, writer);
+    return _CindelNativeDocumentWriter._child(
+      _functions,
+      writer,
+      _stringBytes,
+      _largeStringCache,
+    );
   }
 
   @override
@@ -1119,7 +1133,9 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
   }
 
   void release() {
-    _stringBytes.free();
+    if (_ownsBuffers) {
+      _stringBytes.free();
+    }
   }
 
   Uint8List? _cachedLargeStringBytes(String value) {

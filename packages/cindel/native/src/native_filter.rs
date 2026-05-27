@@ -159,6 +159,9 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, String> {
+    if is_compact_string_list(bytes)? {
+        return compact_string_list_contains(bytes, expected);
+    }
     let count = read_u32_le(bytes, 0)? as usize;
     let mut offset = 4usize;
     for _ in 0..count {
@@ -179,9 +182,56 @@ fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, Strin
     Ok(false)
 }
 
+fn is_compact_string_list(bytes: &[u8]) -> Result<bool, String> {
+    if bytes.len() < 9 {
+        return Ok(false);
+    }
+    Ok(read_u32_le(bytes, 0)? == u32::MAX && bytes[4] == 1)
+}
+
+fn compact_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, String> {
+    let count = read_u32_le(bytes, 5)? as usize;
+    let offsets_start = 9usize;
+    let offsets_len = count
+        .checked_mul(3)
+        .ok_or_else(|| "compact string list offsets overflow".to_string())?;
+    read_slice(bytes, offsets_start, offsets_len)?;
+    let mut max_end = offsets_start + offsets_len;
+    for index in 0..count {
+        let offset = read_u24_le(bytes, offsets_start + index * 3)? as usize;
+        if offset == 0 {
+            continue;
+        }
+        if offset < offsets_start + offsets_len {
+            return Err("compact string list payload points into offsets".into());
+        }
+        let len = read_u24_le(bytes, offset)? as usize;
+        let start = offset
+            .checked_add(3)
+            .ok_or_else(|| "compact string list payload offset overflow".to_string())?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| "compact string list payload length overflow".to_string())?;
+        let payload = read_slice(bytes, start, len)?;
+        max_end = max_end.max(end);
+        if payload == expected {
+            return Ok(true);
+        }
+    }
+    if max_end != bytes.len() {
+        return Err("compact string list contains trailing bytes".into());
+    }
+    Ok(false)
+}
+
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
     let bytes = read_slice(bytes, offset, 4)?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_u24_le(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let bytes = read_slice(bytes, offset, 3)?;
+    Ok(bytes[0] as u32 | ((bytes[1] as u32) << 8) | ((bytes[2] as u32) << 16))
 }
 
 fn read_slice(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], String> {

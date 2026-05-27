@@ -47,6 +47,9 @@
   capacity for subsequent documents.
 - Added Isar-style nested native list writers for generated typed MDBX batch
   inserts, including direct string value-record writing for primitive lists.
+- Reduced generated typed MDBX insert overhead for `List<String>` fields by
+  storing native string lists with an Isar-like offset table and by sharing the
+  native string buffer between parent and list writers.
 - Bumped the native ABI to 25.
 
 ## 0.4.0
