@@ -1,35 +1,318 @@
-# cindel_generator
+# Cindel Generator
 
 Source generator for Cindel schemas, serializers, typed collections, query
-builders, filters, projections, and watcher helpers.
+builders, filters, projections, and native typed document hooks.
 
-## Usage
+[Overview](#overview) |
+[Setup](#setup) |
+[Model Shape](#model-shape) |
+[Generated API](#generated-api) |
+[Indexes](#indexes) |
+[Embedded Objects](#embedded-objects) |
+[Enums](#enums)
+
+> Most applications use `cindel_generator` as a `dev_dependency` together with
+> `build_runner`. It reads annotations from your model classes and emits the
+> `*.g.dart` files consumed by the `cindel` runtime.
+
+## Overview
+
+`cindel_generator` turns annotated Dart classes into the code Cindel needs for
+typed database access:
+
+- Collection schema metadata.
+- Manual document serializers and deserializers.
+- Compact binary document serializers and deserializers.
+- Native typed document readers and writers when the field layout supports it.
+- Typed collection accessors on `CindelDatabase`.
+- Indexed `where()` query helpers.
+- `filter()` query helpers for persisted fields.
+- Sorting, distinct, property projection, and aggregate helpers.
+- Composite index equality helpers.
+- Embedded object conversion helpers.
+
+The package is a build-time tool. It does not open databases and it does not
+ship native binaries.
+
+## Setup
+
+For Flutter apps, depend on Cindel and the native library package at runtime,
+then add the generator as a dev dependency:
 
 ```yaml
+dependencies:
+  cindel: ^0.5.2
+  cindel_flutter_libs: ^0.5.2
+
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.0
+  cindel_generator: ^0.5.2
 ```
 
-Run the generator with:
+Pure Dart packages can depend on `cindel` directly and provide a native library
+path with `CINDEL_NATIVE_LIBRARY` when needed.
+
+## Basic Usage
+
+Create a model file with a `part` directive and Cindel annotations:
+
+```dart
+import 'package:cindel/cindel.dart';
+
+part 'user.g.dart';
+
+@Collection(name: 'users')
+class User {
+  Id id = autoIncrement;
+
+  @Index(unique: true)
+  late String email;
+
+  @index
+  late String name;
+
+  bool active = true;
+}
+```
+
+Run the generator:
 
 ```sh
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-The generator reads Cindel annotations from model classes and emits:
+Then use the generated schema and typed collection API:
 
-- Schema manifests for the native runtime.
-- JSON-compatible serializers and deserializers.
-- Typed collection accessors.
-- Indexed query builders, including composite equality and primitive list
-  membership helpers.
-- Filter builders.
-- Sorting, pagination, distinct, and projection helpers.
-- Watcher and lazy watcher helpers.
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema],
+);
 
-## Release Status
+final user = User()
+  ..name = 'Jhon Doe'
+  ..email = 'jhon@example.com';
 
-This package is still pre-1.0.0. The `0.5.0` package line emits the compact
-typed document readers, writers, query helpers, and native hydration hooks used
-by the optimized Cindel runtime.
+await db.users.put(user);
+
+final saved = await db.users.where().emailEqualTo('jhon@example.com').findFirst();
+```
+
+## Model Shape
+
+Generated collections must follow the rules enforced by the generator:
+
+- `@Collection` can only be used on concrete classes.
+- A collection must declare at least one persisted field.
+- A collection must declare exactly one persisted field named `id`.
+- A collection needs either an unnamed constructor with no parameters or an
+  unnamed constructor with parameters for every persisted field.
+- Collections with final persisted fields need constructor parameters for every
+  persisted field.
+- Fields annotated with `@ignore` are excluded from persistence.
+
+Supported persisted field shapes are:
+
+- `bool`, `int`, `double`, and `String`.
+- `DateTime` and `Duration`.
+- Enums.
+- Embedded objects annotated with `@Embedded`.
+- Nullable variants of supported shapes.
+- Lists of supported non-list shapes.
+
+Nested lists are not supported.
+
+## Generated API
+
+For a `User` collection, the generator emits a schema named `UserSchema` and a
+typed database accessor:
+
+```dart
+final users = db.users;
+```
+
+It also emits conversion functions used by the runtime:
+
+- Dart object to manual Cindel document.
+- Manual Cindel document to Dart object.
+- Dart object to compact binary document.
+- Compact binary document to Dart object.
+- Native typed writer and reader hooks when supported by the field layout.
+- Id getter, and an id setter when the model can assign generated ids.
+
+Generated query access starts from `where()` for indexed fields and
+collection-level composite indexes:
+
+```dart
+final user = await db.users.where().emailEqualTo('jhon@example.com').findFirst();
+```
+
+Generated `filter()` helpers are available for persisted fields:
+
+```dart
+final activeUsers = await db.users
+    .filter()
+    .activeEqualTo(true)
+    .sortByName()
+    .findAll();
+```
+
+Generated query modifiers include field sorting, descending sorting, distinct
+helpers, and property query accessors:
+
+```dart
+final names = await db.users
+    .filter()
+    .activeEqualTo(true)
+    .sortByName()
+    .nameProperty()
+    .findAll();
+```
+
+## Indexes
+
+The generator reads `@index`, `@Index(...)`, and collection-level
+`CompositeIndex(...)` annotations.
+
+### Value Indexes
+
+```dart
+@index
+late String name;
+```
+
+Value indexes generate equality helpers and range-style helpers when the field
+type supports range queries.
+
+### Unique Indexes
+
+```dart
+@Index(unique: true)
+late String email;
+```
+
+Unique indexes generate the same lookup helpers and tell the runtime to enforce
+unique values.
+
+### Hash Indexes
+
+```dart
+@Index(type: CindelIndexType.hash)
+late String externalId;
+```
+
+Hash indexes generate equality helpers only.
+
+### Word Indexes
+
+```dart
+@Index(type: CindelIndexType.words)
+late String bio;
+```
+
+Word indexes are supported for string fields.
+
+### Multi-Entry Indexes
+
+```dart
+@Index(type: CindelIndexType.multiEntry)
+late List<String> tags;
+```
+
+Multi-entry indexes are supported for lists of primitive values, `DateTime`,
+`Duration`, or enums.
+
+### Composite Indexes
+
+```dart
+@Collection(
+  indexes: [
+    CompositeIndex(['teamId', 'email'], unique: true),
+  ],
+)
+class TeamMember {
+  Id id = autoIncrement;
+
+  late int teamId;
+  late String email;
+  late String name;
+}
+```
+
+Composite indexes generate equality helpers for the configured field set.
+
+## Embedded Objects
+
+Embedded classes are converted as part of their parent document.
+
+```dart
+@embedded
+class Address {
+  late String city;
+  late String country;
+}
+
+@collection
+class User {
+  Id id = autoIncrement;
+  late String name;
+  late Address address;
+}
+```
+
+Embedded indexes are not supported by the generator. Index the parent
+collection field instead when you need indexed lookups.
+
+## Enums
+
+The generator supports enum fields and `@Enumerated(...)` strategies.
+
+```dart
+enum UserRole { admin, editor, viewer }
+
+@collection
+class User {
+  Id id = autoIncrement;
+
+  @Enumerated(CindelEnumType.name)
+  late UserRole role;
+}
+```
+
+For value-based enum persistence:
+
+```dart
+enum AccountStatus {
+  active('A'),
+  suspended('S');
+
+  const AccountStatus(this.code);
+  final String code;
+}
+
+@collection
+class Account {
+  Id id = autoIncrement;
+
+  @Enumerated(CindelEnumType.value, valueField: 'code')
+  late AccountStatus status;
+}
+```
+
+## Builder Details
+
+The package registers a `build_runner` builder named `cindel_generator`.
+
+It uses `source_gen` as a shared part builder:
+
+- Input: `.dart` files.
+- Intermediate output: `.cindel.g.part`.
+- Final user-facing output: the combined `*.g.dart` part file.
+
+In normal projects, adding the dependency and running `build_runner` is enough.
+
+## Status
+
+Cindel is in active pre-1.0 development. This generator follows the same
+release line as the runtime package and emits the native typed readers, writers,
+query helpers, and hydration hooks used by the optimized Cindel runtime.

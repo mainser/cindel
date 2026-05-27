@@ -1,26 +1,299 @@
-# cindel_annotations
+# Cindel Annotations
 
-Public annotations and shared schema types for Cindel, an ultra-fast,
-lightweight NoSQL local database for Flutter and Dart apps.
+Public annotations and shared schema metadata types for Cindel models.
 
-## What It Provides
+[Overview](#overview) |
+[When To Use It](#when-to-use-it) |
+[Annotations](#annotations) |
+[Indexes](#indexes) |
+[Ids](#ids) |
+[Enum Fields](#enum-fields)
 
-- `@Collection` for persisted root models.
-- `@Embedded` for nested value objects.
-- `@Index` and `@index` for indexed fields.
-- `CompositeIndex` for collection-level composite indexes.
-- `CindelIndexType.multiEntry` for primitive list membership indexes.
-- `@Enumerated` for enum persistence strategies.
-- `@ignore` for transient fields.
-- `Id` and `autoIncrement` for generated native IDs.
-- Shared index and enum option types used by `cindel` and
-  `cindel_generator`.
+> Most applications should import `package:cindel/cindel.dart`. The main
+> `cindel` package re-exports these annotations together with the runtime API.
+> Use `cindel_annotations` directly when building generators, tooling, or
+> packages that only need model metadata and should not depend on the native
+> database runtime.
 
-Most applications depend on `cindel` directly, which re-exports the public
-annotation API. Generator and tooling packages depend on this package to share
-schema metadata without pulling in the native runtime.
+## Overview
 
-## Release Status
+`cindel_annotations` contains the small, stable annotation surface used by
+`cindel_generator` to turn regular Dart classes into Cindel schemas,
+collections, query builders, and typed database accessors.
 
-This package is still pre-1.0.0. The `0.5.0` package line is aligned with the
-optimized Cindel runtime and generator release.
+It does not open databases, run queries, or include native binaries. It only
+defines the model metadata that the generator and runtime agree on.
+
+## When To Use It
+
+Use the main Cindel package in app code:
+
+```dart
+import 'package:cindel/cindel.dart';
+```
+
+Use this package directly only when you need annotations without the database
+runtime:
+
+```dart
+import 'package:cindel_annotations/cindel_annotations.dart';
+```
+
+Typical direct users are:
+
+- Code generators.
+- Schema analysis tools.
+- Shared model packages that do not open a database.
+- Tests for generator behavior.
+
+## Annotations
+
+### `@Collection`
+
+Marks a Dart class as a persisted root collection.
+
+```dart
+@Collection(name: 'users')
+class User {
+  Id id = autoIncrement;
+
+  late String name;
+  late String email;
+}
+```
+
+When `name` is omitted, the generator derives the collection name from the
+class name.
+
+```dart
+@collection
+class Project {
+  Id id = autoIncrement;
+  late String title;
+}
+```
+
+`@collection` is the shorthand constant for `@Collection()`.
+
+### `@Embedded`
+
+Marks a Dart class as a value object stored inside a parent document.
+
+```dart
+@embedded
+class Address {
+  late String city;
+  late String country;
+}
+
+@collection
+class User {
+  Id id = autoIncrement;
+  late String name;
+  late Address address;
+}
+```
+
+Embedded objects do not get their own collection or generated collection API.
+
+### `@ignore`
+
+Excludes a field from generated persistence.
+
+```dart
+@collection
+class User {
+  Id id = autoIncrement;
+
+  late String name;
+
+  @ignore
+  bool selectedInUi = false;
+}
+```
+
+Use it for transient UI state, cached values, or fields that should be
+computed from persisted data.
+
+## Indexes
+
+Indexes tell the generator and runtime which fields should support efficient
+lookup helpers.
+
+### Value Indexes
+
+`@index` is the shorthand for a regular value index.
+
+```dart
+@collection
+class User {
+  Id id = autoIncrement;
+
+  @index
+  late String name;
+}
+```
+
+Value indexes support equality and range-style helpers where the field type
+allows it.
+
+### Unique Indexes
+
+Use `@Index(unique: true)` when a value must be unique in the collection.
+
+```dart
+@collection
+class User {
+  Id id = autoIncrement;
+
+  @Index(unique: true)
+  late String email;
+}
+```
+
+### Case-Insensitive String Indexes
+
+Use `caseSensitive: false` for case-insensitive string lookup.
+
+```dart
+@Index(caseSensitive: false)
+late String username;
+```
+
+### Hash Indexes
+
+Hash indexes store a compact hash and support equality lookup only.
+
+```dart
+@Index(type: CindelIndexType.hash)
+late String externalId;
+```
+
+### Word Indexes
+
+Word indexes split a string into searchable tokens.
+
+```dart
+@Index(type: CindelIndexType.words)
+late String bio;
+```
+
+### Multi-Entry Indexes
+
+Multi-entry indexes add one index entry for each primitive list item.
+
+```dart
+@Index(type: CindelIndexType.multiEntry)
+late List<String> tags;
+```
+
+Use this for membership-style queries over primitive lists.
+
+### Composite Indexes
+
+Composite indexes are declared at the collection level.
+
+```dart
+@Collection(
+  indexes: [
+    CompositeIndex(['teamId', 'email'], unique: true),
+  ],
+)
+class TeamMember {
+  Id id = autoIncrement;
+
+  late int teamId;
+  late String email;
+  late String name;
+}
+```
+
+The field order matters because it defines the composite key order.
+
+## Ids
+
+`Id` is the type used by generated schemas for document ids.
+
+```dart
+@collection
+class User {
+  Id id = autoIncrement;
+  late String name;
+}
+```
+
+`autoIncrement` is the sentinel value that tells Cindel to allocate the next
+native id when the object is inserted.
+
+You can also assign ids manually:
+
+```dart
+@collection
+class User {
+  Id id;
+  late String name;
+
+  User({required this.id, required this.name});
+}
+
+final user = User(id: 42, name: 'Jhon Doe');
+```
+
+## Enum Fields
+
+Use `@Enumerated` to choose how enum values are stored.
+
+```dart
+enum UserRole { admin, editor, viewer }
+
+@collection
+class User {
+  Id id = autoIncrement;
+
+  @Enumerated(CindelEnumType.name)
+  late UserRole role;
+}
+```
+
+Available strategies:
+
+- `CindelEnumType.name`: stores the enum case name.
+- `CindelEnumType.ordinal`: stores the enum index.
+- `CindelEnumType.value`: stores an enum instance field.
+
+For value-based enum persistence:
+
+```dart
+enum AccountStatus {
+  active('A'),
+  suspended('S');
+
+  const AccountStatus(this.code);
+  final String code;
+}
+
+@collection
+class Account {
+  Id id = autoIncrement;
+
+  @Enumerated(CindelEnumType.value, valueField: 'code')
+  late AccountStatus status;
+}
+```
+
+## Package Role
+
+The Cindel packages are published separately:
+
+- `cindel_annotations`: annotations and metadata types.
+- `cindel_generator`: code generation for annotated models.
+- `cindel`: runtime API, typed collections, queries, watchers, and native FFI.
+
+This package is intentionally small so generator and tooling packages can share
+the schema contract without depending on the database runtime.
+
+## Status
+
+Cindel is in active pre-1.0 development. Annotation names are designed to stay
+small and familiar, but generated schema behavior can still evolve before the
+stable release line.

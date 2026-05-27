@@ -288,7 +288,8 @@ class CindelDatabase {
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
       _markNativeCollectionChanged(
-        CindelChangeSet.upsert(collection, id, value),
+        collection,
+        () => CindelChangeSet.upsert(collection, id, value),
       );
       return;
     }
@@ -301,7 +302,10 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
-    _markNativeCollectionChanged(CindelChangeSet.upsert(collection, id, value));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.upsert(collection, id, value),
+    );
   }
 
   /// Stores every document in [values] atomically.
@@ -338,7 +342,10 @@ class CindelDatabase {
       collection,
       _encodeBatchPutEntries(documents),
     );
-    _markNativeCollectionChanged(CindelChangeSet.upserts(collection, values));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.upserts(collection, values),
+    );
   }
 
   /// Stores one generated binary document.
@@ -359,7 +366,8 @@ class CindelDatabase {
 
     _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
     _markNativeCollectionChanged(
-      CindelChangeSet.upsert(collection, id, document),
+      collection,
+      () => CindelChangeSet.upsert(collection, id, document),
     );
   }
 
@@ -386,7 +394,8 @@ class CindelDatabase {
       _encodeBinaryBatchPutEntries(values),
     );
     _markNativeCollectionChanged(
-      CindelChangeSet.upserts(collection, documents, ids: values.keys),
+      collection,
+      () => CindelChangeSet.upserts(collection, documents, ids: values.keys),
     );
   }
 
@@ -429,7 +438,8 @@ class CindelDatabase {
       trackChanges,
     );
     _markNativeCollectionChanged(
-      CindelChangeSet.upserts(collection, null, ids: ids),
+      collection,
+      () => CindelChangeSet.upserts(collection, null, ids: ids),
     );
   }
 
@@ -461,7 +471,10 @@ class CindelDatabase {
       writeDocument,
       trackChanges,
     );
-    _markNativeCollectionChanged(CindelChangeSet.upserts(collection, null));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.upserts(collection, null),
+    );
   }
 
   /// Stores many documents atomically.
@@ -641,7 +654,10 @@ class CindelDatabase {
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
-    _markNativeCollectionChanged(CindelChangeSet.delete(collection, id));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.delete(collection, id),
+    );
   }
 
   /// Deletes every document under [ids] atomically.
@@ -658,7 +674,10 @@ class CindelDatabase {
     }
 
     _bindings.deleteMany(handle, collection, _encodeIds(idList));
-    _markNativeCollectionChanged(CindelChangeSet.deletes(collection, idList));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.deletes(collection, idList),
+    );
   }
 
   /// Watches the current value of a document and emits after committed changes.
@@ -1093,7 +1112,10 @@ class CindelDatabase {
       _encodeNativeQueryPlan(collection, plan),
     );
     if (ids.isNotEmpty) {
-      _markNativeCollectionChanged(CindelChangeSet.deletes(collection, ids));
+      _markNativeCollectionChanged(
+        collection,
+        () => CindelChangeSet.deletes(collection, ids),
+      );
     }
     return ids;
   }
@@ -1117,7 +1139,10 @@ class CindelDatabase {
       encodeFieldUpdates(updates),
     );
     if (count > 0) {
-      _markNativeCollectionChanged(CindelChangeSet.external(collection));
+      _markNativeCollectionChanged(
+        collection,
+        () => CindelChangeSet.external(collection),
+      );
     }
     return count;
   }
@@ -1755,19 +1780,23 @@ class CindelDatabase {
     }
   }
 
-  void _markNativeCollectionChanged(CindelChangeSet fallback) {
+  void _markNativeCollectionChanged(
+    String collection,
+    CindelChangeSet Function() fallback,
+  ) {
     if (_activeTransaction == _TransactionMode.write) {
-      _markCollectionChanged(fallback);
+      _markCollectionChanged(fallback());
       return;
     }
 
     final handle = _checkOpen();
-    if (!_hasWatchers(fallback.collection)) {
+    if (!_hasWatchers(collection)) {
       _bindings.discardChanges(handle);
       return;
     }
+    final localChange = fallback();
     final changes = _changesFromNative(_takeNativeChangeSets(handle), {
-      fallback.collection: fallback,
+      localChange.collection: localChange,
     });
     for (final change in changes) {
       _notifyWatchers(change);

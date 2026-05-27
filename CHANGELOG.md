@@ -26,6 +26,8 @@ while the core design settles.
 - Added a direct compact bool equality scan for sorted indexed query plans.
 - Specialized prepared native bool equality filters for compact MDBX binary
   documents.
+- Avoided building local watcher change sets for native writes when no watcher
+  is registered, reducing delete and write overhead on the common path.
 - Bumped the native ABI to 28.
 
 ## 0.5.1

@@ -5,17 +5,17 @@ annotated Cindel models.
 
 ```yaml
 dependencies:
-  cindel_annotations: ^0.5.0
+  cindel: ^0.5.2
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.0
+  cindel_generator: ^0.5.2
 ```
 
 Given an annotated model:
 
 ```dart
-import 'package:cindel_annotations/cindel_annotations.dart';
+import 'package:cindel/cindel.dart';
 
 part 'user.g.dart';
 
