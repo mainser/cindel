@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Updated the Cindel API package to the `0.5.1` patch line so Flutter app
+  dependency sets can pair it with `cindel_flutter_libs` `0.5.1`, which
+  contains the regenerated native runtime libraries required by the 0.5 API.
+
 ## 0.5.0
 
 - Updated the Cindel API package and hosted Cindel package constraints to the

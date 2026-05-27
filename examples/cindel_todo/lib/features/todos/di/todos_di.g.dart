@@ -46,7 +46,7 @@ final class TodoDatabaseProvider
   }
 }
 
-String _$todoDatabaseHash() => r'778bf22ae68ede036042503a5066ccef2b03cdcc';
+String _$todoDatabaseHash() => r'09bed84a6457407593f3276c907d28c82c10ee4b';
 
 @ProviderFor(todosLocalDataSource)
 final todosLocalDataSourceProvider = TodosLocalDataSourceProvider._();

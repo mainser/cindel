@@ -5,8 +5,8 @@ prebuilt native runtime is bundled with the app.
 
 ```yaml
 dependencies:
-  cindel: ^0.5.0
-  cindel_flutter_libs: ^0.5.0
+  cindel: ^0.5.1
+  cindel_flutter_libs: ^0.5.1
 ```
 
 No Dart import is required from this package. It is a Flutter plugin that

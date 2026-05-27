@@ -74,8 +74,8 @@ Add the runtime packages:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.0
-  cindel_flutter_libs: ^0.5.0
+  cindel: ^0.5.1
+  cindel_flutter_libs: ^0.5.1
 
 dev_dependencies:
   build_runner: ^2.15.0

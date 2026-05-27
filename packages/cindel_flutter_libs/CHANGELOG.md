@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- Regenerated Windows, Android, and Linux native runtime libraries so the
+  shipped binaries match the `cindel` 0.5.0 native FFI surface, including the
+  native batch list writer symbols required by typed `List<String>` writes.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.5.0
 
 - Updated the Flutter native libraries package to the coordinated `0.5.0`

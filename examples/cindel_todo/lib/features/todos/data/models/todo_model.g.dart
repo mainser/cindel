@@ -16,6 +16,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
     CindelFieldSchema(
       name: "id",
       dartType: "int",
+      binaryType: "int",
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
@@ -25,6 +26,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
     CindelFieldSchema(
       name: "title",
       dartType: "String",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -34,6 +36,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
     CindelFieldSchema(
       name: "titleWords",
       dartType: "String",
+      binaryType: "string",
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
@@ -43,6 +46,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
     CindelFieldSchema(
       name: "completed",
       dartType: "bool",
+      binaryType: "bool",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -52,6 +56,7 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
     CindelFieldSchema(
       name: "createdAtMicros",
       dartType: "int",
+      binaryType: "int",
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
@@ -59,8 +64,14 @@ final TodoModelSchema = CindelCollectionSchema<TodoModel>(
       indexType: CindelIndexType.value,
     ),
   ],
+  compositeIndexes: <CindelCompositeIndexSchema>[],
   toDocument: _$TodoModelToCindelDocument,
   fromDocument: _$TodoModelFromCindelDocument,
+  toBinaryDocument: _$TodoModelToCindelBinaryDocument,
+  fromBinaryDocument: _$TodoModelFromCindelBinaryDocument,
+  writeNativeDocument: _$TodoModelWriteCindelNativeDocument,
+  readNativeDocument: _$TodoModelReadCindelNativeDocument,
+  getId: _$TodoModelGetCindelId,
   setId: _$TodoModelSetCindelId,
 );
 
@@ -403,6 +414,69 @@ TodoModel _$TodoModelFromCindelDocument(Map<String, Object?> document) {
   object.completed = document["completed"] as bool;
   object.createdAtMicros = document["createdAtMicros"] as int;
   return object;
+}
+
+CindelBinaryDocumentBytes _$TodoModelToCindelBinaryDocument(TodoModel object) {
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[
+      object.completed,
+      object.createdAtMicros,
+      object.id,
+      object.title,
+      object.titleWords,
+    ],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.boolValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+    ],
+  );
+}
+
+TodoModel _$TodoModelFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 23);
+  final Object? field0 = reader.readBool(0, 0);
+  final Object? field1 = reader.readInt(1, 1);
+  final Object? field2 = reader.readInt(2, 9);
+  final Object? field3 = reader.readString(3, 17);
+  final Object? field4 = reader.readString(4, 20);
+  final object = TodoModel();
+  object.id = field2 as int;
+  object.title = field3 as String;
+  object.titleWords = field4 as String;
+  object.completed = field0 as bool;
+  object.createdAtMicros = field1 as int;
+  return object;
+}
+
+void _$TodoModelWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  TodoModel object,
+) {
+  writer.writeBool(0, object.completed);
+  writer.writeInt(1, object.createdAtMicros);
+  writer.writeInt(2, object.id);
+  writer.writeString(3, object.title);
+  writer.writeString(4, object.titleWords);
+}
+
+TodoModel _$TodoModelReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = TodoModel();
+  object.id = reader.readInt(documentIndex, 2) as int;
+  object.title = reader.readString(documentIndex, 3) as String;
+  object.titleWords = reader.readString(documentIndex, 4) as String;
+  object.completed = reader.readBool(documentIndex, 0) as bool;
+  object.createdAtMicros = reader.readInt(documentIndex, 1) as int;
+  return object;
+}
+
+int _$TodoModelGetCindelId(TodoModel object) {
+  return object.id;
 }
 
 void _$TodoModelSetCindelId(TodoModel object, int id) {

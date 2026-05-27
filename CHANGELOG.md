@@ -5,6 +5,14 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.1
+
+- Updated `cindel` and `cindel_flutter_libs` to `0.5.1` so Flutter apps
+  resolve the regenerated native runtime libraries instead of the broken
+  `0.5.0` prebuilts.
+- Regenerated Windows, Android, and Linux native runtime libraries with the
+  native batch list writer symbols required by typed `List<String>` writes.
+
 ## 0.5.0
 
 - Updated all publishable packages and the Todo example to the coordinated
