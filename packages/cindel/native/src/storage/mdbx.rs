@@ -121,6 +121,10 @@ enum MdbxQueryCursorSource {
         started: bool,
         seen: Option<HashSet<u64>>,
     },
+    Sorted {
+        documents: Vec<BorrowedPlannedDocument<'static>>,
+        current_index: usize,
+    },
 }
 
 pub(crate) struct MdbxQueryDocumentReader {
@@ -232,14 +236,42 @@ impl MdbxQueryDocumentReader {
                 self.emitted += 1;
                 return Ok(true);
             },
+            MdbxQueryCursorSource::Sorted {
+                documents,
+                current_index,
+            } => {
+                if *current_index >= documents.len() {
+                    self.current_present = false;
+                    return Ok(false);
+                }
+                *current_index += 1;
+                self.current_present = true;
+                self.emitted += 1;
+                Ok(true)
+            }
         }
     }
 
     pub(crate) fn document_bytes(&self, document_index: usize) -> Result<Option<&[u8]>, String> {
-        if document_index == 0 && self.current_present {
-            Ok(Some(&self.current_bytes))
-        } else {
-            Ok(None)
+        if document_index != 0 || !self.current_present {
+            return Ok(None);
+        }
+        match &self.source {
+            MdbxQueryCursorSource::Sorted {
+                documents,
+                current_index,
+            } => {
+                let Some(document) = current_index
+                    .checked_sub(1)
+                    .and_then(|index| documents.get(index))
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(document.bytes.as_ref()))
+            }
+            MdbxQueryCursorSource::Documents { .. } | MdbxQueryCursorSource::IndexEqual { .. } => {
+                Ok(Some(&self.current_bytes))
+            }
         }
     }
 }
@@ -618,10 +650,7 @@ impl MdbxStorage {
         collection: &str,
         plan: &WireQueryPlan,
     ) -> Result<Option<MdbxQueryDocumentReader>, String> {
-        if self.active_write().is_some()
-            || !plan.sorts.is_empty()
-            || !plan.distinct_fields.is_empty()
-        {
+        if self.active_write().is_some() || !plan.distinct_fields.is_empty() {
             return Ok(None);
         }
 
@@ -638,6 +667,193 @@ impl MdbxStorage {
             .database
             .begin_ro_txn()
             .map_err(|error| error.to_string())?;
+
+        if !plan.sorts.is_empty() {
+            let documents = {
+                let sort_fields = query_sort_fields(&schema, &plan.sorts)?;
+                let offset = plan.offset as usize;
+                let limit = plan.limit.map(|value| value as usize);
+                let documents_table = match open_documents_table(&transaction, collection) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let mut documents_cursor = transaction
+                    .cursor(&documents_table)
+                    .map_err(|error| error.to_string())?;
+                let mut planned = Vec::new();
+                let mut seen = query_source_dedupes(&plan.source).then(HashSet::new);
+                let mut position = 0usize;
+
+                if let Some(bool_query) = direct_bool_index_query(&schema, plan) {
+                    for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+                        let (key, bytes) = row.map_err(|error| error.to_string())?;
+                        if !direct_bool_index_query_matches(&schema, bytes.as_ref(), &bool_query)? {
+                            continue;
+                        }
+                        let id = decode_document_table_key(&key)?;
+                        push_borrowed_planned_document(
+                            &schema,
+                            filter.as_ref(),
+                            &sort_fields,
+                            &mut planned,
+                            id,
+                            bytes,
+                            position,
+                        )?;
+                        position += 1;
+                    }
+                } else {
+                    match &plan.source {
+                        WireQuerySource::All { .. } => {
+                            for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                            {
+                                let (key, bytes) = row.map_err(|error| error.to_string())?;
+                                let id = decode_document_table_key(&key)?;
+                                push_borrowed_planned_document(
+                                    &schema,
+                                    filter.as_ref(),
+                                    &sort_fields,
+                                    &mut planned,
+                                    id,
+                                    bytes,
+                                    position,
+                                )?;
+                                position += 1;
+                            }
+                        }
+                        WireQuerySource::IndexEqual {
+                            index_name, value, ..
+                        } => {
+                            let value = wire_index_value_to_storage(value)?;
+                            let key = index_value_key(&value)?;
+                            let Ok(index_table) =
+                                open_index_table(&transaction, collection, index_name)
+                            else {
+                                return Ok(None);
+                            };
+                            let mut index_cursor = transaction
+                                .cursor(&index_table)
+                                .map_err(|error| error.to_string())?;
+                            for row in index_cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&key)
+                            {
+                                let (entry_key, value) = row.map_err(|error| error.to_string())?;
+                                if entry_key.as_ref() != key {
+                                    break;
+                                }
+                                let id = decode_u64(&value)?;
+                                if let Some(seen) = &mut seen {
+                                    if !seen.insert(id) {
+                                        continue;
+                                    }
+                                }
+                                let Some(bytes) = ignore_not_found(
+                                    documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                                )?
+                                else {
+                                    position += 1;
+                                    continue;
+                                };
+                                push_borrowed_planned_document(
+                                    &schema,
+                                    filter.as_ref(),
+                                    &sort_fields,
+                                    &mut planned,
+                                    id,
+                                    bytes,
+                                    position,
+                                )?;
+                                position += 1;
+                            }
+                        }
+                        WireQuerySource::IndexRange {
+                            index_name,
+                            lower,
+                            upper,
+                            ..
+                        } => {
+                            let lower = lower
+                                .as_ref()
+                                .map(wire_index_value_to_storage)
+                                .transpose()?;
+                            let upper = upper
+                                .as_ref()
+                                .map(wire_index_value_to_storage)
+                                .transpose()?;
+                            let range = encode_table_index_range(lower.as_ref(), upper.as_ref())?;
+                            let Ok(index_table) =
+                                open_index_table(&transaction, collection, index_name)
+                            else {
+                                return Ok(None);
+                            };
+                            let mut index_cursor = transaction
+                                .cursor(&index_table)
+                                .map_err(|error| error.to_string())?;
+                            for row in
+                                index_cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&range.start)
+                            {
+                                let (key, value) = row.map_err(|error| error.to_string())?;
+                                if key.as_ref() > range.end_inclusive.as_slice() {
+                                    break;
+                                }
+                                let id = decode_u64(&value)?;
+                                if let Some(seen) = &mut seen {
+                                    if !seen.insert(id) {
+                                        continue;
+                                    }
+                                }
+                                let Some(bytes) = ignore_not_found(
+                                    documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                                )?
+                                else {
+                                    position += 1;
+                                    continue;
+                                };
+                                push_borrowed_planned_document(
+                                    &schema,
+                                    filter.as_ref(),
+                                    &sort_fields,
+                                    &mut planned,
+                                    id,
+                                    bytes,
+                                    position,
+                                )?;
+                                position += 1;
+                            }
+                        }
+                    }
+                }
+                let order = borrowed_planned_document_order(&planned, &sort_fields);
+                window_ordered_borrowed_query_documents(planned, order, offset, limit)
+            };
+            let documents = unsafe {
+                std::mem::transmute::<
+                    Vec<BorrowedPlannedDocument<'_>>,
+                    Vec<BorrowedPlannedDocument<'static>>,
+                >(documents)
+            };
+            let transaction = unsafe {
+                std::mem::transmute::<
+                    Transaction<'_, RO, NoWriteMap>,
+                    Transaction<'static, RO, NoWriteMap>,
+                >(transaction)
+            };
+            return Ok(Some(MdbxQueryDocumentReader {
+                source: MdbxQueryCursorSource::Sorted {
+                    documents,
+                    current_index: 0,
+                },
+                _transaction: transaction,
+                schema,
+                filter,
+                offset: 0,
+                limit: None,
+                matched: 0,
+                emitted: 0,
+                current_present: false,
+                current_bytes: Vec::new(),
+            }));
+        }
+
         let source = match &plan.source {
             WireQuerySource::All { .. } => {
                 let documents_table = match open_documents_table(&transaction, collection) {
@@ -937,6 +1153,30 @@ impl MdbxStorage {
             let mut planned = Vec::new();
             let mut seen = query_source_dedupes(&plan.source).then(HashSet::new);
             let mut position = 0usize;
+
+            if let Some(bool_query) = direct_bool_index_query(schema, plan) {
+                for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+                    let (key, bytes) = row.map_err(|error| error.to_string())?;
+                    if !direct_bool_index_query_matches(schema, bytes.as_ref(), &bool_query)? {
+                        continue;
+                    }
+                    let id = decode_document_table_key(&key)?;
+                    push_borrowed_planned_document(
+                        schema,
+                        filter,
+                        &sort_fields,
+                        &mut planned,
+                        id,
+                        bytes,
+                        position,
+                    )?;
+                    position += 1;
+                }
+                let order = borrowed_planned_document_order(&planned, &sort_fields);
+                return Ok(window_ordered_borrowed_planned_documents(
+                    planned, order, offset, limit,
+                ));
+            }
 
             match &plan.source {
                 WireQuerySource::All { .. } => {
@@ -2766,6 +3006,86 @@ struct DirectBoolIndexUpdate {
     new_value: bool,
 }
 
+struct DirectBoolIndexQuery {
+    field_index: usize,
+    static_offset: usize,
+    static_size: usize,
+    value: bool,
+}
+
+fn direct_bool_index_query(
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+) -> Option<DirectBoolIndexQuery> {
+    let WireQuerySource::IndexEqual {
+        index_name,
+        value: WireIndexValue::Bool(value),
+        dedupe: false,
+    } = &plan.source
+    else {
+        return None;
+    };
+    if schema
+        .composite_indexes
+        .iter()
+        .any(|index| index.fields.iter().any(|field| field == index_name))
+    {
+        return None;
+    }
+
+    let mut static_offset = 0usize;
+    let mut static_size = 0usize;
+    let mut target = None;
+    for (field_index, field) in schema.fields.iter().enumerate() {
+        let field_size = compact_field_static_size(&field.binary_type)?;
+        if field.name == *index_name {
+            if !field.is_indexed
+                || field.is_index_unique
+                || field.index_type != "value"
+                || normalized_binary_type(&field.binary_type) != "bool"
+            {
+                return None;
+            }
+            target = Some((field_index, static_offset));
+        }
+        static_offset = static_offset.checked_add(field_size)?;
+        static_size = static_size.checked_add(field_size)?;
+    }
+    target.map(|(field_index, static_offset)| DirectBoolIndexQuery {
+        field_index,
+        static_offset,
+        static_size,
+        value: *value,
+    })
+}
+
+fn direct_bool_index_query_matches(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    query: &DirectBoolIndexQuery,
+) -> Result<bool, String> {
+    if bytes.starts_with(b"CDBF") {
+        return Ok(matches!(
+            read_binary_field_at(schema, bytes, query.field_index)?,
+            Some(BinaryValue::Bool(value)) if value == query.value
+        ));
+    }
+    if bytes.len() < 3 {
+        return Err("compact binary document is shorter than the header".into());
+    }
+    let static_size = read_compact_u24(bytes, 0)? as usize;
+    if static_size != query.static_size {
+        return Err("compact binary document static size does not match schema".into());
+    }
+    if bytes.len() < 3 + static_size {
+        return Err("compact binary document static section is truncated".into());
+    }
+    let Some(value) = bytes.get(3 + query.static_offset) else {
+        return Err("compact bool field is outside the static section".into());
+    };
+    Ok(matches!((*value, query.value), (0, false) | (1, true)))
+}
+
 fn direct_bool_index_update(
     schema: &CollectionSchemaManifest,
     plan: &WireQueryPlan,
@@ -3180,6 +3500,27 @@ fn window_ordered_borrowed_planned_documents(
             bytes: document.bytes.into_owned(),
             position: document.position,
         })
+        .collect()
+}
+
+fn window_ordered_borrowed_query_documents<'a>(
+    documents: Vec<BorrowedPlannedDocument<'a>>,
+    order: Vec<usize>,
+    offset: usize,
+    limit: Option<usize>,
+) -> Vec<BorrowedPlannedDocument<'a>> {
+    if offset >= order.len() {
+        return Vec::new();
+    }
+    let end = limit
+        .map(|limit| offset.saturating_add(limit).min(order.len()))
+        .unwrap_or(order.len());
+    let mut documents = documents.into_iter().map(Some).collect::<Vec<_>>();
+    order
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .filter_map(|index| documents[index].take())
         .collect()
 }
 
@@ -5260,6 +5601,45 @@ mod tests {
     }
 
     #[test]
+    fn sorts_bool_index_equal_query_documents() {
+        let directory = TemporaryDirectory::new("bool_index_equal_sort");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&task_schema_manifest()).unwrap();
+
+        for (id, completed, title) in [(1, true, "Cid"), (2, false, "Ben"), (3, true, "Ana")] {
+            storage
+                .put_indexed(
+                    "tasks",
+                    id,
+                    &task_document(completed, id as i64, title),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexEqual {
+                index_name: "completed".to_string(),
+                value: WireIndexValue::Bool(true),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "title".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        assert_eq!(
+            storage.query_plan_documents("tasks", &plan).unwrap(),
+            vec![task_document(true, 3, "Ana"), task_document(true, 1, "Cid"),]
+        );
+    }
+
+    #[test]
     fn aggregates_binary_document_fields() {
         // Scenario: PERF-15 keeps aggregate queries inside MDBX instead of
         // hydrating full Dart objects.
@@ -5613,6 +5993,21 @@ mod tests {
         }
     }
 
+    fn task_schema_manifest() -> SchemaManifest {
+        SchemaManifest {
+            collections: vec![CollectionSchemaManifest {
+                name: "tasks".to_string(),
+                id_field: "id".to_string(),
+                fields: vec![
+                    test_field("completed", "bool", false, true),
+                    test_field("id", "int", true, false),
+                    test_field("title", "String", false, false),
+                ],
+                composite_indexes: Vec::new(),
+            }],
+        }
+    }
+
     fn test_field(
         name: &str,
         dart_type: &str,
@@ -5644,6 +6039,15 @@ mod tests {
             Some(BinaryValue::Int(id)),
             Some(BinaryValue::String(name.to_string())),
             Some(BinaryValue::Int(score)),
+        ])
+        .unwrap()
+    }
+
+    fn task_document(completed: bool, id: i64, title: &str) -> Vec<u8> {
+        write_document(&[
+            Some(BinaryValue::Bool(completed)),
+            Some(BinaryValue::Int(id)),
+            Some(BinaryValue::String(title.to_string())),
         ])
         .unwrap()
     }

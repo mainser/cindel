@@ -1201,9 +1201,6 @@ pub(crate) fn read_prepared_binary_string_sort_range(
     }
     validate_prepared_compact_document(bytes, field.static_size)?;
     let range = compact_dynamic_payload_range(bytes, field.static_size, field.static_offset)?;
-    if let Some(range) = &range {
-        decode_utf8(&bytes[range.clone()])?;
-    }
     Ok(Some(range))
 }
 

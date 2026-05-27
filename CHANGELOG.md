@@ -15,6 +15,9 @@ while the core design settles.
   typed filter queries can hydrate results as the cursor advances.
 - Extended the MDBX query reader to stream indexed equality results directly
   from the index cursor instead of materializing the full result batch first.
+- Streamed sorted MDBX query results through the native reader, avoiding full
+  document batch copies after sorting.
+- Added a direct compact bool equality scan for sorted indexed query plans.
 - Specialized prepared native bool equality filters for compact MDBX binary
   documents.
 - Bumped the native ABI to 26.
