@@ -8,6 +8,8 @@
   write transaction reads.
 - Added a streaming native query reader for unsorted MDBX query-plan reads so
   typed filter queries can hydrate results as the cursor advances.
+- Extended the MDBX query reader to stream indexed equality results directly
+  from the index cursor instead of materializing the full result batch first.
 - Specialized prepared native bool equality filters for compact MDBX binary
   documents.
 - Bumped the native ABI to 26.

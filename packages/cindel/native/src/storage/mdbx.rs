@@ -109,14 +109,27 @@ impl MdbxCursorDocumentReader {
     }
 }
 
+enum MdbxQueryCursorSource {
+    Documents {
+        cursor: Cursor<'static, RO>,
+        started: bool,
+    },
+    IndexEqual {
+        index_cursor: Cursor<'static, RO>,
+        documents_cursor: Cursor<'static, RO>,
+        key: Vec<u8>,
+        started: bool,
+        seen: Option<HashSet<u64>>,
+    },
+}
+
 pub(crate) struct MdbxQueryDocumentReader {
-    cursor: Cursor<'static, RO>,
+    source: MdbxQueryCursorSource,
     _transaction: Transaction<'static, RO, NoWriteMap>,
     schema: CollectionSchemaManifest,
     filter: Option<NativeFilter>,
     offset: usize,
     limit: Option<usize>,
-    started: bool,
     matched: usize,
     emitted: usize,
     current_present: bool,
@@ -131,37 +144,94 @@ impl MdbxQueryDocumentReader {
             return Ok(false);
         }
 
-        loop {
-            let row = if self.started {
-                self.cursor
-                    .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
-                    .map_err(|error| error.to_string())?
-            } else {
-                self.started = true;
-                self.cursor
-                    .first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
-                    .map_err(|error| error.to_string())?
-            };
-            let Some((_key, bytes)) = row else {
-                self.current_present = false;
-                self.current_bytes.clear();
-                return Ok(false);
-            };
-            if let Some(filter) = &self.filter {
-                if !filter.matches(&self.schema, bytes.as_ref())? {
+        match &mut self.source {
+            MdbxQueryCursorSource::Documents { cursor, started } => loop {
+                let row = if *started {
+                    cursor
+                        .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .map_err(|error| error.to_string())?
+                } else {
+                    *started = true;
+                    cursor
+                        .first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .map_err(|error| error.to_string())?
+                };
+                let Some((_key, bytes)) = row else {
+                    self.current_present = false;
+                    self.current_bytes.clear();
+                    return Ok(false);
+                };
+                if let Some(filter) = &self.filter {
+                    if !filter.matches(&self.schema, bytes.as_ref())? {
+                        continue;
+                    }
+                }
+                if self.matched < self.offset {
+                    self.matched += 1;
                     continue;
                 }
-            }
-            if self.matched < self.offset {
+                self.current_bytes.clear();
+                self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_present = true;
                 self.matched += 1;
-                continue;
-            }
-            self.current_bytes.clear();
-            self.current_bytes.extend_from_slice(bytes.as_ref());
-            self.current_present = true;
-            self.matched += 1;
-            self.emitted += 1;
-            return Ok(true);
+                self.emitted += 1;
+                return Ok(true);
+            },
+            MdbxQueryCursorSource::IndexEqual {
+                index_cursor,
+                documents_cursor,
+                key,
+                started,
+                seen,
+            } => loop {
+                let row = if *started {
+                    index_cursor
+                        .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .map_err(|error| error.to_string())?
+                } else {
+                    *started = true;
+                    index_cursor
+                        .set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key)
+                        .map_err(|error| error.to_string())?
+                };
+                let Some((entry_key, value)) = row else {
+                    self.current_present = false;
+                    self.current_bytes.clear();
+                    return Ok(false);
+                };
+                if entry_key.as_ref() != key.as_slice() {
+                    self.current_present = false;
+                    self.current_bytes.clear();
+                    return Ok(false);
+                }
+                let id = decode_u64(&value)?;
+                if let Some(seen) = seen {
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                }
+                let Some(bytes) = ignore_not_found(
+                    documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                )?
+                else {
+                    continue;
+                };
+                if let Some(filter) = &self.filter {
+                    if !filter.matches(&self.schema, bytes.as_ref())? {
+                        continue;
+                    }
+                }
+                if self.matched < self.offset {
+                    self.matched += 1;
+                    continue;
+                }
+                self.current_bytes.clear();
+                self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_present = true;
+                self.matched += 1;
+                self.emitted += 1;
+                return Ok(true);
+            },
         }
     }
 
@@ -551,7 +621,6 @@ impl MdbxStorage {
         if self.active_write().is_some()
             || !plan.sorts.is_empty()
             || !plan.distinct_fields.is_empty()
-            || !matches!(plan.source, WireQuerySource::All { .. })
         {
             return Ok(None);
         }
@@ -569,13 +638,59 @@ impl MdbxStorage {
             .database
             .begin_ro_txn()
             .map_err(|error| error.to_string())?;
-        let documents_table = match open_documents_table(&transaction, collection) {
-            Ok(table) => table,
-            Err(_) => return Ok(None),
+        let source = match &plan.source {
+            WireQuerySource::All { .. } => {
+                let documents_table = match open_documents_table(&transaction, collection) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let cursor = transaction
+                    .cursor(&documents_table)
+                    .map_err(|error| error.to_string())?;
+                let cursor =
+                    unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
+                MdbxQueryCursorSource::Documents {
+                    cursor,
+                    started: false,
+                }
+            }
+            WireQuerySource::IndexEqual {
+                index_name,
+                value,
+                dedupe,
+            } => {
+                let value = wire_index_value_to_storage(value)?;
+                let key = index_value_key(&value)?;
+                let index_table = match open_index_table(&transaction, collection, index_name) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let documents_table = match open_documents_table(&transaction, collection) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let index_cursor = transaction
+                    .cursor(&index_table)
+                    .map_err(|error| error.to_string())?;
+                let documents_cursor = transaction
+                    .cursor(&documents_table)
+                    .map_err(|error| error.to_string())?;
+                let index_cursor = unsafe {
+                    std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(index_cursor)
+                };
+                let documents_cursor = unsafe {
+                    std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(documents_cursor)
+                };
+                MdbxQueryCursorSource::IndexEqual {
+                    index_cursor,
+                    documents_cursor,
+                    key,
+                    started: false,
+                    seen: dedupe.then(HashSet::new),
+                }
+            }
+            WireQuerySource::IndexRange { .. } => return Ok(None),
         };
-        let cursor = transaction
-            .cursor(&documents_table)
-            .map_err(|error| error.to_string())?;
 
         // The libmdbx cursor internally owns a cloned transaction handle and
         // only carries the Rust transaction lifetime as a marker. Keep the
@@ -586,16 +701,14 @@ impl MdbxStorage {
                 Transaction<'static, RO, NoWriteMap>,
             >(transaction)
         };
-        let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
 
         Ok(Some(MdbxQueryDocumentReader {
-            cursor,
+            source,
             _transaction: transaction,
             schema,
             filter,
             offset: plan.offset as usize,
             limit: plan.limit.map(|value| value as usize),
-            started: false,
             matched: 0,
             emitted: 0,
             current_present: false,
@@ -5092,6 +5205,58 @@ mod tests {
         );
         assert_eq!(storage.collection_revision("users").unwrap(), 2);
         assert_eq!(storage.schema_version("users").unwrap(), Some(1));
+    }
+
+    #[test]
+    fn streams_index_equal_query_documents() {
+        let directory = TemporaryDirectory::new("index_equal_query_reader");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, email, name, score) in [
+            (1, "ana@example.com", "Ana", 10),
+            (2, "ben@example.com", "Ben", 20),
+            (3, "cid@example.com", "Cid", 10),
+        ] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(email, id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexEqual {
+                index_name: "score".to_string(),
+                value: WireIndexValue::Int(10),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        let mut reader = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .expect("index equality queries should stream through MDBX");
+
+        assert!(reader.next().unwrap());
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("ana@example.com", 1, "Ana", 10).as_slice()
+        );
+        assert!(reader.next().unwrap());
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("cid@example.com", 3, "Cid", 10).as_slice()
+        );
+        assert!(!reader.next().unwrap());
     }
 
     #[test]
