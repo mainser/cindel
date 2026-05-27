@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Generated native MDBX typed writers now keep collection ids in the native key
+  path instead of duplicating them inside compact document payloads.
+- Generated native typed readers now hydrate ids from the native document key.
+
 ## 0.5.0
 
 - Updated the annotations dependency constraint and package documentation to

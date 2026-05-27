@@ -86,6 +86,15 @@ impl MdbxCursorDocumentReader {
         }
     }
 
+    pub(crate) fn document_id(&mut self, document_index: usize) -> Result<Option<u64>, String> {
+        self.load(document_index)?;
+        if self.current_present {
+            Ok(self.ids.get(document_index).copied())
+        } else {
+            Ok(None)
+        }
+    }
+
     fn load(&mut self, document_index: usize) -> Result<(), String> {
         if self.current_index == Some(document_index) {
             return Ok(());
@@ -136,6 +145,7 @@ pub(crate) struct MdbxQueryDocumentReader {
     limit: Option<usize>,
     matched: usize,
     emitted: usize,
+    current_id: Option<u64>,
     current_present: bool,
     current_bytes: Vec<u8>,
 }
@@ -160,8 +170,9 @@ impl MdbxQueryDocumentReader {
                         .first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
                         .map_err(|error| error.to_string())?
                 };
-                let Some((_key, bytes)) = row else {
+                let Some((key, bytes)) = row else {
                     self.current_present = false;
+                    self.current_id = None;
                     self.current_bytes.clear();
                     return Ok(false);
                 };
@@ -176,6 +187,7 @@ impl MdbxQueryDocumentReader {
                 }
                 self.current_bytes.clear();
                 self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_id = Some(decode_document_table_key(key.as_ref())?);
                 self.current_present = true;
                 self.matched += 1;
                 self.emitted += 1;
@@ -200,11 +212,13 @@ impl MdbxQueryDocumentReader {
                 };
                 let Some((entry_key, value)) = row else {
                     self.current_present = false;
+                    self.current_id = None;
                     self.current_bytes.clear();
                     return Ok(false);
                 };
                 if entry_key.as_ref() != key.as_slice() {
                     self.current_present = false;
+                    self.current_id = None;
                     self.current_bytes.clear();
                     return Ok(false);
                 }
@@ -231,6 +245,7 @@ impl MdbxQueryDocumentReader {
                 }
                 self.current_bytes.clear();
                 self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_id = Some(id);
                 self.current_present = true;
                 self.matched += 1;
                 self.emitted += 1;
@@ -242,8 +257,10 @@ impl MdbxQueryDocumentReader {
             } => {
                 if *current_index >= documents.len() {
                     self.current_present = false;
+                    self.current_id = None;
                     return Ok(false);
                 }
+                self.current_id = documents.get(*current_index).map(|document| document.id);
                 *current_index += 1;
                 self.current_present = true;
                 self.emitted += 1;
@@ -273,6 +290,13 @@ impl MdbxQueryDocumentReader {
                 Ok(Some(&self.current_bytes))
             }
         }
+    }
+
+    pub(crate) fn document_id(&self, document_index: usize) -> Result<Option<u64>, String> {
+        if document_index != 0 || !self.current_present {
+            return Ok(None);
+        }
+        Ok(self.current_id)
     }
 }
 
@@ -849,6 +873,7 @@ impl MdbxStorage {
                 limit: None,
                 matched: 0,
                 emitted: 0,
+                current_id: None,
                 current_present: false,
                 current_bytes: Vec::new(),
             }));
@@ -927,6 +952,7 @@ impl MdbxStorage {
             limit: plan.limit.map(|value| value as usize),
             matched: 0,
             emitted: 0,
+            current_id: None,
             current_present: false,
             current_bytes: Vec::new(),
         }))
@@ -4457,6 +4483,9 @@ fn direct_bool_delete_index(schema: &CollectionSchemaManifest) -> Option<DirectB
     let mut static_offset = 0usize;
     let mut static_size = 0usize;
     for field in &schema.fields {
+        if field.is_id {
+            continue;
+        }
         let field_size = compact_field_static_size(&field.binary_type)?;
         if field.is_indexed {
             if indexed_field.is_some()

@@ -7,6 +7,9 @@ while the core design settles.
 
 ## 0.5.2
 
+- Aligned generated native MDBX typed writes with the collection-key id path,
+  keeping ids out of compact document payloads and reducing insert size.
+- Added native document id reads for generated typed hydration.
 - Improved typed MDBX `getAll` reads by keeping a native read cursor alive for
   the batch reader, avoiding full batch materialization before Dart hydration.
 - Kept the existing batch reader as the fallback for non-MDBX paths and active
@@ -20,7 +23,7 @@ while the core design settles.
 - Added a direct compact bool equality scan for sorted indexed query plans.
 - Specialized prepared native bool equality filters for compact MDBX binary
   documents.
-- Bumped the native ABI to 26.
+- Bumped the native ABI to 27.
 
 ## 0.5.1
 

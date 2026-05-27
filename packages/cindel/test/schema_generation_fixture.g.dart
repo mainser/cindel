@@ -1704,7 +1704,6 @@ void _$ImmutableUserWriteCindelNativeDocument(
 ) {
   writer.writeBool(0, object.active);
   writer.writeString(1, object.email);
-  writer.writeInt(2, object.id);
 }
 
 ImmutableUser _$ImmutableUserReadCindelNativeDocument(
@@ -1712,7 +1711,7 @@ ImmutableUser _$ImmutableUserReadCindelNativeDocument(
   int documentIndex,
 ) {
   return ImmutableUser(
-    id: reader.readInt(documentIndex, 2) as int,
+    id: reader.readId(documentIndex),
     email: reader.readString(documentIndex, 1) as String,
     active: reader.readBool(documentIndex, 0) as bool,
   );

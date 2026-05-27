@@ -18,7 +18,7 @@ use crate::wire::{
 };
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    26
+    27
 }
 
 #[no_mangle]
@@ -551,6 +551,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         mode: CindelNativeDocumentReaderMode::Batch {
             layout,
+            ids,
             documents,
             all_present,
             trusted_static_size: true,
@@ -596,6 +597,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         mode: CindelNativeDocumentReaderMode::Batch {
             layout,
+            ids: Vec::new(),
             documents: documents.into_iter().map(Some).collect(),
             all_present: true,
             trusted_static_size: true,
@@ -642,6 +644,25 @@ pub unsafe extern "C" fn cindel_native_document_reader_is_present(
         return false;
     };
     reader.is_present(document_index)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_id(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    out_value: *mut u64,
+) -> bool {
+    if out_value.is_null() {
+        return false;
+    }
+    let Some(reader) = reader.as_mut() else {
+        return false;
+    };
+    let Some(value) = reader.document_id(document_index) else {
+        return false;
+    };
+    *out_value = value;
+    true
 }
 
 #[no_mangle]
@@ -1732,6 +1753,7 @@ pub struct CindelNativeDocumentReader {
 enum CindelNativeDocumentReaderMode {
     Batch {
         layout: NativeBatchLayout,
+        ids: Vec<u64>,
         documents: Vec<Option<Vec<u8>>>,
         all_present: bool,
         trusted_static_size: bool,
@@ -2229,6 +2251,21 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
                 document_index < entries.len()
             }
+        }
+    }
+
+    fn document_id(&mut self, document_index: usize) -> Option<u64> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch { ids, .. } => ids.get(document_index).copied(),
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
+                cursor.document_id(document_index).ok().flatten()
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
+                cursor.document_id(document_index).ok().flatten()
+            }
+            CindelNativeDocumentReaderMode::RawList { .. } => None,
         }
     }
 

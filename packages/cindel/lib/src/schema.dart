@@ -65,6 +65,9 @@ abstract interface class CindelNativeDocumentReader {
   /// Whether the document at [documentIndex] exists.
   bool isPresent(int documentIndex);
 
+  /// Reads the native document id stored as the collection key.
+  int readId(int documentIndex);
+
   /// Reads a nullable boolean value.
   bool? readBool(int documentIndex, int fieldIndex);
 

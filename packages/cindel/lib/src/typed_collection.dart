@@ -291,9 +291,12 @@ final class CindelTypedCollection<T> {
     }
     final fields = schema.fields.toList(growable: false)
       ..sort((left, right) => left.name.compareTo(right.name));
-    final bytes = Uint8List(fields.length);
-    for (var i = 0; i < fields.length; i += 1) {
-      final type = fields[i].binaryType;
+    final binaryFields = fields
+        .where((field) => !field.isId)
+        .toList(growable: false);
+    final bytes = Uint8List(binaryFields.length);
+    for (var i = 0; i < binaryFields.length; i += 1) {
+      final type = binaryFields[i].binaryType;
       final value = switch (type) {
         'bool' => 0,
         'int' => 1,

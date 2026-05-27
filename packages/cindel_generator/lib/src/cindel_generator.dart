@@ -300,8 +300,14 @@ String _emitCollection(_CollectionInfo collection) {
       ..writeln('  CindelNativeDocumentWriter writer,')
       ..writeln('  ${collection.dartName} object,')
       ..writeln(') {');
-    for (var index = 0; index < collection.binaryFields.length; index += 1) {
-      buffer.write(collection.binaryFields[index].nativeWriteStatement(index));
+    for (
+      var index = 0;
+      index < collection.nativeBinaryFields.length;
+      index += 1
+    ) {
+      buffer.write(
+        collection.nativeBinaryFields[index].nativeWriteStatement(index),
+      );
     }
     buffer
       ..writeln('}')
@@ -318,8 +324,13 @@ String _emitCollection(_CollectionInfo collection) {
       ..writeln('  int documentIndex,')
       ..writeln(') {');
     final nativeReadValues = <_FieldInfo, String>{};
-    for (var index = 0; index < collection.binaryFields.length; index += 1) {
-      final field = collection.binaryFields[index];
+    nativeReadValues[collection.idField] = 'reader.readId(documentIndex)';
+    for (
+      var index = 0;
+      index < collection.nativeBinaryFields.length;
+      index += 1
+    ) {
+      final field = collection.nativeBinaryFields[index];
       nativeReadValues[field] = field.nativeReadExpression(index);
     }
     _emitObjectHydration(
@@ -581,12 +592,16 @@ final class _CollectionInfo {
       ..sort((left, right) => left.name.compareTo(right.name));
   }
 
+  List<_FieldInfo> get nativeBinaryFields {
+    return binaryFields.where((field) => !field.isId).toList(growable: false);
+  }
+
   bool get supportsNativeWriter {
-    return binaryFields.every((field) => field.supportsNativeWriter);
+    return nativeBinaryFields.every((field) => field.supportsNativeWriter);
   }
 
   bool get supportsNativeReader {
-    return binaryFields.every((field) => field.supportsNativeReader);
+    return nativeBinaryFields.every((field) => field.supportsNativeReader);
   }
 
   int get binaryStaticSize {

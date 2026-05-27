@@ -1212,6 +1212,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _bytesLength = calloc<Size>(),
       _stringIsAscii = calloc<Bool>(),
       _stringInternId = calloc<Uint64>(),
+      _idValue = calloc<Uint64>(),
       _ownsScratch = true;
 
   _CindelNativeDocumentReader._child(
@@ -1225,6 +1226,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _bytesLength = parent._bytesLength,
       _stringIsAscii = parent._stringIsAscii,
       _stringInternId = parent._stringInternId,
+      _idValue = parent._idValue,
       _ownsScratch = false;
 
   final _CindelNativeFunctions _functions;
@@ -1236,6 +1238,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Size> _bytesLength;
   final Pointer<Bool> _stringIsAscii;
   final Pointer<Uint64> _stringInternId;
+  final Pointer<Uint64> _idValue;
   final bool _ownsScratch;
   bool _released = false;
 
@@ -1245,6 +1248,18 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   @override
   bool isPresent(int documentIndex) {
     return _functions.nativeDocumentReaderIsPresent(_reader, documentIndex);
+  }
+
+  @override
+  int readId(int documentIndex) {
+    if (!_functions.nativeDocumentReaderReadId(
+      _reader,
+      documentIndex,
+      _idValue,
+    )) {
+      throw StateError('Native Cindel document id is not available.');
+    }
+    return _idValue.value;
   }
 
   @override
@@ -1333,7 +1348,8 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       ..free(_bytesPointer)
       ..free(_bytesLength)
       ..free(_stringIsAscii)
-      ..free(_stringInternId);
+      ..free(_stringInternId)
+      ..free(_idValue);
   }
 }
 
@@ -1468,6 +1484,9 @@ abstract interface class _CindelNativeFunctions {
   bool Function(Pointer<Void>) get nativeDocumentReaderNext;
 
   bool Function(Pointer<Void>, int) get nativeDocumentReaderIsPresent;
+
+  bool Function(Pointer<Void>, int, Pointer<Uint64>)
+  get nativeDocumentReaderReadId;
 
   bool Function(Pointer<Void>, int, int, Pointer<Bool>)
   get nativeDocumentReaderReadBool;
@@ -1985,6 +2004,11 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Bool Function(Pointer<Void>, Size),
             bool Function(Pointer<Void>, int)
           >('cindel_native_document_reader_is_present', isLeaf: true),
+      nativeDocumentReaderReadId = library
+          .lookupFunction<
+            Bool Function(Pointer<Void>, Size, Pointer<Uint64>),
+            bool Function(Pointer<Void>, int, Pointer<Uint64>)
+          >('cindel_native_document_reader_read_id', isLeaf: true),
       nativeDocumentReaderReadBool = library
           .lookupFunction<
             Bool Function(Pointer<Void>, Size, Uint32, Pointer<Bool>),
@@ -2698,6 +2722,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final bool Function(Pointer<Void>, int) nativeDocumentReaderIsPresent;
 
   @override
+  final bool Function(Pointer<Void>, int, Pointer<Uint64>)
+  nativeDocumentReaderReadId;
+
+  @override
   final bool Function(Pointer<Void>, int, int, Pointer<Bool>)
   nativeDocumentReaderReadBool;
 
@@ -3169,6 +3197,10 @@ final class _NativeAssetCindelNativeFunctions
   @override
   bool Function(Pointer<Void>, int) get nativeDocumentReaderIsPresent =>
       _cindelNativeDocumentReaderIsPresent;
+
+  @override
+  bool Function(Pointer<Void>, int, Pointer<Uint64>)
+  get nativeDocumentReaderReadId => _cindelNativeDocumentReaderReadId;
 
   @override
   bool Function(Pointer<Void>, int, int, Pointer<Bool>)
@@ -3874,6 +3906,17 @@ external bool _cindelNativeDocumentReaderNext(Pointer<Void> reader);
 external bool _cindelNativeDocumentReaderIsPresent(
   Pointer<Void> reader,
   int documentIndex,
+);
+
+@Native<Bool Function(Pointer<Void>, Size, Pointer<Uint64>)>(
+  symbol: 'cindel_native_document_reader_read_id',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external bool _cindelNativeDocumentReaderReadId(
+  Pointer<Void> reader,
+  int documentIndex,
+  Pointer<Uint64> outValue,
 );
 
 @Native<Bool Function(Pointer<Void>, Size, Uint32, Pointer<Bool>)>(

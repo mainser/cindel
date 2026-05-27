@@ -350,7 +350,7 @@ impl<'a> BinaryDocument<'a> {
 struct CompactBinaryDocument<'a> {
     bytes: &'a [u8],
     static_size: usize,
-    field_offsets: Vec<(CompactFieldType, usize)>,
+    field_offsets: Vec<Option<(CompactFieldType, usize)>>,
 }
 
 impl<'a> CompactBinaryDocument<'a> {
@@ -362,18 +362,36 @@ impl<'a> CompactBinaryDocument<'a> {
             return Err("compact binary document is shorter than the header".into());
         }
         let static_size = read_u24(bytes, 0)? as usize;
-        let mut expected_static_size = 0usize;
-        let mut field_offsets = Vec::with_capacity(schema.fields.len());
+        let mut expected_static_size_without_id = 0usize;
+        let mut field_offsets_without_id = Vec::with_capacity(schema.fields.len());
         for field in &schema.fields {
+            if field.is_id {
+                field_offsets_without_id.push(None);
+                continue;
+            }
             let field_type = CompactFieldType::from_field(field)?;
-            field_offsets.push((field_type, expected_static_size));
-            expected_static_size = expected_static_size
+            field_offsets_without_id.push(Some((field_type, expected_static_size_without_id)));
+            expected_static_size_without_id = expected_static_size_without_id
                 .checked_add(field_type.static_size())
                 .ok_or_else(|| "compact binary document static size overflows".to_string())?;
         }
-        if static_size != expected_static_size {
-            return Err("compact binary document static size does not match schema".into());
-        }
+        let field_offsets = if static_size == expected_static_size_without_id {
+            field_offsets_without_id
+        } else {
+            let mut expected_static_size_with_id = 0usize;
+            let mut field_offsets_with_id = Vec::with_capacity(schema.fields.len());
+            for field in &schema.fields {
+                let field_type = CompactFieldType::from_field(field)?;
+                field_offsets_with_id.push(Some((field_type, expected_static_size_with_id)));
+                expected_static_size_with_id = expected_static_size_with_id
+                    .checked_add(field_type.static_size())
+                    .ok_or_else(|| "compact binary document static size overflows".to_string())?;
+            }
+            if static_size != expected_static_size_with_id {
+                return Err("compact binary document static size does not match schema".into());
+            }
+            field_offsets_with_id
+        };
         if bytes.len() < 3 + static_size {
             return Err("compact binary document static section is truncated".into());
         }
@@ -389,11 +407,12 @@ impl<'a> CompactBinaryDocument<'a> {
     }
 
     fn field_value(&self, index: usize) -> Result<Option<BinaryValue>, String> {
-        let (field_type, offset) = self
-            .field_offsets
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        let Some(slot) = self.field_offsets.get(index).copied() else {
+            return Err(format!("field index `{index}` is out of bounds"));
+        };
+        let Some((field_type, offset)) = slot else {
+            return Ok(None);
+        };
         let absolute = 3 + offset;
         match field_type {
             CompactFieldType::Bool => match self.bytes[absolute] {
@@ -440,11 +459,12 @@ impl<'a> CompactBinaryDocument<'a> {
     }
 
     fn field_sort_key(&self, index: usize) -> Result<Option<BinarySortKey>, String> {
-        let (field_type, offset) = self
-            .field_offsets
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        let Some(slot) = self.field_offsets.get(index).copied() else {
+            return Err(format!("field index `{index}` is out of bounds"));
+        };
+        let Some((field_type, offset)) = slot else {
+            return Ok(None);
+        };
         let absolute = 3 + offset;
         match field_type {
             CompactFieldType::Bool => match self.bytes[absolute] {
@@ -483,11 +503,12 @@ impl<'a> CompactBinaryDocument<'a> {
     }
 
     fn string_payload(&self, index: usize) -> Result<Option<&'a str>, String> {
-        let (field_type, offset) = self
-            .field_offsets
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("field index `{index}` is out of bounds"))?;
+        let Some(slot) = self.field_offsets.get(index).copied() else {
+            return Err(format!("field index `{index}` is out of bounds"));
+        };
+        let Some((field_type, offset)) = slot else {
+            return Ok(None);
+        };
         if field_type != CompactFieldType::String {
             return Err(format!("field index `{index}` is not a string field"));
         }
@@ -1082,6 +1103,12 @@ pub(crate) fn prepare_binary_field_layout(
     let mut static_size = 0usize;
     let mut target = None;
     for (index, schema_field) in schema.fields.iter().enumerate() {
+        if schema_field.is_id {
+            if schema_field.name == field {
+                target = None;
+            }
+            continue;
+        }
         let field_type = CompactFieldType::from_field(schema_field)?;
         if schema_field.name == field {
             target = Some((
@@ -1326,6 +1353,9 @@ fn compact_dynamic_payload_range(
 fn schema_binary_static_size(schema: &CollectionSchemaManifest) -> Result<usize, String> {
     let mut static_size = 0usize;
     for field in &schema.fields {
+        if field.is_id {
+            continue;
+        }
         let field_type = CompactFieldType::from_field(field)?;
         static_size = static_size
             .checked_add(field_type.static_size())
@@ -1361,8 +1391,12 @@ pub(crate) fn prepare_binary_field_updates(
     let mut static_size = 0usize;
     let mut field_offsets = Vec::with_capacity(schema.fields.len());
     for field in &schema.fields {
+        if field.is_id {
+            field_offsets.push(None);
+            continue;
+        }
         let field_type = CompactFieldType::from_field(field)?;
-        field_offsets.push((field_type, static_size));
+        field_offsets.push(Some((field_type, static_size)));
         static_size = static_size
             .checked_add(field_type.static_size())
             .ok_or_else(|| "compact binary document static size overflows".to_string())?;
@@ -1389,6 +1423,7 @@ pub(crate) fn prepare_binary_field_updates(
         let (field_type, static_offset) = field_offsets
             .get(field_index)
             .copied()
+            .flatten()
             .ok_or_else(|| format!("field `{field_name}` is out of bounds"))?;
         validate_prepared_binary_update(field, field_type, value)?;
         prepared.push(PreparedBinaryFieldUpdate {
