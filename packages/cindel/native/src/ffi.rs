@@ -18,7 +18,7 @@ use crate::wire::{
 };
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    27
+    28
 }
 
 #[no_mangle]
@@ -777,6 +777,30 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_string(
     *out_ptr = bytes.as_ptr();
     *out_len = bytes.len();
     *out_is_ascii = bytes.is_ascii();
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_list_bytes(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> bool {
+    if out_ptr.is_null() || out_len.is_null() {
+        return false;
+    }
+    *out_ptr = std::ptr::null();
+    *out_len = 0;
+    let Some(reader) = reader.as_mut() else {
+        return false;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return false;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_len = bytes.len();
     true
 }
 

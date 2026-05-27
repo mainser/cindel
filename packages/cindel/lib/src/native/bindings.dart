@@ -1319,6 +1319,21 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   }
 
   @override
+  List<String>? readStringList(int documentIndex, int fieldIndex) {
+    if (!_functions.nativeDocumentReaderReadListBytes(
+      _reader,
+      documentIndex,
+      fieldIndex,
+      _bytesPointer,
+      _bytesLength,
+    )) {
+      return null;
+    }
+    final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
+    return _decodeNativeStringList(bytes);
+  }
+
+  @override
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) {
     final listReader = _functions.nativeDocumentReaderReadList(
       _reader,
@@ -1358,6 +1373,83 @@ String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
     return String.fromCharCodes(bytes);
   }
   return utf8.decode(bytes);
+}
+
+List<String>? _decodeNativeStringList(Uint8List bytes) {
+  if (bytes.length >= 9 &&
+      _readU32Le(bytes, 0) == 0xffff_ffff &&
+      bytes[4] == 1) {
+    return _decodeNativeStringListOffsets(
+      bytes,
+      offsetsStart: 9,
+      count: _readU32Le(bytes, 5),
+      offsetBase: 0,
+    );
+  }
+  if (bytes.length < 3) {
+    return null;
+  }
+  final staticSize = _readU24Le(bytes, 0);
+  if (staticSize % 3 != 0) {
+    return null;
+  }
+  return _decodeNativeStringListOffsets(
+    bytes,
+    offsetsStart: 3,
+    count: staticSize ~/ 3,
+    offsetBase: 3,
+  );
+}
+
+List<String>? _decodeNativeStringListOffsets(
+  Uint8List bytes, {
+  required int offsetsStart,
+  required int count,
+  required int offsetBase,
+}) {
+  final offsetsEnd = offsetsStart + count * 3;
+  if (offsetsEnd > bytes.length) {
+    return null;
+  }
+  final list = List<String>.filled(count, '', growable: true);
+  for (var i = 0; i < count; i += 1) {
+    final offset = _readU24Le(bytes, offsetsStart + i * 3);
+    if (offset == 0) {
+      continue;
+    }
+    final absolute = offsetBase + offset;
+    if (absolute < offsetsEnd || absolute + 3 > bytes.length) {
+      return null;
+    }
+    final length = _readU24Le(bytes, absolute);
+    final start = absolute + 3;
+    final end = start + length;
+    if (end > bytes.length) {
+      return null;
+    }
+    list[i] = _decodeNativeStringBytes(bytes, start, end);
+  }
+  return list;
+}
+
+String _decodeNativeStringBytes(Uint8List bytes, int start, int end) {
+  for (var i = start; i < end; i += 1) {
+    if (bytes[i] > 0x7f) {
+      return utf8.decode(Uint8List.sublistView(bytes, start, end));
+    }
+  }
+  return String.fromCharCodes(bytes, start, end);
+}
+
+int _readU24Le(Uint8List bytes, int offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+int _readU32Le(Uint8List bytes, int offset) {
+  return bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
 }
 
 abstract interface class _CindelNativeFunctions {
@@ -1510,6 +1602,9 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Uint64>,
   )
   get nativeDocumentReaderReadString;
+
+  bool Function(Pointer<Void>, int, int, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get nativeDocumentReaderReadListBytes;
 
   Pointer<Void> Function(Pointer<Void>, int, int)
   get nativeDocumentReaderReadList;
@@ -2062,6 +2157,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Uint64>,
             )
           >('cindel_native_document_reader_read_string', isLeaf: true),
+      nativeDocumentReaderReadListBytes = library
+          .lookupFunction<
+            Bool Function(
+              Pointer<Void>,
+              Size,
+              Uint32,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            bool Function(
+              Pointer<Void>,
+              int,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_native_document_reader_read_list_bytes', isLeaf: true),
       nativeDocumentReaderReadList = library
           .lookupFunction<
             Pointer<Void> Function(Pointer<Void>, Size, Uint32),
@@ -2760,6 +2872,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   nativeDocumentReaderReadString;
 
   @override
+  final bool Function(
+    Pointer<Void>,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  nativeDocumentReaderReadListBytes;
+
+  @override
   final Pointer<Void> Function(Pointer<Void>, int, int)
   nativeDocumentReaderReadList;
 
@@ -3229,6 +3351,11 @@ final class _NativeAssetCindelNativeFunctions
     Pointer<Uint64>,
   )
   get nativeDocumentReaderReadString => _cindelNativeDocumentReaderReadString;
+
+  @override
+  bool Function(Pointer<Void>, int, int, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get nativeDocumentReaderReadListBytes =>
+      _cindelNativeDocumentReaderReadListBytes;
 
   @override
   Pointer<Void> Function(Pointer<Void>, int, int)
@@ -3999,6 +4126,27 @@ external bool _cindelNativeDocumentReaderReadString(
   Pointer<Size> outLength,
   Pointer<Bool> outIsAscii,
   Pointer<Uint64> outInternId,
+);
+
+@Native<
+  Bool Function(
+    Pointer<Void>,
+    Size,
+    Uint32,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(
+  symbol: 'cindel_native_document_reader_read_list_bytes',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external bool _cindelNativeDocumentReaderReadListBytes(
+  Pointer<Void> reader,
+  int documentIndex,
+  int fieldIndex,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
 );
 
 @Native<Pointer<Void> Function(Pointer<Void>, Size, Uint32)>(

@@ -30,6 +30,6 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.1
+  cindel_generator: ^0.5.2
   lints: ^6.1.0
   test: ^1.31.1

@@ -1010,6 +1010,16 @@ $writeValue      }
 
   String _nativeListReadExpression(int index) {
     final element = type.elementType!;
+    if (element.binaryType == 'string' && !element.isNullable) {
+      if (isNullable) {
+        return '''
+reader.readStringList(documentIndex, $index)
+''';
+      }
+      return '''
+reader.readStringList(documentIndex, $index) ?? const <String>[]
+''';
+    }
     final method = switch (element.binaryType) {
       'bool' => 'readBool',
       'int' => 'readInt',

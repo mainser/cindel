@@ -20,10 +20,13 @@ while the core design settles.
   from the index cursor instead of materializing the full result batch first.
 - Streamed sorted MDBX query results through the native reader, avoiding full
   document batch copies after sorting.
+- Added a native string-list reader for generated typed hydration so MDBX
+  `getAll` can hydrate `List<String>` fields without a child reader and one
+  FFI call per element.
 - Added a direct compact bool equality scan for sorted indexed query plans.
 - Specialized prepared native bool equality filters for compact MDBX binary
   documents.
-- Bumped the native ABI to 27.
+- Bumped the native ABI to 28.
 
 ## 0.5.1
 

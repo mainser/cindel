@@ -80,6 +80,9 @@ abstract interface class CindelNativeDocumentReader {
   /// Reads a nullable string value.
   String? readString(int documentIndex, int fieldIndex);
 
+  /// Reads a nullable string list value.
+  List<String>? readStringList(int documentIndex, int fieldIndex);
+
   /// Reads a nested list value as a child reader.
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex);
 
