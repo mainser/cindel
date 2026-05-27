@@ -1927,7 +1927,11 @@ CindelDocument _decodeDocument(
   int? id,
 }) {
   if (cindelIsGenericDocument(bytes)) {
-    return cindelDecodeGenericDocument(bytes);
+    return _documentWithExternalId(
+      cindelDecodeGenericDocument(bytes),
+      schema,
+      id,
+    );
   }
 
   if (schema != null) {
@@ -1944,7 +1948,11 @@ CindelDocument _decodeDocument(
         }
         final document = dynamicSchema.toDocument(object);
         if (document is Map) {
-          return document.cast<String, Object?>();
+          return _documentWithExternalId(
+            document.cast<String, Object?>(),
+            schema,
+            id,
+          );
         }
       } on Object {
         // Fall through to the unsupported payload error below.
@@ -1955,6 +1963,17 @@ CindelDocument _decodeDocument(
   throw StateError(
     'Native Cindel returned an unsupported document payload for `$collection`.',
   );
+}
+
+CindelDocument _documentWithExternalId(
+  CindelDocument document,
+  CindelCollectionSchema<dynamic>? schema,
+  int? id,
+) {
+  if (schema == null || id == null || document[schema.idField] is int) {
+    return document;
+  }
+  return <String, Object?>{...document, schema.idField: id};
 }
 
 Object? _wireScalarToObject(WireScalar scalar) {

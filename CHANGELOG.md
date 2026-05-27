@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.4
+
+- Updated the generator so generated `toDocument` maps keep ids out of the
+  stored document payload, matching Isar's collection-key id model.
+- Updated typed writes to read ids through generated id getters instead of the
+  generated document map.
+- Rehydrated decoded documents with the external collection-key id on read
+  paths so typed objects and query/delete fallbacks still see their ids.
+- Updated the Todo example to the `0.5.4` package line. Native binaries are
+  unchanged for this release.
+
 ## 0.5.3
 
 - Fixed MDBX query-plan updates for compact native documents that store ids in

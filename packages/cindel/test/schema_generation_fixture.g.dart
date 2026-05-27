@@ -1176,7 +1176,6 @@ final class UserQueryFilter {
 
 Map<String, Object?> _$UserToCindelDocument(User object) {
   return <String, Object?>{
-    "id": object.id,
     "name": object.name,
     "email": object.email,
     "username": object.username,
@@ -1653,11 +1652,7 @@ final class ImmutableUserQueryFilter {
 }
 
 Map<String, Object?> _$ImmutableUserToCindelDocument(ImmutableUser object) {
-  return <String, Object?>{
-    "id": object.id,
-    "email": object.email,
-    "active": object.active,
-  };
+  return <String, Object?>{"email": object.email, "active": object.active};
 }
 
 ImmutableUser _$ImmutableUserFromCindelDocument(Map<String, Object?> document) {

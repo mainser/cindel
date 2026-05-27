@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4
+
+- Typed writes now read ids through generated id getters instead of requiring
+  generated document maps to contain the id field.
+- Decoded schema-backed documents are rehydrated with the external
+  collection-key id on read paths, preserving typed object ids while keeping
+  ids out of stored generated document payloads.
+- Updated the development generator dependency constraint to `^0.5.4`.
+
 ## 0.5.3
 
 - Fixed MDBX query-plan updates for compact native documents that store ids in

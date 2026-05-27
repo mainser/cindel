@@ -218,7 +218,7 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln(') {')
     ..writeln('  return <String, Object?>{');
 
-  for (final field in collection.fields) {
+  for (final field in collection.documentFields) {
     buffer.writeln(
       '    ${_stringLiteral(field.name)}: ${field.toDocumentExpression},',
     );
@@ -594,6 +594,10 @@ final class _CollectionInfo {
   List<_FieldInfo> get binaryFields {
     return fields.where((field) => !field.isId).toList(growable: false)
       ..sort((left, right) => left.name.compareTo(right.name));
+  }
+
+  List<_FieldInfo> get documentFields {
+    return fields.where((field) => !field.isId).toList(growable: false);
   }
 
   List<_FieldInfo> get nativeBinaryFields {

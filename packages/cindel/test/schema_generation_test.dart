@@ -128,11 +128,10 @@ void main() {
 
       // Act.
       final document = UserSchema.toDocument(user);
-      final restored = UserSchema.fromDocument(document);
+      final restored = UserSchema.fromDocument({...document, 'id': 7});
 
       // Assert.
       expect(document, {
-        'id': 7,
         'name': 'Jhon',
         'email': 'demo@example.com',
         'username': 'jhon',
@@ -313,15 +312,11 @@ void main() {
 
       // Act.
       final document = ImmutableUserSchema.toDocument(user);
-      final restored = ImmutableUserSchema.fromDocument(document);
+      final restored = ImmutableUserSchema.fromDocument({...document, 'id': 7});
 
       // Assert.
       expect(ImmutableUserSchema.setId, isNull);
-      expect(document, {
-        'id': 7,
-        'email': 'immutable@example.com',
-        'active': true,
-      });
+      expect(document, {'email': 'immutable@example.com', 'active': true});
       expect(restored.id, 7);
       expect(restored.email, 'immutable@example.com');
       expect(restored.active, isTrue);

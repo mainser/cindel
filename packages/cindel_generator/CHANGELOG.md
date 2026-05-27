@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4
+
+- Generated `toDocument` maps now omit the collection id field, keeping ids in
+  the storage key path instead of duplicating them inside document payloads.
+
 ## 0.5.3
 
 - Updated generated compact binary serializers so ids stay in the collection

@@ -39,14 +39,15 @@ final class CindelTypedCollection<T> {
 
   /// Stores [object] using the id field declared by [schema].
   Future<void> put(T object) async {
-    var document = schema.toDocument(object);
-    var id = _idFromDocument(document);
+    var document = schema.getId == null ? schema.toDocument(object) : null;
+    var id = _idFromObject(object, document);
     if (id == autoIncrement) {
       final setId = _idSetter();
       id = await database.allocateId(schema.name);
       setId(object, id);
-      document = schema.toDocument(object);
+      document = null;
     }
+    document ??= schema.toDocument(object);
     if (_usesBinaryDocuments) {
       return database.putBinaryDocument(
         schema.name,
@@ -77,14 +78,15 @@ final class CindelTypedCollection<T> {
     final seenIds = <int>{};
     CindelSetId<T>? setId;
     for (final object in objectList) {
-      var document = schema.toDocument(object);
-      var id = _idFromDocument(document);
+      var document = schema.getId == null ? schema.toDocument(object) : null;
+      var id = _idFromObject(object, document);
       if (id == autoIncrement) {
         setId ??= _idSetter();
         id = await database.allocateId(schema.name);
         setId(object, id);
-        document = schema.toDocument(object);
+        document = null;
       }
+      document ??= schema.toDocument(object);
       if (!seenIds.add(id)) {
         throw ArgumentError.value(
           id,
@@ -177,7 +179,7 @@ final class CindelTypedCollection<T> {
       return bytes == null ? null : _objectFromBinaryDocument(bytes, id);
     }
     final document = await database.get(schema.name, id);
-    return document == null ? null : schema.fromDocument(document);
+    return document == null ? null : _objectFromDocument(document, id);
   }
 
   /// Returns typed objects stored under [ids], preserving input order.
@@ -205,10 +207,13 @@ final class CindelTypedCollection<T> {
               : _objectFromBinaryDocument(documents[i]!, idList[i]),
       ];
     }
-    final documents = await database.getAll(schema.name, ids);
+    final idList = ids.toList(growable: false);
+    final documents = await database.getAll(schema.name, idList);
     return [
-      for (final document in documents)
-        document == null ? null : schema.fromDocument(document),
+      for (var i = 0; i < documents.length; i += 1)
+        documents[i] == null
+            ? null
+            : _objectFromDocument(documents[i]!, idList[i]),
     ];
   }
 
@@ -236,7 +241,8 @@ final class CindelTypedCollection<T> {
           fireImmediately: fireImmediately,
         )
         .map(
-          (document) => document == null ? null : schema.fromDocument(document),
+          (document) =>
+              document == null ? null : _objectFromDocument(document, id),
         );
   }
 
@@ -325,6 +331,24 @@ final class CindelTypedCollection<T> {
     final object = schema.fromBinaryDocument!(bytes);
     schema.setId?.call(object, id);
     return object;
+  }
+
+  T _objectFromDocument(CindelDocument document, int id) {
+    if (document[schema.idField] is int) {
+      return schema.fromDocument(document);
+    }
+    return schema.fromDocument(<String, Object?>{
+      ...document,
+      schema.idField: id,
+    });
+  }
+
+  int _idFromObject(T object, CindelDocument? document) {
+    final getId = schema.getId;
+    if (getId != null) {
+      return getId(object);
+    }
+    return _idFromDocument(document ?? schema.toDocument(object));
   }
 
   int _idFromDocument(CindelDocument document) {
