@@ -3,11 +3,11 @@ use crate::document_format::{
     write_value_record, BinaryValue,
 };
 use crate::engine::CindelEngine;
-#[cfg(feature = "mdbx")]
-use crate::storage::MdbxCursorDocumentReader;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
 };
+#[cfg(feature = "mdbx")]
+use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
 use crate::wire::{
     decode_document_write_batch, decode_field_updates, decode_id_list, decode_index_entry_list,
     decode_index_value, decode_indexed_document_write_batch, decode_query_plan,
@@ -18,7 +18,7 @@ use crate::wire::{
 };
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    25
+    26
 }
 
 #[no_mangle]
@@ -583,6 +583,13 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
     let Ok(layout) = NativeBatchLayout::new(field_type_bytes) else {
         return std::ptr::null_mut();
     };
+    #[cfg(feature = "mdbx")]
+    if let Ok(Some(cursor)) = engine.mdbx_query_document_reader(collection, &plan) {
+        return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            mode: CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor },
+        }));
+    }
+
     let Ok(documents) = engine.query_plan_documents(collection, &plan) else {
         return std::ptr::null_mut();
     };
@@ -604,6 +611,26 @@ pub unsafe extern "C" fn cindel_native_document_reader_len(
         return 0;
     };
     reader.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_is_streaming(
+    reader: *const CindelNativeDocumentReader,
+) -> bool {
+    let Some(reader) = reader.as_ref() else {
+        return false;
+    };
+    reader.is_streaming()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_next(
+    reader: *mut CindelNativeDocumentReader,
+) -> bool {
+    let Some(reader) = reader.as_mut() else {
+        return false;
+    };
+    reader.next()
 }
 
 #[no_mangle]
@@ -1714,6 +1741,11 @@ enum CindelNativeDocumentReaderMode {
         layout: NativeBatchLayout,
         cursor: MdbxCursorDocumentReader,
     },
+    #[cfg(feature = "mdbx")]
+    MdbxQueryCursor {
+        layout: NativeBatchLayout,
+        cursor: MdbxQueryDocumentReader,
+    },
     RawList {
         bytes: Vec<u8>,
         entries: Vec<NativeRawListEntry>,
@@ -2141,7 +2173,33 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::Batch { documents, .. } => documents.len(),
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor.len(),
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => 0,
             CindelNativeDocumentReaderMode::RawList { entries, .. } => entries.len(),
+        }
+    }
+
+    fn is_streaming(&self) -> bool {
+        match &self.mode {
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => true,
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
+            CindelNativeDocumentReaderMode::Batch { .. }
+            | CindelNativeDocumentReaderMode::RawList { .. } => false,
+        }
+    }
+
+    fn next(&mut self) -> bool {
+        match &mut self.mode {
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
+                cursor.next().unwrap_or(false)
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
+            CindelNativeDocumentReaderMode::Batch { .. }
+            | CindelNativeDocumentReaderMode::RawList { .. } => false,
         }
     }
 
@@ -2162,6 +2220,12 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
                 cursor.is_present(document_index).unwrap_or(false)
             }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => cursor
+                .document_bytes(document_index)
+                .ok()
+                .flatten()
+                .is_some(),
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
                 document_index < entries.len()
             }
@@ -2188,6 +2252,17 @@ impl CindelNativeDocumentReader {
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Bool)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
+                let offset = layout.absolute_offset(field_index)?;
+                match *bytes.get(offset)? {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
                 let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
@@ -2228,6 +2303,18 @@ impl CindelNativeDocumentReader {
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Int)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value == i64::MIN {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
                 let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
@@ -2280,6 +2367,18 @@ impl CindelNativeDocumentReader {
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Double)?;
+                let bytes = cursor.document_bytes(document_index).ok()??;
+                let offset = layout.absolute_offset(field_index)?;
+                let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
+                if value.is_finite() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
                 let bytes = cursor.document_bytes(document_index).ok()??;
                 let offset = layout.absolute_offset(field_index)?;
@@ -2357,6 +2456,26 @@ impl CindelNativeDocumentReader {
                 let end = start.checked_add(len)?;
                 bytes.get(start..end)
             }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
+                match layout.field_type(field_index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return None,
+                }
+                let bytes = cursor.document_bytes(document_index).ok()??;
+                let offset = layout.absolute_offset(field_index)?;
+                let relative = read_u24(bytes, offset)?;
+                if relative == 0 {
+                    return None;
+                }
+                let header_offset = 3usize.checked_add(relative)?;
+                let len = read_u24(bytes, header_offset)?;
+                let start = header_offset.checked_add(3)?;
+                let end = start.checked_add(len)?;
+                bytes.get(start..end)
+            }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
                 if entry.is_null || !matches!(entry.kind, NATIVE_VALUE_STRING | NATIVE_VALUE_ENUM) {
@@ -2375,6 +2494,10 @@ impl CindelNativeDocumentReader {
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => {
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => {
                 parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {

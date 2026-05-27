@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::wire::WireQueryPlan;
 
 #[cfg(feature = "mdbx")]
-pub(crate) use mdbx::MdbxCursorDocumentReader;
-#[cfg(feature = "mdbx")]
 pub use mdbx::MdbxStorage;
+#[cfg(feature = "mdbx")]
+pub(crate) use mdbx::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
 pub use metadata::{
     DocumentFormatVersion, IndexVerificationCheck, SchemaMetadataVersion, StorageLayoutVersion,
     StorageMetadata, StorageVerificationReport,
@@ -69,6 +69,18 @@ impl StorageBackend {
         match self {
             Self::Mdbx(storage) => storage.cursor_document_reader(collection, ids),
             Self::Sqlite(_) => Err("cursor document reader requires MDBX backend".into()),
+        }
+    }
+
+    #[cfg(feature = "mdbx")]
+    pub(crate) fn mdbx_query_document_reader(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<MdbxQueryDocumentReader>, String> {
+        match self {
+            Self::Mdbx(storage) => storage.query_document_reader(collection, plan),
+            Self::Sqlite(_) => Ok(None),
         }
     }
 }

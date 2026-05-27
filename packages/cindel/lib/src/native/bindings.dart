@@ -516,6 +516,13 @@ final class CindelNativeBindings {
           }
           final reader = _CindelNativeDocumentReader(_functions, readerPointer);
           try {
+            if (_functions.nativeDocumentReaderIsStreaming(readerPointer)) {
+              final values = <T>[];
+              while (_functions.nativeDocumentReaderNext(readerPointer)) {
+                values.add(readDocument(reader, 0));
+              }
+              return values;
+            }
             final length = _functions.nativeDocumentReaderLen(readerPointer);
             return List<T>.generate(
               length,
@@ -1456,6 +1463,10 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>) get nativeDocumentReaderLen;
 
+  bool Function(Pointer<Void>) get nativeDocumentReaderIsStreaming;
+
+  bool Function(Pointer<Void>) get nativeDocumentReaderNext;
+
   bool Function(Pointer<Void>, int) get nativeDocumentReaderIsPresent;
 
   bool Function(Pointer<Void>, int, int, Pointer<Bool>)
@@ -1959,6 +1970,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Size Function(Pointer<Void>),
             int Function(Pointer<Void>)
           >('cindel_native_document_reader_len', isLeaf: true),
+      nativeDocumentReaderIsStreaming = library
+          .lookupFunction<
+            Bool Function(Pointer<Void>),
+            bool Function(Pointer<Void>)
+          >('cindel_native_document_reader_is_streaming', isLeaf: true),
+      nativeDocumentReaderNext = library
+          .lookupFunction<
+            Bool Function(Pointer<Void>),
+            bool Function(Pointer<Void>)
+          >('cindel_native_document_reader_next'),
       nativeDocumentReaderIsPresent = library
           .lookupFunction<
             Bool Function(Pointer<Void>, Size),
@@ -2668,6 +2689,12 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>) nativeDocumentReaderLen;
 
   @override
+  final bool Function(Pointer<Void>) nativeDocumentReaderIsStreaming;
+
+  @override
+  final bool Function(Pointer<Void>) nativeDocumentReaderNext;
+
+  @override
   final bool Function(Pointer<Void>, int) nativeDocumentReaderIsPresent;
 
   @override
@@ -3130,6 +3157,14 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>) get nativeDocumentReaderLen =>
       _cindelNativeDocumentReaderLen;
+
+  @override
+  bool Function(Pointer<Void>) get nativeDocumentReaderIsStreaming =>
+      _cindelNativeDocumentReaderIsStreaming;
+
+  @override
+  bool Function(Pointer<Void>) get nativeDocumentReaderNext =>
+      _cindelNativeDocumentReaderNext;
 
   @override
   bool Function(Pointer<Void>, int) get nativeDocumentReaderIsPresent =>
@@ -3817,6 +3852,19 @@ external Pointer<Void> _cindelNativeDocumentReaderNewFromQueryPlan(
   isLeaf: true,
 )
 external int _cindelNativeDocumentReaderLen(Pointer<Void> reader);
+
+@Native<Bool Function(Pointer<Void>)>(
+  symbol: 'cindel_native_document_reader_is_streaming',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external bool _cindelNativeDocumentReaderIsStreaming(Pointer<Void> reader);
+
+@Native<Bool Function(Pointer<Void>)>(
+  symbol: 'cindel_native_document_reader_next',
+  assetId: _assetId,
+)
+external bool _cindelNativeDocumentReaderNext(Pointer<Void> reader);
 
 @Native<Bool Function(Pointer<Void>, Size)>(
   symbol: 'cindel_native_document_reader_is_present',

@@ -109,6 +109,71 @@ impl MdbxCursorDocumentReader {
     }
 }
 
+pub(crate) struct MdbxQueryDocumentReader {
+    cursor: Cursor<'static, RO>,
+    _transaction: Transaction<'static, RO, NoWriteMap>,
+    schema: CollectionSchemaManifest,
+    filter: Option<NativeFilter>,
+    offset: usize,
+    limit: Option<usize>,
+    started: bool,
+    matched: usize,
+    emitted: usize,
+    current_present: bool,
+    current_bytes: Vec<u8>,
+}
+
+impl MdbxQueryDocumentReader {
+    pub(crate) fn next(&mut self) -> Result<bool, String> {
+        if self.limit.is_some_and(|limit| self.emitted >= limit) {
+            self.current_present = false;
+            self.current_bytes.clear();
+            return Ok(false);
+        }
+
+        loop {
+            let row = if self.started {
+                self.cursor
+                    .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                    .map_err(|error| error.to_string())?
+            } else {
+                self.started = true;
+                self.cursor
+                    .first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                    .map_err(|error| error.to_string())?
+            };
+            let Some((_key, bytes)) = row else {
+                self.current_present = false;
+                self.current_bytes.clear();
+                return Ok(false);
+            };
+            if let Some(filter) = &self.filter {
+                if !filter.matches(&self.schema, bytes.as_ref())? {
+                    continue;
+                }
+            }
+            if self.matched < self.offset {
+                self.matched += 1;
+                continue;
+            }
+            self.current_bytes.clear();
+            self.current_bytes.extend_from_slice(bytes.as_ref());
+            self.current_present = true;
+            self.matched += 1;
+            self.emitted += 1;
+            return Ok(true);
+        }
+    }
+
+    pub(crate) fn document_bytes(&self, document_index: usize) -> Result<Option<&[u8]>, String> {
+        if document_index == 0 && self.current_present {
+            Ok(Some(&self.current_bytes))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 struct MdbxSharedState {
     database: Arc<Database<NoWriteMap>>,
     next_ids: Mutex<HashMap<String, u64>>,
@@ -476,6 +541,66 @@ impl MdbxStorage {
             current_present: false,
             current_bytes: Vec::new(),
         })
+    }
+
+    pub(crate) fn query_document_reader(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<MdbxQueryDocumentReader>, String> {
+        if self.active_write().is_some()
+            || !plan.sorts.is_empty()
+            || !plan.distinct_fields.is_empty()
+            || !matches!(plan.source, WireQuerySource::All { .. })
+        {
+            return Ok(None);
+        }
+
+        let schema = self.required_schema(collection)?;
+        let filter = plan
+            .filter
+            .as_ref()
+            .map(|bytes| {
+                NativeFilter::decode(bytes).map(|filter| filter.prepare_for_schema(&schema))
+            })
+            .transpose()?;
+        let transaction = self
+            .state
+            .database
+            .begin_ro_txn()
+            .map_err(|error| error.to_string())?;
+        let documents_table = match open_documents_table(&transaction, collection) {
+            Ok(table) => table,
+            Err(_) => return Ok(None),
+        };
+        let cursor = transaction
+            .cursor(&documents_table)
+            .map_err(|error| error.to_string())?;
+
+        // The libmdbx cursor internally owns a cloned transaction handle and
+        // only carries the Rust transaction lifetime as a marker. Keep the
+        // transaction in the reader and drop the cursor before it.
+        let transaction = unsafe {
+            std::mem::transmute::<
+                Transaction<'_, RO, NoWriteMap>,
+                Transaction<'static, RO, NoWriteMap>,
+            >(transaction)
+        };
+        let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
+
+        Ok(Some(MdbxQueryDocumentReader {
+            cursor,
+            _transaction: transaction,
+            schema,
+            filter,
+            offset: plan.offset as usize,
+            limit: plan.limit.map(|value| value as usize),
+            started: false,
+            matched: 0,
+            emitted: 0,
+            current_present: false,
+            current_bytes: Vec::new(),
+        }))
     }
 
     fn with_write_transaction<T>(

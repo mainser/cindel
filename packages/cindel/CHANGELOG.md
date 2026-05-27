@@ -6,6 +6,11 @@
   the batch reader, avoiding full batch materialization before Dart hydration.
 - Kept the existing batch reader as the fallback for non-MDBX paths and active
   write transaction reads.
+- Added a streaming native query reader for unsorted MDBX query-plan reads so
+  typed filter queries can hydrate results as the cursor advances.
+- Specialized prepared native bool equality filters for compact MDBX binary
+  documents.
+- Bumped the native ABI to 26.
 
 ## 0.5.1
 

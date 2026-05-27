@@ -1026,6 +1026,36 @@ pub(crate) fn read_binary_field_payload_prepared<'a>(
     Ok(Some((layout.normalized_binary_type, payload)))
 }
 
+pub(crate) fn read_binary_bool_field_prepared(
+    bytes: &[u8],
+    layout: &PreparedBinaryFieldLayout,
+) -> Result<Option<bool>, String> {
+    if bytes.starts_with(MAGIC) {
+        let document = BinaryDocument::parse(bytes)?;
+        return match document.field_value(layout.index)? {
+            Some(BinaryValue::Bool(value)) => Ok(Some(value)),
+            Some(_) => Err(format!(
+                "field index `{}` is not a bool field",
+                layout.index
+            )),
+            None => Ok(None),
+        };
+    }
+    if layout.field_type != CompactFieldType::Bool {
+        return Err(format!(
+            "field index `{}` is not a bool field",
+            layout.index
+        ));
+    }
+    validate_prepared_compact_document(bytes, layout.static_size)?;
+    match bytes[3 + layout.static_offset] {
+        COMPACT_NULL_BOOL => Ok(None),
+        0 => Ok(Some(false)),
+        1 => Ok(Some(true)),
+        value => Err(format!("invalid compact bool byte `{value}`")),
+    }
+}
+
 pub(crate) fn read_binary_field_at(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],

@@ -1,6 +1,7 @@
 use crate::document_format::{
-    prepare_binary_field_layout, read_binary_field, read_binary_field_payload,
-    read_binary_field_payload_prepared, BinaryValue, PreparedBinaryFieldLayout,
+    prepare_binary_field_layout, read_binary_bool_field_prepared, read_binary_field,
+    read_binary_field_payload, read_binary_field_payload_prepared, BinaryValue,
+    PreparedBinaryFieldLayout,
 };
 use crate::storage::CollectionSchemaManifest;
 use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
@@ -12,6 +13,10 @@ pub(crate) enum NativeFilter {
         operation: FieldFilterOperation,
         value: WireValue,
         layout: Option<PreparedBinaryFieldLayout>,
+    },
+    BoolEqual {
+        expected: bool,
+        layout: PreparedBinaryFieldLayout,
     },
     All {
         predicates: Vec<NativeFilter>,
@@ -88,12 +93,24 @@ impl NativeFilter {
                 operation,
                 value,
                 ..
-            } => Self::Field {
-                layout: prepare_binary_field_layout(schema, &field).ok(),
-                field,
-                operation,
-                value,
-            },
+            } => {
+                let layout = prepare_binary_field_layout(schema, &field).ok();
+                if let (FieldFilterOperation::EqualTo, WireValue::Bool(expected), Some(layout)) =
+                    (operation, &value, layout.clone())
+                {
+                    Self::BoolEqual {
+                        expected: *expected,
+                        layout,
+                    }
+                } else {
+                    Self::Field {
+                        layout,
+                        field,
+                        operation,
+                        value,
+                    }
+                }
+            }
             Self::All { predicates } => Self::All {
                 predicates: predicates
                     .into_iter()
@@ -111,6 +128,7 @@ impl NativeFilter {
             Self::Not { predicate } => Self::Not {
                 predicate: Box::new(predicate.prepare_for_schema(schema)),
             },
+            Self::BoolEqual { .. } => self,
         }
     }
 
@@ -137,6 +155,7 @@ impl NativeFilter {
                     _ => 50,
                 }
             }
+            Self::BoolEqual { .. } => 1,
             Self::All { predicates } => predicates.iter().fold(5u8, |cost, predicate| {
                 cost.saturating_add(predicate.any_evaluation_cost(schema))
             }),
@@ -180,6 +199,10 @@ impl NativeFilter {
                         FieldFilterOperation::EqualTo | FieldFilterOperation::IsNull
                     ) && matches!(value, WireValue::Null)),
                 }
+            }
+            Self::BoolEqual { expected, layout } => {
+                Ok(read_binary_bool_field_prepared(bytes, layout)?
+                    .is_some_and(|value| value == *expected))
             }
             Self::All { predicates } => {
                 for predicate in predicates {
