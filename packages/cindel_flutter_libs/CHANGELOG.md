@@ -1,7 +1,9 @@
 # Changelog
 
-## 0.4.1
+## 0.5.0
 
+- Updated the Flutter native libraries package to the coordinated `0.5.0`
+  release line.
 - Regenerated the Windows native runtime library with schema-prepared native
   filter evaluation and typed reader string hydration cleanup.
 - Regenerated the Windows native runtime library with the tighter compact

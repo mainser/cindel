@@ -22,5 +22,5 @@ schema metadata without pulling in the native runtime.
 
 ## Release Status
 
-This package is still pre-1.0.0. The `0.4.0` package line is aligned with the
+This package is still pre-1.0.0. The `0.5.0` package line is aligned with the
 optimized Cindel runtime and generator release.

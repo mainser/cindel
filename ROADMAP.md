@@ -82,6 +82,7 @@ next layer is added.
   - schema version display.
 - [x] Android release APK build and physical-device install.
 - [x] Linux prebuilt native library generation through WSL.
+- [x] Coordinated `0.5.0` release preparation for publishable packages.
 - [x] Rust native targets declared for:
   - Windows,
   - Linux `x86_64-unknown-linux-gnu`,
@@ -399,6 +400,16 @@ mature.
   - Confirmed SQLite remains selectable and behavior-compatible.
   - Declared Linux in package platform metadata and ensured Linux runtime files
     are included in the `cindel_flutter_libs` pub.dev archive.
+- [x] PERF-18: Dart plus backend benchmark alignment.
+  - Added the full Dart application-style comparison harness alongside the
+    backend-focused laboratory.
+  - Optimized typed MDBX insert, get/getAll, partial update, delete, filter,
+    filter plus sort, prepare, and open paths against Isar-style native
+    patterns.
+  - Prepared native filters against schema field layouts before scans and
+    kept typed hydration on generated native reader paths.
+  - Regenerated the Windows runtime library for the optimized native filter and
+    typed hydration cleanup.
 - [x] JSON-00: Anti-JSON baseline and exact inventory.
   - Captured small and large CSV benchmark baselines for MDBX and SQLite.
   - Refreshed the runtime JSON inventory across Dart FFI, native helpers,
@@ -514,12 +525,12 @@ mature.
     database file, `NoMetaSync`, coalescing, 1 MiB minimum map size, 128 MiB
     default maximum map size, 5 MiB growth steps, and 20 MiB shrink threshold.
   - Native ABI 17 marks the final anti-JSON runtime contract.
-- [ ] Deferred PERF-18: Compaction and database maintenance.
+- [ ] Deferred PERF-19: Compaction and database maintenance.
   - Add database stats and explicit compact operations after the optimized
     layout is stable.
-- [ ] Deferred PERF-19: Web backend exploration.
+- [ ] Deferred PERF-20: Web backend exploration.
   - Explore web after native desktop/mobile performance is mature.
-- [ ] Deferred PERF-20: Encryption.
+- [ ] Deferred PERF-21: Encryption.
   - Evaluate encryption strategy and performance impact after storage design is
     stable.
 
@@ -536,16 +547,17 @@ mature.
 - [ ] Debug logging hooks.
 - [ ] Inspector or developer tooling prototype.
 - [ ] Documentation for generated schemas and current MVP limits.
-- [x] Package publishing preparation for the `0.2.0` line.
+- [x] Package publishing preparation for the `0.5.0` line.
   - Per-package pub.dev metadata.
   - Changelogs.
   - Package-level README and LICENSE files.
   - Hosted dependency constraints for publishable packages.
 - [x] `dart pub publish --dry-run` validation for every publishable package.
-  - `cindel_annotations` validated with 0 warnings.
-  - `cindel_generator` validated with 0 warnings and a version-jump hint.
-  - `cindel` and `cindel_flutter_libs` archives were produced; rerun from a
-    clean commit before publishing to clear pub.dev's modified-file warning.
+  - `cindel_annotations`, `cindel_generator`, `cindel`, and
+    `cindel_flutter_libs` produced `0.5.0` pub.dev archives.
+  - The only current dry-run warning is pub.dev's modified-file warning because
+    the release-preparation files have not been committed yet.
+  - Rerun from a clean release commit immediately before publishing.
 - [ ] Pub score polish after pub.dev re-analysis.
 
 ## Quality Goals
@@ -577,19 +589,24 @@ mature.
 
 ## Current Focus
 
-The current implementation focus is the `0.4.x` optimized MDBX release line.
-Cindel now has the typed query pipeline, index variants, word-token indexes,
-expanded generated serialization, embedded value-object persistence,
-query/lazy watchers, schema-specific compact binary MDBX document storage, and
-MDBX as the default backend with SQLite as an explicit fallback. CindelWireV1
-now removes JSON from id lists, basic batches, index values, indexed write
-metadata, unique checks, stable hash-index canonicalization, native filters,
-manual documents, schema metadata, common native query plan execution, watcher
-change sets, projection rows, and aggregate scalar results. The default native
-runtime no longer depends on `serde_json`. The next work can focus on
+The current implementation focus is the coordinated `0.5.0` optimized MDBX
+release line. Cindel now has the typed query pipeline, index variants,
+word-token indexes, expanded generated serialization, embedded value-object
+persistence, query/lazy watchers, schema-specific compact binary MDBX document
+storage, and MDBX as the default backend with SQLite as an explicit fallback.
+CindelWireV1 now removes JSON from id lists, basic batches, index values,
+indexed write metadata, unique checks, stable hash-index canonicalization,
+native filters, manual documents, schema metadata, common native query plan
+execution, watcher change sets, projection rows, and aggregate scalar results.
+The default native runtime no longer depends on `serde_json`.
+
+Recent benchmark work closed major backend gaps in prepare/open/insert/update/
+delete/filter paths and brought the Dart plus backend comparison much closer to
+the Isar baseline. The remaining hot area for the next optimization pass is
+typed hydration of large objects and list-heavy query results, especially the
+`get` and `filter + sort` Dart-facing workloads. Future work can also focus on
 external-handle notification strategy, isolate execution, maintenance APIs, and
-future public migration tooling without changing the public watcher or query
-surfaces.
+public migration tooling without changing the public watcher or query surfaces.
 
 Platform hardening continues in parallel: Windows, Android, and Linux prebuilt
 binaries are available. Apple binaries are still pending collaborator machines:

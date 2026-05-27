@@ -1,7 +1,9 @@
 # Changelog
 
-## 0.4.1
+## 0.5.0
 
+- Updated the Cindel API package and hosted Cindel package constraints to the
+  coordinated `0.5.0` release line.
 - Prepared native MDBX filters against schema field layouts before scan
   evaluation, reducing repeated field lookup work in unindexed filter queries.
 - Aligned native sorted query tie handling with the core comparator path and

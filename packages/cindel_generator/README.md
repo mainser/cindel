@@ -8,7 +8,7 @@ builders, filters, projections, and watcher helpers.
 ```yaml
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.4.0
+  cindel_generator: ^0.5.0
 ```
 
 Run the generator with:
@@ -30,5 +30,6 @@ The generator reads Cindel annotations from model classes and emits:
 
 ## Release Status
 
-This package is still pre-1.0.0. The `0.4.0` package line emits the compact
-typed document readers and writers used by the optimized Cindel runtime.
+This package is still pre-1.0.0. The `0.5.0` package line emits the compact
+typed document readers, writers, query helpers, and native hydration hooks used
+by the optimized Cindel runtime.

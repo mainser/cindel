@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- Updated the annotations package to the coordinated Cindel `0.5.0` release
+  line.
+
 ## 0.4.0
 
 - Aligned the annotations package with the coordinated Cindel `0.4.0` release

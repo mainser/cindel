@@ -1,7 +1,9 @@
 # Changelog
 
-## 0.4.1
+## 0.5.0
 
+- Updated the annotations dependency constraint and package documentation to
+  the coordinated `0.5.0` release line.
 - Cached native list lengths in generated typed hydration loops.
 - Allowed generated schemas to hydrate immutable explicit-id collection models
   through constructor parameters and omit auto-increment setters when `id` is

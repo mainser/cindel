@@ -5,8 +5,10 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
-## 0.4.1
+## 0.5.0
 
+- Updated all publishable packages and the Todo example to the coordinated
+  `0.5.0` release line.
 - Added Isar-style native list readers for generated typed hydration, so
   primitive list fields no longer force query results back through generic Dart
   binary document decoding.
