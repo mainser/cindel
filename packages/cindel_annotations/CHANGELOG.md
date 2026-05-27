@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2
+
+- Expanded package documentation with clearer usage guidance for annotations,
+  indexes, ids, enum persistence, and package roles.
+
 ## 0.5.0
 
 - Updated the annotations package to the coordinated Cindel `0.5.0` release

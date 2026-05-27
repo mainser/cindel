@@ -2,6 +2,7 @@
 
 ## 0.5.2
 
+- Updated the annotations dependency constraint to `^0.5.2`.
 - Generated native typed readers now use the direct native string-list reader
   for non-nullable `List<String>` fields.
 

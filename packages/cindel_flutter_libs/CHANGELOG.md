@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  current Cindel native ABI used by the `cindel` 0.5.2 line.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.5.1
 
 - Regenerated Windows, Android, and Linux native runtime libraries so the

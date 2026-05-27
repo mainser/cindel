@@ -7,6 +7,8 @@ while the core design settles.
 
 ## 0.5.2
 
+- Updated the annotations package constraint to the `0.5.2` documentation and
+  release line.
 - Aligned generated native MDBX typed writes with the collection-key id path,
   keeping ids out of compact document payloads and reducing insert size.
 - Added native document id reads for generated typed hydration.
