@@ -9,6 +9,9 @@ const _nullFlag = 0x01;
 const _compactNullBool = 0xff;
 const _compactNullInt = -9223372036854775808;
 const _compactNullDoubleBits = 0x7ff8000000000001;
+const _compactStringListMarker = 0xffffffff;
+const _compactStringListKind = 1;
+const _compactStringListHeaderLength = 9;
 
 /// Schema-backed field types used by Cindel's compact generated document
 /// layout.
@@ -527,11 +530,100 @@ Uint8List _encodeList(List<Object?> values) {
 }
 
 List<Object?> _decodeList(Uint8List bytes) {
+  if (_isCompactStringList(bytes)) {
+    return _decodeCompactStringList(bytes);
+  }
+  final nestedStringList = _tryDecodeNestedStringList(bytes);
+  if (nestedStringList != null) {
+    return nestedStringList;
+  }
   final reader = _BytesReader(bytes);
   final count = reader.readUint32();
   return [
     for (var index = 0; index < count; index += 1) reader.readValueRecord(),
   ];
+}
+
+bool _isCompactStringList(Uint8List bytes) {
+  return bytes.length >= _compactStringListHeaderLength &&
+      _readUint32(bytes, 0) == _compactStringListMarker &&
+      bytes[4] == _compactStringListKind;
+}
+
+List<Object?> _decodeCompactStringList(Uint8List bytes) {
+  final count = _readUint32(bytes, 5);
+  final offsetsStart = _compactStringListHeaderLength;
+  final offsetsEnd = offsetsStart + count * 3;
+  if (offsetsEnd > bytes.length) {
+    throw StateError('Compact string list offsets are truncated.');
+  }
+  final values = <Object?>[];
+  var maxEnd = offsetsEnd;
+  for (var index = 0; index < count; index += 1) {
+    final offset = _readUint24(bytes, offsetsStart + index * 3);
+    if (offset == 0) {
+      values.add(null);
+      continue;
+    }
+    if (offset < offsetsEnd) {
+      throw StateError('Compact string list payload points into offsets.');
+    }
+    final length = _readUint24(bytes, offset);
+    final start = offset + 3;
+    final end = start + length;
+    if (end > bytes.length) {
+      throw StateError('Compact string list payload is truncated.');
+    }
+    maxEnd = maxEnd < end ? end : maxEnd;
+    values.add(utf8.decode(Uint8List.sublistView(bytes, start, end)));
+  }
+  if (maxEnd != bytes.length) {
+    throw StateError('Compact string list contains trailing bytes.');
+  }
+  return values;
+}
+
+List<Object?>? _tryDecodeNestedStringList(Uint8List bytes) {
+  if (bytes.length < 3) {
+    return null;
+  }
+  final staticSize = _readUint24(bytes, 0);
+  if (staticSize == 0 || staticSize % 3 != 0) {
+    return null;
+  }
+  final staticEnd = 3 + staticSize;
+  if (staticEnd > bytes.length) {
+    return null;
+  }
+  final count = staticSize ~/ 3;
+  final values = <Object?>[];
+  var maxEnd = staticEnd;
+  for (var index = 0; index < count; index += 1) {
+    final offset = _readUint24(bytes, 3 + index * 3);
+    if (offset == 0) {
+      values.add(null);
+      continue;
+    }
+    if (offset < staticSize) {
+      return null;
+    }
+    final absolute = 3 + offset;
+    if (absolute + 3 > bytes.length) {
+      return null;
+    }
+    final length = _readUint24(bytes, absolute);
+    final start = absolute + 3;
+    final end = start + length;
+    if (end > bytes.length) {
+      return null;
+    }
+    maxEnd = maxEnd < end ? end : maxEnd;
+    values.add(utf8.decode(Uint8List.sublistView(bytes, start, end)));
+  }
+  if (maxEnd != bytes.length) {
+    return null;
+  }
+  return values;
 }
 
 Uint8List _encodeObject(Map<String, Object?> values) {

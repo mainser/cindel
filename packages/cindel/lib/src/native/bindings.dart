@@ -1204,7 +1204,23 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _bytesPointer = calloc<Pointer<Uint8>>(),
       _bytesLength = calloc<Size>(),
       _stringIsAscii = calloc<Bool>(),
-      _stringInternId = calloc<Uint64>();
+      _stringInternId = calloc<Uint64>(),
+      _internedStrings = <int, String>{},
+      _ownsScratch = true;
+
+  _CindelNativeDocumentReader._child(
+    this._functions,
+    this._reader,
+    _CindelNativeDocumentReader parent,
+  ) : _boolValue = parent._boolValue,
+      _intValue = parent._intValue,
+      _doubleValue = parent._doubleValue,
+      _bytesPointer = parent._bytesPointer,
+      _bytesLength = parent._bytesLength,
+      _stringIsAscii = parent._stringIsAscii,
+      _stringInternId = parent._stringInternId,
+      _internedStrings = parent._internedStrings,
+      _ownsScratch = false;
 
   final _CindelNativeFunctions _functions;
   final Pointer<Void> _reader;
@@ -1215,7 +1231,8 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Size> _bytesLength;
   final Pointer<Bool> _stringIsAscii;
   final Pointer<Uint64> _stringInternId;
-  final Map<int, String> _internedStrings = {};
+  final Map<int, String> _internedStrings;
+  final bool _ownsScratch;
   bool _released = false;
 
   @override
@@ -1303,7 +1320,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
     if (listReader == nullptr) {
       return null;
     }
-    return _CindelNativeDocumentReader(_functions, listReader);
+    return _CindelNativeDocumentReader._child(_functions, listReader, this);
   }
 
   @override
@@ -1313,6 +1330,9 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
     }
     _released = true;
     _functions.nativeDocumentReaderFree(_reader);
+    if (!_ownsScratch) {
+      return;
+    }
     calloc
       ..free(_boolValue)
       ..free(_intValue)

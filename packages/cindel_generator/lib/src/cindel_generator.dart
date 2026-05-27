@@ -1026,12 +1026,13 @@ $writeValue      }
     return null;
   }
   try {
+    final length = listReader.length;
     final list = List<${element.dartType}>.filled(
-      listReader.length,
+      length,
       $fillValue,
       growable: true,
     );
-    for (var i = 0; i < listReader.length; i += 1) {
+    for (var i = 0; i < length; i += 1) {
       list[i] = $readValue;
     }
     return list;
@@ -1048,12 +1049,13 @@ $writeValue      }
     return const <${element.dartType}>[];
   }
   try {
+    final length = listReader.length;
     final list = List<${element.dartType}>.filled(
-      listReader.length,
+      length,
       $fillValue,
       growable: true,
     );
-    for (var i = 0; i < listReader.length; i += 1) {
+    for (var i = 0; i < length; i += 1) {
       list[i] = $readValue;
     }
     return list;

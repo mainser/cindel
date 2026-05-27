@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
@@ -264,6 +266,22 @@ void main() {
       expect(restored.recipients?.single.address, 'ada@example.com');
     });
 
+    test(
+      'decodes native compact string list payloads from binary documents.',
+      () {
+        // Arrange.
+        final bytes = _compactSingleListDocument(['local', null, 'database']);
+
+        // Act.
+        final storedValues = cindelDecodeSchemaBinaryDocument(bytes, const [
+          CindelBinaryFieldType.listValue,
+        ]);
+
+        // Assert.
+        expect(storedValues.single, ['local', null, 'database']);
+      },
+    );
+
     // Scenario: A generated schema assigns an auto-increment id.
     // Covers:
     // - Generated setId function.
@@ -401,4 +419,44 @@ void main() {
       ]);
     });
   });
+}
+
+Uint8List _compactSingleListDocument(List<String?> values) {
+  final payload = _compactStringListPayload(values);
+  final bytes = Uint8List(3 + 3 + 3 + payload.length);
+  _writeUint24(bytes, 0, 3);
+  _writeUint24(bytes, 3, 3);
+  _writeUint24(bytes, 6, payload.length);
+  bytes.setRange(9, bytes.length, payload);
+  return bytes;
+}
+
+Uint8List _compactStringListPayload(List<String?> values) {
+  final staticSize = values.length * 3;
+  final bytes = <int>[..._uint24(staticSize), ...List.filled(staticSize, 0)];
+  for (var i = 0; i < values.length; i += 1) {
+    final value = values[i];
+    if (value == null) {
+      continue;
+    }
+    final encoded = value.codeUnits;
+    final offset = bytes.length - 3;
+    bytes.setRange(3 + i * 3, 6 + i * 3, _uint24(offset));
+    bytes
+      ..addAll(_uint24(encoded.length))
+      ..addAll(encoded);
+  }
+  return Uint8List.fromList(bytes);
+}
+
+List<int> _uint24(int value) => [
+  value & 0xff,
+  (value >> 8) & 0xff,
+  (value >> 16) & 0xff,
+];
+
+void _writeUint24(Uint8List bytes, int offset, int value) {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >> 8) & 0xff;
+  bytes[offset + 2] = (value >> 16) & 0xff;
 }

@@ -2,6 +2,9 @@
 
 ## 0.4.1
 
+- Reduced generated typed `getAll` hydration overhead for native list fields by
+  reusing reader scratch buffers between parent documents and child lists.
+- Fixed schema binary document decoding for compact native string-list payloads.
 - Tightened native `List<String>` payloads to use the compact nested list
   layout while keeping backward-compatible reads for the previous marker
   format.

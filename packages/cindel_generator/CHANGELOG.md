@@ -2,6 +2,7 @@
 
 ## 0.4.1
 
+- Cached native list lengths in generated typed hydration loops.
 - Allowed generated schemas to hydrate immutable explicit-id collection models
   through constructor parameters and omit auto-increment setters when `id` is
   final.
