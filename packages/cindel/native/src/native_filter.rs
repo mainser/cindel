@@ -1,4 +1,7 @@
-use crate::document_format::{read_binary_field, read_binary_field_payload, BinaryValue};
+use crate::document_format::{
+    prepare_binary_field_layout, read_binary_field, read_binary_field_payload,
+    read_binary_field_payload_prepared, BinaryValue, PreparedBinaryFieldLayout,
+};
 use crate::storage::CollectionSchemaManifest;
 use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
@@ -8,6 +11,7 @@ pub(crate) enum NativeFilter {
         field: String,
         operation: FieldFilterOperation,
         value: WireValue,
+        layout: Option<PreparedBinaryFieldLayout>,
     },
     All {
         predicates: Vec<NativeFilter>,
@@ -49,6 +53,7 @@ impl NativeFilter {
                 field,
                 operation: FieldFilterOperation::from_wire(operation),
                 value,
+                layout: None,
             }),
             WireFilter::All { predicates } => Ok(Self::All {
                 predicates: predicates
@@ -76,6 +81,74 @@ impl NativeFilter {
         self.matches_document(schema, bytes)
     }
 
+    pub(crate) fn prepare_for_schema(self, schema: &CollectionSchemaManifest) -> Self {
+        match self {
+            Self::Field {
+                field,
+                operation,
+                value,
+                ..
+            } => Self::Field {
+                layout: prepare_binary_field_layout(schema, &field).ok(),
+                field,
+                operation,
+                value,
+            },
+            Self::All { predicates } => Self::All {
+                predicates: predicates
+                    .into_iter()
+                    .map(|predicate| predicate.prepare_for_schema(schema))
+                    .collect(),
+            },
+            Self::Any { predicates } => {
+                let mut predicates = predicates
+                    .into_iter()
+                    .map(|predicate| predicate.prepare_for_schema(schema))
+                    .collect::<Vec<_>>();
+                predicates.sort_by_key(|predicate| predicate.any_evaluation_cost(schema));
+                Self::Any { predicates }
+            }
+            Self::Not { predicate } => Self::Not {
+                predicate: Box::new(predicate.prepare_for_schema(schema)),
+            },
+        }
+    }
+
+    fn any_evaluation_cost(&self, schema: &CollectionSchemaManifest) -> u8 {
+        match self {
+            Self::Field {
+                field, operation, ..
+            } => {
+                let Some(schema_field) = schema
+                    .fields
+                    .iter()
+                    .find(|schema_field| schema_field.name == *field)
+                else {
+                    return 100;
+                };
+                let binary_type = normalized_binary_type(&schema_field.binary_type);
+                match (*operation, binary_type) {
+                    (FieldFilterOperation::Contains, "string" | "String") => 0,
+                    (FieldFilterOperation::Contains, "list") => 20,
+                    (FieldFilterOperation::Contains, _) => 40,
+                    (_, "bool" | "int" | "double") => 5,
+                    (_, "string" | "String") => 10,
+                    (_, "list" | "object") => 30,
+                    _ => 50,
+                }
+            }
+            Self::All { predicates } => predicates.iter().fold(5u8, |cost, predicate| {
+                cost.saturating_add(predicate.any_evaluation_cost(schema))
+            }),
+            Self::Any { predicates } => predicates
+                .iter()
+                .map(|predicate| predicate.any_evaluation_cost(schema))
+                .min()
+                .unwrap_or(100),
+            Self::Not { predicate } => predicate.any_evaluation_cost(schema).saturating_add(5),
+        }
+    }
+
     fn matches_document(
         &self,
         schema: &CollectionSchemaManifest,
@@ -86,6 +159,7 @@ impl NativeFilter {
                 field,
                 operation,
                 value,
+                layout,
             } => {
                 if !schema
                     .fields
@@ -94,7 +168,9 @@ impl NativeFilter {
                 {
                     return Ok(false);
                 }
-                if let Some(matches) = raw_field_matches(schema, bytes, field, *operation, value)? {
+                if let Some(matches) =
+                    raw_field_matches(schema, bytes, field, layout.as_ref(), *operation, value)?
+                {
                     return Ok(matches);
                 }
                 match read_binary_field(schema, bytes, field)? {
@@ -126,10 +202,15 @@ impl NativeFilter {
     }
 }
 
+fn normalized_binary_type(binary_type: &str) -> &str {
+    binary_type.strip_suffix('?').unwrap_or(binary_type)
+}
+
 fn raw_field_matches(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
     field: &str,
+    layout: Option<&PreparedBinaryFieldLayout>,
     operation: FieldFilterOperation,
     expected: &WireValue,
 ) -> Result<Option<bool>, String> {
@@ -139,7 +220,11 @@ fn raw_field_matches(
     let WireValue::String(expected) = expected else {
         return Ok(None);
     };
-    let Some((binary_type, payload)) = read_binary_field_payload(schema, bytes, field)? else {
+    let field_payload = match layout {
+        Some(layout) => read_binary_field_payload_prepared(bytes, layout)?,
+        None => read_binary_field_payload(schema, bytes, field)?,
+    };
+    let Some((binary_type, payload)) = field_payload else {
         return Ok(Some(false));
     };
     let expected = expected.as_bytes();
@@ -573,6 +658,47 @@ mod tests {
         let filter = NativeFilter::decode(&bytes).unwrap();
 
         // Assert.
+        assert!(filter.matches(&schema(), &document()).unwrap());
+    }
+
+    // Scenario: Rust prepares an OR filter with schema field layouts.
+    // Covers:
+    // - Schema-aware filter preparation before the scan loop.
+    // - Cheap scalar string contains before list contains for OR short-circuiting.
+    // Expected: Semantics stay true while the string predicate is evaluated first.
+    #[test]
+    fn prepares_or_filters_with_schema_aware_contains_order() {
+        // Arrange.
+        let bytes = encode_filter(&WireFilter::Any {
+            predicates: vec![
+                WireFilter::Field {
+                    field: "tags".to_string(),
+                    operation: WireFilterOperation::Contains,
+                    value: WireValue::String("math".to_string()),
+                },
+                WireFilter::Field {
+                    field: "name".to_string(),
+                    operation: WireFilterOperation::Contains,
+                    value: WireValue::String("Ada".to_string()),
+                },
+            ],
+        })
+        .unwrap();
+
+        // Act.
+        let filter = NativeFilter::decode(&bytes)
+            .unwrap()
+            .prepare_for_schema(&schema());
+
+        // Assert.
+        let NativeFilter::Any { predicates } = &filter else {
+            panic!("expected OR filter");
+        };
+        let NativeFilter::Field { field, layout, .. } = &predicates[0] else {
+            panic!("expected field predicate");
+        };
+        assert_eq!(field, "name");
+        assert!(layout.is_some());
         assert!(filter.matches(&schema(), &document()).unwrap());
     }
 

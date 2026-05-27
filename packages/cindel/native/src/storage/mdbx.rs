@@ -465,7 +465,9 @@ impl MdbxStorage {
         let filter = plan
             .filter
             .as_ref()
-            .map(|bytes| NativeFilter::decode(bytes))
+            .map(|bytes| {
+                NativeFilter::decode(bytes).map(|filter| filter.prepare_for_schema(&schema))
+            })
             .transpose()?;
 
         if let Some(documents) =
@@ -785,7 +787,9 @@ impl MdbxStorage {
         let filter = plan
             .filter
             .as_ref()
-            .map(|bytes| NativeFilter::decode(bytes))
+            .map(|bytes| {
+                NativeFilter::decode(bytes).map(|filter| filter.prepare_for_schema(schema))
+            })
             .transpose()?;
         let offset = plan.offset as usize;
         let limit = plan.limit.map(|value| value as usize);
@@ -1652,7 +1656,6 @@ impl StorageEngine for MdbxStorage {
         candidate_ids: &[u64],
         filter: &[u8],
     ) -> Result<Vec<u64>, String> {
-        let filter = NativeFilter::decode(filter)?;
         let schema = self.with_read_transaction(|transaction, tables| {
             self.cached_collection_schema(transaction, &tables, collection)
         })?;
@@ -1661,6 +1664,7 @@ impl StorageEngine for MdbxStorage {
                 "collection `{collection}` has no registered schema"
             ));
         };
+        let filter = NativeFilter::decode(filter)?.prepare_for_schema(&schema);
         let documents = self.get_many_stored(collection, candidate_ids)?;
         let mut ids = Vec::new();
         for (id, document) in candidate_ids.iter().copied().zip(documents) {
@@ -2570,7 +2574,7 @@ fn sort_planned_documents(
                 };
             }
         }
-        left.2.cmp(&right.2)
+        Ordering::Equal
     });
 
     for (target, (id, bytes, position, _)) in documents.iter_mut().zip(keyed) {
@@ -2672,7 +2676,7 @@ fn borrowed_planned_document_order(
                 };
             }
         }
-        left.position.cmp(&right.position)
+        Ordering::Equal
     });
     order
 }

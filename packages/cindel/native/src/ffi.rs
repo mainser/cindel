@@ -14,8 +14,6 @@ use crate::wire::{
     WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
-use std::cell::RefCell;
-
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
     25
@@ -548,7 +546,6 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
             all_present,
             trusted_static_size: true,
         },
-        string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
 
@@ -587,7 +584,6 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
             all_present: true,
             trusted_static_size: true,
         },
-        string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
 
@@ -724,10 +720,6 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_string(
     *out_ptr = bytes.as_ptr();
     *out_len = bytes.len();
     *out_is_ascii = bytes.is_ascii();
-    *out_intern_id = reader
-        .string_cache
-        .borrow_mut()
-        .intern_id(field_index as usize, bytes);
     true
 }
 
@@ -748,7 +740,6 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_list(
             bytes: raw_list.bytes,
             entries: raw_list.entries,
         },
-        string_cache: RefCell::new(NativeStringCache::default()),
     }))
 }
 
@@ -1700,7 +1691,6 @@ enum NativeListEncoding {
 
 pub struct CindelNativeDocumentReader {
     mode: CindelNativeDocumentReaderMode,
-    string_cache: RefCell<NativeStringCache>,
 }
 
 enum CindelNativeDocumentReaderMode {
@@ -1738,42 +1728,6 @@ const NATIVE_VALUE_DURATION: u8 = 6;
 const NATIVE_VALUE_LIST: u8 = 7;
 const NATIVE_VALUE_ENUM: u8 = 8;
 const NATIVE_VALUE_NULL_FLAG: u8 = 0x01;
-
-#[derive(Default)]
-struct NativeStringCache {
-    entries: Vec<NativeStringCacheEntry>,
-    next_id: u64,
-}
-
-struct NativeStringCacheEntry {
-    id: u64,
-    field_index: usize,
-    bytes: Vec<u8>,
-}
-
-impl NativeStringCache {
-    fn intern_id(&mut self, field_index: usize, bytes: &[u8]) -> u64 {
-        if bytes.len() < 128 {
-            return 0;
-        }
-        for entry in self.entries.iter() {
-            if entry.field_index == field_index && entry.bytes == bytes {
-                return entry.id;
-            }
-        }
-        self.next_id = self.next_id.saturating_add(1);
-        let id = self.next_id;
-        if self.entries.len() == 8 {
-            self.entries.remove(0);
-        }
-        self.entries.push(NativeStringCacheEntry {
-            id,
-            field_index,
-            bytes: bytes.to_vec(),
-        });
-        id
-    }
-}
 
 struct NativeBatchLayout {
     field_types: Vec<NativeBatchFieldType>,

@@ -1205,7 +1205,6 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _bytesLength = calloc<Size>(),
       _stringIsAscii = calloc<Bool>(),
       _stringInternId = calloc<Uint64>(),
-      _internedStrings = <int, String>{},
       _ownsScratch = true;
 
   _CindelNativeDocumentReader._child(
@@ -1219,7 +1218,6 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _bytesLength = parent._bytesLength,
       _stringIsAscii = parent._stringIsAscii,
       _stringInternId = parent._stringInternId,
-      _internedStrings = parent._internedStrings,
       _ownsScratch = false;
 
   final _CindelNativeFunctions _functions;
@@ -1231,7 +1229,6 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Size> _bytesLength;
   final Pointer<Bool> _stringIsAscii;
   final Pointer<Uint64> _stringInternId;
-  final Map<int, String> _internedStrings;
   final bool _ownsScratch;
   bool _released = false;
 
@@ -1295,19 +1292,8 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
     )) {
       return null;
     }
-    final internId = _stringInternId.value;
-    if (internId != 0) {
-      final cached = _internedStrings[internId];
-      if (cached != null) {
-        return cached;
-      }
-    }
     final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
-    final value = _decodeNativeString(bytes, isAscii: _stringIsAscii.value);
-    if (internId != 0) {
-      _internedStrings[internId] = value;
-    }
-    return value;
+    return _decodeNativeString(bytes, isAscii: _stringIsAscii.value);
   }
 
   @override

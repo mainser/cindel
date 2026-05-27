@@ -112,6 +112,15 @@ impl CompactFieldType {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedBinaryFieldLayout {
+    index: usize,
+    field_type: CompactFieldType,
+    static_offset: usize,
+    static_size: usize,
+    normalized_binary_type: &'static str,
+}
+
 impl BinaryKind {
     fn from_tag(tag: u8) -> Result<Self, String> {
         match tag {
@@ -976,40 +985,45 @@ pub(crate) fn read_binary_field_payload<'a>(
     schema: &'a CollectionSchemaManifest,
     bytes: &'a [u8],
     field: &str,
-) -> Result<Option<(&'a str, &'a [u8])>, String> {
-    let (index, field_type, static_offset, static_size, binary_type) =
-        prepared_field_layout(schema, field)?;
-    let normalized_type = normalized_binary_type(binary_type);
+) -> Result<Option<(&'static str, &'a [u8])>, String> {
+    let layout = prepare_binary_field_layout(schema, field)?;
+    read_binary_field_payload_prepared(bytes, &layout)
+}
+
+pub(crate) fn read_binary_field_payload_prepared<'a>(
+    bytes: &'a [u8],
+    layout: &PreparedBinaryFieldLayout,
+) -> Result<Option<(&'static str, &'a [u8])>, String> {
     if bytes.starts_with(MAGIC) {
         let document = BinaryDocument::parse(bytes)?;
-        let Some(range) = document.field_payload_range(index)? else {
+        let Some(range) = document.field_payload_range(layout.index)? else {
             return Ok(None);
         };
-        return Ok(Some((normalized_type, &bytes[range])));
+        return Ok(Some((layout.normalized_binary_type, &bytes[range])));
     }
-    validate_prepared_compact_document(bytes, static_size)?;
-    let payload = match field_type {
-        CompactFieldType::Bool => match bytes[3 + static_offset] {
+    validate_prepared_compact_document(bytes, layout.static_size)?;
+    let payload = match layout.field_type {
+        CompactFieldType::Bool => match bytes[3 + layout.static_offset] {
             COMPACT_NULL_BOOL => return Ok(None),
-            _ => &bytes[3 + static_offset..3 + static_offset + 1],
+            _ => &bytes[3 + layout.static_offset..3 + layout.static_offset + 1],
         },
         CompactFieldType::Int | CompactFieldType::Double => {
-            let start = 3 + static_offset;
+            let start = 3 + layout.static_offset;
             &bytes[start..start + 8]
         }
         CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object => {
             let document = CompactBinaryDocument {
                 bytes,
-                static_size,
+                static_size: layout.static_size,
                 field_offsets: Vec::new(),
             };
-            let Some(payload) = document.dynamic_payload(static_offset)? else {
+            let Some(payload) = document.dynamic_payload(layout.static_offset)? else {
                 return Ok(None);
             };
             payload
         }
     };
-    Ok(Some((normalized_type, payload)))
+    Ok(Some((layout.normalized_binary_type, payload)))
 }
 
 pub(crate) fn read_binary_field_at(
@@ -1031,10 +1045,10 @@ pub(crate) fn read_binary_field_at(
     document.field_value(index)
 }
 
-fn prepared_field_layout<'a>(
-    schema: &'a CollectionSchemaManifest,
+pub(crate) fn prepare_binary_field_layout(
+    schema: &CollectionSchemaManifest,
     field: &str,
-) -> Result<(usize, CompactFieldType, usize, usize, &'a str), String> {
+) -> Result<PreparedBinaryFieldLayout, String> {
     let mut static_size = 0usize;
     let mut target = None;
     for (index, schema_field) in schema.fields.iter().enumerate() {
@@ -1044,21 +1058,40 @@ fn prepared_field_layout<'a>(
                 index,
                 field_type,
                 static_size,
-                schema_field.binary_type.as_str(),
+                normalized_binary_type_name(&schema_field.binary_type),
             ));
         }
         static_size = static_size
             .checked_add(field_type.static_size())
             .ok_or_else(|| "compact binary document static size overflows".to_string())?;
     }
-    let Some((index, field_type, static_offset, binary_type)) = target else {
+    let Some((index, field_type, static_offset, normalized_binary_type)) = target else {
         return Err(format!("field `{field}` is not part of `{}`", schema.name));
     };
-    Ok((index, field_type, static_offset, static_size, binary_type))
+    Ok(PreparedBinaryFieldLayout {
+        index,
+        field_type,
+        static_offset,
+        static_size,
+        normalized_binary_type,
+    })
 }
 
 fn normalized_binary_type(binary_type: &str) -> &str {
     binary_type.strip_suffix('?').unwrap_or(binary_type)
+}
+
+fn normalized_binary_type_name(binary_type: &str) -> &'static str {
+    match normalized_binary_type(binary_type) {
+        "bool" => "bool",
+        "int" => "int",
+        "double" => "double",
+        "string" => "string",
+        "String" => "String",
+        "list" => "list",
+        "object" => "object",
+        _ => "unknown",
+    }
 }
 
 pub(crate) fn read_binary_sort_key_at(

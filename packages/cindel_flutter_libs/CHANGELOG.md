@@ -2,6 +2,8 @@
 
 ## 0.4.1
 
+- Regenerated the Windows native runtime library with schema-prepared native
+  filter evaluation and typed reader string hydration cleanup.
 - Regenerated the Windows native runtime library with the tighter compact
   native `List<String>` payload layout.
 - Regenerated the Windows native runtime library for faster typed MDBX inserts

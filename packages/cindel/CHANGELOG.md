@@ -2,6 +2,10 @@
 
 ## 0.4.1
 
+- Prepared native MDBX filters against schema field layouts before scan
+  evaluation, reducing repeated field lookup work in unindexed filter queries.
+- Aligned native sorted query tie handling with the core comparator path and
+  removed typed reader string interning work from generated native hydration.
 - Reduced generated typed `getAll` hydration overhead for native list fields by
   reusing reader scratch buffers between parent documents and child lists.
 - Fixed schema binary document decoding for compact native string-list payloads.
