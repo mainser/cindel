@@ -1264,7 +1264,6 @@ CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
       object.createdAt.microsecondsSinceEpoch,
       object.displayName,
       object.email,
-      object.id,
       object.name,
       object.plan.code,
       object.primaryRecipient == null
@@ -1287,7 +1286,6 @@ CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
       CindelBinaryFieldType.intValue,
       CindelBinaryFieldType.stringValue,
       CindelBinaryFieldType.stringValue,
-      CindelBinaryFieldType.intValue,
       CindelBinaryFieldType.stringValue,
       CindelBinaryFieldType.stringValue,
       CindelBinaryFieldType.objectValue,
@@ -1303,29 +1301,28 @@ CindelBinaryDocumentBytes _$UserToCindelBinaryDocument(User object) {
 }
 
 User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
-  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 69);
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 61);
   final Object? field0 = reader.readString(0, 0);
   final Object? field1 = reader.readBool(1, 3);
   final Object? field2 = reader.readString(2, 4);
   final Object? field3 = reader.readInt(3, 7);
   final Object? field4 = reader.readString(4, 15);
   final Object? field5 = reader.readString(5, 18);
-  final Object? field6 = reader.readInt(6, 21);
-  final Object? field7 = reader.readString(7, 29);
-  final Object? field8 = reader.readString(8, 32);
-  final Object? field9 = reader.readObject(9, 35);
-  final Object? field10 = reader.readList(10, 38);
-  final Object? field11 = reader.readString(11, 41);
-  final Object? field12 = reader.readList(12, 44);
+  final Object? field6 = reader.readString(6, 21);
+  final Object? field7 = reader.readString(7, 24);
+  final Object? field8 = reader.readObject(8, 27);
+  final Object? field9 = reader.readList(9, 30);
+  final Object? field10 = reader.readString(10, 33);
+  final Object? field11 = reader.readList(11, 36);
+  final Object? field12 = reader.readInt(12, 39);
   final Object? field13 = reader.readInt(13, 47);
-  final Object? field14 = reader.readInt(14, 55);
-  final Object? field15 = reader.readList(15, 63);
-  final Object? field16 = reader.readString(16, 66);
+  final Object? field14 = reader.readList(14, 55);
+  final Object? field15 = reader.readString(15, 58);
   final object = User();
-  object.id = field6 as int;
-  object.name = field7 as String;
+  object.id = autoIncrement;
+  object.name = field6 as String;
   object.email = field5 as String;
-  object.username = field16 == null ? null : field16 as String?;
+  object.username = field15 == null ? null : field15 as String?;
   object.displayName = field4 == null ? null : field4 as String?;
   object.accessToken = field0 == null ? null : field0 as String?;
   object.bio = field2 == null ? null : field2 as String?;
@@ -1334,28 +1331,28 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
     field3 as int,
     isUtc: true,
   );
-  object.sessionLength = field13 == null
+  object.sessionLength = field12 == null
       ? null
-      : Duration(microseconds: field13 as int);
-  object.tags = (field15 as List<Object?>)
+      : Duration(microseconds: field12 as int);
+  object.tags = (field14 as List<Object?>)
       .map((value) => value as String)
       .toList(growable: false);
-  object.scores = field12 == null
+  object.scores = field11 == null
       ? null
-      : (field12 as List<Object?>)
+      : (field11 as List<Object?>)
             .map((value) => value as int)
             .toList(growable: false);
-  object.role = UserRole.values.byName(field11 as String);
-  object.status = UserStatus.values[field14 as int];
+  object.role = UserRole.values.byName(field10 as String);
+  object.status = UserStatus.values[field13 as int];
   object.plan = UserPlan.values.firstWhere(
-    (enumValue) => enumValue.code == field8,
+    (enumValue) => enumValue.code == field7,
   );
-  object.primaryRecipient = field9 == null
+  object.primaryRecipient = field8 == null
       ? null
-      : _$RecipientFromCindelEmbedded((field9 as Map).cast<String, Object?>());
-  object.recipients = field10 == null
+      : _$RecipientFromCindelEmbedded((field8 as Map).cast<String, Object?>());
+  object.recipients = field9 == null
       ? null
-      : (field10 as List<Object?>)
+      : (field9 as List<Object?>)
             .map(
               (value) => _$RecipientFromCindelEmbedded(
                 (value as Map).cast<String, Object?>(),
@@ -1675,11 +1672,10 @@ CindelBinaryDocumentBytes _$ImmutableUserToCindelBinaryDocument(
   ImmutableUser object,
 ) {
   return cindelEncodeSchemaBinaryDocument(
-    <Object?>[object.active, object.email, object.id],
+    <Object?>[object.active, object.email],
     const <CindelBinaryFieldType>[
       CindelBinaryFieldType.boolValue,
       CindelBinaryFieldType.stringValue,
-      CindelBinaryFieldType.intValue,
     ],
   );
 }
@@ -1687,12 +1683,11 @@ CindelBinaryDocumentBytes _$ImmutableUserToCindelBinaryDocument(
 ImmutableUser _$ImmutableUserFromCindelBinaryDocument(
   CindelBinaryDocumentBytes bytes,
 ) {
-  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 12);
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 4);
   final Object? field0 = reader.readBool(0, 0);
   final Object? field1 = reader.readString(1, 1);
-  final Object? field2 = reader.readInt(2, 4);
   return ImmutableUser(
-    id: field2 as int,
+    id: autoIncrement,
     email: field1 as String,
     active: field0 as bool,
   );

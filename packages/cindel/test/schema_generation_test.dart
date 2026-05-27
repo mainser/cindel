@@ -108,10 +108,10 @@ void main() {
         ..address = 'ben@example.com';
       final user = User()
         ..id = 7
-        ..name = 'Noel'
+        ..name = 'Jhon'
         ..email = 'demo@example.com'
-        ..username = 'noel'
-        ..displayName = 'Noel Alvarez'
+        ..username = 'jhon'
+        ..displayName = 'Jhon Doe'
         ..accessToken = 'secret-token'
         ..bio = 'Builds local databases'
         ..active = true
@@ -133,10 +133,10 @@ void main() {
       // Assert.
       expect(document, {
         'id': 7,
-        'name': 'Noel',
+        'name': 'Jhon',
         'email': 'demo@example.com',
-        'username': 'noel',
-        'displayName': 'Noel Alvarez',
+        'username': 'jhon',
+        'displayName': 'Jhon Doe',
         'accessToken': 'secret-token',
         'bio': 'Builds local databases',
         'active': true,
@@ -165,10 +165,10 @@ void main() {
         ],
       });
       expect(restored.id, 7);
-      expect(restored.name, 'Noel');
+      expect(restored.name, 'Jhon');
       expect(restored.email, 'demo@example.com');
-      expect(restored.username, 'noel');
-      expect(restored.displayName, 'Noel Alvarez');
+      expect(restored.username, 'jhon');
+      expect(restored.displayName, 'Jhon Doe');
       expect(restored.accessToken, 'secret-token');
       expect(restored.bio, 'Builds local databases');
       expect(restored.active, isTrue);
@@ -206,10 +206,10 @@ void main() {
         ..metadata = (RecipientMetadata()..label = 'primary');
       final user = User()
         ..id = 7
-        ..name = 'Noel'
+        ..name = 'Jhon'
         ..email = 'demo@example.com'
-        ..username = 'noel'
-        ..displayName = 'Noel Alvarez'
+        ..username = 'jhon'
+        ..displayName = 'Jhon Doe'
         ..accessToken = 'secret-token'
         ..bio = 'Builds local databases'
         ..active = true
@@ -232,7 +232,6 @@ void main() {
         CindelBinaryFieldType.intValue,
         CindelBinaryFieldType.stringValue,
         CindelBinaryFieldType.stringValue,
-        CindelBinaryFieldType.intValue,
         CindelBinaryFieldType.stringValue,
         CindelBinaryFieldType.stringValue,
         CindelBinaryFieldType.objectValue,
@@ -248,10 +247,9 @@ void main() {
 
       // Assert.
       expect(storedValues[3], createdAt.microsecondsSinceEpoch);
-      expect(storedValues[6], 7);
-      expect(storedValues[14], 1);
-      expect(restored.id, 7);
-      expect(restored.name, 'Noel');
+      expect(storedValues[13], 1);
+      expect(restored.id, autoIncrement);
+      expect(restored.name, 'Jhon');
       expect(restored.createdAt, createdAt);
       expect(
         restored.sessionLength,

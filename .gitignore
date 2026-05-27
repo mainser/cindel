@@ -24,6 +24,7 @@ target/
 
 # Local planning scratchpad
 docs/local_benchmarks/
+examples/cindel_bench/
 examples/cindel_todo/pubspec_overrides.yaml
 tool/benchmark/
 

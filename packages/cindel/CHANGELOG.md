@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- Fixed MDBX query-plan updates for compact native documents that store ids in
+  the collection key instead of inside the document payload.
+- Kept compact `sortById` queries ordered by the external document id without
+  reintroducing embedded ids into compact documents.
+- Hydrates generated compact binary documents with ids from the collection key
+  on Dart fallback reads.
+
 ## 0.5.2
 
 - Updated the annotations package constraint to the `0.5.2` documentation and

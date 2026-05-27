@@ -5,6 +5,15 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.3
+
+- Fixed MDBX query-plan updates for compact native documents that store ids in
+  the collection key instead of inside the document payload.
+- Kept compact `sortById` queries ordered by the external document id without
+  reintroducing embedded ids into compact documents.
+- Updated the generator so compact binary serializers no longer emit ids inside
+  document payloads.
+
 ## 0.5.2
 
 - Updated the annotations package constraint to the `0.5.2` documentation and

@@ -510,7 +510,7 @@ class CindelDatabase {
       return null;
     }
 
-    return _decodeDocument(collection, bytes, _schemas[collection]);
+    return _decodeDocument(collection, bytes, _schemas[collection], id: id);
   }
 
   /// Returns raw generated binary document bytes, or `null`.
@@ -1013,17 +1013,26 @@ class CindelDatabase {
     final handle = _checkOpen();
     _checkBinaryBackend();
     _checkCollection(collection);
+    final ids = _bindings.queryPlanIds(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+    );
+    if (ids.isEmpty) {
+      return const <CindelDocument>[];
+    }
     final documents = _decodeBinaryDocumentBatch(
-      _bindings.queryPlanDocuments(
-        handle,
-        collection,
-        _encodeNativeQueryPlan(collection, plan),
-      ),
+      _bindings.getManyStored(handle, collection, _encodeIds(ids)),
     );
     return [
-      for (final bytes in documents)
-        if (bytes != null)
-          _decodeDocument(collection, bytes, _schemas[collection]),
+      for (var i = 0; i < documents.length; i += 1)
+        if (documents[i] != null)
+          _decodeDocument(
+            collection,
+            documents[i]!,
+            _schemas[collection],
+            id: ids[i],
+          ),
     ];
   }
 
@@ -1707,11 +1716,16 @@ class CindelDatabase {
       _bindings.getMany(handle, collection, _encodeIds(ids)),
     );
     return [
-      for (final bytes in documents)
-        if (bytes == null)
+      for (var i = 0; i < documents.length; i += 1)
+        if (documents[i] == null)
           null
         else
-          _decodeDocument(collection, bytes, _schemas[collection]),
+          _decodeDocument(
+            collection,
+            documents[i]!,
+            _schemas[collection],
+            id: ids[i],
+          ),
     ];
   }
 
@@ -1909,8 +1923,9 @@ Uint8List _encodeDocument(CindelDocument value) {
 CindelDocument _decodeDocument(
   String collection,
   Uint8List bytes,
-  CindelCollectionSchema<dynamic>? schema,
-) {
+  CindelCollectionSchema<dynamic>? schema, {
+  int? id,
+}) {
   if (cindelIsGenericDocument(bytes)) {
     return cindelDecodeGenericDocument(bytes);
   }
@@ -1921,6 +1936,12 @@ CindelDocument _decodeDocument(
     if (fromBinaryDocument != null) {
       try {
         final object = fromBinaryDocument(bytes);
+        if (id != null) {
+          final setId = dynamicSchema.setId;
+          if (setId != null) {
+            setId(object, id);
+          }
+        }
         final document = dynamicSchema.toDocument(object);
         if (document is Map) {
           return document.cast<String, Object?>();

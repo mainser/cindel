@@ -320,15 +320,30 @@ struct BorrowedPlannedDocument<'a> {
 }
 
 enum BorrowedSortValues {
-    One(Option<BinarySortKey>),
+    One(BorrowedSortValue),
     OneStringRange(Option<std::ops::Range<usize>>),
-    Many(Vec<Option<BinarySortKey>>),
+    Many(Vec<BorrowedSortValue>),
+}
+
+enum BorrowedSortValue {
+    Id(u64),
+    Field(Option<BinarySortKey>),
+}
+
+enum OwnedSortValue {
+    Id(u64),
+    Field(Option<BinaryValue>),
+}
+
+enum QuerySortTarget {
+    Id,
+    Field(PreparedBinarySortField),
 }
 
 struct QuerySortField {
     index: usize,
     ascending: bool,
-    prepared: PreparedBinarySortField,
+    target: QuerySortTarget,
 }
 
 type SharedMdbxState = Arc<MdbxSharedState>;
@@ -3063,6 +3078,9 @@ fn direct_bool_index_query(
     let mut static_size = 0usize;
     let mut target = None;
     for (field_index, field) in schema.fields.iter().enumerate() {
+        if field.is_id {
+            continue;
+        }
         let field_size = compact_field_static_size(&field.binary_type)?;
         if field.name == *index_name {
             if !field.is_indexed
@@ -3141,6 +3159,9 @@ fn direct_bool_index_update(
     let mut static_size = 0usize;
     let mut target_offset = None;
     for field in &schema.fields {
+        if field.is_id {
+            continue;
+        }
         let field_size = compact_field_static_size(&field.binary_type)?;
         if field.name == *field_name {
             if !field.is_indexed
@@ -3229,7 +3250,13 @@ fn sort_planned_documents(
         .map(|document| {
             let values = sort_fields
                 .iter()
-                .map(|sort_field| read_binary_field_at(schema, &document.bytes, sort_field.index))
+                .map(|sort_field| match &sort_field.target {
+                    QuerySortTarget::Id => Ok(OwnedSortValue::Id(document.id)),
+                    QuerySortTarget::Field(_) => {
+                        read_binary_field_at(schema, &document.bytes, sort_field.index)
+                            .map(OwnedSortValue::Field)
+                    }
+                })
                 .collect::<Result<Vec<_>, String>>()?;
             Ok((
                 document.id,
@@ -3242,7 +3269,7 @@ fn sort_planned_documents(
 
     keyed.sort_unstable_by(|left, right| {
         for (index, sort_field) in sort_fields.iter().enumerate() {
-            let ordering = compare_binary_values(left.3[index].as_ref(), right.3[index].as_ref());
+            let ordering = compare_owned_sort_values(&left.3[index], &right.3[index]);
             if ordering != Ordering::Equal {
                 return if sort_field.ascending {
                     ordering
@@ -3284,7 +3311,11 @@ fn query_sort_fields(
             Ok(QuerySortField {
                 index,
                 ascending: sort.ascending,
-                prepared: prepare_binary_sort_field(schema, index)?,
+                target: if schema.fields[index].is_id {
+                    QuerySortTarget::Id
+                } else {
+                    QuerySortTarget::Field(prepare_binary_sort_field(schema, index)?)
+                },
             })
         })
         .collect::<Result<Vec<_>, String>>()
@@ -3305,24 +3336,25 @@ fn push_borrowed_planned_document<'a>(
         }
     }
     let sort_values = if let [sort_field] = sort_fields {
-        if let Some(range) =
-            read_prepared_binary_string_sort_range(bytes.as_ref(), &sort_field.prepared)?
-        {
-            BorrowedSortValues::OneStringRange(range)
-        } else {
-            BorrowedSortValues::One(read_prepared_binary_sort_key(
-                schema,
-                bytes.as_ref(),
-                &sort_field.prepared,
-            )?)
+        match &sort_field.target {
+            QuerySortTarget::Id => BorrowedSortValues::One(BorrowedSortValue::Id(id)),
+            QuerySortTarget::Field(prepared) => {
+                if let Some(range) =
+                    read_prepared_binary_string_sort_range(bytes.as_ref(), prepared)?
+                {
+                    BorrowedSortValues::OneStringRange(range)
+                } else {
+                    BorrowedSortValues::One(BorrowedSortValue::Field(
+                        read_prepared_binary_sort_key(schema, bytes.as_ref(), prepared)?,
+                    ))
+                }
+            }
         }
     } else {
         BorrowedSortValues::Many(
             sort_fields
                 .iter()
-                .map(|sort_field| {
-                    read_prepared_binary_sort_key(schema, bytes.as_ref(), &sort_field.prepared)
-                })
+                .map(|sort_field| read_borrowed_sort_value(schema, bytes.as_ref(), id, sort_field))
                 .collect::<Result<Vec<_>, String>>()?,
         )
     };
@@ -3361,11 +3393,25 @@ fn borrowed_planned_document_order(
 fn borrowed_sort_value<'a>(
     document: &'a BorrowedPlannedDocument<'_>,
     index: usize,
-) -> Option<&'a BinarySortKey> {
+) -> Option<&'a BorrowedSortValue> {
     match &document.sort_values {
-        BorrowedSortValues::One(value) => value.as_ref(),
+        BorrowedSortValues::One(value) => Some(value),
         BorrowedSortValues::OneStringRange(_) => None,
-        BorrowedSortValues::Many(values) => values[index].as_ref(),
+        BorrowedSortValues::Many(values) => Some(&values[index]),
+    }
+}
+
+fn read_borrowed_sort_value(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    id: u64,
+    sort_field: &QuerySortField,
+) -> Result<BorrowedSortValue, String> {
+    match &sort_field.target {
+        QuerySortTarget::Id => Ok(BorrowedSortValue::Id(id)),
+        QuerySortTarget::Field(prepared) => Ok(BorrowedSortValue::Field(
+            read_prepared_binary_sort_key(schema, bytes, prepared)?,
+        )),
     }
 }
 
@@ -3387,12 +3433,31 @@ fn compare_borrowed_sort_values(
                 .as_ref()
                 .map(|range| &right.bytes.as_ref()[range.clone()]),
         ),
-        _ => compare_binary_sort_keys(
+        _ => compare_borrowed_sort_value(
             borrowed_sort_value(left, index),
             left.bytes.as_ref(),
             borrowed_sort_value(right, index),
             right.bytes.as_ref(),
         ),
+    }
+}
+
+fn compare_borrowed_sort_value(
+    left: Option<&BorrowedSortValue>,
+    left_bytes: &[u8],
+    right: Option<&BorrowedSortValue>,
+    right_bytes: &[u8],
+) -> Ordering {
+    match (left, right) {
+        (Some(BorrowedSortValue::Id(left)), Some(BorrowedSortValue::Id(right))) => left.cmp(right),
+        (Some(BorrowedSortValue::Field(left)), Some(BorrowedSortValue::Field(right))) => {
+            compare_binary_sort_keys(left.as_ref(), left_bytes, right.as_ref(), right_bytes)
+        }
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(BorrowedSortValue::Id(_)), Some(BorrowedSortValue::Field(_))) => Ordering::Greater,
+        (Some(BorrowedSortValue::Field(_)), Some(BorrowedSortValue::Id(_))) => Ordering::Less,
     }
 }
 
@@ -3435,6 +3500,17 @@ fn compare_binary_sort_keys(
             binary_sort_key_distinct_key(left, left_bytes)
                 .cmp(&binary_sort_key_distinct_key(right, right_bytes))
         }
+    }
+}
+
+fn compare_owned_sort_values(left: &OwnedSortValue, right: &OwnedSortValue) -> Ordering {
+    match (left, right) {
+        (OwnedSortValue::Id(left), OwnedSortValue::Id(right)) => left.cmp(right),
+        (OwnedSortValue::Field(left), OwnedSortValue::Field(right)) => {
+            compare_binary_values(left.as_ref(), right.as_ref())
+        }
+        (OwnedSortValue::Id(_), OwnedSortValue::Field(_)) => Ordering::Greater,
+        (OwnedSortValue::Field(_), OwnedSortValue::Id(_)) => Ordering::Less,
     }
 }
 
@@ -5669,6 +5745,102 @@ mod tests {
     }
 
     #[test]
+    fn updates_compact_bool_index_documents_without_embedded_id() {
+        let directory = TemporaryDirectory::new("bool_index_update_compact_without_id");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&task_schema_manifest()).unwrap();
+
+        for (id, completed, title) in [(1, true, "Cid"), (2, false, "Ben"), (3, true, "Ana")] {
+            storage
+                .put_indexed("tasks", id, &task_compact_document(completed, title), &[])
+                .unwrap();
+        }
+
+        let true_plan = WireQueryPlan {
+            source: WireQuerySource::IndexEqual {
+                index_name: "completed".to_string(),
+                value: WireIndexValue::Bool(true),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "title".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        assert_eq!(
+            storage.query_plan_documents("tasks", &true_plan).unwrap(),
+            vec![
+                task_compact_document(true, "Ana"),
+                task_compact_document(true, "Cid"),
+            ]
+        );
+
+        let updated = storage
+            .query_plan_update(
+                "tasks",
+                &WireQueryPlan {
+                    sorts: Vec::new(),
+                    ..true_plan.clone()
+                },
+                &[("completed".to_string(), WireValue::Bool(false))],
+            )
+            .unwrap();
+
+        assert_eq!(updated, vec![1, 3]);
+        assert_eq!(
+            storage
+                .query_index_equal("tasks", "completed", &IndexValue::Bool(true))
+                .unwrap(),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            storage
+                .query_index_equal("tasks", "completed", &IndexValue::Bool(false))
+                .unwrap(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn sorts_compact_documents_by_external_id() {
+        let directory = TemporaryDirectory::new("sort_compact_by_external_id");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&task_schema_manifest()).unwrap();
+
+        for (id, completed, title) in [(3, false, "Cid"), (1, true, "Ana"), (2, false, "Ben")] {
+            storage
+                .put_indexed("tasks", id, &task_compact_document(completed, title), &[])
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "id".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        assert_eq!(
+            storage.query_plan_documents("tasks", &plan).unwrap(),
+            vec![
+                task_compact_document(true, "Ana"),
+                task_compact_document(false, "Ben"),
+                task_compact_document(false, "Cid"),
+            ]
+        );
+    }
+
+    #[test]
     fn aggregates_binary_document_fields() {
         // Scenario: PERF-15 keeps aggregate queries inside MDBX instead of
         // hydrating full Dart objects.
@@ -6079,6 +6251,19 @@ mod tests {
             Some(BinaryValue::String(title.to_string())),
         ])
         .unwrap()
+    }
+
+    fn task_compact_document(completed: bool, title: &str) -> Vec<u8> {
+        let title = title.as_bytes();
+        let mut bytes = Vec::with_capacity(10 + title.len());
+        bytes.extend_from_slice(&[4, 0, 0]);
+        bytes.push(u8::from(completed));
+        bytes.extend_from_slice(&[4, 0, 0]);
+        bytes.push(title.len() as u8);
+        bytes.push((title.len() >> 8) as u8);
+        bytes.push((title.len() >> 16) as u8);
+        bytes.extend_from_slice(title);
+        bytes
     }
 
     struct TemporaryDirectory {

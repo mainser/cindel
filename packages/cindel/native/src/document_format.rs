@@ -362,36 +362,22 @@ impl<'a> CompactBinaryDocument<'a> {
             return Err("compact binary document is shorter than the header".into());
         }
         let static_size = read_u24(bytes, 0)? as usize;
-        let mut expected_static_size_without_id = 0usize;
-        let mut field_offsets_without_id = Vec::with_capacity(schema.fields.len());
+        let mut expected_static_size = 0usize;
+        let mut field_offsets = Vec::with_capacity(schema.fields.len());
         for field in &schema.fields {
             if field.is_id {
-                field_offsets_without_id.push(None);
+                field_offsets.push(None);
                 continue;
             }
             let field_type = CompactFieldType::from_field(field)?;
-            field_offsets_without_id.push(Some((field_type, expected_static_size_without_id)));
-            expected_static_size_without_id = expected_static_size_without_id
+            field_offsets.push(Some((field_type, expected_static_size)));
+            expected_static_size = expected_static_size
                 .checked_add(field_type.static_size())
                 .ok_or_else(|| "compact binary document static size overflows".to_string())?;
         }
-        let field_offsets = if static_size == expected_static_size_without_id {
-            field_offsets_without_id
-        } else {
-            let mut expected_static_size_with_id = 0usize;
-            let mut field_offsets_with_id = Vec::with_capacity(schema.fields.len());
-            for field in &schema.fields {
-                let field_type = CompactFieldType::from_field(field)?;
-                field_offsets_with_id.push(Some((field_type, expected_static_size_with_id)));
-                expected_static_size_with_id = expected_static_size_with_id
-                    .checked_add(field_type.static_size())
-                    .ok_or_else(|| "compact binary document static size overflows".to_string())?;
-            }
-            if static_size != expected_static_size_with_id {
-                return Err("compact binary document static size does not match schema".into());
-            }
-            field_offsets_with_id
-        };
+        if static_size != expected_static_size {
+            return Err("compact binary document static size does not match schema".into());
+        }
         if bytes.len() < 3 + static_size {
             return Err("compact binary document static section is truncated".into());
         }
@@ -1178,6 +1164,12 @@ pub(crate) fn prepare_binary_sort_field(
 ) -> Result<PreparedBinarySortField, String> {
     let mut static_offset = 0usize;
     for (field_index, field) in schema.fields.iter().enumerate() {
+        if field.is_id {
+            if field_index == index {
+                return Err("id is stored outside compact binary documents".into());
+            }
+            continue;
+        }
         let field_type = CompactFieldType::from_field(field)?;
         let field_static_size = field_type.static_size();
         if field_index == index {

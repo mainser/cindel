@@ -174,7 +174,7 @@ final class CindelTypedCollection<T> {
   Future<T?> get(int id) async {
     if (_usesBinaryDocuments) {
       final bytes = await database.getBinaryDocument(schema.name, id);
-      return bytes == null ? null : schema.fromBinaryDocument!(bytes);
+      return bytes == null ? null : _objectFromBinaryDocument(bytes, id);
     }
     final document = await database.get(schema.name, id);
     return document == null ? null : schema.fromDocument(document);
@@ -193,10 +193,16 @@ final class CindelTypedCollection<T> {
           nativeReader,
         );
       }
-      final documents = await database.getAllBinaryDocuments(schema.name, ids);
+      final idList = ids.toList(growable: false);
+      final documents = await database.getAllBinaryDocuments(
+        schema.name,
+        idList,
+      );
       return [
-        for (final bytes in documents)
-          bytes == null ? null : schema.fromBinaryDocument!(bytes),
+        for (var i = 0; i < documents.length; i += 1)
+          documents[i] == null
+              ? null
+              : _objectFromBinaryDocument(documents[i]!, idList[i]),
       ];
     }
     final documents = await database.getAll(schema.name, ids);
@@ -313,6 +319,12 @@ final class CindelTypedCollection<T> {
     }
     _nativeFieldTypesCache[schema] = bytes;
     return bytes;
+  }
+
+  T _objectFromBinaryDocument(Uint8List bytes, int id) {
+    final object = schema.fromBinaryDocument!(bytes);
+    schema.setId?.call(object, id);
+    return object;
   }
 
   int _idFromDocument(CindelDocument document) {

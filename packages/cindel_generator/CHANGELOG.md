@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3
+
+- Updated generated compact binary serializers so ids stay in the collection
+  key instead of the document payload.
+
 ## 0.5.2
 
 - Updated the annotations dependency constraint to `^0.5.2`.

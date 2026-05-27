@@ -289,7 +289,11 @@ String _emitCollection(_CollectionInfo collection) {
     staticOffset += field.binaryStaticSize;
   }
 
-  _emitObjectHydration(buffer, collection, (field) => binaryReadValues[field]!);
+  _emitObjectHydration(
+    buffer,
+    collection,
+    (field) => field.isId ? 'autoIncrement' : binaryReadValues[field]!,
+  );
   buffer
     ..writeln('}')
     ..writeln();
@@ -588,12 +592,12 @@ final class _CollectionInfo {
   }
 
   List<_FieldInfo> get binaryFields {
-    return fields.toList(growable: false)
+    return fields.where((field) => !field.isId).toList(growable: false)
       ..sort((left, right) => left.name.compareTo(right.name));
   }
 
   List<_FieldInfo> get nativeBinaryFields {
-    return binaryFields.where((field) => !field.isId).toList(growable: false);
+    return binaryFields;
   }
 
   bool get supportsNativeWriter {
