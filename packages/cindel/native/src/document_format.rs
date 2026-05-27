@@ -725,6 +725,54 @@ fn decode_compact_string_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, 
     Ok(values)
 }
 
+fn decode_nested_string_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
+    if bytes.len() < 3 {
+        return Err("nested string list is shorter than the header".into());
+    }
+    let static_size = read_u24(bytes, 0)? as usize;
+    if static_size % 3 != 0 {
+        return Err("nested string list static size is not aligned".into());
+    }
+    let static_end = 3usize
+        .checked_add(static_size)
+        .ok_or_else(|| "nested string list static section overflows".to_string())?;
+    read_slice(bytes, 0, static_end)?;
+    let count = static_size / 3;
+    let mut values = Vec::with_capacity(count);
+    let mut max_end = static_end;
+    for index in 0..count {
+        let offset = read_u24(bytes, 3 + index * 3)? as usize;
+        if offset == 0 {
+            values.push(None);
+            continue;
+        }
+        if offset < static_size {
+            return Err("nested string list payload points into offsets".into());
+        }
+        let absolute = 3usize
+            .checked_add(offset)
+            .ok_or_else(|| "nested string list payload offset overflow".to_string())?;
+        let len = read_u24(bytes, absolute)? as usize;
+        let start = absolute
+            .checked_add(3)
+            .ok_or_else(|| "nested string list payload offset overflow".to_string())?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| "nested string list payload length overflow".to_string())?;
+        let payload = read_slice(bytes, start, len)?;
+        max_end = max_end.max(end);
+        values.push(Some(BinaryValue::String(
+            str::from_utf8(payload)
+                .map_err(|_| "nested string list contains invalid utf-8".to_string())?
+                .to_string(),
+        )));
+    }
+    if max_end != bytes.len() {
+        return Err("nested string list contains trailing bytes".into());
+    }
+    Ok(values)
+}
+
 fn encode_list(values: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     push_u32(&mut bytes, checked_u32(values.len(), "list length")?);
@@ -758,29 +806,26 @@ pub(crate) fn write_string_value_record(payload: &[u8]) -> Result<Vec<u8>, Strin
 pub(crate) fn write_compact_string_list_records(
     records: &[Option<Vec<u8>>],
 ) -> Result<Vec<u8>, String> {
-    let offsets_len = records
+    let static_size = records
         .len()
         .checked_mul(3)
-        .ok_or_else(|| "compact string list offsets overflow".to_string())?;
-    let mut bytes = vec![0; COMPACT_STRING_LIST_HEADER_LEN + offsets_len];
-    push_u32_at(&mut bytes, 0, COMPACT_STRING_LIST_MARKER)?;
-    bytes[4] = COMPACT_STRING_LIST_KIND;
-    push_u32_at(
-        &mut bytes,
-        5,
-        checked_u32(records.len(), "compact string list length")?,
-    )?;
+        .ok_or_else(|| "nested string list static size overflows".to_string())?;
+    if static_size > 0x00ff_ffff {
+        return Err("nested string list static size is too large".into());
+    }
+    let mut bytes = vec![0; 3 + static_size];
+    write_u24(&mut bytes, 0, static_size)?;
     for (index, record) in records.iter().enumerate() {
         let Some(payload) = record else {
             continue;
         };
-        let offset = checked_u32(bytes.len(), "compact string list offset")?;
+        let offset = checked_u32(bytes.len() - 3, "nested string list offset")?;
         if offset > 0x00ff_ffff {
-            return Err("compact string list offset is too large".into());
+            return Err("nested string list offset is too large".into());
         }
-        write_u24(&mut bytes, COMPACT_STRING_LIST_HEADER_LEN + index * 3, offset as usize)?;
+        write_u24(&mut bytes, 3 + index * 3, offset as usize)?;
         if payload.len() > 0x00ff_ffff {
-            return Err("compact string list payload is too large".into());
+            return Err("nested string list payload is too large".into());
         }
         let mut header = [0u8; 3];
         write_u24(&mut header, 0, payload.len())?;
@@ -822,6 +867,9 @@ fn encode_object(entries: &[(String, Option<BinaryValue>)]) -> Result<Vec<u8>, S
 pub(crate) fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, String> {
     if is_compact_string_list(bytes) {
         return decode_compact_string_list(bytes);
+    }
+    if let Ok(values) = decode_nested_string_list(bytes) {
+        return Ok(values);
     }
     let count = read_u32(bytes, 0)? as usize;
     let mut offset = 4;
@@ -2084,7 +2132,10 @@ mod tests {
         .unwrap();
 
         assert!(compact.len() < legacy.len());
-        assert_eq!(decode_list(&compact).unwrap(), decode_list(&legacy).unwrap());
+        assert_eq!(
+            decode_list(&compact).unwrap(),
+            decode_list(&legacy).unwrap()
+        );
     }
 
     #[test]

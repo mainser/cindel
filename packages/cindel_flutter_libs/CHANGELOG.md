@@ -2,6 +2,8 @@
 
 ## 0.4.1
 
+- Regenerated the Windows native runtime library with the tighter compact
+  native `List<String>` payload layout.
 - Regenerated the Windows native runtime library for faster typed MDBX inserts
   with compact native string-list payloads.
 - Regenerated the Windows native runtime library for Cindel native ABI 25 with

@@ -2,7 +2,10 @@
 
 ## 0.4.1
 
-- Added Isar-style native list readers for generated typed hydration, so
+- Tightened native `List<String>` payloads to use the compact nested list
+  layout while keeping backward-compatible reads for the previous marker
+  format.
+- Added native list readers for generated typed hydration, so
   primitive list fields no longer force query results back through generic Dart
   binary document decoding.
 - Reduced unindexed MDBX `filter query` overhead by applying offset/limit while
@@ -25,8 +28,8 @@
 - Added a direct MDBX query-update path for simple non-unique bool value
   indexes, updating compact document bytes in place and moving the index entry
   with positioned cursors.
-- Added native query-plan updates for compact MDBX binary documents, matching
-  Isar-style property updates without Dart object hydration.
+- Added native query-plan updates for compact MDBX binary documents, enabling
+  property updates without Dart object hydration.
 - Fixed geometry and table count settings.
 - Raised the MDBX default map limit to support large batch updates and deletes
   without forcing application-level chunking.
@@ -45,10 +48,10 @@
   batch updates.
 - Reduced native batch writer reallocations by reusing observed document
   capacity for subsequent documents.
-- Added Isar-style nested native list writers for generated typed MDBX batch
+- Added nested native list writers for generated typed MDBX batch
   inserts, including direct string value-record writing for primitive lists.
 - Reduced generated typed MDBX insert overhead for `List<String>` fields by
-  storing native string lists with an Isar-like offset table and by sharing the
+  storing native string lists with a compact offset table and by sharing the
   native string buffer between parent and list writers.
 - Bumped the native ABI to 25.
 
@@ -56,7 +59,7 @@
 
 - Removed the legacy native benchmark module and optional `benchmarks` Cargo
   feature from the committed native package sources.
-- Aligned the MDBX open profile with Isar's native engine by storing the
+- Aligned the MDBX open profile by storing the
   physical database as `cindel.mdbx` with no-subdir mode, `NoMetaSync`,
   coalescing, 1 MiB minimum map size, 128 MiB default maximum map size, 5 MiB
   growth steps, and 20 MiB shrink threshold.
@@ -64,7 +67,7 @@
 - Removed `MDBX_ACCEDE` from the default MDBX open flags.
 - Shortened MDBX document table names and marked the storage layout as
   `mdbx-v4`.
-- Added schema-specific typed binary document storage aligned to Isar's
+- Added schema-specific typed binary document storage with a compact
   static/dynamic layout.
 - Marked generated typed document storage as `binary-v2`.
 - Compacted MDBX index table names and table-local index keys, marking the
@@ -75,7 +78,7 @@
   once per native `putAll`.
 - Aligned native schema registration with generated binary document field
   slots.
-- Added native compact-document writer and reader handles for Isar-like FFI
+- Added native compact-document writer and reader handles for generated FFI
   typed paths.
 - Reworked the native compact-document writer to use a single object buffer
   and static null template.

@@ -1974,7 +1974,7 @@ impl CindelNativeBatchWriter {
                     let record = write_string_value_record(payload)?;
                     write_list_record(records, index, record)
                 }
-            }
+            },
         }
     }
 
@@ -2359,6 +2359,9 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
     if is_native_compact_string_list(bytes)? {
         return parse_native_compact_string_list(bytes);
     }
+    if let Ok(list) = parse_native_nested_string_list(bytes) {
+        return Ok(list);
+    }
     let count = read_u32_le(bytes, 0)? as usize;
     let mut offset = 4usize;
     let mut entries = Vec::with_capacity(count);
@@ -2383,6 +2386,63 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
     }
     if offset != bytes.len() {
         return Err("native list contains trailing bytes".into());
+    }
+    Ok(NativeRawList {
+        bytes: bytes.to_vec(),
+        entries,
+    })
+}
+
+fn parse_native_nested_string_list(bytes: &[u8]) -> Result<NativeRawList, String> {
+    if bytes.len() < 3 {
+        return Err("native nested string list is shorter than the header".into());
+    }
+    let static_size = read_u24_le(bytes, 0)? as usize;
+    if static_size % 3 != 0 {
+        return Err("native nested string list static size is not aligned".into());
+    }
+    let static_end = 3usize
+        .checked_add(static_size)
+        .ok_or_else(|| "native nested string list static section overflows".to_string())?;
+    read_native_slice(bytes, 0, static_end)?;
+    let count = static_size / 3;
+    let mut entries = Vec::with_capacity(count);
+    let mut max_end = static_end;
+    for index in 0..count {
+        let offset = read_u24_le(bytes, 3 + index * 3)? as usize;
+        if offset == 0 {
+            entries.push(NativeRawListEntry {
+                kind: NATIVE_VALUE_NULL,
+                is_null: true,
+                payload_start: 0,
+                payload_len: 0,
+            });
+            continue;
+        }
+        if offset < static_size {
+            return Err("native nested string list payload points into offsets".into());
+        }
+        let absolute = 3usize
+            .checked_add(offset)
+            .ok_or_else(|| "native nested string list payload offset overflow".to_string())?;
+        let len = read_u24_le(bytes, absolute)? as usize;
+        let payload_start = absolute
+            .checked_add(3)
+            .ok_or_else(|| "native nested string list payload offset overflow".to_string())?;
+        let payload_end = payload_start
+            .checked_add(len)
+            .ok_or_else(|| "native nested string list payload length overflow".to_string())?;
+        read_native_slice(bytes, payload_start, len)?;
+        max_end = max_end.max(payload_end);
+        entries.push(NativeRawListEntry {
+            kind: NATIVE_VALUE_STRING,
+            is_null: false,
+            payload_start,
+            payload_len: len,
+        });
+    }
+    if max_end != bytes.len() {
+        return Err("native nested string list contains trailing bytes".into());
     }
     Ok(NativeRawList {
         bytes: bytes.to_vec(),

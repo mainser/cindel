@@ -162,6 +162,9 @@ fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, Strin
     if is_compact_string_list(bytes)? {
         return compact_string_list_contains(bytes, expected);
     }
+    if let Ok(contains) = nested_string_list_contains(bytes, expected) {
+        return Ok(contains);
+    }
     let count = read_u32_le(bytes, 0)? as usize;
     let mut offset = 4usize;
     for _ in 0..count {
@@ -178,6 +181,50 @@ fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, Strin
     }
     if offset != bytes.len() {
         return Err("binary list contains trailing bytes".into());
+    }
+    Ok(false)
+}
+
+fn nested_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, String> {
+    if bytes.len() < 3 {
+        return Err("nested string list is shorter than the header".into());
+    }
+    let static_size = read_u24_le(bytes, 0)? as usize;
+    if static_size % 3 != 0 {
+        return Err("nested string list static size is not aligned".into());
+    }
+    let static_end = 3usize
+        .checked_add(static_size)
+        .ok_or_else(|| "nested string list static section overflows".to_string())?;
+    read_slice(bytes, 0, static_end)?;
+    let count = static_size / 3;
+    let mut max_end = static_end;
+    for index in 0..count {
+        let offset = read_u24_le(bytes, 3 + index * 3)? as usize;
+        if offset == 0 {
+            continue;
+        }
+        if offset < static_size {
+            return Err("nested string list payload points into offsets".into());
+        }
+        let absolute = 3usize
+            .checked_add(offset)
+            .ok_or_else(|| "nested string list payload offset overflow".to_string())?;
+        let len = read_u24_le(bytes, absolute)? as usize;
+        let start = absolute
+            .checked_add(3)
+            .ok_or_else(|| "nested string list payload offset overflow".to_string())?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| "nested string list payload length overflow".to_string())?;
+        let payload = read_slice(bytes, start, len)?;
+        max_end = max_end.max(end);
+        if payload == expected {
+            return Ok(true);
+        }
+    }
+    if max_end != bytes.len() {
+        return Err("nested string list contains trailing bytes".into());
     }
     Ok(false)
 }
