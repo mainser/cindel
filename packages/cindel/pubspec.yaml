@@ -11,8 +11,6 @@ topics:
   - storage
   - cindel
   - encryption
-  - flutter
-  - ffi
 
 platforms:
   android:
