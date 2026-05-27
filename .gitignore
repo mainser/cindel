@@ -23,7 +23,6 @@ target/
 !packages/cindel_flutter_libs/linux/*.so
 
 # Local planning scratchpad
-cindel_steps.txt
 docs/local_benchmarks/
 examples/cindel_todo/pubspec_overrides.yaml
 tool/benchmark/
