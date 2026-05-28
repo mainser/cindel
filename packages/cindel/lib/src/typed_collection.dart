@@ -312,7 +312,7 @@ final class CindelTypedCollection<T> {
   }
 
   bool get _usesSqliteNativeDocuments {
-    return database.backend == CindelStorageBackend.sqlite &&
+    return database.usesSqliteNativeDocuments &&
         schema.writeNativeDocument != null &&
         schema.readNativeDocument != null;
   }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::path::Path;
@@ -19,9 +19,19 @@ use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, 
 
 pub struct SqliteStorage {
     connection: Connection,
+    schemas: HashMap<String, RegisteredCollectionSchema>,
+    collection_revisions: HashMap<String, u64>,
+    id_counters: HashMap<String, i64>,
+    persist_schema_metadata: bool,
     active_transaction: Option<TransactionMode>,
     active_change_sets: Vec<StorageChangeSet>,
     last_change_sets: Vec<StorageChangeSet>,
+}
+
+#[derive(Clone)]
+struct RegisteredCollectionSchema {
+    version: u64,
+    schema: CollectionSchemaManifest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -273,7 +283,7 @@ fn sqlite_error(database: *mut ffi::sqlite3) -> String {
 
 impl SqliteStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
-        let storage = Self::open_uninitialized(directory)?;
+        let mut storage = Self::open_uninitialized(directory, true)?;
         storage.initialize(None)?;
 
         Ok(storage)
@@ -281,7 +291,7 @@ impl SqliteStorage {
 
     pub fn open_with_schemas(directory: &str, manifest: &SchemaManifest) -> Result<Self, String> {
         validate_schema_manifest(manifest)?;
-        let storage = Self::open_uninitialized(directory)?;
+        let mut storage = Self::open_uninitialized(directory, false)?;
         storage.initialize(Some(manifest))?;
 
         Ok(storage)
@@ -292,19 +302,19 @@ impl SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<Option<SqliteNativeDocumentCursor>, String> {
-        let Some(schema) = collection_schema(&self.connection, collection)? else {
+        let Some(schema) = self.collection_schema(collection) else {
             return Ok(None);
         };
         SqliteNativeDocumentCursor::new(
             &self.connection,
-            &schema,
+            schema,
             ids,
             self.active_transaction.is_none(),
         )
         .map(Some)
     }
 
-    fn open_uninitialized(directory: &str) -> Result<Self, String> {
+    fn open_uninitialized(directory: &str, persist_schema_metadata: bool) -> Result<Self, String> {
         let connection = if directory == IN_MEMORY_DIRECTORY {
             Connection::open_in_memory().map_err(|error| error.to_string())?
         } else {
@@ -314,6 +324,10 @@ impl SqliteStorage {
         };
         let storage = Self {
             connection,
+            schemas: HashMap::new(),
+            collection_revisions: HashMap::new(),
+            id_counters: HashMap::new(),
+            persist_schema_metadata,
             active_transaction: None,
             active_change_sets: Vec::new(),
             last_change_sets: Vec::new(),
@@ -322,7 +336,7 @@ impl SqliteStorage {
         Ok(storage)
     }
 
-    fn initialize(&self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
+    fn initialize(&mut self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
         self.connection
             .execute_batch(
                 r#"
@@ -347,7 +361,14 @@ impl SqliteStorage {
         }
     }
 
-    fn initialize_transaction(&self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
+    fn initialize_transaction(&mut self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
+        if let Some(manifest) = manifest {
+            for collection in &manifest.collections {
+                self.register_collection_schema(collection)?;
+            }
+            return Ok(());
+        }
+
         self.connection
             .execute_batch(
                 r#"
@@ -416,11 +437,6 @@ impl SqliteStorage {
             SchemaMetadataVersion::BinaryV1,
         )?;
         validate_schema_metadata_records(&self.connection)?;
-        if let Some(manifest) = manifest {
-            for collection in &manifest.collections {
-                register_collection_schema(&self.connection, collection)?;
-            }
-        }
         Ok(())
     }
 
@@ -437,6 +453,58 @@ impl SqliteStorage {
             &mut self.last_change_sets
         };
         merge_change_set(target, collection, revision, ids);
+    }
+
+    fn collection_schema(&self, collection: &str) -> Option<&CollectionSchemaManifest> {
+        self.schemas.get(collection).map(|schema| &schema.schema)
+    }
+
+    fn register_collection_schema(
+        &mut self,
+        collection: &CollectionSchemaManifest,
+    ) -> Result<(), String> {
+        let version = match self.schemas.get(&collection.name) {
+            None => 1,
+            Some(existing) if existing.schema == *collection => existing.version,
+            Some(existing) => {
+                validate_compatible_schema_change(&existing.schema, collection)?;
+                existing.version + 1
+            }
+        };
+        create_collection_table(&self.connection, collection)?;
+        let next_id = self.next_collection_row_id(&collection.name)?;
+        self.schemas.insert(
+            collection.name.clone(),
+            RegisteredCollectionSchema {
+                version,
+                schema: collection.clone(),
+            },
+        );
+        self.id_counters.insert(collection.name.clone(), next_id);
+        Ok(())
+    }
+
+    fn next_collection_row_id(&self, collection: &str) -> Result<i64, String> {
+        let sql = format!("SELECT MAX({SQLITE_ROW_ID_COLUMN}) FROM {collection}");
+        self.connection
+            .query_row(&sql, [], |row| row.get::<_, Option<i64>>(0))
+            .map_err(|error| error.to_string())
+            .map(|max_id| max_id.map(|id| id + 1).unwrap_or(0))
+    }
+
+    fn bump_collection_revision_in_memory(&mut self, collection: &str) -> u64 {
+        let revision = self
+            .collection_revisions
+            .entry(collection.to_string())
+            .or_default();
+        *revision += 1;
+        *revision
+    }
+
+    fn advance_collection_id_counter(&mut self, collection: &str, id: i64) {
+        let next_id = id.saturating_add(1);
+        let counter = self.id_counters.entry(collection.to_string()).or_default();
+        *counter = (*counter).max(next_id);
     }
 }
 
@@ -483,6 +551,12 @@ impl StorageEngine for SqliteStorage {
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
         self.ensure_can_write()?;
+        if self.collection_schema(collection).is_some() {
+            let id = *self.id_counters.entry(collection.to_string()).or_default();
+            self.id_counters
+                .insert(collection.to_string(), id.saturating_add(1));
+            return u64::try_from(id).map_err(|error| error.to_string());
+        }
         if self.active_transaction.is_some() {
             let id = allocate_id(&self.connection, collection)?;
             return u64::try_from(id).map_err(|error| error.to_string());
@@ -534,22 +608,18 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<Vec<Option<Vec<u8>>>, String> {
-        let Some(schema) = collection_schema(&self.connection, collection)? else {
+        let Some(schema) = self.collection_schema(collection) else {
             return self.get_many(collection, ids);
         };
-        get_many_native_documents(&self.connection, &schema, ids)
+        get_many_native_documents(&self.connection, schema, ids)
     }
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
-        if collection_schema(&self.connection, collection)?.is_some() {
+        if self.collection_schema(collection).is_some() {
             let sql = format!(
-                "SELECT id FROM (
-                    SELECT {SQLITE_ROW_ID_COLUMN} AS id FROM {collection}
-                    UNION
-                    SELECT id FROM documents WHERE collection = ?1
-                ) ORDER BY id"
+                "SELECT {SQLITE_ROW_ID_COLUMN} FROM {collection} ORDER BY {SQLITE_ROW_ID_COLUMN}"
             );
-            return query_ids(&self.connection, &sql, params![collection]);
+            return query_ids(&self.connection, &sql, []);
         }
         query_ids(
             &self.connection,
@@ -682,7 +752,7 @@ impl StorageEngine for SqliteStorage {
         documents: &[NativeDocumentWrite],
         track_changes: bool,
     ) -> Result<bool, String> {
-        let Some(schema) = collection_schema(&self.connection, collection)? else {
+        let Some(schema) = self.collection_schema(collection).cloned() else {
             return Ok(false);
         };
         if documents.is_empty() {
@@ -693,8 +763,11 @@ impl StorageEngine for SqliteStorage {
         }
         self.ensure_can_write()?;
         if self.active_transaction.is_some() {
-            put_native_documents(&self.connection, &schema, documents)?;
-            let revision = bump_collection_revision(&self.connection, collection)?;
+            let max_id = put_native_documents(&self.connection, &schema, documents)?;
+            if let Some(max_id) = max_id {
+                self.advance_collection_id_counter(collection, max_id);
+            }
+            let revision = self.bump_collection_revision_in_memory(collection);
             if track_changes {
                 self.record_change(
                     collection,
@@ -709,10 +782,13 @@ impl StorageEngine for SqliteStorage {
             .connection
             .transaction()
             .map_err(|error| error.to_string())?;
-        put_native_documents(&transaction, &schema, documents)?;
-        let revision = bump_collection_revision(&transaction, collection)?;
+        let max_id = put_native_documents(&transaction, &schema, documents)?;
 
         transaction.commit().map_err(|error| error.to_string())?;
+        if let Some(max_id) = max_id {
+            self.advance_collection_id_counter(collection, max_id);
+        }
+        let revision = self.bump_collection_revision_in_memory(collection);
         if track_changes {
             self.record_change(
                 collection,
@@ -728,7 +804,7 @@ impl StorageEngine for SqliteStorage {
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
         self.ensure_can_write()?;
         let id = sqlite_id(id)?;
-        let has_collection_table = collection_schema(&self.connection, collection)?.is_some();
+        let has_collection_table = self.collection_schema(collection).is_some();
         if self.active_transaction.is_some() {
             let deleted = delete_document_with_layout(
                 &self.connection,
@@ -771,7 +847,7 @@ impl StorageEngine for SqliteStorage {
             return Ok(());
         }
         self.ensure_can_write()?;
-        let has_collection_table = collection_schema(&self.connection, collection)?.is_some();
+        let has_collection_table = self.collection_schema(collection).is_some();
         if self.active_transaction.is_some() {
             let mut deleted_ids = Vec::new();
             for id in ids {
@@ -826,7 +902,7 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<bool, String> {
-        let Some(schema) = collection_schema(&self.connection, collection)? else {
+        let Some(schema) = self.collection_schema(collection).cloned() else {
             return Ok(false);
         };
         if ids.is_empty() {
@@ -840,7 +916,7 @@ impl StorageEngine for SqliteStorage {
         if self.active_transaction.is_some() {
             let deleted_ids = delete_native_documents(&self.connection, &schema.name, ids)?;
             if !deleted_ids.is_empty() {
-                let revision = bump_collection_revision(&self.connection, collection)?;
+                let revision = self.bump_collection_revision_in_memory(collection);
                 self.record_change(collection, revision, deleted_ids);
             }
             return Ok(true);
@@ -852,14 +928,11 @@ impl StorageEngine for SqliteStorage {
             .transaction()
             .map_err(|error| error.to_string())?;
         let deleted_ids = delete_native_documents(&transaction, &schema.name, ids)?;
-        let revision = if deleted_ids.is_empty() {
-            None
-        } else {
-            Some(bump_collection_revision(&transaction, collection)?)
-        };
+        let has_deleted_ids = !deleted_ids.is_empty();
 
         transaction.commit().map_err(|error| error.to_string())?;
-        if let Some(revision) = revision {
+        if has_deleted_ids {
+            let revision = self.bump_collection_revision_in_memory(collection);
             self.record_change(collection, revision, deleted_ids);
         }
         Ok(true)
@@ -891,6 +964,9 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
+        if self.collection_schema(collection).is_some() {
+            return Ok(*self.collection_revisions.get(collection).unwrap_or(&0));
+        }
         self.connection
             .query_row(
                 "SELECT revision FROM collection_revisions WHERE collection = ?1",
@@ -912,41 +988,70 @@ impl StorageEngine for SqliteStorage {
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
         validate_schema_manifest(manifest)?;
         self.ensure_can_write()?;
+        if self.persist_schema_metadata {
+            if self.active_transaction.is_some() {
+                for collection in &manifest.collections {
+                    register_persisted_collection_schema(&self.connection, collection)?;
+                }
+                return Ok(());
+            }
+
+            let transaction = self
+                .connection
+                .transaction()
+                .map_err(|error| error.to_string())?;
+            for collection in &manifest.collections {
+                register_persisted_collection_schema(&transaction, collection)?;
+            }
+            return transaction.commit().map_err(|error| error.to_string());
+        }
+
         if self.active_transaction.is_some() {
             for collection in &manifest.collections {
-                register_collection_schema(&self.connection, collection)?;
+                self.register_collection_schema(collection)?;
             }
             return Ok(());
         }
 
-        let transaction = self
-            .connection
-            .transaction()
+        self.connection
+            .execute_batch("BEGIN")
             .map_err(|error| error.to_string())?;
-
         for collection in &manifest.collections {
-            register_collection_schema(&transaction, collection)?;
+            if let Err(error) = self.register_collection_schema(collection) {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                return Err(error);
+            }
         }
 
-        transaction.commit().map_err(|error| error.to_string())
-    }
-
-    fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.connection
-            .query_row(
-                "SELECT version FROM schema_collections WHERE collection = ?1",
-                params![collection],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .map(u64::try_from)
-            .transpose()
+            .execute_batch("COMMIT")
             .map_err(|error| error.to_string())
     }
 
+    fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
+        if self.persist_schema_metadata {
+            return self
+                .connection
+                .query_row(
+                    "SELECT version FROM schema_collections WHERE collection = ?1",
+                    params![collection],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .map(u64::try_from)
+                .transpose()
+                .map_err(|error| error.to_string());
+        }
+        Ok(self.schemas.get(collection).map(|schema| schema.version))
+    }
+
     fn storage_metadata(&self) -> Result<StorageMetadata, String> {
-        read_storage_metadata(&self.connection)
+        Ok(StorageMetadata {
+            layout: StorageLayoutVersion::SqliteV1,
+            document_format: DocumentFormatVersion::BinaryV2,
+            schema_metadata_format: SchemaMetadataVersion::BinaryV1,
+        })
     }
 
     fn rebuild_indexes(
@@ -1087,14 +1192,15 @@ fn put_native_documents(
     connection: &Connection,
     schema: &CollectionSchemaManifest,
     documents: &[NativeDocumentWrite],
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     if documents.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let fields = native_fields(schema);
     let values_per_document = fields.len() + 1;
     let batch_limit = SQLITE_MAX_PARAM_COUNT / values_per_document;
     let batch_limit = batch_limit.max(1);
+    let mut max_seen_id = None;
     for chunk in documents.chunks(batch_limit) {
         let sql = native_insert_sql(&schema.name, &fields, chunk.len());
         let mut params = Vec::with_capacity(chunk.len() * values_per_document);
@@ -1108,6 +1214,7 @@ fn put_native_documents(
             }
             let id = sqlite_id(document.id)?;
             max_id = max_id.max(id);
+            max_seen_id = Some(max_seen_id.map_or(id, |current: i64| current.max(id)));
             params.push(Value::Integer(id));
             for (field, value) in fields.iter().zip(document.values.iter()) {
                 params.push(native_sql_value(field, value)?);
@@ -1116,9 +1223,8 @@ fn put_native_documents(
         connection
             .execute(&sql, params_from_iter(params.iter()))
             .map_err(|error| error.to_string())?;
-        advance_id_counter(connection, &schema.name, max_id)?;
     }
-    Ok(())
+    Ok(max_seen_id)
 }
 
 fn native_insert_sql(collection: &str, fields: &[&FieldSchemaManifest], count: usize) -> String {
@@ -1787,6 +1893,68 @@ fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
     Ok(())
 }
 
+fn register_persisted_collection_schema(
+    connection: &Connection,
+    collection: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    let existing = connection
+        .query_row(
+            "SELECT version, schema_bytes FROM schema_collections WHERE collection = ?1",
+            params![collection.name],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+
+    let Some((version, schema_bytes)) = existing else {
+        let schema_bytes = encode_schema_record(1, collection)?;
+        connection
+            .execute(
+                r#"
+                INSERT INTO schema_collections (collection, version, schema_bytes)
+                VALUES (?1, 1, ?2)
+                "#,
+                params![collection.name, schema_bytes],
+            )
+            .map_err(|error| error.to_string())?;
+        create_collection_table(connection, collection)?;
+        return Ok(());
+    };
+
+    let (stored_version, existing_schema) = decode_schema_record(&schema_bytes)?;
+    let stored_version = i64::try_from(stored_version).map_err(|error| error.to_string())?;
+    if stored_version != version {
+        return Err(format!(
+            "schema metadata version mismatch for `{}`",
+            collection.name
+        ));
+    }
+    if existing_schema == *collection {
+        create_collection_table(connection, collection)?;
+        return Ok(());
+    }
+
+    validate_compatible_schema_change(&existing_schema, collection)?;
+
+    let next_version = version + 1;
+    let schema_bytes = encode_schema_record(
+        u64::try_from(next_version).map_err(|error| error.to_string())?,
+        collection,
+    )?;
+    connection
+        .execute(
+            r#"
+            UPDATE schema_collections
+            SET version = ?2, schema_bytes = ?3
+            WHERE collection = ?1
+            "#,
+            params![collection.name, next_version, schema_bytes],
+        )
+        .map_err(|error| error.to_string())?;
+    create_collection_table(connection, collection)?;
+    Ok(())
+}
+
 fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(), String> {
     if collection.id_field.trim().is_empty() {
         return Err(format!(
@@ -1911,69 +2079,6 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         }
     }
 
-    Ok(())
-}
-
-fn register_collection_schema(
-    connection: &Connection,
-    collection: &CollectionSchemaManifest,
-) -> Result<(), String> {
-    let existing = connection
-        .query_row(
-            "SELECT version, schema_bytes FROM schema_collections WHERE collection = ?1",
-            params![collection.name],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-
-    let Some((version, schema_bytes)) = existing else {
-        let schema_bytes = encode_schema_record(1, collection)?;
-        connection
-            .execute(
-                r#"
-                INSERT INTO schema_collections (collection, version, schema_bytes)
-                VALUES (?1, 1, ?2)
-                "#,
-                params![collection.name, schema_bytes],
-            )
-            .map(|_| ())
-            .map_err(|error| error.to_string())?;
-        create_collection_table(connection, collection)?;
-        return Ok(());
-    };
-
-    let (stored_version, existing_schema) = decode_schema_record(&schema_bytes)?;
-    let stored_version = i64::try_from(stored_version).map_err(|error| error.to_string())?;
-    if stored_version != version {
-        return Err(format!(
-            "schema metadata version mismatch for `{}`",
-            collection.name
-        ));
-    }
-    if existing_schema == *collection {
-        create_collection_table(connection, collection)?;
-        return Ok(());
-    }
-
-    validate_compatible_schema_change(&existing_schema, collection)?;
-
-    let next_version = version + 1;
-    let schema_bytes = encode_schema_record(
-        u64::try_from(next_version).map_err(|error| error.to_string())?,
-        collection,
-    )?;
-    connection
-        .execute(
-            r#"
-            UPDATE schema_collections
-            SET version = ?2, schema_bytes = ?3
-            WHERE collection = ?1
-            "#,
-            params![collection.name, next_version, schema_bytes],
-        )
-        .map_err(|error| error.to_string())?;
-    create_collection_table(connection, collection)?;
     Ok(())
 }
 
@@ -2721,11 +2826,14 @@ mod tests {
                 },
             )
             .unwrap();
-        let generic_count = storage
+        let generic_documents_table = storage
             .connection
-            .query_row("SELECT COUNT(*) FROM documents", [], |row| {
-                row.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
             .unwrap();
         let ids = storage.document_ids("users").unwrap();
         let stored = storage.get_many_stored("users", &[1, 3]).unwrap();
@@ -2736,7 +2844,7 @@ mod tests {
 
         // Assert.
         assert_eq!(row, (1, 42, "Ana".to_string()));
-        assert_eq!(generic_count, 0);
+        assert_eq!(generic_documents_table, None);
         assert_eq!(ids, vec![1, 2]);
         assert!(stored[0].is_some());
         assert_eq!(stored[1], None);
@@ -2798,11 +2906,14 @@ mod tests {
             .connection
             .query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))
             .unwrap();
-        let generic_count = storage
+        let generic_documents_table = storage
             .connection
-            .query_row("SELECT COUNT(*) FROM documents", [], |row| {
-                row.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
             .unwrap();
 
         // Assert.
@@ -2812,7 +2923,7 @@ mod tests {
         assert_eq!(after_missing_delete, 2);
         assert_eq!(ids, vec![2]);
         assert_eq!(remaining, 1);
-        assert_eq!(generic_count, 0);
+        assert_eq!(generic_documents_table, None);
     }
 
     #[test]

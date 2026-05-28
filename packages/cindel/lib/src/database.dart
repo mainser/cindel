@@ -141,6 +141,9 @@ class CindelDatabase {
   Pointer<Void>? _handle;
   _TransactionMode? _activeTransaction;
 
+  bool get usesSqliteNativeDocuments =>
+      backend == CindelStorageBackend.sqlite && _schemasWereRegisteredOnOpen;
+
   /// Opens a database stored under [directory].
   ///
   /// Throws an [ArgumentError] when [directory] is empty and a [StateError] when
@@ -181,11 +184,17 @@ class CindelDatabase {
     final schemaManifest = schemasByCollection.isEmpty
         ? null
         : _encodeSchemaManifest(schemasByCollection.values);
+    final schemaManifestForOpen =
+        schemaManifest != null &&
+            (backend != CindelStorageBackend.sqlite ||
+                _canOpenSqliteWithNativeSchemas(schemasByCollection.values))
+        ? schemaManifest
+        : null;
     final database = await _openRaw(
       directory: directory,
       schemasByCollection: schemasByCollection,
       backend: backend,
-      schemaManifest: schemaManifest,
+      schemaManifest: schemaManifestForOpen,
     );
     if (schemaManifest != null && !database._schemasWereRegisteredOnOpen) {
       try {
@@ -199,6 +208,19 @@ class CindelDatabase {
       }
     }
     return database;
+  }
+
+  static bool _canOpenSqliteWithNativeSchemas(
+    Iterable<CindelCollectionSchema<dynamic>> schemas,
+  ) {
+    for (final schema in schemas) {
+      final dynamic dynamicSchema = schema;
+      if (dynamicSchema.writeNativeDocument == null ||
+          dynamicSchema.readNativeDocument == null) {
+        return false;
+      }
+    }
+    return true;
   }
 
   static Future<CindelDatabase> _openRaw({
