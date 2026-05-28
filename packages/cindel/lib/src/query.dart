@@ -123,7 +123,8 @@ final class CindelFilterField {
     ]);
   }
 
-  /// Matches string fields containing [value].
+  /// Matches string fields containing [value] or list fields containing [value]
+  /// as an element.
   CindelFilterPredicate contains(String value) {
     return _FieldFilterPredicate(
       field: _field,
@@ -1576,7 +1577,10 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
       _FilterOperation.lessThan => _compareNumbers(actual, expected) < 0,
       _FilterOperation.lessThanOrEqualTo =>
         _compareNumbers(actual, expected) <= 0,
-      _FilterOperation.contains => _string(actual).contains(_string(expected)),
+      _FilterOperation.contains =>
+        actual is Iterable
+            ? actual.any((value) => value == expected)
+            : _string(actual).contains(_string(expected)),
       _FilterOperation.startsWith => _string(
         actual,
       ).startsWith(_string(expected)),

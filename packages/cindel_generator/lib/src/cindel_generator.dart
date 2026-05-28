@@ -642,6 +642,22 @@ void _emitFilterMethods(
     ..writeln('    );')
     ..writeln('  }');
 
+  if (field.type.isList) {
+    final elementType = field.type.listElementDartType;
+    final elementValue = field.type.listElementToStoredExpression('value');
+    buffer
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}ElementEqualTo($elementType value) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).contains($elementValue),',
+      )
+      ..writeln('    );')
+      ..writeln('  }');
+  }
+
   if (field.supportsComparableFilters) {
     final valueType = field.nonNullableDartType;
     final lower = field.toStoredValueExpression('lower', nullableInput: true);

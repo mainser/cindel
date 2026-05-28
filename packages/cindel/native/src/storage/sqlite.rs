@@ -1705,7 +1705,14 @@ fn sqlite_field_filter_sql(
     operation: WireFilterOperation,
     value: &WireValue,
 ) -> Result<(String, Vec<Value>), String> {
-    let column = sqlite_column_for_field(schema, field)?;
+    let schema_field = sqlite_schema_field(schema, field)?;
+    let column = sqlite_column_for_schema_field(schema_field);
+    if !schema_field.is_id
+        && sqlite_binary_type(&schema_field.binary_type) == "list"
+        && operation == WireFilterOperation::Contains
+    {
+        return sqlite_list_contains_sql(&column, value);
+    }
     let sql = match operation {
         WireFilterOperation::IsNull => (format!("{column} IS NULL"), Vec::new()),
         WireFilterOperation::Equal => match value {
@@ -1741,6 +1748,27 @@ fn sqlite_field_filter_sql(
     Ok(sql)
 }
 
+fn sqlite_list_contains_sql(
+    column: &str,
+    value: &WireValue,
+) -> Result<(String, Vec<Value>), String> {
+    let value = sqlite_wire_value(value)?;
+    let predicate = match value {
+        Value::Null => format!(
+            "{column} IS NOT NULL AND EXISTS (SELECT 1 FROM json_each({column}) AS cindel_list WHERE cindel_list.value IS NULL)"
+        ),
+        value => {
+            return Ok((
+                format!(
+                    "{column} IS NOT NULL AND EXISTS (SELECT 1 FROM json_each({column}) AS cindel_list WHERE cindel_list.value = ?)"
+                ),
+                vec![value],
+            ))
+        }
+    };
+    Ok((predicate, Vec::new()))
+}
+
 fn sqlite_string_like_sql(
     column: &str,
     value: &WireValue,
@@ -1770,21 +1798,37 @@ fn sqlite_column_for_field(
     schema: &CollectionSchemaManifest,
     field: &str,
 ) -> Result<String, String> {
-    let Some(schema_field) = schema
+    Ok(sqlite_column_for_schema_field(sqlite_schema_field(
+        schema, field,
+    )?))
+}
+
+fn sqlite_schema_field<'a>(
+    schema: &'a CollectionSchemaManifest,
+    field: &str,
+) -> Result<&'a FieldSchemaManifest, String> {
+    schema
         .fields
         .iter()
         .find(|schema_field| schema_field.name == field)
-    else {
-        return Err(format!(
-            "field `{field}` is not declared in schema `{}`",
-            schema.name
-        ));
-    };
-    if schema_field.is_id {
-        Ok(SQLITE_ROW_ID_COLUMN.to_string())
+        .ok_or_else(|| {
+            format!(
+                "field `{field}` is not declared in schema `{}`",
+                schema.name
+            )
+        })
+}
+
+fn sqlite_column_for_schema_field(field: &FieldSchemaManifest) -> String {
+    if field.is_id {
+        SQLITE_ROW_ID_COLUMN.to_string()
     } else {
-        Ok(schema_field.name.clone())
+        field.name.clone()
     }
+}
+
+fn sqlite_binary_type(binary_type: &str) -> &str {
+    binary_type.strip_suffix('?').unwrap_or(binary_type)
 }
 
 fn sqlite_wire_value(value: &WireValue) -> Result<Value, String> {
@@ -3778,6 +3822,113 @@ mod tests {
         assert_eq!(sorted_cursor.read_int(0, 1), Some(20));
         assert_eq!(sorted_cursor.read_bytes(0, 2), Some(&b"zulu"[..]));
         assert!(!sorted_cursor.next().unwrap());
+    }
+
+    #[test]
+    fn queries_native_documents_with_sql_list_element_filter() {
+        // Scenario: SQLite executes the same list-element filter shape used by
+        // the app benchmark Filter Query.
+        // Covers:
+        // - Wire `Contains` on a list field lowering to exact JSON element
+        //   equality instead of a LIKE over the serialized JSON text.
+        // - OR composition with a scalar string contains predicate.
+        // Expected: A row containing `time` matches, a row containing only
+        // `timer` does not, and scalar string filtering still participates in
+        // the same SQL query.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_query_plan_list_filter");
+        let mut schema = native_user_schema();
+        schema
+            .fields
+            .push(native_field("words", "List<String>", "list", false));
+        schema
+            .fields
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        let manifest = schema_manifest(vec![schema]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(10),
+                    NativeDocumentValue::Bytes(b"zulu".to_vec()),
+                    NativeDocumentValue::Null,
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(20),
+                    NativeDocumentValue::Bytes(b"zulu".to_vec()),
+                    NativeDocumentValue::Null,
+                ],
+            },
+            NativeDocumentWrite {
+                id: 3,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(30),
+                    NativeDocumentValue::Bytes(b"alpha".to_vec()),
+                    NativeDocumentValue::Null,
+                ],
+            },
+        ];
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        storage
+            .connection
+            .execute(
+                "UPDATE users SET words = ?1 WHERE _rowid_ = ?2",
+                params![r#"["time","alpha"]"#, 1i64],
+            )
+            .unwrap();
+        storage
+            .connection
+            .execute(
+                "UPDATE users SET words = ?1 WHERE _rowid_ = ?2",
+                params![r#"["timer"]"#, 2i64],
+            )
+            .unwrap();
+        storage
+            .connection
+            .execute(
+                "UPDATE users SET words = ?1 WHERE _rowid_ = ?2",
+                params![r#"[]"#, 3i64],
+            )
+            .unwrap();
+        let filter = crate::wire::encode_filter(&crate::wire::WireFilter::Any {
+            predicates: vec![
+                crate::wire::WireFilter::Field {
+                    field: "words".to_string(),
+                    operation: crate::wire::WireFilterOperation::Contains,
+                    value: crate::wire::WireValue::String("time".to_string()),
+                },
+                crate::wire::WireFilter::Field {
+                    field: "title".to_string(),
+                    operation: crate::wire::WireFilterOperation::Contains,
+                    value: crate::wire::WireValue::String("a".to_string()),
+                },
+            ],
+        })
+        .unwrap();
+        let plan = crate::wire::WireQueryPlan {
+            source: crate::wire::WireQuerySource::All { dedupe: false },
+            filter: Some(filter),
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        // Act.
+        let ids = storage.query_plan_ids("users", &plan).unwrap();
+
+        // Assert.
+        assert_eq!(ids, vec![1, 3]);
     }
 
     #[test]
