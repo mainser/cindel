@@ -27,6 +27,21 @@ enum TransactionMode {
 
 impl SqliteStorage {
     pub fn open(directory: &str) -> Result<Self, String> {
+        let storage = Self::open_uninitialized(directory)?;
+        storage.initialize(None)?;
+
+        Ok(storage)
+    }
+
+    pub fn open_with_schemas(directory: &str, manifest: &SchemaManifest) -> Result<Self, String> {
+        validate_schema_manifest(manifest)?;
+        let storage = Self::open_uninitialized(directory)?;
+        storage.initialize(Some(manifest))?;
+
+        Ok(storage)
+    }
+
+    fn open_uninitialized(directory: &str) -> Result<Self, String> {
         let connection = if directory == IN_MEMORY_DIRECTORY {
             Connection::open_in_memory().map_err(|error| error.to_string())?
         } else {
@@ -40,16 +55,39 @@ impl SqliteStorage {
             active_change_sets: Vec::new(),
             last_change_sets: Vec::new(),
         };
-        storage.initialize()?;
 
         Ok(storage)
     }
 
-    fn initialize(&self) -> Result<(), String> {
+    fn initialize(&self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
         self.connection
             .execute_batch(
                 r#"
+                PRAGMA mmap_size = 1073741824;
                 PRAGMA journal_mode = WAL;
+                "#,
+            )
+            .map_err(|error| error.to_string())?;
+        self.connection
+            .execute_batch("BEGIN")
+            .map_err(|error| error.to_string())?;
+        let result = self.initialize_transaction(manifest);
+        match result {
+            Ok(()) => self
+                .connection
+                .execute_batch("COMMIT")
+                .map_err(|error| error.to_string()),
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn initialize_transaction(&self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
+        self.connection
+            .execute_batch(
+                r#"
                 CREATE TABLE IF NOT EXISTS documents (
                     collection TEXT NOT NULL,
                     id INTEGER NOT NULL,
@@ -114,7 +152,13 @@ impl SqliteStorage {
             DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
-        validate_schema_metadata_records(&self.connection)
+        validate_schema_metadata_records(&self.connection)?;
+        if let Some(manifest) = manifest {
+            for collection in &manifest.collections {
+                register_collection_schema(&self.connection, collection)?;
+            }
+        }
+        Ok(())
     }
 
     fn record_change(
@@ -1858,6 +1902,28 @@ mod tests {
 
         // Act.
         storage.register_schemas(&manifest).unwrap();
+        let version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn opens_with_schema_manifest_during_open() {
+        // Scenario: Dart opens SQLite with generated schemas already available.
+        // Covers:
+        // - [SqliteStorage::open_with_schemas] registering schema metadata during open.
+        // - Keeping SQLite open aligned with Isar's schema-aware open path.
+        // Expected: The collection starts at schema version 1 without a later register call.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_open");
+        let manifest = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+
+        // Act.
+        let storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
         let version = storage.schema_version("users").unwrap();
 
         // Assert.
