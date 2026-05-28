@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.6
+
+- Aligned generated SQLite `getAll` reads with Isar's cursor path: one prepared
+  SQLite statement, per-id bind/step, direct row-field reads, and a native read
+  transaction around the batch.
+- Updated the Dart native reader binding to use direct-return FFI calls for
+  generated typed hydration, matching Isar's reader call shape more closely.
+- Removed the generated SQLite read fallback to the generic stored-document
+  batch path so the schema collection table is the clean source of truth.
+- Regenerated the Windows `cindel_flutter_libs` native runtime library for the
+  new `0.5.6` reader ABI.
+- Verified the SQLite core benchmark get metric after the cursor/read
+  alignment and kept the benchmark files untracked.
+
 ## 0.5.5
 
 - Aligned Cindel's SQLite schema-aware open path with Isar by registering

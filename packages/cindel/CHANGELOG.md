@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.6
+
+- Aligned typed SQLite `getAll` with Isar's cursor path by keeping a prepared
+  SQLite statement alive across the batch, binding each requested id, and
+  reading generated fields directly from the active SQLite row.
+- Wrapped the generated SQLite `getAll` cursor in a native read transaction,
+  matching Isar's `getTxn` read path for cursor reads.
+- Added direct-return native reader calls for generated id, bool, int, double,
+  and string reads so the Dart hydration path mirrors Isar's reader FFI shape.
+- Removed the generated SQLite reader's fallback to the generic stored-document
+  batch path; generated SQLite reads now use the schema collection table path.
+
 ## 0.5.5
 
 - Aligned the SQLite schema-aware open path with Isar by registering generated

@@ -5,7 +5,7 @@ use crate::document_format::{
 use crate::engine::CindelEngine;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
-    NativeDocumentWrite, StorageBackendKind,
+    NativeDocumentWrite, SqliteNativeDocumentCursor, StorageBackendKind,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -546,23 +546,17 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     #[cfg(feature = "mdbx")]
     if let Ok(cursor) = engine.mdbx_cursor_document_reader(collection, &ids) {
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            current_index: None,
             mode: CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor },
         }));
     }
-
-    let Ok(documents) = engine.get_many_stored(collection, &ids) else {
-        return std::ptr::null_mut();
-    };
-    let all_present = documents.iter().all(Option::is_some);
-    Box::into_raw(Box::new(CindelNativeDocumentReader {
-        mode: CindelNativeDocumentReaderMode::Batch {
-            layout,
-            ids,
-            documents,
-            all_present,
-            trusted_static_size: true,
-        },
-    }))
+    if let Ok(Some(cursor)) = engine.sqlite_native_document_cursor(collection, &ids) {
+        return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            current_index: None,
+            mode: CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor },
+        }));
+    }
+    std::ptr::null_mut()
 }
 
 #[no_mangle]
@@ -593,6 +587,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
     #[cfg(feature = "mdbx")]
     if let Ok(Some(cursor)) = engine.mdbx_query_document_reader(collection, &plan) {
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            current_index: None,
             mode: CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor },
         }));
     }
@@ -601,6 +596,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        current_index: None,
         mode: CindelNativeDocumentReaderMode::Batch {
             layout,
             ids: Vec::new(),
@@ -672,6 +668,30 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_id(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_id_value(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+) -> u64 {
+    let Some(reader) = reader.as_mut() else {
+        return u64::MAX;
+    };
+    reader.document_id(document_index).unwrap_or(u64::MAX)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_id_value(
+    reader: *mut CindelNativeDocumentReader,
+) -> u64 {
+    let Some(reader) = reader.as_mut() else {
+        return u64::MAX;
+    };
+    let Some(document_index) = reader.current_index else {
+        return u64::MAX;
+    };
+    reader.document_id(document_index).unwrap_or(u64::MAX)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_bool(
     reader: *mut CindelNativeDocumentReader,
     document_index: usize,
@@ -689,6 +709,40 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bool(
         true
     } else {
         false
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_bool_value(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+) -> u8 {
+    let Some(reader) = reader.as_mut() else {
+        return 2;
+    };
+    match reader.read_bool(document_index, field_index as usize) {
+        Some(false) => 0,
+        Some(true) => 1,
+        None => 2,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_bool_value(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+) -> u8 {
+    let Some(reader) = reader.as_mut() else {
+        return 2;
+    };
+    let Some(document_index) = reader.current_index else {
+        return 2;
+    };
+    match reader.read_bool(document_index, field_index as usize) {
+        Some(false) => 0,
+        Some(true) => 1,
+        None => 2,
     }
 }
 
@@ -713,6 +767,36 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_int(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_int_value(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+) -> i64 {
+    let Some(reader) = reader.as_mut() else {
+        return i64::MIN;
+    };
+    reader
+        .read_int(document_index, field_index as usize)
+        .unwrap_or(i64::MIN)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_int_value(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+) -> i64 {
+    let Some(reader) = reader.as_mut() else {
+        return i64::MIN;
+    };
+    let Some(document_index) = reader.current_index else {
+        return i64::MIN;
+    };
+    reader
+        .read_int(document_index, field_index as usize)
+        .unwrap_or(i64::MIN)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_double(
     reader: *mut CindelNativeDocumentReader,
     document_index: usize,
@@ -731,6 +815,36 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_double(
     } else {
         false
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_double_value(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+) -> f64 {
+    let Some(reader) = reader.as_mut() else {
+        return f64::NAN;
+    };
+    reader
+        .read_double(document_index, field_index as usize)
+        .unwrap_or(f64::NAN)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_double_value(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+) -> f64 {
+    let Some(reader) = reader.as_mut() else {
+        return f64::NAN;
+    };
+    let Some(document_index) = reader.current_index else {
+        return f64::NAN;
+    };
+    reader
+        .read_double(document_index, field_index as usize)
+        .unwrap_or(f64::NAN)
 }
 
 #[no_mangle]
@@ -755,6 +869,56 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
     *out_ptr = bytes.as_ptr();
     *out_len = bytes.len();
     true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_string_value(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_is_ascii: *mut bool,
+) -> usize {
+    if out_ptr.is_null() || out_is_ascii.is_null() {
+        return 0;
+    }
+    *out_ptr = std::ptr::null();
+    *out_is_ascii = false;
+    let Some(reader) = reader.as_mut() else {
+        return 0;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return 0;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_is_ascii = bytes.is_ascii();
+    bytes.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_string_value(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_is_ascii: *mut bool,
+) -> usize {
+    if out_ptr.is_null() || out_is_ascii.is_null() {
+        return 0;
+    }
+    *out_ptr = std::ptr::null();
+    *out_is_ascii = false;
+    let Some(reader) = reader.as_mut() else {
+        return 0;
+    };
+    let Some(document_index) = reader.current_index else {
+        return 0;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return 0;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_is_ascii = bytes.is_ascii();
+    bytes.len()
 }
 
 #[no_mangle]
@@ -823,6 +987,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_list(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        current_index: None,
         mode: CindelNativeDocumentReaderMode::RawList {
             bytes: raw_list.bytes,
             entries: raw_list.entries,
@@ -1779,6 +1944,7 @@ enum NativeListEncoding {
 }
 
 pub struct CindelNativeDocumentReader {
+    current_index: Option<usize>,
     mode: CindelNativeDocumentReaderMode,
 }
 
@@ -1789,6 +1955,10 @@ enum CindelNativeDocumentReaderMode {
         documents: Vec<Option<Vec<u8>>>,
         all_present: bool,
         trusted_static_size: bool,
+    },
+    SqliteCursor {
+        layout: NativeBatchLayout,
+        cursor: SqliteNativeDocumentCursor,
     },
     #[cfg(feature = "mdbx")]
     MdbxCursor {
@@ -2278,6 +2448,7 @@ impl CindelNativeDocumentReader {
     fn len(&self) -> usize {
         match &self.mode {
             CindelNativeDocumentReaderMode::Batch { documents, .. } => documents.len(),
+            CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => cursor.len(),
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor.len(),
             #[cfg(feature = "mdbx")]
@@ -2293,12 +2464,13 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
             CindelNativeDocumentReaderMode::Batch { .. }
+            | CindelNativeDocumentReaderMode::SqliteCursor { .. }
             | CindelNativeDocumentReaderMode::RawList { .. } => false,
         }
     }
 
     fn next(&mut self) -> bool {
-        match &mut self.mode {
+        let has_next = match &mut self.mode {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
                 cursor.next().unwrap_or(false)
@@ -2306,12 +2478,17 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
             CindelNativeDocumentReaderMode::Batch { .. }
+            | CindelNativeDocumentReaderMode::SqliteCursor { .. }
             | CindelNativeDocumentReaderMode::RawList { .. } => false,
+        };
+        if has_next {
+            self.current_index = Some(0);
         }
+        has_next
     }
 
     fn is_present(&mut self, document_index: usize) -> bool {
-        match &mut self.mode {
+        let present = match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch {
                 documents,
                 all_present,
@@ -2322,6 +2499,9 @@ impl CindelNativeDocumentReader {
                 } else {
                     documents.get(document_index).is_some_and(Option::is_some)
                 }
+            }
+            CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
+                cursor.is_present(document_index).unwrap_or(false)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
@@ -2336,12 +2516,17 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
                 document_index < entries.len()
             }
-        }
+        };
+        self.current_index = Some(document_index);
+        present
     }
 
     fn document_id(&mut self, document_index: usize) -> Option<u64> {
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { ids, .. } => ids.get(document_index).copied(),
+            CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
+                cursor.document_id(document_index)
+            }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
                 cursor.document_id(document_index).ok().flatten()
@@ -2371,6 +2556,10 @@ impl CindelNativeDocumentReader {
                     1 => Some(true),
                     _ => None,
                 }
+            }
+            CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Bool)?;
+                cursor.read_bool(document_index, field_index)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
@@ -2422,6 +2611,10 @@ impl CindelNativeDocumentReader {
                 } else {
                     Some(value)
                 }
+            }
+            CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Int)?;
+                cursor.read_int(document_index, field_index)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
@@ -2486,6 +2679,10 @@ impl CindelNativeDocumentReader {
                 } else {
                     None
                 }
+            }
+            CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Double)?;
+                cursor.read_double(document_index, field_index)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
@@ -2558,6 +2755,15 @@ impl CindelNativeDocumentReader {
                 let end = start.checked_add(len)?;
                 bytes.get(start..end)
             }
+            CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                match layout.field_type(field_index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return None,
+                }
+                cursor.read_bytes(document_index, field_index)
+            }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
                 match layout.field_type(field_index)? {
@@ -2612,6 +2818,9 @@ impl CindelNativeDocumentReader {
     fn read_list(&mut self, document_index: usize, field_index: usize) -> Option<NativeRawList> {
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { .. } => {
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+            }
+            CindelNativeDocumentReaderMode::SqliteCursor { .. } => {
                 parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
             }
             #[cfg(feature = "mdbx")]

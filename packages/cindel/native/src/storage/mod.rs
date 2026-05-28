@@ -18,6 +18,7 @@ pub use metadata::{
     DocumentFormatVersion, IndexVerificationCheck, SchemaMetadataVersion, StorageLayoutVersion,
     StorageMetadata, StorageVerificationReport,
 };
+pub(crate) use sqlite::SqliteNativeDocumentCursor;
 pub use sqlite::SqliteStorage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,6 +80,18 @@ impl StorageBackend {
         match self {
             Self::Mdbx(storage) => storage.query_document_reader(collection, plan),
             Self::Sqlite(_) => Ok(None),
+        }
+    }
+
+    pub(crate) fn sqlite_native_document_cursor(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Option<SqliteNativeDocumentCursor>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.native_document_cursor(collection, ids),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(_) => Ok(None),
         }
     }
 }

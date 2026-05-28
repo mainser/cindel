@@ -1,6 +1,7 @@
 use crate::storage::{
-    DocumentWrite, IndexEntry, IndexValue, NativeDocumentWrite, SchemaManifest, StorageBackend,
-    StorageBackendKind, StorageChangeSet, StorageEngine,
+    DocumentWrite, IndexEntry, IndexValue, NativeDocumentWrite, SchemaManifest,
+    SqliteNativeDocumentCursor, StorageBackend, StorageBackendKind, StorageChangeSet,
+    StorageEngine,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -56,6 +57,14 @@ impl CindelEngine {
         ids: &[u64],
     ) -> Result<Vec<Option<Vec<u8>>>, String> {
         self.storage.get_many_stored(collection, ids)
+    }
+
+    pub(crate) fn sqlite_native_document_cursor(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Option<SqliteNativeDocumentCursor>, String> {
+        self.storage.sqlite_native_document_cursor(collection, ids)
     }
 
     #[cfg(feature = "mdbx")]

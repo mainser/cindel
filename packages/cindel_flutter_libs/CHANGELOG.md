@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6
+
+- Regenerated the Windows native runtime library for the Cindel `0.5.6`
+  SQLite generated `getAll` cursor/reader ABI.
+- Kept MDBX and SQLite compiled into the shipped binary, with MDBX as the
+  default backend.
+
 ## 0.5.4
 
 - Regenerated Windows, Android, and Linux native runtime libraries for the
