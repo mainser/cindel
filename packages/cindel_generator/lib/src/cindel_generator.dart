@@ -975,7 +975,7 @@ final class _FieldInfo {
         }
 '''
         : '        listWriter.$method(i, $value);\n';
-    final expression = toDocumentExpression;
+    final expression = 'object.$name';
     if (!isNullable) {
       return '''
   {

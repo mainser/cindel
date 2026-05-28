@@ -4,6 +4,8 @@
 
 - Generated `toDocument` maps now omit the collection id field, keeping ids in
   the storage key path instead of duplicating them inside document payloads.
+- Generated native list writers now use the model list directly when no value
+  conversion is needed, avoiding redundant list copies during typed inserts.
 
 ## 0.5.3
 

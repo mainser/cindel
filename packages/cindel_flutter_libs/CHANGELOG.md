@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4
+
+- Regenerate Windows, Android, and Linux native runtime libraries for the
+  Cindel `0.5.4` MDBX unindexed typed batch insert fast path.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend.
+
 ## 0.5.3
 
 - Regenerated Windows, Android, and Linux native runtime libraries for the

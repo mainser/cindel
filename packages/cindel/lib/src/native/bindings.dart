@@ -298,18 +298,10 @@ final class CindelNativeBindings {
     var finished = false;
     try {
       final nativeWriter = _CindelNativeDocumentWriter(_functions, writer);
-      final seenIds = <int>{};
       try {
         for (final object in objects) {
           final id = getId(object);
           _checkId(id);
-          if (!seenIds.add(id)) {
-            throw ArgumentError.value(
-              id,
-              'objects',
-              'Bulk writes cannot contain duplicate ids.',
-            );
-          }
           writeDocument(nativeWriter, object);
           _functions.nativeBatchWriterSaveDocument(writer, id);
         }

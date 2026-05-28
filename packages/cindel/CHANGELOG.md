@@ -7,6 +7,12 @@
 - Decoded schema-backed documents are rehydrated with the external
   collection-key id on read paths, preserving typed object ids while keeping
   ids out of stored generated document payloads.
+- Typed `putAll` now reuses caller-provided lists instead of copying them
+  before entering the native batch writer.
+- Native typed batch writes now follow Isar's insert path more closely by
+  avoiding duplicate-id set prevalidation before `UPSERT`.
+- MDBX trusted schema batch inserts skip old-index lookup work when the schema
+  has no indexes.
 - Updated the development generator dependency constraint to `^0.5.4`.
 
 ## 0.5.3

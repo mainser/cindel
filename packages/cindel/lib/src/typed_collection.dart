@@ -61,7 +61,9 @@ final class CindelTypedCollection<T> {
 
   /// Stores every object atomically.
   Future<void> putAll(Iterable<T> objects) async {
-    final objectList = objects.toList(growable: false);
+    final objectList = objects is List<T>
+        ? objects
+        : objects.toList(growable: false);
     if (objectList.isEmpty) {
       return;
     }

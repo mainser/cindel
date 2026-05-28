@@ -4181,6 +4181,23 @@ fn put_many_documents_with_indexes(
         .cursor(&documents_table)
         .map_err(|error| error.to_string())?;
     let index_names = index_names_from_schema(schema);
+    if trust_schema_documents
+        && index_names.is_empty()
+        && unique_indexes.is_empty()
+        && documents.iter().all(|document| document.indexes.is_empty())
+    {
+        for document in documents {
+            documents_cursor
+                .put(
+                    &document_table_key(document.id),
+                    &document.bytes,
+                    WriteFlags::UPSERT,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        drop(documents_cursor);
+        return Ok(());
+    }
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
     let mut index_cursors = index_tables
         .tables
