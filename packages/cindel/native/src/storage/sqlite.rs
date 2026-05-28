@@ -1308,6 +1308,25 @@ impl StorageEngine for SqliteStorage {
         }
         Ok(ids)
     }
+
+    fn query_plan_update(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        updates: &[(String, WireValue)],
+        collect_changes: bool,
+    ) -> Result<usize, String> {
+        self.ensure_can_write()?;
+        let schema = self.required_collection_schema(collection)?;
+        let count = update_native_query_plan(&self.connection, &schema, plan, updates)?;
+        if count > 0 {
+            let revision = self.bump_collection_revision_in_memory(collection);
+            if collect_changes {
+                self.record_change(collection, revision, std::iter::empty::<u64>());
+            }
+        }
+        Ok(count)
+    }
 }
 
 impl SqliteStorage {
@@ -1386,19 +1405,7 @@ fn sqlite_query_plan_sql(
     select: SqliteQuerySelect,
 ) -> Result<(String, Vec<Value>), String> {
     let fields = native_fields(schema);
-    let mut params = Vec::new();
-    let mut predicates = Vec::new();
-
-    if let Some((source_sql, source_params)) = sqlite_query_source_sql(schema, &plan.source)? {
-        predicates.push(source_sql);
-        params.extend(source_params);
-    }
-    if let Some(filter) = &plan.filter {
-        let filter = decode_filter(filter)?;
-        let (filter_sql, filter_params) = sqlite_filter_sql(schema, filter)?;
-        predicates.push(filter_sql);
-        params.extend(filter_params);
-    }
+    let (predicates, params) = sqlite_query_plan_predicates(schema, plan)?;
 
     let mut sql = String::new();
     match select {
@@ -1454,6 +1461,158 @@ fn sqlite_query_plan_sql(
     }
 
     Ok((sql, params))
+}
+
+fn sqlite_query_plan_predicates(
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+) -> Result<(Vec<String>, Vec<Value>), String> {
+    let mut params = Vec::new();
+    let mut predicates = Vec::new();
+
+    if let Some((source_sql, source_params)) = sqlite_query_source_sql(schema, &plan.source)? {
+        predicates.push(source_sql);
+        params.extend(source_params);
+    }
+    if let Some(filter) = &plan.filter {
+        let filter = decode_filter(filter)?;
+        let (filter_sql, filter_params) = sqlite_filter_sql(schema, filter)?;
+        predicates.push(filter_sql);
+        params.extend(filter_params);
+    }
+
+    Ok((predicates, params))
+}
+
+fn update_native_query_plan(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+    updates: &[(String, WireValue)],
+) -> Result<usize, String> {
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    let (update_sql, mut params) = sqlite_update_sql(schema, updates)?;
+    let requires_subquery = plan.offset > 0
+        || plan.limit.is_some()
+        || !plan.sorts.is_empty()
+        || !plan.distinct_fields.is_empty();
+
+    let sql = if requires_subquery {
+        let (select_sql, select_params) =
+            sqlite_query_plan_sql(schema, plan, SqliteQuerySelect::Ids)?;
+        params.extend(select_params);
+        format!(
+            "UPDATE {} SET {} WHERE {} IN ({})",
+            schema.name, update_sql, SQLITE_ROW_ID_COLUMN, select_sql
+        )
+    } else {
+        let (predicates, predicate_params) = sqlite_query_plan_predicates(schema, plan)?;
+        params.extend(predicate_params);
+        let mut sql = format!("UPDATE {} SET {}", schema.name, update_sql);
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+        sql
+    };
+
+    connection
+        .execute(&sql, params_from_iter(params.iter()))
+        .map_err(|error| error.to_string())
+}
+
+fn sqlite_update_sql(
+    schema: &CollectionSchemaManifest,
+    updates: &[(String, WireValue)],
+) -> Result<(String, Vec<Value>), String> {
+    let mut sql = String::new();
+    let mut params = Vec::new();
+    for (field_name, value) in updates {
+        let field = schema
+            .fields
+            .iter()
+            .find(|field| field.name == *field_name)
+            .ok_or_else(|| {
+                format!(
+                    "field `{field_name}` is not declared in schema `{}`",
+                    schema.name
+                )
+            })?;
+        if field.is_id {
+            return Err(format!(
+                "query updates cannot change id field `{field_name}`"
+            ));
+        }
+        if !sql.is_empty() {
+            sql.push(',');
+        }
+        sql.push_str(&field.name);
+        if matches!(value, WireValue::Null) {
+            sql.push_str("=NULL");
+        } else {
+            sql.push_str("=?");
+            params.push(sqlite_update_value(field, value)?);
+        }
+    }
+    Ok((sql, params))
+}
+
+fn sqlite_update_value(field: &FieldSchemaManifest, value: &WireValue) -> Result<Value, String> {
+    match (field.binary_type.as_str(), value) {
+        (_, WireValue::Null) => Ok(Value::Null),
+        ("bool", WireValue::Bool(value)) => Ok(Value::Integer(i64::from(*value))),
+        ("int", WireValue::Int(value)) => Ok(Value::Integer(*value)),
+        ("double", WireValue::Double(value)) if value.is_finite() => Ok(Value::Real(*value)),
+        ("double", WireValue::Double(_)) => {
+            Err("SQLite update double values must be finite".into())
+        }
+        ("string", WireValue::String(value)) => Ok(Value::Text(value.clone())),
+        ("list", WireValue::List(_)) | ("object", WireValue::Object(_)) => {
+            let mut json = String::new();
+            push_wire_json_value(&mut json, value)?;
+            Ok(Value::Text(json))
+        }
+        _ => Err(format!(
+            "SQLite update value does not match field `{}` type `{}`",
+            field.name, field.binary_type
+        )),
+    }
+}
+
+fn push_wire_json_value(json: &mut String, value: &WireValue) -> Result<(), String> {
+    match value {
+        WireValue::Null => json.push_str("null"),
+        WireValue::Bool(value) => json.push_str(if *value { "true" } else { "false" }),
+        WireValue::Int(value) => json.push_str(&value.to_string()),
+        WireValue::Double(value) if value.is_finite() => json.push_str(&value.to_string()),
+        WireValue::Double(_) => return Err("SQLite JSON double values must be finite".into()),
+        WireValue::String(value) => push_json_string(json, value)?,
+        WireValue::List(values) => {
+            json.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    json.push(',');
+                }
+                push_wire_json_value(json, value)?;
+            }
+            json.push(']');
+        }
+        WireValue::Object(fields) => {
+            json.push('{');
+            for (index, (name, value)) in fields.iter().enumerate() {
+                if index > 0 {
+                    json.push(',');
+                }
+                push_json_string(json, name)?;
+                json.push(':');
+                push_wire_json_value(json, value)?;
+            }
+            json.push('}');
+        }
+    }
+    Ok(())
 }
 
 fn sqlite_query_source_sql(
@@ -3619,6 +3778,95 @@ mod tests {
         assert_eq!(sorted_cursor.read_int(0, 1), Some(20));
         assert_eq!(sorted_cursor.read_bytes(0, 2), Some(&b"zulu"[..]));
         assert!(!sorted_cursor.next().unwrap());
+    }
+
+    #[test]
+    fn updates_native_documents_with_sql_query_plan() {
+        // Scenario: SQLite updates rows matched by a schema-aware native query
+        // plan without reading and rewriting full documents.
+        // Covers:
+        // - Isar-like UPDATE table SET field=? WHERE ...
+        // - Binding update params before query params.
+        // - Collection revision bump after matched rows change.
+        // Expected: Only matching rows are updated and nonmatching rows stay
+        // untouched.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_query_update");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(10),
+                    NativeDocumentValue::Bytes(b"alpha".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(20),
+                    NativeDocumentValue::Bytes(b"zulu".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 3,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(30),
+                    NativeDocumentValue::Bytes(b"beta".to_vec()),
+                ],
+            },
+        ];
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let after_insert = storage.collection_revision("users").unwrap();
+        let plan = crate::wire::WireQueryPlan {
+            source: crate::wire::WireQuerySource::All { dedupe: false },
+            filter: Some(
+                crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                    field: "completed".to_string(),
+                    operation: crate::wire::WireFilterOperation::Equal,
+                    value: crate::wire::WireValue::Bool(true),
+                })
+                .unwrap(),
+            ),
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        // Act.
+        let count = storage
+            .query_plan_update(
+                "users",
+                &plan,
+                &[("completed".to_string(), crate::wire::WireValue::Bool(false))],
+                true,
+            )
+            .unwrap();
+        let after_update = storage.collection_revision("users").unwrap();
+        let remaining_true = storage.query_plan_ids("users", &plan).unwrap();
+        let false_count = storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE completed = 0",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+
+        // Assert.
+        assert_eq!(count, 2);
+        assert_eq!(after_insert, 1);
+        assert_eq!(after_update, 2);
+        assert!(remaining_true.is_empty());
+        assert_eq!(false_count, 3);
     }
 
     #[test]

@@ -1180,7 +1180,7 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     _checkCanWrite();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     if (updates.isEmpty) {
       return 0;
