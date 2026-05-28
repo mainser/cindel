@@ -44,12 +44,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.3
-  cindel_flutter_libs: ^0.5.3
+  cindel: ^0.5.7
+  cindel_flutter_libs: ^0.5.7
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.3
+  cindel_generator: ^0.5.5
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -284,6 +284,10 @@ Use in-memory databases for fast tests:
 final db = await Cindel.openInMemory(schemas: [UserSchema]);
 addTearDown(db.close);
 ```
+
+## Benchmarks
+<img src="https://raw.githubusercontent.com/mainser/Cindel/main/.github/assets/benchmarks.png" width="100%" />
+
 
 ## License
 

@@ -5,6 +5,21 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.7
+
+- Completed the generated typed SQLite app backend alignment: schema-backed
+  open, typed inserts, cursor reads, query updates, query deletes, filter
+  queries, sorted queries, and direct native typed reads now use the SQLite
+  collection-table path instead of legacy generic document fallbacks.
+- Updated the generated query path so SQLite can execute supported typed
+  filters through the native query-plan route.
+- Regenerated the Windows native runtime library so `cindel_flutter_libs`
+  matches the current runtime changes.
+- Reduced extra MDBX typed insert work by reusing cached schema metadata during
+  trusted batch writes.
+- Refreshed roadmap and package documentation for the completed SQLite backend
+  and current MDBX insert focus.
+
 ## 0.5.6
 
 - Aligned generated SQLite `getAll` reads with Isar's cursor path: one prepared

@@ -16,8 +16,9 @@ secondary backend.
 
 ## Status
 
-The current development line is focused on hardening the optimized MDBX runtime
-and the generated typed API.
+The current development line is focused on hardening the optimized MDBX runtime,
+keeping the generated typed API stable, and keeping SQLite aligned as the
+complete explicit secondary backend for the current typed app surface.
 
 Current package roles:
 
@@ -95,7 +96,10 @@ Current native backend policy:
 
 - Rust native core behind Dart FFI.
 - MDBX storage backend.
-- SQLite storage backend.
+- SQLite storage backend for the generated typed app path, including schema
+  collection tables, open-time schema registration, `putAll`, `getAll`,
+  query-based update/delete, filter queries, sorted queries, and direct native
+  typed reads.
 - Compact generated binary document format.
 - Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
@@ -140,13 +144,13 @@ Current native backend policy:
 
 ### Runtime Improvements
 
-- Collection-key ids for generated native MDBX typed writes.
-- Native document id reads for typed hydration.
-- Streaming native typed readers for unsorted and sorted MDBX query results.
-- Direct native string-list hydration for `List<String>` fields.
-- Direct compact bool equality scan for sorted indexed query plans.
-- Prepared native bool equality filters for compact MDBX documents.
-- Lazy local watcher change-set creation when no watcher is registered.
+- Keep the MDBX typed insert path close to Isar's streaming write model.
+- Continue reducing extra work in MDBX generated binary serialization and batch
+  writes.
+- Keep SQLite behavior aligned with the typed app benchmark while MDBX remains
+  the default backend.
+- Preserve lazy local watcher change-set creation when no watcher is
+  registered.
 
 ## Next
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.5
+
+- Generated typed query plans now include the metadata needed by the SQLite
+  native filter path for supported generated collection filters.
+
 ## 0.5.4
 
 - Generated `toDocument` maps now omit the collection id field, keeping ids in

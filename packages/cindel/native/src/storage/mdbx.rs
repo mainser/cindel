@@ -1727,10 +1727,13 @@ impl MdbxStorage {
                         collection,
                         documents,
                     } => {
+                        let schema =
+                            self.cached_collection_schema(transaction, &tables, &collection)?;
                         put_many_documents_with_indexes(
                             transaction,
                             &tables,
                             &collection,
+                            schema.as_ref(),
                             &documents,
                             false,
                         )?;
@@ -2130,10 +2133,12 @@ impl StorageEngine for MdbxStorage {
 
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
+            let schema = self.cached_collection_schema(transaction, &tables, collection)?;
             put_many_documents_with_indexes(
                 transaction,
                 &tables,
                 collection,
+                schema.as_ref(),
                 documents,
                 trust_schema_documents,
             )?;
@@ -4149,6 +4154,7 @@ fn put_many_documents_with_indexes(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,
+    schema: Option<&CollectionSchemaManifest>,
     documents: &[DocumentWrite],
     trust_schema_documents: bool,
 ) -> Result<(), String> {
@@ -4156,7 +4162,6 @@ fn put_many_documents_with_indexes(
         return Ok(());
     }
 
-    let schema = collection_schema(transaction, tables, collection)?;
     if schema.is_none() {
         if documents.iter().all(|document| document.indexes.is_empty()) {
             let documents_table = create_documents_table(transaction, collection)?;
@@ -4188,7 +4193,7 @@ fn put_many_documents_with_indexes(
         return Ok(());
     }
 
-    let schema = schema.as_ref().expect("schema checked above");
+    let schema = schema.expect("schema checked above");
     let unique_indexes = unique_index_names_from_schema(Some(schema));
     let documents_table = create_documents_table(transaction, collection)?;
     let mut documents_cursor = transaction

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.7
+
+- Completed the generated typed SQLite app backend path for the current public
+  surface: schema-backed open, typed `putAll`, `getAll`, query updates, query
+  deletes, filter queries, sorted queries, and direct native typed reads now use
+  SQLite collection tables.
+- Removed the remaining generated SQLite query fallback to generic stored
+  documents for supported typed query plans.
+- Added native SQLite query update and filter execution for generated
+  collections.
+- Reduced extra MDBX typed insert work by reusing cached schema metadata during
+  trusted unindexed batch writes.
+- Updated the development generator dependency constraint to `^0.5.5`.
+
 ## 0.5.6
 
 - Aligned typed SQLite `getAll` with Isar's cursor path by keeping a prepared

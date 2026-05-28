@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7
+
+- Regenerated the Windows native runtime library for the Cindel `0.5.7`
+  SQLite generated typed backend completion line.
+- Kept MDBX and SQLite compiled into the shipped binary, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.6
 
 - Regenerated the Windows native runtime library for the Cindel `0.5.6`
