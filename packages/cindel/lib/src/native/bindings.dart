@@ -217,6 +217,7 @@ final class CindelNativeBindings {
     List<T> objects,
     CindelWriteNativeDocument<T> writeDocument,
     bool trackChanges,
+    bool collectNativeValues,
   ) {
     if (ids.length != objects.length) {
       throw ArgumentError.value(
@@ -234,6 +235,7 @@ final class CindelNativeBindings {
         fieldTypesPointer,
         fieldTypesLength,
         objects.length,
+        collectNativeValues ? 1 : 0,
       );
     });
     if (writer == nullptr) {
@@ -280,6 +282,7 @@ final class CindelNativeBindings {
     CindelGetId<T> getId,
     CindelWriteNativeDocument<T> writeDocument,
     bool trackChanges,
+    bool collectNativeValues,
   ) {
     final writer = _withNativeBytes(fieldTypes, (
       fieldTypesPointer,
@@ -289,6 +292,7 @@ final class CindelNativeBindings {
         fieldTypesPointer,
         fieldTypesLength,
         objects.length,
+        collectNativeValues ? 1 : 0,
       );
     });
     if (writer == nullptr) {
@@ -1543,7 +1547,8 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get putManyStored;
 
-  Pointer<Void> Function(Pointer<Uint8>, int, int) get nativeBatchWriterNew;
+  Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  get nativeBatchWriterNew;
 
   void Function(Pointer<Void>, int) get nativeBatchWriterBeginDocument;
 
@@ -2016,8 +2021,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
           >('cindel_put_many_stored'),
       nativeBatchWriterNew = library
           .lookupFunction<
-            Pointer<Void> Function(Pointer<Uint8>, Size, Size),
-            Pointer<Void> Function(Pointer<Uint8>, int, int)
+            Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32),
+            Pointer<Void> Function(Pointer<Uint8>, int, int, int)
           >('cindel_native_batch_writer_new'),
       nativeBatchWriterBeginDocument = library
           .lookupFunction<
@@ -2894,7 +2899,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   putManyStored;
 
   @override
-  final Pointer<Void> Function(Pointer<Uint8>, int, int) nativeBatchWriterNew;
+  final Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  nativeBatchWriterNew;
 
   @override
   final void Function(Pointer<Void>, int) nativeBatchWriterBeginDocument;
@@ -3408,8 +3414,8 @@ final class _NativeAssetCindelNativeFunctions
   get putManyStored => _cindelPutManyStored;
 
   @override
-  Pointer<Void> Function(Pointer<Uint8>, int, int) get nativeBatchWriterNew =>
-      _cindelNativeBatchWriterNew;
+  Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  get nativeBatchWriterNew => _cindelNativeBatchWriterNew;
 
   @override
   void Function(Pointer<Void>, int) get nativeBatchWriterBeginDocument =>
@@ -4061,7 +4067,7 @@ external int _cindelPutManyStored(
   int documentsLen,
 );
 
-@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Size)>(
+@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32)>(
   symbol: 'cindel_native_batch_writer_new',
   assetId: _assetId,
 )
@@ -4069,6 +4075,7 @@ external Pointer<Void> _cindelNativeBatchWriterNew(
   Pointer<Uint8> fieldTypes,
   int fieldTypesLen,
   int capacity,
+  int collectNativeValues,
 );
 
 @Native<Void Function(Pointer<Void>, Uint64)>(

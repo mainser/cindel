@@ -435,6 +435,7 @@ class CindelDatabase {
       objects,
       writeDocument,
       trackChanges,
+      backend == CindelStorageBackend.sqlite,
     );
     _markNativeCollectionChanged(
       collection,
@@ -468,6 +469,7 @@ class CindelDatabase {
       getId,
       writeDocument,
       trackChanges,
+      backend == CindelStorageBackend.sqlite,
     );
     _markNativeCollectionChanged(
       collection,
