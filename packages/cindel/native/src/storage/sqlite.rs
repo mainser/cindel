@@ -821,6 +821,50 @@ impl StorageEngine for SqliteStorage {
         Ok(())
     }
 
+    fn delete_many_native_documents(
+        &mut self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<bool, String> {
+        let Some(schema) = collection_schema(&self.connection, collection)? else {
+            return Ok(false);
+        };
+        if ids.is_empty() {
+            if self.active_transaction.is_none() {
+                self.last_change_sets.clear();
+            }
+            return Ok(true);
+        }
+        self.ensure_can_write()?;
+
+        if self.active_transaction.is_some() {
+            let deleted_ids = delete_native_documents(&self.connection, &schema.name, ids)?;
+            if !deleted_ids.is_empty() {
+                let revision = bump_collection_revision(&self.connection, collection)?;
+                self.record_change(collection, revision, deleted_ids);
+            }
+            return Ok(true);
+        }
+
+        self.last_change_sets.clear();
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let deleted_ids = delete_native_documents(&transaction, &schema.name, ids)?;
+        let revision = if deleted_ids.is_empty() {
+            None
+        } else {
+            Some(bump_collection_revision(&transaction, collection)?)
+        };
+
+        transaction.commit().map_err(|error| error.to_string())?;
+        if let Some(revision) = revision {
+            self.record_change(collection, revision, deleted_ids);
+        }
+        Ok(true)
+    }
+
     fn query_index_equal(
         &self,
         collection: &str,
@@ -1099,6 +1143,28 @@ fn native_insert_sql(collection: &str, fields: &[&FieldSchemaManifest], count: u
         sql.push_str(&batch);
     }
     sql
+}
+
+fn delete_native_documents(
+    connection: &Connection,
+    collection: &str,
+    ids: &[u64],
+) -> Result<Vec<u64>, String> {
+    let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| error.to_string())?;
+    let mut deleted_ids = Vec::new();
+    for id in ids {
+        let id = sqlite_id(*id)?;
+        let deleted = statement
+            .execute(params![id])
+            .map_err(|error| error.to_string())?;
+        if deleted > 0 {
+            deleted_ids.push(id as u64);
+        }
+    }
+    Ok(deleted_ids)
 }
 
 fn native_sql_value(
@@ -2682,6 +2748,71 @@ mod tests {
         assert_eq!(cursor.read_bytes(0, 2), Some(&b"Ada"[..]));
         assert!(!cursor.is_present(1).unwrap());
         assert_eq!(cursor.document_id(1), None);
+    }
+
+    #[test]
+    fn deletes_native_documents_from_collection_table() {
+        // Scenario: A generated typed collection deletes SQLite-native rows.
+        // Covers:
+        // - Isar-like deletion from the collection table by row id.
+        // - Avoiding generic document and index-entry cleanup for native rows.
+        // Expected: Existing rows are removed and missing ids do not advance
+        // the collection revision.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_delete");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(42),
+                    NativeDocumentValue::Bytes(b"Ana".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(84),
+                    NativeDocumentValue::Bytes(b"Ada".to_vec()),
+                ],
+            },
+        ];
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let after_insert = storage.collection_revision("users").unwrap();
+
+        // Act.
+        let handled = storage
+            .delete_many_native_documents("users", &[1, 3])
+            .unwrap();
+        let after_delete = storage.collection_revision("users").unwrap();
+        storage.delete_many_native_documents("users", &[3]).unwrap();
+        let after_missing_delete = storage.collection_revision("users").unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let remaining = storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        let generic_count = storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+
+        // Assert.
+        assert!(handled);
+        assert_eq!(after_insert, 1);
+        assert_eq!(after_delete, 2);
+        assert_eq!(after_missing_delete, 2);
+        assert_eq!(ids, vec![2]);
+        assert_eq!(remaining, 1);
+        assert_eq!(generic_count, 0);
     }
 
     #[test]

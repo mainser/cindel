@@ -587,6 +587,28 @@ final class CindelNativeBindings {
     _checkStatus(status, 'delete many');
   }
 
+  void deleteManyNativeDocuments(
+    Pointer<Void> handle,
+    String collection,
+    Uint8List ids,
+  ) {
+    final status = _withNativeUtf8Bytes(collection, (
+      collectionPointer,
+      collectionLength,
+    ) {
+      return _withNativeBytes(ids, (idsPointer, idsLength) {
+        return _functions.deleteManyNativeDocuments(
+          handle,
+          collectionPointer,
+          collectionLength,
+          idsPointer,
+          idsLength,
+        );
+      });
+    });
+    _checkStatus(status, 'delete many native documents');
+  }
+
   int collectionRevision(Pointer<Void> handle, String collection) {
     final outRevision = calloc<Uint64>();
     try {
@@ -1724,6 +1746,9 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get deleteMany;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get deleteManyNativeDocuments;
+
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision;
 
@@ -2448,6 +2473,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_delete_many'),
+      deleteManyNativeDocuments = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_delete_many_native_documents'),
       collectionRevision = library
           .lookupFunction<
             Int32 Function(
@@ -3142,6 +3184,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   deleteMany;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  deleteManyNativeDocuments;
+
+  @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   collectionRevision;
 
@@ -3665,6 +3711,10 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get deleteMany => _cindelDeleteMany;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
+  get deleteManyNativeDocuments => _cindelDeleteManyNativeDocuments;
 
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
@@ -4633,6 +4683,17 @@ external int _cindelDelete(
   Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint8>, Size)
 >(symbol: 'cindel_delete_many', assetId: _assetId)
 external int _cindelDeleteMany(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  Pointer<Uint8> ids,
+  int idsLen,
+);
+
+@Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint8>, Size)
+>(symbol: 'cindel_delete_many_native_documents', assetId: _assetId)
+external int _cindelDeleteManyNativeDocuments(
   Pointer<Void> handle,
   Pointer<Uint8> collection,
   int collectionLen,

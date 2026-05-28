@@ -228,11 +228,17 @@ final class CindelTypedCollection<T> {
 
   /// Deletes the object stored under [id], if it exists.
   Future<void> delete(int id) {
+    if (_usesSqliteNativeDocuments) {
+      return database.deleteAllNativeDocuments(schema.name, [id]);
+    }
     return database.delete(schema.name, id);
   }
 
   /// Deletes every object stored under [ids] atomically.
   Future<void> deleteAll(Iterable<int> ids) {
+    if (_usesSqliteNativeDocuments) {
+      return database.deleteAllNativeDocuments(schema.name, ids);
+    }
     return database.deleteAll(schema.name, ids);
   }
 

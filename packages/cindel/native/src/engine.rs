@@ -174,6 +174,14 @@ impl CindelEngine {
         self.storage.delete_many(collection, ids)
     }
 
+    pub fn delete_many_native_documents(
+        &mut self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<bool, String> {
+        self.storage.delete_many_native_documents(collection, ids)
+    }
+
     pub fn query_index_equal(
         &self,
         collection: &str,

@@ -279,6 +279,14 @@ pub trait StorageEngine {
     }
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String>;
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String>;
+    fn delete_many_native_documents(
+        &mut self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<bool, String> {
+        let _ = (collection, ids);
+        Ok(false)
+    }
     fn query_index_equal(
         &self,
         collection: &str,
@@ -576,6 +584,18 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.delete_many(collection, ids),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.delete_many(collection, ids),
+        }
+    }
+
+    fn delete_many_native_documents(
+        &mut self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<bool, String> {
+        match self {
+            Self::Sqlite(storage) => storage.delete_many_native_documents(collection, ids),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(_) => Ok(false),
         }
     }
 

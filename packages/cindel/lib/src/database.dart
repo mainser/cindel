@@ -679,6 +679,29 @@ class CindelDatabase {
     );
   }
 
+  /// Deletes generated typed SQLite-native documents atomically.
+  Future<void> deleteAllNativeDocuments(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return;
+    }
+
+    _bindings.deleteManyNativeDocuments(handle, collection, _encodeIds(idList));
+    _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.deletes(collection, idList),
+    );
+  }
+
   /// Watches the current value of a document and emits after committed changes.
   ///
   /// The stream emits the current snapshot first, then emits again whenever the

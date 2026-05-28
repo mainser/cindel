@@ -1219,6 +1219,30 @@ pub unsafe extern "C" fn cindel_delete_many(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_delete_many_native_documents(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
+        return -1;
+    };
+
+    match engine.delete_many_native_documents(collection, &ids) {
+        Ok(true) => 0,
+        Ok(false) | Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_collection_revision(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
