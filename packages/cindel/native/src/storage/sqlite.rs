@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CStr, CString};
+use std::ffi::{c_void, CStr, CString};
 use std::fs;
 use std::path::Path;
 use std::ptr;
@@ -48,6 +48,13 @@ pub(crate) struct SqliteNativeDocumentCursor {
     statement: *mut ffi::sqlite3_stmt,
     ids: Vec<i64>,
     current_index: Option<usize>,
+    current_present: bool,
+    owns_transaction: bool,
+}
+
+pub(crate) struct SqliteNativeQueryCursor {
+    database: *mut ffi::sqlite3,
+    statement: *mut ffi::sqlite3_stmt,
     current_present: bool,
     owns_transaction: bool,
 }
@@ -220,6 +227,145 @@ impl SqliteNativeDocumentCursor {
     }
 }
 
+impl SqliteNativeQueryCursor {
+    fn new(
+        connection: &Connection,
+        schema: &CollectionSchemaManifest,
+        plan: &WireQueryPlan,
+        owns_transaction: bool,
+    ) -> Result<Self, String> {
+        let (sql, params) = sqlite_query_plan_sql(schema, plan, SqliteQuerySelect::Documents)?;
+        let sql = CString::new(sql).map_err(|error| error.to_string())?;
+        let mut statement = ptr::null_mut();
+        let database = unsafe { connection.handle() };
+        if owns_transaction {
+            sqlite_exec(database, "BEGIN")?;
+        }
+        let status = unsafe {
+            ffi::sqlite3_prepare_v2(database, sql.as_ptr(), -1, &mut statement, ptr::null_mut())
+        };
+        if status != ffi::SQLITE_OK {
+            if owns_transaction {
+                let _ = sqlite_exec(database, "ROLLBACK");
+            }
+            return Err(sqlite_error(database));
+        }
+        for (index, value) in params.iter().enumerate() {
+            bind_sqlite_value(database, statement, index + 1, value)?;
+        }
+        Ok(Self {
+            database,
+            statement,
+            current_present: false,
+            owns_transaction,
+        })
+    }
+
+    pub(crate) fn next(&mut self) -> Result<bool, String> {
+        let status = unsafe { ffi::sqlite3_step(self.statement) };
+        self.current_present = match status {
+            ffi::SQLITE_ROW => true,
+            ffi::SQLITE_DONE => false,
+            _ => return Err(sqlite_error(self.database)),
+        };
+        Ok(self.current_present)
+    }
+
+    pub(crate) fn document_id(&self, _document_index: usize) -> Option<u64> {
+        if !self.current_present {
+            return None;
+        }
+        let id = unsafe { ffi::sqlite3_column_int64(self.statement, 0) };
+        u64::try_from(id).ok()
+    }
+
+    pub(crate) fn read_bool(&self, _document_index: usize, field_index: usize) -> Option<bool> {
+        if !self.current_present {
+            return None;
+        }
+        let column = Self::field_column(field_index)?;
+        if self.is_null_column(column) {
+            None
+        } else {
+            Some(unsafe { ffi::sqlite3_column_int(self.statement, column) } != 0)
+        }
+    }
+
+    pub(crate) fn read_int(&self, _document_index: usize, field_index: usize) -> Option<i64> {
+        if !self.current_present {
+            return None;
+        }
+        let column = Self::field_column(field_index)?;
+        if self.is_null_column(column) {
+            None
+        } else {
+            Some(unsafe { ffi::sqlite3_column_int64(self.statement, column) })
+        }
+    }
+
+    pub(crate) fn read_double(&self, _document_index: usize, field_index: usize) -> Option<f64> {
+        if !self.current_present {
+            return None;
+        }
+        let column = Self::field_column(field_index)?;
+        if self.is_null_column(column) {
+            None
+        } else {
+            Some(unsafe { ffi::sqlite3_column_double(self.statement, column) })
+        }
+    }
+
+    pub(crate) fn read_bytes(&self, _document_index: usize, field_index: usize) -> Option<&[u8]> {
+        if !self.current_present {
+            return None;
+        }
+        let column = Self::field_column(field_index)?;
+        if self.is_null_column(column) {
+            return None;
+        }
+        let length = unsafe { ffi::sqlite3_column_bytes(self.statement, column) };
+        if length < 0 {
+            return None;
+        }
+        let ptr = match unsafe { ffi::sqlite3_column_type(self.statement, column) } {
+            ffi::SQLITE_TEXT => unsafe {
+                ffi::sqlite3_column_text(self.statement, column) as *const u8
+            },
+            ffi::SQLITE_BLOB => unsafe {
+                ffi::sqlite3_column_blob(self.statement, column) as *const u8
+            },
+            _ => return None,
+        };
+        if ptr.is_null() && length != 0 {
+            return None;
+        }
+        Some(unsafe { slice::from_raw_parts(ptr, length as usize) })
+    }
+
+    fn field_column(field_index: usize) -> Option<i32> {
+        i32::try_from(field_index.checked_add(1)?).ok()
+    }
+
+    fn is_null_column(&self, column: i32) -> bool {
+        unsafe { ffi::sqlite3_column_type(self.statement, column) == ffi::SQLITE_NULL }
+    }
+}
+
+impl Drop for SqliteNativeQueryCursor {
+    fn drop(&mut self) {
+        if !self.statement.is_null() {
+            unsafe {
+                ffi::sqlite3_finalize(self.statement);
+            }
+            self.statement = ptr::null_mut();
+        }
+        if self.owns_transaction {
+            let _ = sqlite_exec(self.database, "COMMIT");
+            self.owns_transaction = false;
+        }
+    }
+}
+
 impl Drop for SqliteNativeDocumentCursor {
     fn drop(&mut self) {
         if !self.statement.is_null() {
@@ -233,6 +379,39 @@ impl Drop for SqliteNativeDocumentCursor {
             self.owns_transaction = false;
         }
     }
+}
+
+fn bind_sqlite_value(
+    database: *mut ffi::sqlite3,
+    statement: *mut ffi::sqlite3_stmt,
+    index: usize,
+    value: &Value,
+) -> Result<(), String> {
+    let index = i32::try_from(index).map_err(|error| error.to_string())?;
+    let status = match value {
+        Value::Null => unsafe { ffi::sqlite3_bind_null(statement, index) },
+        Value::Integer(value) => unsafe { ffi::sqlite3_bind_int64(statement, index, *value) },
+        Value::Real(value) => unsafe { ffi::sqlite3_bind_double(statement, index, *value) },
+        Value::Text(value) => unsafe {
+            ffi::sqlite3_bind_text(
+                statement,
+                index,
+                value.as_ptr().cast(),
+                i32::try_from(value.len()).map_err(|error| error.to_string())?,
+                ffi::SQLITE_TRANSIENT(),
+            )
+        },
+        Value::Blob(value) => unsafe {
+            ffi::sqlite3_bind_blob(
+                statement,
+                index,
+                value.as_ptr().cast::<c_void>(),
+                i32::try_from(value.len()).map_err(|error| error.to_string())?,
+                ffi::SQLITE_TRANSIENT(),
+            )
+        },
+    };
+    sqlite_status(database, status)
 }
 
 fn sqlite_exec(database: *mut ffi::sqlite3, sql: &str) -> Result<(), String> {
@@ -327,6 +506,23 @@ impl SqliteStorage {
         }
         self.query_plan_native_document_rows(collection, plan)
             .map(Some)
+    }
+
+    pub(crate) fn query_plan_native_cursor(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<SqliteNativeQueryCursor>, String> {
+        let Some(schema) = self.collection_schema(collection) else {
+            return Ok(None);
+        };
+        SqliteNativeQueryCursor::new(
+            &self.connection,
+            schema,
+            plan,
+            self.active_transaction.is_none(),
+        )
+        .map(Some)
     }
 
     fn open_uninitialized(directory: &str, persist_schema_metadata: bool) -> Result<Self, String> {
@@ -3333,6 +3529,10 @@ mod tests {
             .query_plan_native_documents("users", &sorted)
             .unwrap()
             .unwrap();
+        let mut sorted_cursor = storage
+            .query_plan_native_cursor("users", &sorted)
+            .unwrap()
+            .unwrap();
 
         // Assert.
         assert_eq!(filtered_ids, vec![2, 4]);
@@ -3343,6 +3543,17 @@ mod tests {
             vec![4, 2]
         );
         assert_eq!(sorted_rows.len(), 2);
+        assert!(sorted_cursor.next().unwrap());
+        assert_eq!(sorted_cursor.document_id(0), Some(4));
+        assert_eq!(sorted_cursor.read_bool(0, 0), Some(true));
+        assert_eq!(sorted_cursor.read_int(0, 1), Some(40));
+        assert_eq!(sorted_cursor.read_bytes(0, 2), Some(&b"beta"[..]));
+        assert!(sorted_cursor.next().unwrap());
+        assert_eq!(sorted_cursor.document_id(0), Some(2));
+        assert_eq!(sorted_cursor.read_bool(0, 0), Some(true));
+        assert_eq!(sorted_cursor.read_int(0, 1), Some(20));
+        assert_eq!(sorted_cursor.read_bytes(0, 2), Some(&b"zulu"[..]));
+        assert!(!sorted_cursor.next().unwrap());
     }
 
     #[test]

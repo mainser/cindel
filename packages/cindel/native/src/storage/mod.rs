@@ -18,8 +18,8 @@ pub use metadata::{
     DocumentFormatVersion, IndexVerificationCheck, SchemaMetadataVersion, StorageLayoutVersion,
     StorageMetadata, StorageVerificationReport,
 };
-pub(crate) use sqlite::SqliteNativeDocumentCursor;
 pub use sqlite::SqliteStorage;
+pub(crate) use sqlite::{SqliteNativeDocumentCursor, SqliteNativeQueryCursor};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageBackendKind {
@@ -102,6 +102,18 @@ impl StorageBackend {
     ) -> Result<Option<Vec<(u64, Vec<u8>)>>, String> {
         match self {
             Self::Sqlite(storage) => storage.query_plan_native_documents(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(_) => Ok(None),
+        }
+    }
+
+    pub(crate) fn sqlite_query_plan_native_cursor(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<SqliteNativeQueryCursor>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_native_cursor(collection, plan),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(_) => Ok(None),
         }

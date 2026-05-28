@@ -5,7 +5,7 @@ use crate::document_format::{
 use crate::engine::CindelEngine;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
-    NativeDocumentWrite, SqliteNativeDocumentCursor, StorageBackendKind,
+    NativeDocumentWrite, SqliteNativeDocumentCursor, SqliteNativeQueryCursor, StorageBackendKind,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -595,6 +595,13 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
             current_index: None,
             mode: CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor },
+        }));
+    }
+
+    if let Ok(Some(cursor)) = engine.sqlite_query_plan_native_cursor(collection, &plan) {
+        return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            current_index: None,
+            mode: CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor },
         }));
     }
 
@@ -2010,6 +2017,10 @@ enum CindelNativeDocumentReaderMode {
         layout: NativeBatchLayout,
         cursor: SqliteNativeDocumentCursor,
     },
+    SqliteQueryCursor {
+        layout: NativeBatchLayout,
+        cursor: SqliteNativeQueryCursor,
+    },
     #[cfg(feature = "mdbx")]
     MdbxCursor {
         layout: NativeBatchLayout,
@@ -2547,6 +2558,7 @@ impl CindelNativeDocumentReader {
         match &self.mode {
             CindelNativeDocumentReaderMode::Batch { documents, .. } => documents.len(),
             CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => cursor.len(),
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => 0,
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor.len(),
             #[cfg(feature = "mdbx")]
@@ -2561,6 +2573,7 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => true,
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => true,
             CindelNativeDocumentReaderMode::Batch { .. }
             | CindelNativeDocumentReaderMode::SqliteCursor { .. }
             | CindelNativeDocumentReaderMode::RawList { .. } => false,
@@ -2571,6 +2584,9 @@ impl CindelNativeDocumentReader {
         let has_next = match &mut self.mode {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
+                cursor.next().unwrap_or(false)
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
                 cursor.next().unwrap_or(false)
             }
             #[cfg(feature = "mdbx")]
@@ -2601,6 +2617,9 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
                 cursor.is_present(document_index).unwrap_or(false)
             }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
+                cursor.document_id(document_index).is_some()
+            }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
                 cursor.is_present(document_index).unwrap_or(false)
@@ -2623,6 +2642,9 @@ impl CindelNativeDocumentReader {
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { ids, .. } => ids.get(document_index).copied(),
             CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
+                cursor.document_id(document_index)
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
                 cursor.document_id(document_index)
             }
             #[cfg(feature = "mdbx")]
@@ -2656,6 +2678,10 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Bool)?;
+                cursor.read_bool(document_index, field_index)
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
                 cursor.read_bool(document_index, field_index)
             }
@@ -2711,6 +2737,10 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Int)?;
+                cursor.read_int(document_index, field_index)
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
                 cursor.read_int(document_index, field_index)
             }
@@ -2779,6 +2809,10 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                layout.require_field(field_index, NativeBatchFieldType::Double)?;
+                cursor.read_double(document_index, field_index)
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
                 cursor.read_double(document_index, field_index)
             }
@@ -2862,6 +2896,15 @@ impl CindelNativeDocumentReader {
                 }
                 cursor.read_bytes(document_index, field_index)
             }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
+                match layout.field_type(field_index)? {
+                    NativeBatchFieldType::String
+                    | NativeBatchFieldType::List
+                    | NativeBatchFieldType::Object => {}
+                    _ => return None,
+                }
+                cursor.read_bytes(document_index, field_index)
+            }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
                 match layout.field_type(field_index)? {
@@ -2919,6 +2962,9 @@ impl CindelNativeDocumentReader {
                 parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
             }
             CindelNativeDocumentReaderMode::SqliteCursor { .. } => {
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+            }
+            CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => {
                 parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
             }
             #[cfg(feature = "mdbx")]
