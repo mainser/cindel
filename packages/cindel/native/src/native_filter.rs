@@ -180,10 +180,11 @@ impl NativeFilter {
                 value,
                 layout,
             } => {
-                if !schema
-                    .fields
-                    .iter()
-                    .any(|schema_field| schema_field.name == *field)
+                if layout.is_none()
+                    && !schema
+                        .fields
+                        .iter()
+                        .any(|schema_field| schema_field.name == *field)
                 {
                     return Ok(false);
                 }
@@ -259,11 +260,16 @@ fn raw_field_matches(
 }
 
 fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty()
-        || (needle.len() <= haystack.len()
-            && haystack
-                .windows(needle.len())
-                .any(|window| window == needle))
+    match needle {
+        [] => true,
+        [byte] => haystack.contains(byte),
+        _ => {
+            needle.len() <= haystack.len()
+                && haystack
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+        }
+    }
 }
 
 fn raw_string_list_contains(bytes: &[u8], expected: &[u8]) -> Result<bool, String> {
@@ -723,6 +729,21 @@ mod tests {
         assert_eq!(field, "name");
         assert!(layout.is_some());
         assert!(filter.matches(&schema(), &document()).unwrap());
+    }
+
+    // Scenario: Rust evaluates single-byte string contains inside a native
+    // scan loop.
+    // Covers:
+    // - The hot `titleContains('a')` shape used by the app benchmark.
+    // - Empty and multi-byte contains behavior staying unchanged.
+    // Expected: Single-byte contains uses the same semantics as the generic
+    //   window scan.
+    #[test]
+    fn byte_contains_handles_single_byte_needles() {
+        assert!(bytes_contains(b"Ada Lovelace", b"a"));
+        assert!(bytes_contains(b"Ada Lovelace", b"Love"));
+        assert!(bytes_contains(b"Ada Lovelace", b""));
+        assert!(!bytes_contains(b"Ada Lovelace", b"z"));
     }
 
     // Scenario: Rust evaluates a decoded binary negated filter.
