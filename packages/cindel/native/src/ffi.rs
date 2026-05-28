@@ -598,6 +598,20 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
         }));
     }
 
+    if let Ok(Some(documents)) = engine.sqlite_query_plan_native_documents(collection, &plan) {
+        let (ids, documents): (Vec<_>, Vec<_>) = documents.into_iter().unzip();
+        return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            current_index: None,
+            mode: CindelNativeDocumentReaderMode::Batch {
+                layout,
+                ids,
+                documents: documents.into_iter().map(Some).collect(),
+                all_present: true,
+                trusted_static_size: true,
+            },
+        }));
+    }
+
     let Ok(ids) = engine.query_plan_ids(collection, &plan) else {
         return std::ptr::null_mut();
     };

@@ -317,6 +317,18 @@ impl SqliteStorage {
         .map(Some)
     }
 
+    pub(crate) fn query_plan_native_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<Vec<(u64, Vec<u8>)>>, String> {
+        if self.collection_schema(collection).is_none() {
+            return Ok(None);
+        }
+        self.query_plan_native_document_rows(collection, plan)
+            .map(Some)
+    }
+
     fn open_uninitialized(directory: &str, persist_schema_metadata: bool) -> Result<Self, String> {
         let connection = if directory == IN_MEMORY_DIRECTORY {
             Connection::open_in_memory().map_err(|error| error.to_string())?
@@ -1086,23 +1098,11 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         plan: &WireQueryPlan,
     ) -> Result<Vec<Vec<u8>>, String> {
-        let schema = self.required_collection_schema(collection)?;
-        let fields = native_fields(&schema);
-        let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Documents)?;
-        let mut statement = self
-            .connection
-            .prepare(&sql)
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map(params_from_iter(params.iter()), |row| {
-                native_document_from_row(row, &fields)
-            })
-            .map_err(|error| error.to_string())?;
-        let mut documents = Vec::new();
-        for row in rows {
-            documents.push(row.map_err(|error| error.to_string())?);
-        }
-        Ok(documents)
+        Ok(self
+            .query_plan_native_document_rows(collection, plan)?
+            .into_iter()
+            .map(|(_, document)| document)
+            .collect())
     }
 
     fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
@@ -1131,6 +1131,37 @@ impl SqliteStorage {
         self.collection_schema(collection)
             .cloned()
             .ok_or_else(|| format!("collection `{collection}` has no registered schema"))
+    }
+
+    fn query_plan_native_document_rows(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<(u64, Vec<u8>)>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let fields = native_fields(&schema);
+        let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Documents)?;
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(params.iter()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    native_document_from_row(row, &fields)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut documents = Vec::new();
+        for row in rows {
+            let (id, document) = row.map_err(|error| error.to_string())?;
+            documents.push((
+                u64::try_from(id).map_err(|error| error.to_string())?,
+                document,
+            ));
+        }
+        Ok(documents)
     }
 
     fn begin_transaction(&mut self, mode: TransactionMode, sql: &str) -> Result<(), String> {
@@ -3298,11 +3329,20 @@ mod tests {
         let filtered_ids = storage.query_plan_ids("users", &filtered).unwrap();
         let sorted_ids = storage.query_plan_ids("users", &sorted).unwrap();
         let sorted_documents = storage.query_plan_documents("users", &sorted).unwrap();
+        let sorted_rows = storage
+            .query_plan_native_documents("users", &sorted)
+            .unwrap()
+            .unwrap();
 
         // Assert.
         assert_eq!(filtered_ids, vec![2, 4]);
         assert_eq!(sorted_ids, vec![4, 2]);
         assert_eq!(sorted_documents.len(), 2);
+        assert_eq!(
+            sorted_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![4, 2]
+        );
+        assert_eq!(sorted_rows.len(), 2);
     }
 
     #[test]

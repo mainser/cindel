@@ -94,6 +94,18 @@ impl StorageBackend {
             Self::Mdbx(_) => Ok(None),
         }
     }
+
+    pub(crate) fn sqlite_query_plan_native_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Option<Vec<(u64, Vec<u8>)>>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.query_plan_native_documents(collection, plan),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(_) => Ok(None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
