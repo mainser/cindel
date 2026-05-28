@@ -1013,6 +1013,7 @@ final class CindelNativeBindings {
     String collection,
     Uint8List plan,
     Uint8List updates,
+    bool collectChanges,
   ) {
     final outCount = calloc<Uint64>();
     try {
@@ -1030,6 +1031,7 @@ final class CindelNativeBindings {
               planLength,
               updatesPointer,
               updatesLength,
+              collectChanges,
               outCount,
             );
           });
@@ -1819,6 +1821,7 @@ abstract interface class _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    bool,
     Pointer<Uint64>,
   )
   get queryPlanUpdate;
@@ -2610,6 +2613,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Size,
               Pointer<Uint8>,
               Size,
+              Bool,
               Pointer<Uint64>,
             ),
             int Function(
@@ -2620,6 +2624,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
               Pointer<Uint8>,
               int,
+              bool,
               Pointer<Uint64>,
             )
           >('cindel_query_plan_update'),
@@ -3119,6 +3124,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    bool,
     Pointer<Uint64>,
   )
   queryPlanUpdate;
@@ -3597,6 +3603,7 @@ final class _NativeAssetCindelNativeFunctions
     int,
     Pointer<Uint8>,
     int,
+    bool,
     Pointer<Uint64>,
   )
   get queryPlanUpdate => _cindelQueryPlanUpdate;
@@ -4594,6 +4601,7 @@ external int _cindelQueryPlanDelete(
     Size,
     Pointer<Uint8>,
     Size,
+    Bool,
     Pointer<Uint64>,
   )
 >(symbol: 'cindel_query_plan_update', assetId: _assetId)
@@ -4605,6 +4613,7 @@ external int _cindelQueryPlanUpdate(
   int planLen,
   Pointer<Uint8> updates,
   int updatesLen,
+  bool collectChanges,
   Pointer<Uint64> outCount,
 );
 

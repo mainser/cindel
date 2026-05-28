@@ -18,7 +18,7 @@ use crate::wire::{
 };
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    28
+    29
 }
 
 #[no_mangle]
@@ -1609,6 +1609,7 @@ pub unsafe extern "C" fn cindel_query_plan_update(
     plan_len: usize,
     updates_ptr: *const u8,
     updates_len: usize,
+    collect_changes: bool,
     out_count: *mut u64,
 ) -> i32 {
     if out_count.is_null() {
@@ -1633,9 +1634,9 @@ pub unsafe extern "C" fn cindel_query_plan_update(
         return -1;
     };
 
-    match engine.query_plan_update(collection, &plan, &updates) {
-        Ok(ids) => {
-            *out_count = ids.len() as u64;
+    match engine.query_plan_update(collection, &plan, &updates, collect_changes) {
+        Ok(count) => {
+            *out_count = count as u64;
             0
         }
         Err(_) => -1,

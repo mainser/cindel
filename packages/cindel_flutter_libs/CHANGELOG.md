@@ -4,6 +4,8 @@
 
 - Regenerate Windows, Android, and Linux native runtime libraries for the
   Cindel `0.5.4` MDBX unindexed typed batch insert fast path.
+- Regenerated the Windows and Android native runtime libraries for the Cindel
+  ABI 29 native query-plan update path.
 - Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
   default backend.
 

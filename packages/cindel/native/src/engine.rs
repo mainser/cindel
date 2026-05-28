@@ -261,8 +261,10 @@ impl CindelEngine {
         collection: &str,
         plan: &WireQueryPlan,
         updates: &[(String, crate::wire::WireValue)],
-    ) -> Result<Vec<u64>, String> {
-        self.storage.query_plan_update(collection, plan, updates)
+        collect_changes: bool,
+    ) -> Result<usize, String> {
+        self.storage
+            .query_plan_update(collection, plan, updates, collect_changes)
     }
 
     pub fn collection_revision(&self, collection: &str) -> Result<u64, String> {

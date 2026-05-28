@@ -1386,7 +1386,8 @@ impl MdbxStorage {
         schema: &CollectionSchemaManifest,
         updates: &PreparedBinaryFieldUpdates,
         update_touches_index: bool,
-    ) -> Result<Option<Vec<u64>>, String> {
+        collect_changes: bool,
+    ) -> Result<Option<usize>, String> {
         if self.active_write().is_some()
             || update_touches_index
             || !matches!(plan.source, WireQuerySource::All { .. })
@@ -1405,7 +1406,8 @@ impl MdbxStorage {
             .transpose()?;
         let offset = plan.offset as usize;
         let limit = plan.limit.map(|value| value as usize);
-        let mut ids = Vec::new();
+        let mut count = 0usize;
+        let mut ids = collect_changes.then(Vec::new);
         let mut change_sets = Vec::new();
 
         self.with_write_transaction(|transaction, tables| {
@@ -1436,29 +1438,34 @@ impl MdbxStorage {
                         .map_err(|error| error.to_string())?;
                     continue;
                 }
-                if limit.is_some_and(|limit| ids.len() >= limit) {
+                if limit.is_some_and(|limit| count >= limit) {
                     break;
                 }
                 apply_prepared_binary_field_updates(&mut bytes, updates)?;
                 cursor
                     .put(&key, &bytes, WriteFlags::CURRENT)
                     .map_err(|error| error.to_string())?;
-                ids.push(decode_document_table_key(&key)?);
+                count += 1;
+                if let Some(ids) = ids.as_mut() {
+                    ids.push(decode_document_table_key(&key)?);
+                }
                 current = cursor
                     .next::<Vec<u8>, Vec<u8>>()
                     .map_err(|error| error.to_string())?;
             }
             drop(cursor);
 
-            if ids.is_empty() {
+            if count == 0 {
                 return Ok(());
             }
             let revision = bump_collection_revision(transaction, &tables, collection)?;
-            merge_change_set(&mut change_sets, collection, revision, ids.iter().copied());
+            if let Some(ids) = &ids {
+                merge_change_set(&mut change_sets, collection, revision, ids.iter().copied());
+            }
             Ok(())
         })?;
         self.last_change_sets = change_sets;
-        Ok(Some(ids))
+        Ok(Some(count))
     }
 
     fn query_plan_update_direct_bool_index(
@@ -1467,7 +1474,8 @@ impl MdbxStorage {
         plan: &WireQueryPlan,
         schema: &CollectionSchemaManifest,
         updates: &[(String, WireValue)],
-    ) -> Result<Option<Vec<u64>>, String> {
+        collect_changes: bool,
+    ) -> Result<Option<usize>, String> {
         if self.active_write().is_some()
             || plan.filter.is_some()
             || !plan.sorts.is_empty()
@@ -1486,10 +1494,11 @@ impl MdbxStorage {
             dedupe_ids(&mut ids);
         }
         if ids.is_empty() {
-            return Ok(Some(Vec::new()));
+            return Ok(Some(0));
         }
 
-        let mut updated_ids = Vec::with_capacity(ids.len());
+        let mut count = 0usize;
+        let mut updated_ids = collect_changes.then(|| Vec::with_capacity(ids.len()));
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             let documents_table = match open_documents_table(transaction, collection) {
@@ -1530,25 +1539,30 @@ impl MdbxStorage {
                         .put(&update.new_key, &document_id_bytes, WriteFlags::UPSERT)
                         .map_err(|error| error.to_string())?;
                 }
-                updated_ids.push(*id);
+                count += 1;
+                if let Some(updated_ids) = updated_ids.as_mut() {
+                    updated_ids.push(*id);
+                }
             }
             drop(index_cursor);
             drop(documents_cursor);
 
-            if updated_ids.is_empty() {
+            if count == 0 {
                 return Ok(());
             }
             let revision = bump_collection_revision(transaction, &tables, collection)?;
-            merge_change_set(
-                &mut change_sets,
-                collection,
-                revision,
-                updated_ids.iter().copied(),
-            );
+            if let Some(updated_ids) = &updated_ids {
+                merge_change_set(
+                    &mut change_sets,
+                    collection,
+                    revision,
+                    updated_ids.iter().copied(),
+                );
+            }
             Ok(())
         })?;
         self.last_change_sets = change_sets;
-        Ok(Some(updated_ids))
+        Ok(Some(count))
     }
 
     fn ensure_can_write(&self) -> Result<(), String> {
@@ -2445,33 +2459,39 @@ impl StorageEngine for MdbxStorage {
         collection: &str,
         plan: &WireQueryPlan,
         updates: &[(String, WireValue)],
-    ) -> Result<Vec<u64>, String> {
+        collect_changes: bool,
+    ) -> Result<usize, String> {
         self.ensure_can_write()?;
         if updates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(0);
         }
 
         let schema = self.required_schema(collection)?;
         let update_touches_index = updates_touch_index(&schema, updates)?;
         let prepared_updates = prepare_binary_field_updates(&schema, updates)?;
-        if let Some(ids) =
-            self.query_plan_update_direct_bool_index(collection, plan, &schema, updates)?
-        {
-            return Ok(ids);
+        if let Some(count) = self.query_plan_update_direct_bool_index(
+            collection,
+            plan,
+            &schema,
+            updates,
+            collect_changes,
+        )? {
+            return Ok(count);
         }
-        if let Some(ids) = self.query_plan_update_direct_nonindexed(
+        if let Some(count) = self.query_plan_update_direct_nonindexed(
             collection,
             plan,
             &schema,
             &prepared_updates,
             update_touches_index,
+            collect_changes,
         )? {
-            return Ok(ids);
+            return Ok(count);
         }
 
         let planned = self.execute_query_plan(collection, plan)?;
         if planned.is_empty() {
-            return Ok(Vec::new());
+            return Ok(0);
         }
 
         let mut documents = Vec::with_capacity(planned.len());
@@ -2486,9 +2506,10 @@ impl StorageEngine for MdbxStorage {
 
         if self.active_write_mut().is_some() || update_touches_index {
             self.put_many_indexed_with_options(collection, &documents, true, true)?;
-            return Ok(documents.into_iter().map(|document| document.id).collect());
+            return Ok(documents.len());
         }
 
+        let count = documents.len();
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
             let documents_table = create_documents_table(transaction, collection)?;
@@ -2506,16 +2527,18 @@ impl StorageEngine for MdbxStorage {
             }
             drop(cursor);
             let revision = bump_collection_revision(transaction, &tables, collection)?;
-            merge_change_set(
-                &mut change_sets,
-                collection,
-                revision,
-                documents.iter().map(|document| document.id),
-            );
+            if collect_changes {
+                merge_change_set(
+                    &mut change_sets,
+                    collection,
+                    revision,
+                    documents.iter().map(|document| document.id),
+                );
+            }
             Ok(())
         })?;
         self.last_change_sets = change_sets;
-        Ok(documents.into_iter().map(|document| document.id).collect())
+        Ok(count)
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
@@ -5805,10 +5828,11 @@ mod tests {
                     ..true_plan.clone()
                 },
                 &[("completed".to_string(), WireValue::Bool(false))],
+                true,
             )
             .unwrap();
 
-        assert_eq!(updated, vec![1, 3]);
+        assert_eq!(updated, 2);
         assert_eq!(
             storage
                 .query_index_equal("tasks", "completed", &IndexValue::Bool(true))
@@ -5820,6 +5844,60 @@ mod tests {
                 .query_index_equal("tasks", "completed", &IndexValue::Bool(false))
                 .unwrap(),
             vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn skips_change_set_ids_for_unwatched_unindexed_query_updates() {
+        let directory = TemporaryDirectory::new("update_without_change_ids");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage
+            .register_schemas(&task_unindexed_schema_manifest())
+            .unwrap();
+
+        for (id, completed, title) in [(1, true, "Cid"), (2, false, "Ben"), (3, true, "Ana")] {
+            storage
+                .put_indexed("tasks", id, &task_compact_document(completed, title), &[])
+                .unwrap();
+        }
+
+        let filter = crate::wire::WireFilter::Field {
+            field: "completed".to_string(),
+            operation: crate::wire::WireFilterOperation::Equal,
+            value: WireValue::Bool(true),
+        };
+        let all_tasks_plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        let updated = storage
+            .query_plan_update(
+                "tasks",
+                &WireQueryPlan {
+                    filter: Some(crate::wire::encode_filter(&filter).unwrap()),
+                    ..all_tasks_plan.clone()
+                },
+                &[("completed".to_string(), WireValue::Bool(false))],
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(updated, 2);
+        assert!(storage.take_change_sets().unwrap().is_empty());
+        assert_eq!(
+            storage
+                .query_plan_documents("tasks", &all_tasks_plan)
+                .unwrap(),
+            vec![
+                task_compact_document(false, "Cid"),
+                task_compact_document(false, "Ben"),
+                task_compact_document(false, "Ana"),
+            ]
         );
     }
 
@@ -6218,6 +6296,21 @@ mod tests {
                 id_field: "id".to_string(),
                 fields: vec![
                     test_field("completed", "bool", false, true),
+                    test_field("id", "int", true, false),
+                    test_field("title", "String", false, false),
+                ],
+                composite_indexes: Vec::new(),
+            }],
+        }
+    }
+
+    fn task_unindexed_schema_manifest() -> SchemaManifest {
+        SchemaManifest {
+            collections: vec![CollectionSchemaManifest {
+                name: "tasks".to_string(),
+                id_field: "id".to_string(),
+                fields: vec![
+                    test_field("completed", "bool", false, false),
                     test_field("id", "int", true, false),
                     test_field("title", "String", false, false),
                 ],

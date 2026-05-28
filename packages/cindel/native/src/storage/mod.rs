@@ -345,8 +345,9 @@ pub trait StorageEngine {
         collection: &str,
         plan: &WireQueryPlan,
         updates: &[(String, crate::wire::WireValue)],
-    ) -> Result<Vec<u64>, String> {
-        let _ = (collection, plan, updates);
+        collect_changes: bool,
+    ) -> Result<usize, String> {
+        let _ = (collection, plan, updates, collect_changes);
         Err("native query plan updates are not supported by this storage backend".into())
     }
 
@@ -724,11 +725,16 @@ impl StorageEngine for StorageBackend {
         collection: &str,
         plan: &WireQueryPlan,
         updates: &[(String, crate::wire::WireValue)],
-    ) -> Result<Vec<u64>, String> {
+        collect_changes: bool,
+    ) -> Result<usize, String> {
         match self {
-            Self::Sqlite(storage) => storage.query_plan_update(collection, plan, updates),
+            Self::Sqlite(storage) => {
+                storage.query_plan_update(collection, plan, updates, collect_changes)
+            }
             #[cfg(feature = "mdbx")]
-            Self::Mdbx(storage) => storage.query_plan_update(collection, plan, updates),
+            Self::Mdbx(storage) => {
+                storage.query_plan_update(collection, plan, updates, collect_changes)
+            }
         }
     }
 }

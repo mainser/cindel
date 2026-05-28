@@ -13,7 +13,10 @@
   avoiding duplicate-id set prevalidation before `UPSERT`.
 - MDBX trusted schema batch inserts skip old-index lookup work when the schema
   has no indexes.
+- MDBX native query-plan updates now skip per-document change id collection
+  when no watcher is registered, reducing unindexed bulk update overhead.
 - Updated the development generator dependency constraint to `^0.5.4`.
+- Bumped the native ABI to 29.
 
 ## 0.5.3
 

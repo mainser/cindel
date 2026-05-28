@@ -1146,6 +1146,7 @@ class CindelDatabase {
       collection,
       _encodeNativeQueryPlan(collection, plan),
       encodeFieldUpdates(updates),
+      _activeTransaction == _TransactionMode.write || _hasWatchers(collection),
     );
     if (count > 0) {
       _markNativeCollectionChanged(
