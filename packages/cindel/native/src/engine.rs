@@ -67,15 +67,6 @@ impl CindelEngine {
         self.storage.sqlite_native_document_cursor(collection, ids)
     }
 
-    pub(crate) fn sqlite_query_plan_native_documents(
-        &self,
-        collection: &str,
-        plan: &WireQueryPlan,
-    ) -> Result<Option<Vec<(u64, Vec<u8>)>>, String> {
-        self.storage
-            .sqlite_query_plan_native_documents(collection, plan)
-    }
-
     pub(crate) fn sqlite_query_plan_native_cursor(
         &self,
         collection: &str,

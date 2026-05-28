@@ -496,18 +496,6 @@ impl SqliteStorage {
         .map(Some)
     }
 
-    pub(crate) fn query_plan_native_documents(
-        &self,
-        collection: &str,
-        plan: &WireQueryPlan,
-    ) -> Result<Option<Vec<(u64, Vec<u8>)>>, String> {
-        if self.collection_schema(collection).is_none() {
-            return Ok(None);
-        }
-        self.query_plan_native_document_rows(collection, plan)
-            .map(Some)
-    }
-
     pub(crate) fn query_plan_native_cursor(
         &self,
         collection: &str,
@@ -3540,10 +3528,6 @@ mod tests {
         let sorted_ids = storage.query_plan_ids("users", &sorted).unwrap();
         let case_sensitive_ids = storage.query_plan_ids("users", &case_sensitive).unwrap();
         let sorted_documents = storage.query_plan_documents("users", &sorted).unwrap();
-        let sorted_rows = storage
-            .query_plan_native_documents("users", &sorted)
-            .unwrap()
-            .unwrap();
         let mut sorted_cursor = storage
             .query_plan_native_cursor("users", &sorted)
             .unwrap()
@@ -3554,11 +3538,6 @@ mod tests {
         assert_eq!(sorted_ids, vec![4, 2]);
         assert!(case_sensitive_ids.is_empty());
         assert_eq!(sorted_documents.len(), 2);
-        assert_eq!(
-            sorted_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            vec![4, 2]
-        );
-        assert_eq!(sorted_rows.len(), 2);
         assert!(sorted_cursor.next().unwrap());
         assert_eq!(sorted_cursor.document_id(0), Some(4));
         assert_eq!(sorted_cursor.read_bool(0, 0), Some(true));
