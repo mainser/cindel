@@ -514,9 +514,16 @@ final class CindelNativeBindings {
               'Native Cindel query document reader allocation failed.',
             );
           }
-          final reader = _CindelNativeDocumentReader(_functions, readerPointer);
+          final isStreaming = _functions.nativeDocumentReaderIsStreaming(
+            readerPointer,
+          );
+          final reader = _CindelNativeDocumentReader(
+            _functions,
+            readerPointer,
+            useCurrentDocument: isStreaming,
+          );
           try {
-            if (_functions.nativeDocumentReaderIsStreaming(readerPointer)) {
+            if (isStreaming) {
               final values = <T>[];
               while (_functions.nativeDocumentReaderNext(readerPointer)) {
                 values.add(readDocument(reader, 0));

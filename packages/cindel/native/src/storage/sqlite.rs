@@ -553,6 +553,7 @@ impl SqliteStorage {
                 r#"
                 PRAGMA mmap_size = 1073741824;
                 PRAGMA journal_mode = WAL;
+                PRAGMA case_sensitive_like = true;
                 "#,
             )
             .map_err(|error| error.to_string())?;
@@ -1446,14 +1447,11 @@ fn sqlite_query_plan_sql(
                 sql.push_str(", ");
             }
             sql.push_str(&sqlite_column_for_field(schema, &sort.field)?);
-            sql.push_str(" COLLATE BINARY");
+            sql.push_str(" COLLATE NOCASE");
             if !sort.ascending {
                 sql.push_str(" DESC");
             }
         }
-    } else {
-        sql.push_str(" ORDER BY ");
-        sql.push_str(SQLITE_ROW_ID_COLUMN);
     }
     if plan.offset > 0 {
         sql.push_str(&format!(
@@ -3434,7 +3432,8 @@ mod tests {
         // Scenario: SQLite executes a schema-aware native query plan.
         // Covers:
         // - Wire filters lowered to SQL WHERE over collection columns.
-        // - Isar-like SQL ORDER BY and offset handling.
+        // - Isar-like explicit SQL ORDER BY and offset handling.
+        // - Case-sensitive string filters, matching Dart/Isar defaults.
         // Expected: Matching ids and native document bytes come back in the
         // same order produced by SQLite.
 
@@ -3520,10 +3519,26 @@ mod tests {
             offset: 0,
             limit: None,
         };
+        let case_sensitive = crate::wire::WireQueryPlan {
+            source: crate::wire::WireQuerySource::All { dedupe: false },
+            filter: Some(
+                crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                    field: "title".to_string(),
+                    operation: crate::wire::WireFilterOperation::Contains,
+                    value: crate::wire::WireValue::String("A".to_string()),
+                })
+                .unwrap(),
+            ),
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
 
         // Act.
         let filtered_ids = storage.query_plan_ids("users", &filtered).unwrap();
         let sorted_ids = storage.query_plan_ids("users", &sorted).unwrap();
+        let case_sensitive_ids = storage.query_plan_ids("users", &case_sensitive).unwrap();
         let sorted_documents = storage.query_plan_documents("users", &sorted).unwrap();
         let sorted_rows = storage
             .query_plan_native_documents("users", &sorted)
@@ -3537,6 +3552,7 @@ mod tests {
         // Assert.
         assert_eq!(filtered_ids, vec![2, 4]);
         assert_eq!(sorted_ids, vec![4, 2]);
+        assert!(case_sensitive_ids.is_empty());
         assert_eq!(sorted_documents.len(), 2);
         assert_eq!(
             sorted_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
