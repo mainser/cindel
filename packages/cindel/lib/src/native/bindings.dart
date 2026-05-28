@@ -1437,6 +1437,27 @@ String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
 }
 
 List<String>? _decodeNativeStringList(Uint8List bytes) {
+  if (bytes.isNotEmpty && bytes[0] == 0x5b) {
+    try {
+      final values = jsonDecode(utf8.decode(bytes));
+      if (values is! List<Object?>) {
+        return null;
+      }
+      final strings = <String>[];
+      for (final value in values) {
+        if (value == null) {
+          strings.add('');
+        } else if (value is String) {
+          strings.add(value);
+        } else {
+          return null;
+        }
+      }
+      return strings;
+    } catch (_) {
+      return null;
+    }
+  }
   if (bytes.length >= 9 &&
       _readU32Le(bytes, 0) == 0xffff_ffff &&
       bytes[4] == 1) {

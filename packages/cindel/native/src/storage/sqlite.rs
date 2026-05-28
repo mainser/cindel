@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::ptr;
 use std::slice;
 
-use rusqlite::types::{Value, ValueRef};
+use rusqlite::types::{Null, Value, ValueRef};
 use rusqlite::{ffi, params, params_from_iter, Connection, OptionalExtension, Row};
 
+use crate::document_format::{decode_list, BinaryValue};
 use crate::wire::{
     decode_filter, encode_index_value, WireFilter, WireFilterOperation, WireIndexValue,
     WireQueryPlan, WireQuerySource, WireValue,
@@ -1760,7 +1762,10 @@ fn put_native_documents(
     let mut max_seen_id = None;
     for chunk in documents.chunks(batch_limit) {
         let sql = native_insert_sql(&schema.name, &fields, chunk.len());
-        let mut params = Vec::with_capacity(chunk.len() * values_per_document);
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let mut parameter_index = 1;
         let mut max_id = 0i64;
         for document in chunk {
             if document.values.len() != fields.len() {
@@ -1772,14 +1777,16 @@ fn put_native_documents(
             let id = sqlite_id(document.id)?;
             max_id = max_id.max(id);
             max_seen_id = Some(max_seen_id.map_or(id, |current: i64| current.max(id)));
-            params.push(Value::Integer(id));
+            statement
+                .raw_bind_parameter(parameter_index, id)
+                .map_err(|error| error.to_string())?;
+            parameter_index += 1;
             for (field, value) in fields.iter().zip(document.values.iter()) {
-                params.push(native_sql_value(field, value)?);
+                bind_native_sql_value(&mut statement, parameter_index, field, value)?;
+                parameter_index += 1;
             }
         }
-        connection
-            .execute(&sql, params_from_iter(params.iter()))
-            .map_err(|error| error.to_string())?;
+        statement.raw_execute().map_err(|error| error.to_string())?;
     }
     Ok(max_seen_id)
 }
@@ -1830,25 +1837,86 @@ fn delete_native_documents(
     Ok(deleted_ids)
 }
 
-fn native_sql_value(
+fn bind_native_sql_value(
+    statement: &mut rusqlite::Statement<'_>,
+    parameter_index: usize,
     field: &FieldSchemaManifest,
     value: &NativeDocumentValue,
-) -> Result<Value, String> {
+) -> Result<(), String> {
     match (field.binary_type.as_str(), value) {
-        (_, NativeDocumentValue::Null) => Ok(Value::Null),
-        ("bool", NativeDocumentValue::Bool(value)) => Ok(Value::Integer(i64::from(*value))),
-        ("int", NativeDocumentValue::Int(value)) => Ok(Value::Integer(*value)),
-        ("double", NativeDocumentValue::Double(value)) => Ok(Value::Real(*value)),
+        (_, NativeDocumentValue::Null) => statement.raw_bind_parameter(parameter_index, Null),
+        ("bool", NativeDocumentValue::Bool(value)) => {
+            statement.raw_bind_parameter(parameter_index, i64::from(*value))
+        }
+        ("int", NativeDocumentValue::Int(value)) => {
+            statement.raw_bind_parameter(parameter_index, *value)
+        }
+        ("double", NativeDocumentValue::Double(value)) => {
+            statement.raw_bind_parameter(parameter_index, *value)
+        }
         ("string", NativeDocumentValue::Bytes(value)) => {
             let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
-            Ok(Value::Text(text.to_string()))
+            statement.raw_bind_parameter(parameter_index, text)
         }
-        ("list" | "object", NativeDocumentValue::Bytes(value)) => Ok(Value::Blob(value.clone())),
-        _ => Err(format!(
-            "native value does not match schema field `{}` type `{}`",
-            field.name, field.binary_type
-        )),
+        ("list", NativeDocumentValue::Bytes(value)) => {
+            if value.first() == Some(&b'[') {
+                let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
+                statement.raw_bind_parameter(parameter_index, text)
+            } else {
+                let text = native_string_list_json(value)?;
+                statement.raw_bind_parameter(parameter_index, text.as_str())
+            }
+        }
+        ("object", NativeDocumentValue::Bytes(value)) => {
+            statement.raw_bind_parameter(parameter_index, value.as_slice())
+        }
+        _ => {
+            return Err(format!(
+                "native value does not match schema field `{}` type `{}`",
+                field.name, field.binary_type
+            ))
+        }
     }
+    .map_err(|error| error.to_string())
+}
+
+fn native_string_list_json(bytes: &[u8]) -> Result<String, String> {
+    let values = decode_list(bytes)?;
+    let mut json = String::new();
+    json.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        match value {
+            Some(BinaryValue::String(value)) => push_json_string(&mut json, value)?,
+            None => json.push_str("null"),
+            _ => return Err("SQLite native string list contains a non-string value".into()),
+        }
+    }
+    json.push(']');
+    Ok(json)
+}
+
+fn push_json_string(json: &mut String, value: &str) -> Result<(), String> {
+    json.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => json.push_str("\\\""),
+            '\\' => json.push_str("\\\\"),
+            '\n' => json.push_str("\\n"),
+            '\r' => json.push_str("\\r"),
+            '\t' => json.push_str("\\t"),
+            '\u{08}' => json.push_str("\\b"),
+            '\u{0c}' => json.push_str("\\f"),
+            character if character <= '\u{1f}' => {
+                write!(json, "\\u{:04x}", character as u32).map_err(|error| error.to_string())?;
+            }
+            character => json.push(character),
+        }
+    }
+    json.push('"');
+    Ok(())
 }
 
 fn get_many_native_documents(
@@ -1964,6 +2032,7 @@ fn write_native_row_value(
             bytes[offset..offset + 8].copy_from_slice(&0x7ff8_0000_0000_0001u64.to_le_bytes());
         }
         ("string", ValueRef::Text(value)) => write_native_dynamic(bytes, layout, offset, value)?,
+        ("list", ValueRef::Text(value)) => write_native_dynamic(bytes, layout, offset, value)?,
         ("list" | "object", ValueRef::Blob(value)) => {
             write_native_dynamic(bytes, layout, offset, value)?
         }
@@ -2694,7 +2763,8 @@ fn sql_type_for_field(field: &FieldSchemaManifest) -> &'static str {
         "int" => "i64",
         "double" => "f64",
         "string" => "str",
-        "list" | "object" => "json",
+        "list" => "str[]",
+        "object" => "json",
         _ => "json",
     }
 }

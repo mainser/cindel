@@ -17,6 +17,7 @@ use crate::wire::{
     WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
+use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
     29
@@ -2323,12 +2324,49 @@ impl CindelNativeBatchWriter {
         else {
             return Err("native batch writer expected a list writer".into());
         };
+        if encoding == NativeListEncoding::CompactString
+            && self.write_native_string_list_json(parent_index, &records)?
+        {
+            return Ok(());
+        }
         let bytes = if encoding == NativeListEncoding::CompactString {
             write_compact_string_list_records(&records)?
         } else {
             write_list_records(&records)?
         };
         self.write_bytes(parent_index, &bytes)
+    }
+
+    fn write_native_string_list_json(
+        &mut self,
+        index: usize,
+        records: &[Option<Vec<u8>>],
+    ) -> Result<bool, String> {
+        let NativeBatchWriterMode::Batch {
+            layout, current, ..
+        } = &mut self.mode
+        else {
+            return Ok(false);
+        };
+        if layout.field_type_result(index)? != NativeBatchFieldType::List {
+            return Err("native batch writer expected a list field".into());
+        }
+        let Some(current) = current.as_mut() else {
+            return Err("native batch writer has no open document".into());
+        };
+        if current.bytes.is_some() {
+            return Ok(false);
+        }
+        let Some(values) = current.values.as_mut() else {
+            return Ok(false);
+        };
+        let Some(value) = values.get_mut(index) else {
+            return Err(format!(
+                "native batch writer field index `{index}` is out of range"
+            ));
+        };
+        *value = NativeDocumentValue::Bytes(compact_string_records_json(records)?.into_bytes());
+        Ok(true)
     }
 
     fn end_document(&mut self) -> Result<(), String> {
@@ -2540,6 +2578,45 @@ fn write_list_record(
         ));
     };
     *slot = Some(record);
+    Ok(())
+}
+
+fn compact_string_records_json(records: &[Option<Vec<u8>>]) -> Result<String, String> {
+    let mut json = String::new();
+    json.push('[');
+    for (index, record) in records.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        let Some(payload) = record else {
+            json.push_str("null");
+            continue;
+        };
+        let value = std::str::from_utf8(payload).map_err(|error| error.to_string())?;
+        push_json_string(&mut json, value)?;
+    }
+    json.push(']');
+    Ok(json)
+}
+
+fn push_json_string(json: &mut String, value: &str) -> Result<(), String> {
+    json.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => json.push_str("\\\""),
+            '\\' => json.push_str("\\\\"),
+            '\n' => json.push_str("\\n"),
+            '\r' => json.push_str("\\r"),
+            '\t' => json.push_str("\\t"),
+            '\u{08}' => json.push_str("\\b"),
+            '\u{0c}' => json.push_str("\\f"),
+            character if character <= '\u{1f}' => {
+                write!(json, "\\u{:04x}", character as u32).map_err(|error| error.to_string())?;
+            }
+            character => json.push(character),
+        }
+    }
+    json.push('"');
     Ok(())
 }
 
