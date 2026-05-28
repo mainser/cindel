@@ -5,6 +5,20 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.5
+
+- Aligned Cindel's SQLite schema-aware open path with Isar by registering
+  generated schemas during native open instead of using a second native schema
+  registration call.
+- Configured the SQLite `mmap_size` during open and wrapped SQLite open-time
+  table, metadata, and schema setup in one native transaction.
+- Added native coverage for opening SQLite with schemas already available and
+  verified the SQLite core benchmark open metric against Isar.
+- Aligned typed SQLite inserts with Isar's per-collection table path, removing
+  the generic blob document table from the generated `putAll` route.
+- Verified the SQLite core benchmark insert metric against Isar after the
+  collection-table insert change.
+
 ## 0.5.4
 
 - Updated the generator so generated `toDocument` maps keep ids out of the

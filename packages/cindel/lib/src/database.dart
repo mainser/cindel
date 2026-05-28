@@ -409,7 +409,6 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     _checkCanWrite();
-    _checkBinaryBackend();
     _checkCollection(collection);
     if (objects.isEmpty) {
       return;
@@ -453,7 +452,6 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     _checkCanWrite();
-    _checkBinaryBackend();
     _checkCollection(collection);
     if (objects.isEmpty) {
       return;
@@ -572,7 +570,6 @@ class CindelDatabase {
     CindelReadNativeDocument<T> readDocument,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
     for (final id in idList) {

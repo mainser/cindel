@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.5
+
+- Aligned the SQLite schema-aware open path with Isar by registering generated
+  schemas during native open instead of opening first and registering schemas
+  through a second native call.
+- Configured SQLite `mmap_size` during open to match the Isar SQLite benchmark
+  profile.
+- Wrapped SQLite open-time table, metadata, and schema setup in one native
+  transaction and added coverage for opening SQLite with schemas already
+  available.
+- Aligned typed SQLite `putAll` with Isar's collection-table insert path by
+  routing generated native writers into per-collection SQLite tables instead of
+  the generic `documents` blob table.
+- Added coverage for native SQLite inserts proving generated values land in
+  collection columns without creating generic document rows.
+
 ## 0.5.4
 
 - Typed writes now read ids through generated id getters instead of requiring

@@ -39,6 +39,9 @@ final class CindelTypedCollection<T> {
 
   /// Stores [object] using the id field declared by [schema].
   Future<void> put(T object) async {
+    if (_usesSqliteNativeDocuments && schema.getId != null) {
+      return _putAllBinaryObjects([object]);
+    }
     var document = schema.getId == null ? schema.toDocument(object) : null;
     var id = _idFromObject(object, document);
     if (id == autoIncrement) {
@@ -68,7 +71,8 @@ final class CindelTypedCollection<T> {
       return;
     }
 
-    if (_usesBinaryDocuments && schema.getId != null) {
+    if ((_usesBinaryDocuments || _usesSqliteNativeDocuments) &&
+        schema.getId != null) {
       return _putAllBinaryObjects(objectList);
     }
 
@@ -176,6 +180,9 @@ final class CindelTypedCollection<T> {
 
   /// Returns the typed object stored under [id], or `null`.
   Future<T?> get(int id) async {
+    if (_usesSqliteNativeDocuments) {
+      return (await getAll([id])).single;
+    }
     if (_usesBinaryDocuments) {
       final bytes = await database.getBinaryDocument(schema.name, id);
       return bytes == null ? null : _objectFromBinaryDocument(bytes, id);
@@ -186,7 +193,7 @@ final class CindelTypedCollection<T> {
 
   /// Returns typed objects stored under [ids], preserving input order.
   Future<List<T?>> getAll(Iterable<int> ids) async {
-    if (_usesBinaryDocuments) {
+    if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
       final nativeReader = schema.readNativeDocument;
       final nativeFieldTypes = _nativeFieldTypes();
       if (nativeReader != null && nativeFieldTypes != null) {
@@ -296,6 +303,12 @@ final class CindelTypedCollection<T> {
     return database.backend == CindelStorageBackend.mdbx &&
         schema.toBinaryDocument != null &&
         schema.fromBinaryDocument != null;
+  }
+
+  bool get _usesSqliteNativeDocuments {
+    return database.backend == CindelStorageBackend.sqlite &&
+        schema.writeNativeDocument != null &&
+        schema.readNativeDocument != null;
   }
 
   Uint8List? _nativeFieldTypes() {

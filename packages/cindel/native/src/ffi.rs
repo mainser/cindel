@@ -4,7 +4,8 @@ use crate::document_format::{
 };
 use crate::engine::CindelEngine;
 use crate::storage::{
-    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, StorageBackendKind,
+    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
+    NativeDocumentWrite, StorageBackendKind,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -496,9 +497,14 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish_with_options(
     if writer.failed {
         return -1;
     }
-    let Ok(documents) = writer.take_documents() else {
+    let Ok((documents, native_documents)) = writer.take_documents_with_native_values() else {
         return -1;
     };
+    match engine.put_many_native_documents(collection, &native_documents, track_changes != 0) {
+        Ok(true) => return 0,
+        Ok(false) => {}
+        Err(_) => return -1,
+    }
     match engine.put_many_indexed_with_options(collection, &documents, track_changes != 0, true) {
         Ok(()) => 0,
         Err(_) => -1,
@@ -1754,6 +1760,7 @@ enum NativeBatchWriterMode {
     Batch {
         layout: NativeBatchLayout,
         documents: Vec<DocumentWrite>,
+        native_documents: Vec<NativeDocumentWrite>,
         current: Option<NativeBatchDocumentBuilder>,
         document_capacity_hint: usize,
     },
@@ -1832,6 +1839,7 @@ struct NativeBatchLayout {
 struct NativeBatchDocumentBuilder {
     id: u64,
     bytes: Vec<u8>,
+    values: Vec<NativeDocumentValue>,
 }
 
 impl CindelNativeBatchWriter {
@@ -1842,6 +1850,7 @@ impl CindelNativeBatchWriter {
             mode: NativeBatchWriterMode::Batch {
                 layout,
                 documents: Vec::with_capacity(capacity),
+                native_documents: Vec::with_capacity(capacity),
                 current: None,
                 document_capacity_hint,
             },
@@ -1882,7 +1891,8 @@ impl CindelNativeBatchWriter {
                 }
                 let mut bytes = Vec::with_capacity(*document_capacity_hint);
                 bytes.extend_from_slice(&layout.null_static_bytes);
-                *current = Some(NativeBatchDocumentBuilder { id, bytes });
+                let values = vec![NativeDocumentValue::Null; layout.field_types.len()];
+                *current = Some(NativeBatchDocumentBuilder { id, bytes, values });
                 Ok(())
             }
             NativeBatchWriterMode::List { .. } => {
@@ -1904,7 +1914,15 @@ impl CindelNativeBatchWriter {
                     &layout.offsets,
                     &mut current.bytes,
                     index,
-                )
+                )?;
+                if let Some(value) = current.values.get_mut(index) {
+                    *value = NativeDocumentValue::Null;
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "native batch writer field index `{index}` is out of range"
+                    ))
+                }
             }
             NativeBatchWriterMode::List { records, .. } => {
                 let Some(value) = records.get_mut(index) else {
@@ -1925,6 +1943,7 @@ impl CindelNativeBatchWriter {
                 let offset = self.absolute_offset(index)?;
                 let current = self.current_mut()?;
                 current.bytes[offset] = if value { 1 } else { 0 };
+                current.values[index] = NativeDocumentValue::Bool(value);
                 Ok(())
             }
             NativeBatchWriterMode::List {
@@ -1946,6 +1965,7 @@ impl CindelNativeBatchWriter {
                 let offset = self.absolute_offset(index)?;
                 let current = self.current_mut()?;
                 current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                current.values[index] = NativeDocumentValue::Int(value);
                 Ok(())
             }
             NativeBatchWriterMode::List {
@@ -1967,6 +1987,7 @@ impl CindelNativeBatchWriter {
                 let offset = self.absolute_offset(index)?;
                 let current = self.current_mut()?;
                 current.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+                current.values[index] = NativeDocumentValue::Double(value);
                 Ok(())
             }
             NativeBatchWriterMode::List {
@@ -2008,6 +2029,7 @@ impl CindelNativeBatchWriter {
                 write_u24(&mut header, 0, payload.len())?;
                 current.bytes.extend_from_slice(&header);
                 current.bytes.extend_from_slice(payload);
+                current.values[index] = NativeDocumentValue::Bytes(payload.to_vec());
                 Ok(())
             }
             NativeBatchWriterMode::List {
@@ -2051,6 +2073,7 @@ impl CindelNativeBatchWriter {
         match &mut self.mode {
             NativeBatchWriterMode::Batch {
                 documents,
+                native_documents,
                 current,
                 document_capacity_hint,
                 ..
@@ -2063,6 +2086,10 @@ impl CindelNativeBatchWriter {
                     id: current.id,
                     bytes: current.bytes,
                     indexes: Vec::new(),
+                });
+                native_documents.push(NativeDocumentWrite {
+                    id: current.id,
+                    values: current.values,
                 });
                 Ok(())
             }
@@ -2077,6 +2104,7 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::Batch {
                 layout,
                 documents,
+                native_documents,
                 current,
                 document_capacity_hint,
             } => {
@@ -2085,13 +2113,18 @@ impl CindelNativeBatchWriter {
                 } else {
                     let mut bytes = Vec::with_capacity(*document_capacity_hint);
                     bytes.extend_from_slice(&layout.null_static_bytes);
-                    NativeBatchDocumentBuilder { id, bytes }
+                    let values = vec![NativeDocumentValue::Null; layout.field_types.len()];
+                    NativeBatchDocumentBuilder { id, bytes, values }
                 };
                 *document_capacity_hint = (*document_capacity_hint).max(current.bytes.len());
                 documents.push(DocumentWrite {
                     id,
                     bytes: current.bytes,
                     indexes: Vec::new(),
+                });
+                native_documents.push(NativeDocumentWrite {
+                    id,
+                    values: current.values,
                 });
                 Ok(())
             }
@@ -2118,6 +2151,28 @@ impl CindelNativeBatchWriter {
         }
     }
 
+    fn take_documents_with_native_values(
+        self,
+    ) -> Result<(Vec<DocumentWrite>, Vec<NativeDocumentWrite>), String> {
+        match self.mode {
+            NativeBatchWriterMode::Batch {
+                documents,
+                native_documents,
+                current,
+                ..
+            } => {
+                if current.is_some() {
+                    Err("native batch writer has an open document".into())
+                } else {
+                    Ok((documents, native_documents))
+                }
+            }
+            NativeBatchWriterMode::List { .. } => {
+                Err("native batch writer expected a document writer".into())
+            }
+        }
+    }
+
     fn current_mut(&mut self) -> Result<&mut NativeBatchDocumentBuilder, String> {
         match &mut self.mode {
             NativeBatchWriterMode::Batch {
@@ -2129,7 +2184,12 @@ impl CindelNativeBatchWriter {
                 if current.is_none() {
                     let mut bytes = Vec::with_capacity(*document_capacity_hint);
                     bytes.extend_from_slice(&layout.null_static_bytes);
-                    *current = Some(NativeBatchDocumentBuilder { id: 0, bytes });
+                    let values = vec![NativeDocumentValue::Null; layout.field_types.len()];
+                    *current = Some(NativeBatchDocumentBuilder {
+                        id: 0,
+                        bytes,
+                        values,
+                    });
                 }
                 current
                     .as_mut()

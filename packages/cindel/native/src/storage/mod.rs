@@ -105,6 +105,21 @@ pub struct DocumentWrite {
     pub indexes: Vec<IndexEntry>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeDocumentWrite {
+    pub id: u64,
+    pub values: Vec<NativeDocumentValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeDocumentValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    Bytes(Vec<u8>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageChangeSet {
     pub collection: String,
@@ -239,6 +254,15 @@ pub trait StorageEngine {
     ) -> Result<(), String> {
         let _ = (track_changes, trust_schema_documents);
         self.put_many_indexed(collection, documents)
+    }
+    fn put_many_native_documents(
+        &mut self,
+        collection: &str,
+        documents: &[NativeDocumentWrite],
+        track_changes: bool,
+    ) -> Result<bool, String> {
+        let _ = (collection, documents, track_changes);
+        Ok(false)
     }
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String>;
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String>;
@@ -507,6 +531,22 @@ impl StorageEngine for StorageBackend {
                 track_changes,
                 trust_schema_documents,
             ),
+        }
+    }
+
+    fn put_many_native_documents(
+        &mut self,
+        collection: &str,
+        documents: &[NativeDocumentWrite],
+        track_changes: bool,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Sqlite(storage) => {
+                storage.put_many_native_documents(collection, documents, track_changes)?;
+                Ok(true)
+            }
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(_) => Ok(false),
         }
     }
 

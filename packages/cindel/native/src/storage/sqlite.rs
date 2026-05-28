@@ -2,13 +2,15 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::types::{Value, ValueRef};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::wire::{encode_index_value, WireIndexValue};
 
 use super::{
     decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
-    FieldSchemaManifest, IndexEntry, IndexValue, SchemaManifest, StorageChangeSet, StorageEngine,
+    FieldSchemaManifest, IndexEntry, IndexValue, NativeDocumentValue, NativeDocumentWrite,
+    SchemaManifest, StorageChangeSet, StorageEngine,
 };
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
@@ -178,6 +180,8 @@ impl SqliteStorage {
 }
 
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
+const SQLITE_ROW_ID_COLUMN: &str = "_rowid_";
+const SQLITE_MAX_PARAM_COUNT: usize = 32766;
 
 impl StorageEngine for SqliteStorage {
     fn begin_read_transaction(&mut self) -> Result<(), String> {
@@ -264,7 +268,28 @@ impl StorageEngine for SqliteStorage {
         Ok(documents)
     }
 
+    fn get_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<Option<Vec<u8>>>, String> {
+        let Some(schema) = collection_schema(&self.connection, collection)? else {
+            return self.get_many(collection, ids);
+        };
+        get_many_native_documents(&self.connection, &schema, ids)
+    }
+
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
+        if collection_schema(&self.connection, collection)?.is_some() {
+            let sql = format!(
+                "SELECT id FROM (
+                    SELECT {SQLITE_ROW_ID_COLUMN} AS id FROM {collection}
+                    UNION
+                    SELECT id FROM documents WHERE collection = ?1
+                ) ORDER BY id"
+            );
+            return query_ids(&self.connection, &sql, params![collection]);
+        }
         query_ids(
             &self.connection,
             r#"
@@ -390,11 +415,66 @@ impl StorageEngine for SqliteStorage {
         Ok(())
     }
 
+    fn put_many_native_documents(
+        &mut self,
+        collection: &str,
+        documents: &[NativeDocumentWrite],
+        track_changes: bool,
+    ) -> Result<bool, String> {
+        let Some(schema) = collection_schema(&self.connection, collection)? else {
+            return Ok(false);
+        };
+        if documents.is_empty() {
+            if self.active_transaction.is_none() {
+                self.last_change_sets.clear();
+            }
+            return Ok(true);
+        }
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            put_native_documents(&self.connection, &schema, documents)?;
+            let revision = bump_collection_revision(&self.connection, collection)?;
+            if track_changes {
+                self.record_change(
+                    collection,
+                    revision,
+                    documents.iter().map(|document| document.id),
+                );
+            }
+            return Ok(true);
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        put_native_documents(&transaction, &schema, documents)?;
+        let revision = bump_collection_revision(&transaction, collection)?;
+
+        transaction.commit().map_err(|error| error.to_string())?;
+        if track_changes {
+            self.record_change(
+                collection,
+                revision,
+                documents.iter().map(|document| document.id),
+            );
+        } else {
+            self.last_change_sets.clear();
+        }
+        Ok(true)
+    }
+
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
         self.ensure_can_write()?;
         let id = sqlite_id(id)?;
+        let has_collection_table = collection_schema(&self.connection, collection)?.is_some();
         if self.active_transaction.is_some() {
-            let deleted = delete_document(&self.connection, collection, id)?;
+            let deleted = delete_document_with_layout(
+                &self.connection,
+                collection,
+                id,
+                has_collection_table,
+            )?;
             if deleted {
                 let revision = bump_collection_revision(&self.connection, collection)?;
                 self.record_change(collection, revision, [id as u64]);
@@ -408,15 +488,10 @@ impl StorageEngine for SqliteStorage {
             .transaction()
             .map_err(|error| error.to_string())?;
 
-        let deleted = transaction
-            .execute(
-                "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
-                params![collection, id],
-            )
-            .map_err(|error| error.to_string())?;
-        delete_index_entries(&transaction, collection, id)?;
+        let deleted =
+            delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
         let mut revision = None;
-        if deleted > 0 {
+        if deleted {
             revision = Some(bump_collection_revision(&transaction, collection)?);
         }
 
@@ -435,11 +510,17 @@ impl StorageEngine for SqliteStorage {
             return Ok(());
         }
         self.ensure_can_write()?;
+        let has_collection_table = collection_schema(&self.connection, collection)?.is_some();
         if self.active_transaction.is_some() {
             let mut deleted_ids = Vec::new();
             for id in ids {
                 let id = sqlite_id(*id)?;
-                let deleted = delete_document(&self.connection, collection, id)?;
+                let deleted = delete_document_with_layout(
+                    &self.connection,
+                    collection,
+                    id,
+                    has_collection_table,
+                )?;
                 if deleted {
                     deleted_ids.push(id as u64);
                 }
@@ -460,7 +541,8 @@ impl StorageEngine for SqliteStorage {
         let mut deleted_ids = Vec::new();
         for id in ids {
             let id = sqlite_id(*id)?;
-            let deleted = delete_document(&transaction, collection, id)?;
+            let deleted =
+                delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
             if deleted {
                 deleted_ids.push(id as u64);
             }
@@ -696,8 +778,261 @@ fn put_document(
         .map_err(|error| error.to_string())
 }
 
-fn delete_document(connection: &Connection, collection: &str, id: i64) -> Result<bool, String> {
-    let deleted = connection
+fn put_native_documents(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    documents: &[NativeDocumentWrite],
+) -> Result<(), String> {
+    if documents.is_empty() {
+        return Ok(());
+    }
+    let fields = native_fields(schema);
+    let values_per_document = fields.len() + 1;
+    let batch_limit = SQLITE_MAX_PARAM_COUNT / values_per_document;
+    let batch_limit = batch_limit.max(1);
+    for chunk in documents.chunks(batch_limit) {
+        let sql = native_insert_sql(&schema.name, &fields, chunk.len());
+        let mut params = Vec::with_capacity(chunk.len() * values_per_document);
+        let mut max_id = 0i64;
+        for document in chunk {
+            if document.values.len() != fields.len() {
+                return Err(format!(
+                    "native document field count mismatch for collection `{}`",
+                    schema.name
+                ));
+            }
+            let id = sqlite_id(document.id)?;
+            max_id = max_id.max(id);
+            params.push(Value::Integer(id));
+            for (field, value) in fields.iter().zip(document.values.iter()) {
+                params.push(native_sql_value(field, value)?);
+            }
+        }
+        connection
+            .execute(&sql, params_from_iter(params.iter()))
+            .map_err(|error| error.to_string())?;
+        advance_id_counter(connection, &schema.name, max_id)?;
+    }
+    Ok(())
+}
+
+fn native_insert_sql(collection: &str, fields: &[&FieldSchemaManifest], count: usize) -> String {
+    let mut sql = String::new();
+    sql.push_str("INSERT OR REPLACE INTO ");
+    sql.push_str(collection);
+    sql.push_str(" (");
+    sql.push_str(SQLITE_ROW_ID_COLUMN);
+    for field in fields {
+        sql.push_str(", ");
+        sql.push_str(&field.name);
+    }
+    sql.push_str(") VALUES ");
+    let mut batch = String::from("(?");
+    for _ in fields {
+        batch.push_str(",?");
+    }
+    batch.push(')');
+    sql.push_str(&batch);
+    for _ in 1..count {
+        sql.push(',');
+        sql.push_str(&batch);
+    }
+    sql
+}
+
+fn native_sql_value(
+    field: &FieldSchemaManifest,
+    value: &NativeDocumentValue,
+) -> Result<Value, String> {
+    match (field.binary_type.as_str(), value) {
+        (_, NativeDocumentValue::Null) => Ok(Value::Null),
+        ("bool", NativeDocumentValue::Bool(value)) => Ok(Value::Integer(i64::from(*value))),
+        ("int", NativeDocumentValue::Int(value)) => Ok(Value::Integer(*value)),
+        ("double", NativeDocumentValue::Double(value)) => Ok(Value::Real(*value)),
+        ("string", NativeDocumentValue::Bytes(value)) => {
+            let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
+            Ok(Value::Text(text.to_string()))
+        }
+        ("list" | "object", NativeDocumentValue::Bytes(value)) => Ok(Value::Blob(value.clone())),
+        _ => Err(format!(
+            "native value does not match schema field `{}` type `{}`",
+            field.name, field.binary_type
+        )),
+    }
+}
+
+fn get_many_native_documents(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    ids: &[u64],
+) -> Result<Vec<Option<Vec<u8>>>, String> {
+    let fields = native_fields(schema);
+    let mut select = String::from("SELECT ");
+    select.push_str(SQLITE_ROW_ID_COLUMN);
+    for field in &fields {
+        select.push_str(", ");
+        select.push_str(&field.name);
+    }
+    select.push_str(" FROM ");
+    select.push_str(&schema.name);
+    select.push_str(" WHERE ");
+    select.push_str(SQLITE_ROW_ID_COLUMN);
+    select.push_str(" = ?1");
+
+    let mut statement = connection
+        .prepare(&select)
+        .map_err(|error| error.to_string())?;
+    let mut documents = Vec::with_capacity(ids.len());
+    for id in ids {
+        let id = sqlite_id(*id)?;
+        let document = statement
+            .query_row(params![id], |row| native_document_from_row(row, &fields))
+            .optional()
+            .map_err(|error| error.to_string())?;
+        documents.push(document);
+    }
+    Ok(documents)
+}
+
+fn native_document_from_row(
+    row: &Row<'_>,
+    fields: &[&FieldSchemaManifest],
+) -> rusqlite::Result<Vec<u8>> {
+    let mut layout = NativeDocumentLayout::new(fields);
+    let mut bytes = Vec::with_capacity(3 + layout.static_size);
+    bytes.resize(3 + layout.static_size, 0);
+    write_u24_le(&mut bytes, 0, layout.static_size)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
+    for (index, field) in fields.iter().enumerate() {
+        let value = row.get_ref(index + 1)?;
+        write_native_row_value(&mut bytes, &mut layout, index, field, value)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
+    }
+    Ok(bytes)
+}
+
+struct NativeDocumentLayout {
+    offsets: Vec<usize>,
+    static_size: usize,
+}
+
+impl NativeDocumentLayout {
+    fn new(fields: &[&FieldSchemaManifest]) -> Self {
+        let mut offsets = Vec::with_capacity(fields.len());
+        let mut static_size = 0usize;
+        for field in fields {
+            offsets.push(static_size);
+            static_size += native_field_static_size(field);
+        }
+        Self {
+            offsets,
+            static_size,
+        }
+    }
+}
+
+fn native_field_static_size(field: &FieldSchemaManifest) -> usize {
+    match field.binary_type.as_str() {
+        "bool" => 1,
+        "int" | "double" => 8,
+        "string" | "list" | "object" => 3,
+        _ => 3,
+    }
+}
+
+fn write_native_row_value(
+    bytes: &mut Vec<u8>,
+    layout: &mut NativeDocumentLayout,
+    index: usize,
+    field: &FieldSchemaManifest,
+    value: ValueRef<'_>,
+) -> Result<(), String> {
+    let offset = 3 + layout
+        .offsets
+        .get(index)
+        .copied()
+        .ok_or_else(|| format!("native field index `{index}` is out of range"))?;
+    match (field.binary_type.as_str(), value) {
+        ("bool", ValueRef::Integer(value)) => {
+            bytes[offset] = if value == 0 { 0 } else { 1 };
+        }
+        ("bool", ValueRef::Null) => bytes[offset] = 0xff,
+        ("int", ValueRef::Integer(value)) => {
+            bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        ("int", ValueRef::Null) => {
+            bytes[offset..offset + 8].copy_from_slice(&i64::MIN.to_le_bytes());
+        }
+        ("double", ValueRef::Real(value)) => {
+            bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        ("double", ValueRef::Integer(value)) => {
+            let value = value as f64;
+            bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        ("double", ValueRef::Null) => {
+            bytes[offset..offset + 8].copy_from_slice(&0x7ff8_0000_0000_0001u64.to_le_bytes());
+        }
+        ("string", ValueRef::Text(value)) => write_native_dynamic(bytes, layout, offset, value)?,
+        ("list" | "object", ValueRef::Blob(value)) => {
+            write_native_dynamic(bytes, layout, offset, value)?
+        }
+        ("string" | "list" | "object", ValueRef::Null) => write_u24_le(bytes, offset, 0)?,
+        _ => {
+            return Err(format!(
+                "SQLite value does not match native field `{}` type `{}`",
+                field.name, field.binary_type
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_native_dynamic(
+    bytes: &mut Vec<u8>,
+    layout: &NativeDocumentLayout,
+    offset: usize,
+    payload: &[u8],
+) -> Result<(), String> {
+    if payload.len() > 0x00ff_ffff {
+        return Err("native dynamic payload is too large".into());
+    }
+    let relative = layout
+        .static_size
+        .checked_add(bytes.len().saturating_sub(3 + layout.static_size))
+        .ok_or_else(|| "native dynamic offset overflow".to_string())?;
+    write_u24_le(bytes, offset, relative)?;
+    let mut header = [0u8; 3];
+    write_u24_le(&mut header, 0, payload.len())?;
+    bytes.extend_from_slice(&header);
+    bytes.extend_from_slice(payload);
+    Ok(())
+}
+
+fn write_u24_le(bytes: &mut [u8], offset: usize, value: usize) -> Result<(), String> {
+    if value > 0x00ff_ffff || offset + 3 > bytes.len() {
+        return Err("native uint24 write is out of range".into());
+    }
+    bytes[offset] = (value & 0xff) as u8;
+    bytes[offset + 1] = ((value >> 8) & 0xff) as u8;
+    bytes[offset + 2] = ((value >> 16) & 0xff) as u8;
+    Ok(())
+}
+
+fn delete_document_with_layout(
+    connection: &Connection,
+    collection: &str,
+    id: i64,
+    has_collection_table: bool,
+) -> Result<bool, String> {
+    let mut deleted = 0usize;
+    if has_collection_table {
+        let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
+        deleted += connection
+            .execute(&sql, params![id])
+            .map_err(|error| error.to_string())?;
+    }
+    deleted += connection
         .execute(
             "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
             params![collection, id],
@@ -744,15 +1079,30 @@ fn ensure_document_exists(
     collection: &str,
     id: i64,
 ) -> Result<(), String> {
-    let exists = connection
-        .query_row(
-            "SELECT 1 FROM documents WHERE collection = ?1 AND id = ?2",
-            params![collection, id],
-            |_| Ok(()),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?
-        .is_some();
+    let exists = if collection_schema(connection, collection)?.is_some() {
+        let sql = format!(
+            "SELECT 1 FROM (
+                SELECT {SQLITE_ROW_ID_COLUMN} AS id FROM {collection}
+                UNION
+                SELECT id FROM documents WHERE collection = ?2
+            ) WHERE id = ?1"
+        );
+        connection
+            .query_row(&sql, params![id, collection], |_| Ok(()))
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some()
+    } else {
+        connection
+            .query_row(
+                "SELECT 1 FROM documents WHERE collection = ?1 AND id = ?2",
+                params![collection, id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some()
+    };
     if exists {
         Ok(())
     } else {
@@ -1262,6 +1612,7 @@ fn register_collection_schema(
             )
             .map(|_| ())
             .map_err(|error| error.to_string())?;
+        create_collection_table(connection, collection)?;
         return Ok(());
     };
 
@@ -1274,6 +1625,7 @@ fn register_collection_schema(
         ));
     }
     if existing_schema == *collection {
+        create_collection_table(connection, collection)?;
         return Ok(());
     }
 
@@ -1294,7 +1646,68 @@ fn register_collection_schema(
             params![collection.name, next_version, schema_bytes],
         )
         .map_err(|error| error.to_string())?;
+    create_collection_table(connection, collection)?;
     Ok(())
+}
+
+fn collection_schema(
+    connection: &Connection,
+    collection: &str,
+) -> Result<Option<CollectionSchemaManifest>, String> {
+    let schema_bytes = connection
+        .query_row(
+            "SELECT schema_bytes FROM schema_collections WHERE collection = ?1",
+            params![collection],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    schema_bytes
+        .map(|bytes| decode_schema_record(&bytes).map(|(_, schema)| schema))
+        .transpose()
+}
+
+fn create_collection_table(
+    connection: &Connection,
+    collection: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    let fields = native_fields(collection);
+    let mut sql = format!(
+        "CREATE TABLE IF NOT EXISTS {} ({} INTEGER PRIMARY KEY",
+        collection.name, SQLITE_ROW_ID_COLUMN
+    );
+    for field in fields {
+        sql.push_str(", ");
+        sql.push_str(&field.name);
+        sql.push(' ');
+        sql.push_str(sql_type_for_field(field));
+    }
+    sql.push(')');
+    connection
+        .execute(&sql, [])
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn native_fields(collection: &CollectionSchemaManifest) -> Vec<&FieldSchemaManifest> {
+    let mut fields = collection
+        .fields
+        .iter()
+        .filter(|field| !field.is_id)
+        .collect::<Vec<_>>();
+    fields.sort_by(|left, right| left.name.cmp(&right.name));
+    fields
+}
+
+fn sql_type_for_field(field: &FieldSchemaManifest) -> &'static str {
+    match field.binary_type.as_str() {
+        "bool" => "bool",
+        "int" => "i64",
+        "double" => "f64",
+        "string" => "str",
+        "list" | "object" => "json",
+        _ => "json",
+    }
 }
 
 fn validate_compatible_schema_change(
@@ -1928,6 +2341,74 @@ mod tests {
 
         // Assert.
         assert_eq!(version, Some(1));
+    }
+
+    #[test]
+    fn inserts_native_documents_into_collection_table() {
+        // Scenario: A generated typed collection writes through the native
+        // writer on SQLite.
+        // Covers:
+        // - Isar-like per-collection table storage instead of generic blobs.
+        // - Batched native value insertion and native read-back bytes.
+        // Expected: Values land in collection columns and no generic document
+        // row is required.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_insert");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(42),
+                    NativeDocumentValue::Bytes(b"Ana".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(84),
+                    NativeDocumentValue::Bytes(b"Ada".to_vec()),
+                ],
+            },
+        ];
+
+        // Act.
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let row = storage
+            .connection
+            .query_row(
+                "SELECT completed, createdAtMicros, title FROM users WHERE _rowid_ = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let generic_count = storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let stored = storage.get_many_stored("users", &[1, 3]).unwrap();
+
+        // Assert.
+        assert_eq!(row, (1, 42, "Ana".to_string()));
+        assert_eq!(generic_count, 0);
+        assert_eq!(ids, vec![1, 2]);
+        assert!(stored[0].is_some());
+        assert_eq!(stored[1], None);
     }
 
     #[test]
@@ -2590,6 +3071,22 @@ mod tests {
         }
     }
 
+    fn native_user_schema() -> CollectionSchemaManifest {
+        let mut fields = vec![
+            native_field("completed", "bool", "bool", false),
+            native_field("createdAtMicros", "int", "int", false),
+            native_field("id", "int", "int", true),
+            native_field("title", "String", "string", false),
+        ];
+        fields.sort_by(|left, right| left.name.cmp(&right.name));
+        CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields,
+            composite_indexes: Vec::new(),
+        }
+    }
+
     fn field(name: &str, dart_type: &str, is_id: bool, is_indexed: bool) -> FieldSchemaManifest {
         FieldSchemaManifest {
             name: name.to_string(),
@@ -2597,6 +3094,24 @@ mod tests {
             binary_type: dart_type.to_string(),
             is_id,
             is_indexed,
+            is_index_unique: false,
+            index_case_sensitive: true,
+            index_type: "value".to_string(),
+        }
+    }
+
+    fn native_field(
+        name: &str,
+        dart_type: &str,
+        binary_type: &str,
+        is_id: bool,
+    ) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.to_string(),
+            dart_type: dart_type.to_string(),
+            binary_type: binary_type.to_string(),
+            is_id,
+            is_indexed: false,
             is_index_unique: false,
             index_case_sensitive: true,
             index_type: "value".to_string(),

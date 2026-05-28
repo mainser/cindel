@@ -1,6 +1,6 @@
 use crate::storage::{
-    DocumentWrite, IndexEntry, IndexValue, SchemaManifest, StorageBackend, StorageBackendKind,
-    StorageChangeSet, StorageEngine,
+    DocumentWrite, IndexEntry, IndexValue, NativeDocumentWrite, SchemaManifest, StorageBackend,
+    StorageBackendKind, StorageChangeSet, StorageEngine,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -145,6 +145,16 @@ impl CindelEngine {
             track_changes,
             trust_schema_documents,
         )
+    }
+
+    pub fn put_many_native_documents(
+        &mut self,
+        collection: &str,
+        documents: &[NativeDocumentWrite],
+        track_changes: bool,
+    ) -> Result<bool, String> {
+        self.storage
+            .put_many_native_documents(collection, documents, track_changes)
     }
 
     pub fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
