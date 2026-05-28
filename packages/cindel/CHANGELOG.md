@@ -17,6 +17,8 @@
   when no watcher is registered, reducing unindexed bulk update overhead.
 - Native filters avoid repeated schema field lookups after query-plan
   preparation and use a faster single-byte string `contains` path.
+- Sorted MDBX query plans now order borrowed planned documents directly,
+  avoiding intermediate order and option vectors on filtered sort queries.
 - Updated the development generator dependency constraint to `^0.5.4`.
 - Bumped the native ABI to 29.
 

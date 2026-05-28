@@ -41,12 +41,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.3
-  cindel_flutter_libs: ^0.5.3
+  cindel: ^0.5.4
+  cindel_flutter_libs: ^0.5.4
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.3
+  cindel_generator: ^0.5.4
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library

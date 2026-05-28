@@ -861,8 +861,7 @@ impl MdbxStorage {
                         }
                     }
                 }
-                let order = borrowed_planned_document_order(&planned, &sort_fields);
-                window_ordered_borrowed_query_documents(planned, order, offset, limit)
+                sort_and_window_borrowed_query_documents(planned, &sort_fields, offset, limit)
             };
             let documents = unsafe {
                 std::mem::transmute::<
@@ -1213,9 +1212,11 @@ impl MdbxStorage {
                     )?;
                     position += 1;
                 }
-                let order = borrowed_planned_document_order(&planned, &sort_fields);
-                return Ok(window_ordered_borrowed_planned_documents(
-                    planned, order, offset, limit,
+                return Ok(sort_and_window_borrowed_planned_documents(
+                    planned,
+                    &sort_fields,
+                    offset,
+                    limit,
                 ));
             }
 
@@ -1333,9 +1334,11 @@ impl MdbxStorage {
                 }
             }
 
-            let order = borrowed_planned_document_order(&planned, &sort_fields);
-            Ok(window_ordered_borrowed_planned_documents(
-                planned, order, offset, limit,
+            Ok(sort_and_window_borrowed_planned_documents(
+                planned,
+                &sort_fields,
+                offset,
+                limit,
             ))
         })
         .map(Some)
@@ -3390,14 +3393,11 @@ fn push_borrowed_planned_document<'a>(
     Ok(())
 }
 
-fn borrowed_planned_document_order(
-    documents: &[BorrowedPlannedDocument<'_>],
+fn sort_borrowed_planned_documents(
+    documents: &mut [BorrowedPlannedDocument<'_>],
     sort_fields: &[QuerySortField],
-) -> Vec<usize> {
-    let mut order = (0..documents.len()).collect::<Vec<_>>();
-    order.sort_unstable_by(|left, right| {
-        let left = &documents[*left];
-        let right = &documents[*right];
+) {
+    documents.sort_unstable_by(|left, right| {
         for (index, sort_field) in sort_fields.iter().enumerate() {
             let ordering = compare_borrowed_sort_values(left, right, index);
             if ordering != Ordering::Equal {
@@ -3410,7 +3410,6 @@ fn borrowed_planned_document_order(
         }
         Ordering::Equal
     });
-    order
 }
 
 fn borrowed_sort_value<'a>(
@@ -3602,24 +3601,21 @@ fn compare_binary_values(left: Option<&BinaryValue>, right: Option<&BinaryValue>
     }
 }
 
-fn window_ordered_borrowed_planned_documents(
-    documents: Vec<BorrowedPlannedDocument<'_>>,
-    order: Vec<usize>,
+fn sort_and_window_borrowed_planned_documents(
+    mut documents: Vec<BorrowedPlannedDocument<'_>>,
+    sort_fields: &[QuerySortField],
     offset: usize,
     limit: Option<usize>,
 ) -> Vec<PlannedDocument> {
-    if offset >= order.len() {
+    sort_borrowed_planned_documents(&mut documents, sort_fields);
+    if offset >= documents.len() {
         return Vec::new();
     }
     let end = limit
-        .map(|limit| offset.saturating_add(limit).min(order.len()))
-        .unwrap_or(order.len());
-    let mut documents = documents.into_iter().map(Some).collect::<Vec<_>>();
-    order
-        .into_iter()
-        .skip(offset)
-        .take(end - offset)
-        .filter_map(|index| documents[index].take())
+        .map(|limit| offset.saturating_add(limit).min(documents.len()))
+        .unwrap_or(documents.len());
+    documents
+        .drain(offset..end)
         .map(|document| PlannedDocument {
             id: document.id,
             bytes: document.bytes.into_owned(),
@@ -3628,25 +3624,20 @@ fn window_ordered_borrowed_planned_documents(
         .collect()
 }
 
-fn window_ordered_borrowed_query_documents<'a>(
-    documents: Vec<BorrowedPlannedDocument<'a>>,
-    order: Vec<usize>,
+fn sort_and_window_borrowed_query_documents<'a>(
+    mut documents: Vec<BorrowedPlannedDocument<'a>>,
+    sort_fields: &[QuerySortField],
     offset: usize,
     limit: Option<usize>,
 ) -> Vec<BorrowedPlannedDocument<'a>> {
-    if offset >= order.len() {
+    sort_borrowed_planned_documents(&mut documents, sort_fields);
+    if offset >= documents.len() {
         return Vec::new();
     }
     let end = limit
-        .map(|limit| offset.saturating_add(limit).min(order.len()))
-        .unwrap_or(order.len());
-    let mut documents = documents.into_iter().map(Some).collect::<Vec<_>>();
-    order
-        .into_iter()
-        .skip(offset)
-        .take(end - offset)
-        .filter_map(|index| documents[index].take())
-        .collect()
+        .map(|limit| offset.saturating_add(limit).min(documents.len()))
+        .unwrap_or(documents.len());
+    documents.drain(offset..end).collect()
 }
 
 fn distinct_planned_documents(

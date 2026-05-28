@@ -272,7 +272,7 @@ void main() {
         await database.users.put(savedUser);
 
         // Assert.
-        expect(await database.get('users', 1), {'name': 'Ana'});
+        expect(await database.get('users', 1), {'id': 1, 'name': 'Ana'});
         expect(savedUser.id, 2);
         expect(await database.users.get(savedUser.id), isNotNull);
       },

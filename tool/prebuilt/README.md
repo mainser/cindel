@@ -16,8 +16,8 @@ Maintainer requirements by platform:
   for MDBX bindgen.
 - iOS/macOS: macOS, Xcode command line tools, Rust Apple targets, and
   LLVM/libclang for MDBX bindgen.
-- Linux: Rust GNU toolchain for the host or configured cross toolchains, plus
-  LLVM/libclang for MDBX bindgen.
+- Linux: Rust GNU toolchain for the host or WSL, plus LLVM/libclang for MDBX
+  bindgen.
 
 Consumers should not need Rust or Cargo once the generated binaries are checked
 into `packages/cindel_flutter_libs`.
@@ -34,10 +34,10 @@ Common commands from the repository root:
 ./tool/prebuilt/build_linux.sh
 ```
 
-After changing `packages/cindel/native`, regenerate every prebuilt binary that
-can be produced on the current machine before committing. On Windows that means
-at least `build_windows.ps1` and, when the Android NDK is installed,
-`build_android.ps1`.
+After changing `packages/cindel/native`, regenerate every advertised prebuilt
+binary that can be produced before publishing. On Windows that means
+`build_windows.ps1`, `build_android.ps1` when the Android NDK is installed, and
+`build_linux.sh` through WSL or a Linux host.
 
-Apple and Linux binaries should be generated and validated on their native
-platforms before they are advertised in pub.dev metadata.
+Apple binaries should be generated and validated on Apple platforms before they
+are advertised in pub.dev metadata.

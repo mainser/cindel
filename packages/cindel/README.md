@@ -1,7 +1,7 @@
 # Cindel Database
 
-Fast local database for Flutter and Dart apps, powered by a generated Dart API
-and a compact Rust native core.
+Extremely fast, easy to use and fully async NoSQL local database for Flutter 
+and Dart apps, powered by a generated Dart API and a compact Rust native core.
 
 [Quickstart](#quickstart) |
 [Features](#features) |

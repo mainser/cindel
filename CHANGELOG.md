@@ -16,8 +16,12 @@ while the core design settles.
 - Reduced generated typed MDBX insert overhead by avoiding redundant Dart list
   copies and duplicate-id prevalidation on the Isar-like native batch path.
 - Added a trusted schema fast path for unindexed MDBX typed batch inserts.
+- Reduced MDBX native query-plan update, filter scan, and filtered sort
+  overhead on the app-style benchmark path.
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  `0.5.4` package line.
 - Updated `cindel_flutter_libs` and the Todo example to the `0.5.4` package
-  line. Native binaries must be regenerated for this release.
+  line.
 
 ## 0.5.3
 
