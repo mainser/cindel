@@ -8,7 +8,10 @@ use std::slice;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::{ffi, params, params_from_iter, Connection, OptionalExtension, Row};
 
-use crate::wire::{encode_index_value, WireIndexValue};
+use crate::wire::{
+    decode_filter, encode_index_value, WireFilter, WireFilterOperation, WireIndexValue,
+    WireQueryPlan, WireQuerySource, WireValue,
+};
 
 use super::{
     decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
@@ -1071,9 +1074,65 @@ impl StorageEngine for SqliteStorage {
         rebuild_indexes_on_connection(&transaction, collection, documents)?;
         transaction.commit().map_err(|error| error.to_string())
     }
+
+    fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Ids)?;
+        query_ids(&self.connection, &sql, params_from_iter(params.iter()))
+    }
+
+    fn query_plan_documents(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let fields = native_fields(&schema);
+        let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Documents)?;
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(params.iter()), |row| {
+                native_document_from_row(row, &fields)
+            })
+            .map_err(|error| error.to_string())?;
+        let mut documents = Vec::new();
+        for row in rows {
+            documents.push(row.map_err(|error| error.to_string())?);
+        }
+        Ok(documents)
+    }
+
+    fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
+        Ok(self.query_plan_ids(collection, plan)?.len() as u64)
+    }
+
+    fn query_plan_delete(
+        &mut self,
+        collection: &str,
+        plan: &WireQueryPlan,
+    ) -> Result<Vec<u64>, String> {
+        self.ensure_can_write()?;
+        let ids = self.query_plan_ids(collection, plan)?;
+        if !ids.is_empty() {
+            self.delete_many_native_documents(collection, &ids)?;
+        }
+        Ok(ids)
+    }
 }
 
 impl SqliteStorage {
+    fn required_collection_schema(
+        &self,
+        collection: &str,
+    ) -> Result<CollectionSchemaManifest, String> {
+        self.collection_schema(collection)
+            .cloned()
+            .ok_or_else(|| format!("collection `{collection}` has no registered schema"))
+    }
+
     fn begin_transaction(&mut self, mode: TransactionMode, sql: &str) -> Result<(), String> {
         if self.active_transaction.is_some() {
             return Err("a transaction is already active".into());
@@ -1095,6 +1154,291 @@ impl SqliteStorage {
 
 fn sqlite_id(id: u64) -> Result<i64, String> {
     i64::try_from(id).map_err(|_| format!("id {id} exceeds SQLite INTEGER range"))
+}
+
+#[derive(Clone, Copy)]
+enum SqliteQuerySelect {
+    Ids,
+    Documents,
+}
+
+fn sqlite_query_plan_sql(
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+    select: SqliteQuerySelect,
+) -> Result<(String, Vec<Value>), String> {
+    let fields = native_fields(schema);
+    let mut params = Vec::new();
+    let mut predicates = Vec::new();
+
+    if let Some((source_sql, source_params)) = sqlite_query_source_sql(schema, &plan.source)? {
+        predicates.push(source_sql);
+        params.extend(source_params);
+    }
+    if let Some(filter) = &plan.filter {
+        let filter = decode_filter(filter)?;
+        let (filter_sql, filter_params) = sqlite_filter_sql(schema, filter)?;
+        predicates.push(filter_sql);
+        params.extend(filter_params);
+    }
+
+    let mut sql = String::new();
+    match select {
+        SqliteQuerySelect::Ids => {
+            sql.push_str("SELECT ");
+            sql.push_str(SQLITE_ROW_ID_COLUMN);
+        }
+        SqliteQuerySelect::Documents => {
+            sql.push_str("SELECT ");
+            sql.push_str(SQLITE_ROW_ID_COLUMN);
+            for field in &fields {
+                sql.push_str(", ");
+                sql.push_str(&field.name);
+            }
+        }
+    }
+    sql.push_str(" FROM ");
+    sql.push_str(&schema.name);
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+    if !plan.distinct_fields.is_empty() {
+        sql.push_str(" GROUP BY ");
+        let distinct = plan
+            .distinct_fields
+            .iter()
+            .map(|field| sqlite_column_for_field(schema, field))
+            .collect::<Result<Vec<_>, String>>()?;
+        sql.push_str(&distinct.join(", "));
+    }
+    if !plan.sorts.is_empty() {
+        sql.push_str(" ORDER BY ");
+        for (index, sort) in plan.sorts.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&sqlite_column_for_field(schema, &sort.field)?);
+            sql.push_str(" COLLATE BINARY");
+            if !sort.ascending {
+                sql.push_str(" DESC");
+            }
+        }
+    } else {
+        sql.push_str(" ORDER BY ");
+        sql.push_str(SQLITE_ROW_ID_COLUMN);
+    }
+    if plan.offset > 0 {
+        sql.push_str(&format!(
+            " LIMIT {}, {}",
+            plan.offset,
+            plan.limit.unwrap_or(u32::MAX)
+        ));
+    } else if let Some(limit) = plan.limit {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+
+    Ok((sql, params))
+}
+
+fn sqlite_query_source_sql(
+    schema: &CollectionSchemaManifest,
+    source: &WireQuerySource,
+) -> Result<Option<(String, Vec<Value>)>, String> {
+    match source {
+        WireQuerySource::All { .. } => Ok(None),
+        WireQuerySource::IndexEqual {
+            index_name, value, ..
+        } => {
+            let column = sqlite_column_for_field(schema, index_name)?;
+            if matches!(value, WireIndexValue::Null) {
+                Ok(Some((format!("{column} IS NULL"), Vec::new())))
+            } else {
+                Ok(Some((
+                    format!("{column} = ?"),
+                    vec![sqlite_index_value(value)?],
+                )))
+            }
+        }
+        WireQuerySource::IndexRange {
+            index_name,
+            lower,
+            upper,
+            ..
+        } => {
+            let column = sqlite_column_for_field(schema, index_name)?;
+            let mut sql = Vec::new();
+            let mut params = Vec::new();
+            if let Some(lower) = lower {
+                sql.push(format!("{column} >= ?"));
+                params.push(sqlite_index_value(lower)?);
+            }
+            if let Some(upper) = upper {
+                sql.push(format!("{column} <= ?"));
+                params.push(sqlite_index_value(upper)?);
+            }
+            Ok(Some((sql.join(" AND "), params)))
+        }
+    }
+}
+
+fn sqlite_filter_sql(
+    schema: &CollectionSchemaManifest,
+    filter: WireFilter,
+) -> Result<(String, Vec<Value>), String> {
+    match filter {
+        WireFilter::Field {
+            field,
+            operation,
+            value,
+        } => sqlite_field_filter_sql(schema, &field, operation, &value),
+        WireFilter::All { predicates } => {
+            if predicates.is_empty() {
+                return Ok(("TRUE".to_string(), Vec::new()));
+            }
+            let mut sql = Vec::new();
+            let mut params = Vec::new();
+            for predicate in predicates {
+                let (predicate_sql, predicate_params) = sqlite_filter_sql(schema, predicate)?;
+                sql.push(predicate_sql);
+                params.extend(predicate_params);
+            }
+            Ok((format!("({})", sql.join(" AND ")), params))
+        }
+        WireFilter::Any { predicates } => {
+            if predicates.is_empty() {
+                return Ok(("FALSE".to_string(), Vec::new()));
+            }
+            let mut sql = Vec::new();
+            let mut params = Vec::new();
+            for predicate in predicates {
+                let (predicate_sql, predicate_params) = sqlite_filter_sql(schema, predicate)?;
+                sql.push(predicate_sql);
+                params.extend(predicate_params);
+            }
+            Ok((format!("({})", sql.join(" OR ")), params))
+        }
+        WireFilter::Not { predicate } => {
+            let (sql, params) = sqlite_filter_sql(schema, *predicate)?;
+            Ok((format!("NOT {sql}"), params))
+        }
+    }
+}
+
+fn sqlite_field_filter_sql(
+    schema: &CollectionSchemaManifest,
+    field: &str,
+    operation: WireFilterOperation,
+    value: &WireValue,
+) -> Result<(String, Vec<Value>), String> {
+    let column = sqlite_column_for_field(schema, field)?;
+    let sql = match operation {
+        WireFilterOperation::IsNull => (format!("{column} IS NULL"), Vec::new()),
+        WireFilterOperation::Equal => match value {
+            WireValue::Null => (format!("{column} IS NULL"), Vec::new()),
+            value => (format!("{column} = ?"), vec![sqlite_wire_value(value)?]),
+        },
+        WireFilterOperation::GreaterThan => match value {
+            WireValue::Null => (format!("{column} IS NOT NULL"), Vec::new()),
+            value => (format!("{column} > ?"), vec![sqlite_wire_value(value)?]),
+        },
+        WireFilterOperation::GreaterThanOrEqual => match value {
+            WireValue::Null => ("TRUE".to_string(), Vec::new()),
+            value => (format!("{column} >= ?"), vec![sqlite_wire_value(value)?]),
+        },
+        WireFilterOperation::LessThan => match value {
+            WireValue::Null => ("FALSE".to_string(), Vec::new()),
+            value => (
+                format!("({column} < ? OR {column} IS NULL)"),
+                vec![sqlite_wire_value(value)?],
+            ),
+        },
+        WireFilterOperation::LessThanOrEqual => match value {
+            WireValue::Null => (format!("{column} IS NULL"), Vec::new()),
+            value => (
+                format!("({column} <= ? OR {column} IS NULL)"),
+                vec![sqlite_wire_value(value)?],
+            ),
+        },
+        WireFilterOperation::Contains => sqlite_string_like_sql(&column, value, "%", "%")?,
+        WireFilterOperation::StartsWith => sqlite_string_like_sql(&column, value, "", "%")?,
+        WireFilterOperation::EndsWith => sqlite_string_like_sql(&column, value, "%", "")?,
+    };
+    Ok(sql)
+}
+
+fn sqlite_string_like_sql(
+    column: &str,
+    value: &WireValue,
+    prefix: &str,
+    suffix: &str,
+) -> Result<(String, Vec<Value>), String> {
+    let WireValue::String(value) = value else {
+        return Ok(("FALSE".to_string(), Vec::new()));
+    };
+    Ok((
+        format!("{column} LIKE ? ESCAPE '\\'"),
+        vec![Value::Text(format!(
+            "{prefix}{}{suffix}",
+            sqlite_escape_like(value)
+        ))],
+    ))
+}
+
+fn sqlite_escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn sqlite_column_for_field(
+    schema: &CollectionSchemaManifest,
+    field: &str,
+) -> Result<String, String> {
+    let Some(schema_field) = schema
+        .fields
+        .iter()
+        .find(|schema_field| schema_field.name == field)
+    else {
+        return Err(format!(
+            "field `{field}` is not declared in schema `{}`",
+            schema.name
+        ));
+    };
+    if schema_field.is_id {
+        Ok(SQLITE_ROW_ID_COLUMN.to_string())
+    } else {
+        Ok(schema_field.name.clone())
+    }
+}
+
+fn sqlite_wire_value(value: &WireValue) -> Result<Value, String> {
+    match value {
+        WireValue::Null => Ok(Value::Null),
+        WireValue::Bool(value) => Ok(Value::Integer(i64::from(*value))),
+        WireValue::Int(value) => Ok(Value::Integer(*value)),
+        WireValue::Double(value) if value.is_finite() => Ok(Value::Real(*value)),
+        WireValue::Double(_) => Err("SQLite query double values must be finite".into()),
+        WireValue::String(value) => Ok(Value::Text(value.clone())),
+        WireValue::List(_) | WireValue::Object(_) => {
+            Err("SQLite native SQL filters do not support list or object values yet".into())
+        }
+    }
+}
+
+fn sqlite_index_value(value: &WireIndexValue) -> Result<Value, String> {
+    match value {
+        WireIndexValue::Null => Ok(Value::Null),
+        WireIndexValue::Bool(value) => Ok(Value::Integer(i64::from(*value))),
+        WireIndexValue::Int(value) => Ok(Value::Integer(*value)),
+        WireIndexValue::Double(value) if value.is_finite() => Ok(Value::Real(*value)),
+        WireIndexValue::Double(_) => Err("SQLite query double values must be finite".into()),
+        WireIndexValue::String(value) => Ok(Value::Text(value.clone())),
+        WireIndexValue::List(_) => {
+            Err("SQLite native SQL query sources do not support composite values yet".into())
+        }
+    }
 }
 
 fn allocate_id(connection: &Connection, collection: &str) -> Result<i64, String> {
@@ -2856,6 +3200,109 @@ mod tests {
         assert_eq!(cursor.read_bytes(0, 2), Some(&b"Ada"[..]));
         assert!(!cursor.is_present(1).unwrap());
         assert_eq!(cursor.document_id(1), None);
+    }
+
+    #[test]
+    fn queries_native_documents_with_sql_filter_and_sort() {
+        // Scenario: SQLite executes a schema-aware native query plan.
+        // Covers:
+        // - Wire filters lowered to SQL WHERE over collection columns.
+        // - Isar-like SQL ORDER BY and offset handling.
+        // Expected: Matching ids and native document bytes come back in the
+        // same order produced by SQLite.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_query_plan");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(10),
+                    NativeDocumentValue::Bytes(b"alpha".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(20),
+                    NativeDocumentValue::Bytes(b"zulu".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 3,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(30),
+                    NativeDocumentValue::Bytes(b"zulu".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 4,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(40),
+                    NativeDocumentValue::Bytes(b"beta".to_vec()),
+                ],
+            },
+        ];
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let filter = crate::wire::encode_filter(&crate::wire::WireFilter::Any {
+            predicates: vec![
+                crate::wire::WireFilter::Field {
+                    field: "title".to_string(),
+                    operation: crate::wire::WireFilterOperation::Contains,
+                    value: crate::wire::WireValue::String("a".to_string()),
+                },
+                crate::wire::WireFilter::Field {
+                    field: "completed".to_string(),
+                    operation: crate::wire::WireFilterOperation::Equal,
+                    value: crate::wire::WireValue::Bool(true),
+                },
+            ],
+        })
+        .unwrap();
+        let filtered = crate::wire::WireQueryPlan {
+            source: crate::wire::WireQuerySource::All { dedupe: false },
+            filter: Some(filter),
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: None,
+        };
+        let sorted = crate::wire::WireQueryPlan {
+            source: crate::wire::WireQuerySource::All { dedupe: false },
+            filter: Some(
+                crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                    field: "completed".to_string(),
+                    operation: crate::wire::WireFilterOperation::Equal,
+                    value: crate::wire::WireValue::Bool(true),
+                })
+                .unwrap(),
+            ),
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "title".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        // Act.
+        let filtered_ids = storage.query_plan_ids("users", &filtered).unwrap();
+        let sorted_ids = storage.query_plan_ids("users", &sorted).unwrap();
+        let sorted_documents = storage.query_plan_documents("users", &sorted).unwrap();
+
+        // Assert.
+        assert_eq!(filtered_ids, vec![2, 4]);
+        assert_eq!(sorted_ids, vec![4, 2]);
+        assert_eq!(sorted_documents.len(), 2);
     }
 
     #[test]

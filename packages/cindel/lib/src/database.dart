@@ -621,7 +621,7 @@ class CindelDatabase {
     CindelReadNativeDocument<T> readDocument,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     return _bindings.queryPlanNativeDocuments(
       handle,
@@ -1041,7 +1041,7 @@ class CindelDatabase {
     CindelNativeQueryPlan plan,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     return _bindings.queryPlanIds(
       handle,
@@ -1055,7 +1055,7 @@ class CindelDatabase {
     CindelNativeQueryPlan plan,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     final ids = _bindings.queryPlanIds(
       handle,
@@ -1085,7 +1085,7 @@ class CindelDatabase {
     CindelNativeQueryPlan plan,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     final scalar = decodeScalar(
       _bindings.queryPlanCount(
@@ -1107,7 +1107,7 @@ class CindelDatabase {
     String field,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     _checkIndexName(field);
     final rows = decodeProjectionRows(
@@ -1131,7 +1131,7 @@ class CindelDatabase {
     String operation,
   ) async {
     final handle = _checkOpen();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     _checkIndexName(field);
     if (!_nativeAggregateOperations.contains(operation)) {
@@ -1157,7 +1157,7 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     _checkCanWrite();
-    _checkBinaryBackend();
+    _checkNativeQueryBackend();
     _checkCollection(collection);
     final ids = _bindings.queryPlanDelete(
       handle,
@@ -1472,6 +1472,15 @@ class CindelDatabase {
         'Cindel binary documents require the MDBX storage backend.',
       );
     }
+  }
+
+  void _checkNativeQueryBackend() {
+    if (backend == CindelStorageBackend.mdbx || usesSqliteNativeDocuments) {
+      return;
+    }
+    throw StateError(
+      'Native Cindel query plans require MDBX or SQLite native documents.',
+    );
   }
 
   CindelFieldSchema? _fieldSchema(String collection, String field) {

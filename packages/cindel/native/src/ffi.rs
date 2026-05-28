@@ -598,14 +598,20 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
         }));
     }
 
+    let Ok(ids) = engine.query_plan_ids(collection, &plan) else {
+        return std::ptr::null_mut();
+    };
     let Ok(documents) = engine.query_plan_documents(collection, &plan) else {
         return std::ptr::null_mut();
     };
+    if ids.len() != documents.len() {
+        return std::ptr::null_mut();
+    }
     Box::into_raw(Box::new(CindelNativeDocumentReader {
         current_index: None,
         mode: CindelNativeDocumentReaderMode::Batch {
             layout,
-            ids: Vec::new(),
+            ids,
             documents: documents.into_iter().map(Some).collect(),
             all_present: true,
             trusted_static_size: true,

@@ -787,10 +787,21 @@ final class CindelQuery<T> {
   }
 
   bool get _canUseNativePlanner {
-    return _canUseNativeFilter && _sourceFilter == null;
+    if (_sourceFilter != null) {
+      return false;
+    }
+    if (_database.backend == CindelStorageBackend.mdbx) {
+      return _schema.toBinaryDocument != null &&
+          _schema.fromBinaryDocument != null;
+    }
+    return _database.usesSqliteNativeDocuments &&
+        _schema.writeNativeDocument != null &&
+        _schema.readNativeDocument != null &&
+        _nativeSource is CindelNativeAllQuerySource;
   }
 
-  bool get _canUseNativeProjection => _canUseNativePlanner;
+  bool get _canUseNativeProjection =>
+      _canUseNativePlanner && _database.backend == CindelStorageBackend.mdbx;
 
   Stream<List<CindelDocument>> _watchMatchingDocuments({
     required Duration pollInterval,
