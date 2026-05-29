@@ -354,7 +354,7 @@ void main() {
 
 User _user(int id, String name, bool active) {
   return User()
-    ..id = id
+    ..dbId = id
     ..name = name
     ..email = '$name@example.com'.toLowerCase()
     ..active = active;

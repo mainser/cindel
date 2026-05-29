@@ -27,6 +27,8 @@ const _embeddedChecker = TypeChecker.typeNamed(
   inPackage: 'cindel_annotations',
 );
 
+const _cindelIdFieldName = 'dbId';
+
 /// Generates schemas and serializers for classes annotated with `@collection`.
 final class CindelGenerator extends GeneratorForAnnotation<Collection> {
   /// Creates a Cindel generator.
@@ -522,7 +524,7 @@ final class _CollectionInfo {
     final idFields = fields.where((field) => field.isId).toList();
     if (idFields.length != 1) {
       throw InvalidGenerationSourceError(
-        '@collection classes must declare exactly one field named `id`.',
+        '@collection classes must declare exactly one field named `dbId`.',
         element: element,
       );
     }
@@ -883,7 +885,7 @@ final class _FieldInfo {
       dartType: dartType,
       type: type,
       isAssignable: !element.isFinal && !element.isConst,
-      isId: name == 'id',
+      isId: name == _cindelIdFieldName,
       isIndexed: index != null,
       isIndexUnique: index?.unique ?? false,
       indexCaseSensitive: index?.caseSensitive ?? true,
@@ -946,13 +948,6 @@ final class _FieldInfo {
       'string' => 'writeString',
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
-    final castType = switch (binaryType) {
-      'bool' => 'bool',
-      'int' => 'int',
-      'double' => 'double',
-      'string' => 'String',
-      final type => throw StateError('Unsupported native writer type `$type`.'),
-    };
     final expression = 'object.$name';
     if (!isNullable) {
       return '  writer.$method($index, $expression);\n';
@@ -963,7 +958,7 @@ final class _FieldInfo {
     if (value == null) {
       writer.writeNull($index);
     } else {
-      writer.$method($index, value as $castType);
+      writer.$method($index, value);
     }
   }
 ''';
@@ -1029,7 +1024,11 @@ $writeValue      }
       'string' => 'readString',
       final type => throw StateError('Unsupported native reader type `$type`.'),
     };
-    return fromStoredValueExpression('reader.$method(documentIndex, $index)');
+    final expression = 'reader.$method(documentIndex, $index)';
+    if (type.kind == _PersistedTypeKind.primitive && isNullable) {
+      return expression;
+    }
+    return fromStoredValueExpression(expression);
   }
 
   String _nativeListReadExpression(int index) {

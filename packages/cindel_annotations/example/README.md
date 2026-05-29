@@ -10,7 +10,7 @@ part 'todo.g.dart';
 
 @Collection(name: 'todos')
 class Todo {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @index
   late String title;

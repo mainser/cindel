@@ -4,12 +4,12 @@ Add Cindel, the Flutter native libraries package, and the generator to your app:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.7
-  cindel_flutter_libs: ^0.5.7
+  cindel: ^0.5.8
+  cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.5
+  cindel_generator: ^0.5.6
 ```
 
 Define a model and generate its schema:
@@ -21,7 +21,7 @@ part 'user.g.dart';
 
 @Collection(name: 'users')
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @index
   late String email;

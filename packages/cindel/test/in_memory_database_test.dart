@@ -18,12 +18,12 @@ void main() {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final ana = User()
-        ..id = 1
+        ..dbId = 1
         ..name = 'Ana'
         ..email = 'ana@example.com'
         ..active = true;
       final ben = User()
-        ..id = 2
+        ..dbId = 2
         ..name = 'Ben'
         ..email = 'ben@example.com'
         ..active = false;
@@ -49,8 +49,8 @@ void main() {
       expect(database.directory, ':memory:');
       expect(storedAna, isNotNull);
       expect(storedAna!.name, 'Ana');
-      expect(exactMatches.map((document) => document['id']), [1]);
-      expect(rangeMatches.map((document) => document['id']), [1, 2]);
+      expect(exactMatches.map((document) => document['dbId']), [1]);
+      expect(rangeMatches.map((document) => document['dbId']), [1, 2]);
       expect(version, 1);
     });
 
@@ -67,7 +67,7 @@ void main() {
 
       // Act.
       await firstDatabase.put('users', 1, {
-        'id': 1,
+        'dbId': 1,
         'name': 'Ana',
         'email': 'ana@example.com',
         'active': true,

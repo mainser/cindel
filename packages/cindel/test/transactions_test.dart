@@ -115,9 +115,9 @@ void main() {
       await database.users.put(savedUser);
 
       // Assert.
-      expect(rolledBackUser.id, 1);
-      expect(savedUser.id, 1);
-      expect(await database.users.get(rolledBackUser.id), isNotNull);
+      expect(rolledBackUser.dbId, 1);
+      expect(savedUser.dbId, 1);
+      expect(await database.users.get(rolledBackUser.dbId), isNotNull);
     });
 
     // Scenario: Reads are wrapped in an explicit read transaction.
@@ -272,9 +272,9 @@ void main() {
         await database.users.put(savedUser);
 
         // Assert.
-        expect(await database.get('users', 1), {'id': 1, 'name': 'Ana'});
-        expect(savedUser.id, 2);
-        expect(await database.users.get(savedUser.id), isNotNull);
+        expect(await database.get('users', 1), {'name': 'Ana', 'dbId': 1});
+        expect(savedUser.dbId, 2);
+        expect(await database.users.get(savedUser.dbId), isNotNull);
       },
       skip: !_runMdbxBackendTests
           ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
@@ -302,7 +302,7 @@ bool get _runMdbxBackendTests {
 
 User _user(int id, String name, bool active) {
   return User()
-    ..id = id
+    ..dbId = id
     ..name = name
     ..email = '$name@example.com'.toLowerCase()
     ..active = active;

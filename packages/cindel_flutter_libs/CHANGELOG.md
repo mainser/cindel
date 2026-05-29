@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.8
+
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  Cindel `0.5.8` backend format and `dbId` release line.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.7
 
 - Regenerated the Windows native runtime library for the Cindel `0.5.7`

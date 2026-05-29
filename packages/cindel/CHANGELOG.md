@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.8
+
+- Changed the generated collection id convention from `id` to `dbId`, leaving
+  `id` free for API/domain fields in user models.
+- Removed the old CDBF document compatibility path so generated compact
+  documents use the current backend format as the only supported storage path.
+- Kept generated document ids in the storage key path while allowing normal
+  indexed `id` fields to be stored, queried, sorted, projected, and aggregated
+  like any other model field.
+- Expanded typed filter helpers so generated `contains` filters can represent
+  string, list, and embedded-value containment without narrowing the public
+  filter value to `String`.
+- Updated tests and documentation for the `dbId` id field convention.
+
 ## 0.5.7
 
 - Completed the generated typed SQLite app backend path for the current public

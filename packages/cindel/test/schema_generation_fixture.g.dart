@@ -11,10 +11,10 @@ part of 'schema_generation_fixture.dart';
 final UserSchema = CindelCollectionSchema<User>(
   name: "users",
   dartName: "User",
-  idField: "id",
+  idField: "dbId",
   fields: <CindelFieldSchema>[
     CindelFieldSchema(
-      name: "id",
+      name: "dbId",
       dartType: "int",
       binaryType: "int",
       isId: true,
@@ -216,32 +216,32 @@ extension UserCindelQueryFilterAccess on CindelQuery<User> {
 }
 
 extension UserCindelQueryModifierAccess on CindelQuery<User> {
-  CindelQuery<User> sortById({
+  CindelQuery<User> sortByDbId({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
-    return sortBy("id", order: order);
+    return sortBy("dbId", order: order);
   }
 
-  CindelQuery<User> sortByIdDesc() {
-    return sortBy("id", order: CindelSortOrder.descending);
+  CindelQuery<User> sortByDbIdDesc() {
+    return sortBy("dbId", order: CindelSortOrder.descending);
   }
 
-  CindelQuery<User> thenById({
+  CindelQuery<User> thenByDbId({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
-    return thenBy("id", order: order);
+    return thenBy("dbId", order: order);
   }
 
-  CindelQuery<User> thenByIdDesc() {
-    return thenBy("id", order: CindelSortOrder.descending);
+  CindelQuery<User> thenByDbIdDesc() {
+    return thenBy("dbId", order: CindelSortOrder.descending);
   }
 
-  CindelQuery<User> distinctById() {
-    return distinctBy("id");
+  CindelQuery<User> distinctByDbId() {
+    return distinctBy("dbId");
   }
 
-  CindelPropertyQuery<User, int> idProperty() {
-    return property<int>("id");
+  CindelPropertyQuery<User, int> dbIdProperty() {
+    return property<int>("dbId");
   }
 
   CindelQuery<User> sortByName({
@@ -925,32 +925,34 @@ final class UserQueryFilter {
 
   final CindelQuery<User> _query;
 
-  CindelQuery<User> idEqualTo(int value) {
-    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  CindelQuery<User> dbIdEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").equalTo(value));
   }
 
-  CindelQuery<User> idGreaterThan(int value) {
-    return _query.whereMatches(CindelFilter.field("id").greaterThan(value));
+  CindelQuery<User> dbIdGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").greaterThan(value));
   }
 
-  CindelQuery<User> idGreaterThanOrEqualTo(int value) {
+  CindelQuery<User> dbIdGreaterThanOrEqualTo(int value) {
     return _query.whereMatches(
-      CindelFilter.field("id").greaterThanOrEqualTo(value),
+      CindelFilter.field("dbId").greaterThanOrEqualTo(value),
     );
   }
 
-  CindelQuery<User> idLessThan(int value) {
-    return _query.whereMatches(CindelFilter.field("id").lessThan(value));
+  CindelQuery<User> dbIdLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").lessThan(value));
   }
 
-  CindelQuery<User> idLessThanOrEqualTo(int value) {
+  CindelQuery<User> dbIdLessThanOrEqualTo(int value) {
     return _query.whereMatches(
-      CindelFilter.field("id").lessThanOrEqualTo(value),
+      CindelFilter.field("dbId").lessThanOrEqualTo(value),
     );
   }
 
-  CindelQuery<User> idBetween(int? lower, int? upper) {
-    return _query.whereMatches(CindelFilter.field("id").between(lower, upper));
+  CindelQuery<User> dbIdBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").between(lower, upper),
+    );
   }
 
   CindelQuery<User> nameEqualTo(String value) {
@@ -1133,12 +1135,20 @@ final class UserQueryFilter {
     );
   }
 
+  CindelQuery<User> tagsElementEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("tags").contains(value));
+  }
+
   CindelQuery<User> scoresEqualTo(List<int>? value) {
     return _query.whereMatches(
       CindelFilter.field(
         "scores",
       ).equalTo(value?.map((value) => value).toList(growable: false)),
     );
+  }
+
+  CindelQuery<User> scoresElementEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("scores").contains(value));
   }
 
   CindelQuery<User> roleEqualTo(UserRole value) {
@@ -1172,6 +1182,14 @@ final class UserQueryFilter {
       ),
     );
   }
+
+  CindelQuery<User> recipientsElementEqualTo(Recipient value) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "recipients",
+      ).contains(_$RecipientToCindelEmbedded(value)),
+    );
+  }
 }
 
 Map<String, Object?> _$UserToCindelDocument(User object) {
@@ -1201,7 +1219,7 @@ Map<String, Object?> _$UserToCindelDocument(User object) {
 
 User _$UserFromCindelDocument(Map<String, Object?> document) {
   final object = User();
-  object.id = document["id"] as int;
+  object.dbId = document["dbId"] as int;
   object.name = document["name"] as String;
   object.email = document["email"] as String;
   object.username = document["username"] == null
@@ -1318,7 +1336,7 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
   final Object? field14 = reader.readList(14, 55);
   final Object? field15 = reader.readString(15, 58);
   final object = User();
-  object.id = autoIncrement;
+  object.dbId = autoIncrement;
   object.name = field6 as String;
   object.email = field5 as String;
   object.username = field15 == null ? null : field15 as String?;
@@ -1362,11 +1380,11 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
 }
 
 int _$UserGetCindelId(User object) {
-  return object.id;
+  return object.dbId;
 }
 
 void _$UserSetCindelId(User object, int id) {
-  object.id = id;
+  object.dbId = id;
 }
 
 Map<String, Object?> _$RecipientToCindelEmbedded(Recipient object) {
@@ -1416,10 +1434,10 @@ RecipientMetadata _$RecipientMetadataFromCindelEmbedded(
 final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(
   name: "immutableUsers",
   dartName: "ImmutableUser",
-  idField: "id",
+  idField: "dbId",
   fields: <CindelFieldSchema>[
     CindelFieldSchema(
-      name: "id",
+      name: "dbId",
       dartType: "int",
       binaryType: "int",
       isId: true,
@@ -1478,32 +1496,32 @@ extension ImmutableUserCindelQueryFilterAccess on CindelQuery<ImmutableUser> {
 }
 
 extension ImmutableUserCindelQueryModifierAccess on CindelQuery<ImmutableUser> {
-  CindelQuery<ImmutableUser> sortById({
+  CindelQuery<ImmutableUser> sortByDbId({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
-    return sortBy("id", order: order);
+    return sortBy("dbId", order: order);
   }
 
-  CindelQuery<ImmutableUser> sortByIdDesc() {
-    return sortBy("id", order: CindelSortOrder.descending);
+  CindelQuery<ImmutableUser> sortByDbIdDesc() {
+    return sortBy("dbId", order: CindelSortOrder.descending);
   }
 
-  CindelQuery<ImmutableUser> thenById({
+  CindelQuery<ImmutableUser> thenByDbId({
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
-    return thenBy("id", order: order);
+    return thenBy("dbId", order: order);
   }
 
-  CindelQuery<ImmutableUser> thenByIdDesc() {
-    return thenBy("id", order: CindelSortOrder.descending);
+  CindelQuery<ImmutableUser> thenByDbIdDesc() {
+    return thenBy("dbId", order: CindelSortOrder.descending);
   }
 
-  CindelQuery<ImmutableUser> distinctById() {
-    return distinctBy("id");
+  CindelQuery<ImmutableUser> distinctByDbId() {
+    return distinctBy("dbId");
   }
 
-  CindelPropertyQuery<ImmutableUser, int> idProperty() {
-    return property<int>("id");
+  CindelPropertyQuery<ImmutableUser, int> dbIdProperty() {
+    return property<int>("dbId");
   }
 
   CindelQuery<ImmutableUser> sortByEmail({
@@ -1602,32 +1620,34 @@ final class ImmutableUserQueryFilter {
 
   final CindelQuery<ImmutableUser> _query;
 
-  CindelQuery<ImmutableUser> idEqualTo(int value) {
-    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  CindelQuery<ImmutableUser> dbIdEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").equalTo(value));
   }
 
-  CindelQuery<ImmutableUser> idGreaterThan(int value) {
-    return _query.whereMatches(CindelFilter.field("id").greaterThan(value));
+  CindelQuery<ImmutableUser> dbIdGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").greaterThan(value));
   }
 
-  CindelQuery<ImmutableUser> idGreaterThanOrEqualTo(int value) {
+  CindelQuery<ImmutableUser> dbIdGreaterThanOrEqualTo(int value) {
     return _query.whereMatches(
-      CindelFilter.field("id").greaterThanOrEqualTo(value),
+      CindelFilter.field("dbId").greaterThanOrEqualTo(value),
     );
   }
 
-  CindelQuery<ImmutableUser> idLessThan(int value) {
-    return _query.whereMatches(CindelFilter.field("id").lessThan(value));
+  CindelQuery<ImmutableUser> dbIdLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").lessThan(value));
   }
 
-  CindelQuery<ImmutableUser> idLessThanOrEqualTo(int value) {
+  CindelQuery<ImmutableUser> dbIdLessThanOrEqualTo(int value) {
     return _query.whereMatches(
-      CindelFilter.field("id").lessThanOrEqualTo(value),
+      CindelFilter.field("dbId").lessThanOrEqualTo(value),
     );
   }
 
-  CindelQuery<ImmutableUser> idBetween(int? lower, int? upper) {
-    return _query.whereMatches(CindelFilter.field("id").between(lower, upper));
+  CindelQuery<ImmutableUser> dbIdBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").between(lower, upper),
+    );
   }
 
   CindelQuery<ImmutableUser> emailEqualTo(String value) {
@@ -1657,7 +1677,7 @@ Map<String, Object?> _$ImmutableUserToCindelDocument(ImmutableUser object) {
 
 ImmutableUser _$ImmutableUserFromCindelDocument(Map<String, Object?> document) {
   return ImmutableUser(
-    id: document["id"] as int,
+    dbId: document["dbId"] as int,
     email: document["email"] as String,
     active: document["active"] as bool,
   );
@@ -1682,7 +1702,7 @@ ImmutableUser _$ImmutableUserFromCindelBinaryDocument(
   final Object? field0 = reader.readBool(0, 0);
   final Object? field1 = reader.readString(1, 1);
   return ImmutableUser(
-    id: autoIncrement,
+    dbId: autoIncrement,
     email: field1 as String,
     active: field0 as bool,
   );
@@ -1701,12 +1721,337 @@ ImmutableUser _$ImmutableUserReadCindelNativeDocument(
   int documentIndex,
 ) {
   return ImmutableUser(
-    id: reader.readId(documentIndex),
+    dbId: reader.readId(documentIndex),
     email: reader.readString(documentIndex, 1) as String,
     active: reader.readBool(documentIndex, 0) as bool,
   );
 }
 
 int _$ImmutableUserGetCindelId(ImmutableUser object) {
-  return object.id;
+  return object.dbId;
+}
+
+// ignore_for_file: non_constant_identifier_names
+
+final ApiProductSchema = CindelCollectionSchema<ApiProduct>(
+  name: "apiProducts",
+  dartName: "ApiProduct",
+  idField: "dbId",
+  fields: <CindelFieldSchema>[
+    CindelFieldSchema(
+      name: "dbId",
+      dartType: "int",
+      binaryType: "int",
+      isId: true,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "id",
+      dartType: "String?",
+      binaryType: "string",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "name",
+      dartType: "String",
+      binaryType: "string",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+  ],
+  compositeIndexes: <CindelCompositeIndexSchema>[],
+  toDocument: _$ApiProductToCindelDocument,
+  fromDocument: _$ApiProductFromCindelDocument,
+  toBinaryDocument: _$ApiProductToCindelBinaryDocument,
+  fromBinaryDocument: _$ApiProductFromCindelBinaryDocument,
+  writeNativeDocument: _$ApiProductWriteCindelNativeDocument,
+  readNativeDocument: _$ApiProductReadCindelNativeDocument,
+  getId: _$ApiProductGetCindelId,
+  setId: _$ApiProductSetCindelId,
+);
+
+extension ApiProductCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<ApiProduct> get apiProducts =>
+      typedCollection(ApiProductSchema);
+}
+
+extension ApiProductCindelQueryAccess on CindelTypedCollection<ApiProduct> {
+  ApiProductQueryWhere where() => ApiProductQueryWhere(this);
+
+  ApiProductQueryFilter filter() => ApiProductQueryFilter(
+    CindelQuery.all(database: database, schema: ApiProductSchema),
+  );
+}
+
+extension ApiProductCindelQueryFilterAccess on CindelQuery<ApiProduct> {
+  ApiProductQueryFilter filter() => ApiProductQueryFilter(this);
+}
+
+extension ApiProductCindelQueryModifierAccess on CindelQuery<ApiProduct> {
+  CindelQuery<ApiProduct> sortByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("dbId", order: order);
+  }
+
+  CindelQuery<ApiProduct> sortByDbIdDesc() {
+    return sortBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> thenByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("dbId", order: order);
+  }
+
+  CindelQuery<ApiProduct> thenByDbIdDesc() {
+    return thenBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> distinctByDbId() {
+    return distinctBy("dbId");
+  }
+
+  CindelPropertyQuery<ApiProduct, int> dbIdProperty() {
+    return property<int>("dbId");
+  }
+
+  CindelQuery<ApiProduct> sortById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("id", order: order);
+  }
+
+  CindelQuery<ApiProduct> sortByIdDesc() {
+    return sortBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> thenById({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("id", order: order);
+  }
+
+  CindelQuery<ApiProduct> thenByIdDesc() {
+    return thenBy("id", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> distinctById() {
+    return distinctBy("id");
+  }
+
+  CindelPropertyQuery<ApiProduct, String?> idProperty() {
+    return property<String?>("id");
+  }
+
+  CindelQuery<ApiProduct> sortByName({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("name", order: order);
+  }
+
+  CindelQuery<ApiProduct> sortByNameDesc() {
+    return sortBy("name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> thenByName({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("name", order: order);
+  }
+
+  CindelQuery<ApiProduct> thenByNameDesc() {
+    return thenBy("name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<ApiProduct> distinctByName() {
+    return distinctBy("name");
+  }
+
+  CindelPropertyQuery<ApiProduct, String> nameProperty() {
+    return property<String>("name");
+  }
+}
+
+final class ApiProductQueryWhere {
+  const ApiProductQueryWhere(this._collection);
+
+  final CindelTypedCollection<ApiProduct> _collection;
+
+  CindelQuery<ApiProduct> idEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ApiProductSchema,
+      field: "id",
+      value: value,
+    );
+  }
+
+  CindelQuery<ApiProduct> idStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: ApiProductSchema,
+      field: "id",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<ApiProduct> idBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ApiProductSchema,
+      field: "id",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
+final class ApiProductQueryFilter {
+  const ApiProductQueryFilter(this._query);
+
+  final CindelQuery<ApiProduct> _query;
+
+  CindelQuery<ApiProduct> dbIdEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").equalTo(value));
+  }
+
+  CindelQuery<ApiProduct> dbIdGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").greaterThan(value));
+  }
+
+  CindelQuery<ApiProduct> dbIdGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<ApiProduct> dbIdLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").lessThan(value));
+  }
+
+  CindelQuery<ApiProduct> dbIdLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<ApiProduct> dbIdBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").between(lower, upper),
+    );
+  }
+
+  CindelQuery<ApiProduct> idEqualTo(String? value) {
+    return _query.whereMatches(CindelFilter.field("id").equalTo(value));
+  }
+
+  CindelQuery<ApiProduct> idContains(String value) {
+    return _query.whereMatches(CindelFilter.field("id").contains(value));
+  }
+
+  CindelQuery<ApiProduct> idStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("id").startsWith(value));
+  }
+
+  CindelQuery<ApiProduct> idEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("id").endsWith(value));
+  }
+
+  CindelQuery<ApiProduct> nameEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("name").equalTo(value));
+  }
+
+  CindelQuery<ApiProduct> nameContains(String value) {
+    return _query.whereMatches(CindelFilter.field("name").contains(value));
+  }
+
+  CindelQuery<ApiProduct> nameStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("name").startsWith(value));
+  }
+
+  CindelQuery<ApiProduct> nameEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("name").endsWith(value));
+  }
+}
+
+Map<String, Object?> _$ApiProductToCindelDocument(ApiProduct object) {
+  return <String, Object?>{"id": object.id, "name": object.name};
+}
+
+ApiProduct _$ApiProductFromCindelDocument(Map<String, Object?> document) {
+  final object = ApiProduct();
+  object.dbId = document["dbId"] as int;
+  object.id = document["id"] == null ? null : document["id"] as String?;
+  object.name = document["name"] as String;
+  return object;
+}
+
+CindelBinaryDocumentBytes _$ApiProductToCindelBinaryDocument(
+  ApiProduct object,
+) {
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[object.id, object.name],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+    ],
+  );
+}
+
+ApiProduct _$ApiProductFromCindelBinaryDocument(
+  CindelBinaryDocumentBytes bytes,
+) {
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 6);
+  final Object? field0 = reader.readString(0, 0);
+  final Object? field1 = reader.readString(1, 3);
+  final object = ApiProduct();
+  object.dbId = autoIncrement;
+  object.id = field0 == null ? null : field0 as String?;
+  object.name = field1 as String;
+  return object;
+}
+
+void _$ApiProductWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  ApiProduct object,
+) {
+  {
+    final value = object.id;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeString(0, value);
+    }
+  }
+  writer.writeString(1, object.name);
+}
+
+ApiProduct _$ApiProductReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = ApiProduct();
+  object.dbId = reader.readId(documentIndex);
+  object.id = reader.readString(documentIndex, 0);
+  object.name = reader.readString(documentIndex, 1) as String;
+  return object;
+}
+
+int _$ApiProductGetCindelId(ApiProduct object) {
+  return object.dbId;
+}
+
+void _$ApiProductSetCindelId(ApiProduct object, int id) {
+  object.dbId = id;
 }

@@ -44,12 +44,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.7
-  cindel_flutter_libs: ^0.5.7
+  cindel: ^0.5.8
+  cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.5
+  cindel_generator: ^0.5.6
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -64,7 +64,7 @@ part 'user.g.dart';
 
 @Collection(name: 'users')
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Index(unique: true)
   late String email;
@@ -122,9 +122,9 @@ final jhon = User()
 
 await db.users.put(jhon);
 
-final saved = await db.users.get(jhon.id);
+final saved = await db.users.get(jhon.dbId);
 
-await db.users.delete(jhon.id);
+await db.users.delete(jhon.dbId);
 ```
 
 Bulk operations use native batch paths:
@@ -140,9 +140,9 @@ final taylor = User()
 
 await db.users.putMany([jhon, maria, taylor]);
 
-final users = await db.users.getAll([jhon.id, maria.id, 404]);
+final users = await db.users.getAll([jhon.dbId, maria.dbId, 404]);
 
-await db.users.deleteAll([jhon.id, maria.id]);
+await db.users.deleteAll([jhon.dbId, maria.dbId]);
 ```
 
 Use transactions when multiple operations must commit together:
@@ -196,7 +196,7 @@ final names = await db.users
     .nameProperty()
     .findAll();
 
-final maxId = await db.users.all().idProperty().max();
+final maxId = await db.users.all().dbIdProperty().max();
 ```
 
 The lower-level manual document API remains available:
@@ -242,7 +242,7 @@ Use `@Embedded` for value objects stored inside a parent collection document:
 ```dart
 @Collection(name: 'emails')
 class Email {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   String? subject;
 

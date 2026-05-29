@@ -27,7 +27,7 @@ void main() {
       );
       addTearDown(database.close);
       final user = User()
-        ..id = 1
+        ..dbId = 1
         ..name = 'Ana'
         ..email = 'ana@example.com'
         ..active = true;
@@ -80,12 +80,12 @@ void main() {
       // Act.
       await database.users.put(firstUser);
       await database.users.put(secondUser);
-      final savedFirstUser = await database.users.get(firstUser.id);
-      final savedSecondUser = await database.users.get(secondUser.id);
+      final savedFirstUser = await database.users.get(firstUser.dbId);
+      final savedSecondUser = await database.users.get(secondUser.dbId);
 
       // Assert.
-      expect(firstUser.id, 1);
-      expect(secondUser.id, 2);
+      expect(firstUser.dbId, 1);
+      expect(secondUser.dbId, 2);
       expect(savedFirstUser!.name, 'Ana');
       expect(savedSecondUser!.name, 'Ben');
     });
@@ -110,12 +110,16 @@ void main() {
 
       // Act.
       await database.users.putMany([ana, ben]);
-      final storedUsers = await database.users.getAll([ben.id, ana.id, 404]);
-      await database.users.deleteAll([ana.id, ben.id]);
-      final deletedUsers = await database.users.getAll([ana.id, ben.id]);
+      final storedUsers = await database.users.getAll([
+        ben.dbId,
+        ana.dbId,
+        404,
+      ]);
+      await database.users.deleteAll([ana.dbId, ben.dbId]);
+      final deletedUsers = await database.users.getAll([ana.dbId, ben.dbId]);
 
       // Assert.
-      expect([ana.id, ben.id], [1, 2]);
+      expect([ana.dbId, ben.dbId], [1, 2]);
       expect(storedUsers.map((user) => user?.name), ['Ben', 'Ana', null]);
       expect(deletedUsers, [null, null]);
     });
@@ -130,11 +134,11 @@ void main() {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final firstUser = User()
-        ..id = 7
+        ..dbId = 7
         ..name = 'Ana'
         ..email = 'ana@example.com';
       final secondUser = User()
-        ..id = 7
+        ..dbId = 7
         ..name = 'Ben'
         ..email = 'ben@example.com';
 
@@ -172,7 +176,7 @@ void main() {
       addTearDown(collectionSubscription.cancel);
       addTearDown(objectSubscription.cancel);
       final user = User()
-        ..id = 1
+        ..dbId = 1
         ..name = 'Ben'
         ..email = 'ben@example.com'
         ..active = false;

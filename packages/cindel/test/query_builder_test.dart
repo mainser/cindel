@@ -242,9 +242,9 @@ void main() {
       );
       addTearDown(database.close);
       await database.immutableUsers.putAll([
-        const ImmutableUser(id: 1, email: 'a@example.com', active: true),
-        const ImmutableUser(id: 2, email: 'b@example.com', active: false),
-        const ImmutableUser(id: 3, email: 'c@example.com', active: true),
+        const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
+        const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
+        const ImmutableUser(dbId: 3, email: 'c@example.com', active: true),
       ]);
 
       // Act.
@@ -264,7 +264,7 @@ void main() {
       // Assert.
       expect(updated, 2);
       expect(activeCount, 0);
-      expect(inactive.map((user) => user.id), [1, 2, 3]);
+      expect(inactive.map((user) => user.dbId), [1, 2, 3]);
     });
 
     // Scenario: A generated filter starts from the whole collection.
@@ -313,8 +313,8 @@ void main() {
       // Assert.
       expect(filterUsers.map((user) => user.name), ['Ana', 'Cid']);
       expect(
-        filterUsers.map((user) => user.id),
-        whereUsers.map((user) => user.id),
+        filterUsers.map((user) => user.dbId),
+        whereUsers.map((user) => user.dbId),
       );
     });
 
@@ -382,9 +382,9 @@ void main() {
       // Act.
       final greaterThan = await database.users
           .filter()
-          .idGreaterThan(2)
+          .dbIdGreaterThan(2)
           .findAll();
-      final between = await database.users.filter().idBetween(2, 3).findAll();
+      final between = await database.users.filter().dbIdBetween(2, 3).findAll();
 
       // Assert.
       expect(greaterThan.map((user) => user.name), ['Cid', 'Dee']);
@@ -542,7 +542,7 @@ void main() {
       // Act.
       final names = await database.users
           .all()
-          .sortById()
+          .sortByDbId()
           .nameProperty()
           .findAll();
       final firstEmail = await database.users
@@ -550,7 +550,7 @@ void main() {
           .sortByNameDesc()
           .emailProperty()
           .findFirst();
-      final rows = await database.users.all().sortById().limit(2).properties([
+      final rows = await database.users.all().sortByDbId().limit(2).properties([
         'name',
         'active',
       ]).findAll();
@@ -578,18 +578,18 @@ void main() {
       addTearDown(database.close);
 
       // Act.
-      final idCount = await database.users.all().idProperty().count();
-      final minId = await database.users.all().idProperty().min();
-      final maxId = await database.users.all().idProperty().max();
+      final idCount = await database.users.all().dbIdProperty().count();
+      final minId = await database.users.all().dbIdProperty().min();
+      final maxId = await database.users.all().dbIdProperty().max();
       final activeIdSum = await database.users
           .filter()
           .activeEqualTo(true)
-          .idProperty()
+          .dbIdProperty()
           .sum();
       final activeIdAverage = await database.users
           .filter()
           .activeEqualTo(true)
-          .idProperty()
+          .dbIdProperty()
           .average();
       final firstName = await database.users.all().nameProperty().min();
       final lastName = await database.users.all().nameProperty().max();
@@ -631,7 +631,7 @@ void main() {
       // Act.
       final names = await query().nameProperty().findAll();
       final count = await query().count();
-      final idSum = await query().idProperty().sum();
+      final idSum = await query().dbIdProperty().sum();
       final deleted = await query().deleteFirst();
       final deletedUser = await database.users.get(2);
       final remainingNames = await database.users
@@ -688,21 +688,21 @@ Future<CindelDatabase> _openSeededUsers() async {
   final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
     _user(
-      id: 1,
+      dbId: 1,
       name: 'Ana',
       email: 'team@example.com',
       tags: ['flutter', 'database'],
     ),
   );
   await database.users.put(
-    _user(id: 2, name: 'Ben', email: 'solo@example.com'),
+    _user(dbId: 2, name: 'Ben', email: 'solo@example.com'),
   );
   await database.users.put(
-    _user(id: 3, name: 'Cid', email: 'team@example.com', active: false),
+    _user(dbId: 3, name: 'Cid', email: 'team@example.com', active: false),
   );
   await database.users.put(
     _user(
-      id: 4,
+      dbId: 4,
       name: 'Dee',
       email: 'team-alpha@example.com',
       tags: ['Flutter', 'todo'],
@@ -714,13 +714,13 @@ Future<CindelDatabase> _openSeededUsers() async {
 Future<CindelDatabase> _openUsersWithDuplicateNames() async {
   final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
-    _user(id: 1, name: 'Ana', email: 'z@example.com', active: false),
+    _user(dbId: 1, name: 'Ana', email: 'z@example.com', active: false),
   );
   await database.users.put(
-    _user(id: 2, name: 'Ben', email: 'b@example.com', active: true),
+    _user(dbId: 2, name: 'Ben', email: 'b@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 3, name: 'Ana', email: 'a@example.com', active: true),
+    _user(dbId: 3, name: 'Ana', email: 'a@example.com', active: true),
   );
   return database;
 }
@@ -728,35 +728,35 @@ Future<CindelDatabase> _openUsersWithDuplicateNames() async {
 Future<CindelDatabase> _openUsersForExecutionOrder() async {
   final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
   await database.users.put(
-    _user(id: 1, name: 'Bob', email: 'team-a@example.com', active: true),
+    _user(dbId: 1, name: 'Bob', email: 'team-a@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 2, name: 'Ana', email: 'team-a@example.com', active: true),
+    _user(dbId: 2, name: 'Ana', email: 'team-a@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 3, name: 'Cid', email: 'team-c@example.com', active: true),
+    _user(dbId: 3, name: 'Cid', email: 'team-c@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 4, name: 'Dee', email: 'team-d@example.com', active: true),
+    _user(dbId: 4, name: 'Dee', email: 'team-d@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 5, name: 'Eli', email: 'solo@example.com', active: true),
+    _user(dbId: 5, name: 'Eli', email: 'solo@example.com', active: true),
   );
   await database.users.put(
-    _user(id: 6, name: 'Fox', email: 'team-f@example.com', active: false),
+    _user(dbId: 6, name: 'Fox', email: 'team-f@example.com', active: false),
   );
   return database;
 }
 
 User _user({
-  required int id,
+  required int dbId,
   required String name,
   required String email,
   bool active = true,
   List<String> tags = const [],
 }) {
   return User()
-    ..id = id
+    ..dbId = dbId
     ..name = name
     ..email = email
     ..active = active

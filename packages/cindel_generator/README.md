@@ -41,12 +41,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.7
-  cindel_flutter_libs: ^0.5.7
+  cindel: ^0.5.8
+  cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.5
+  cindel_generator: ^0.5.6
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -63,7 +63,7 @@ part 'user.g.dart';
 
 @Collection(name: 'users')
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Index(unique: true)
   late String email;
@@ -231,7 +231,7 @@ Multi-entry indexes are supported for lists of primitive values, `DateTime`,
   ],
 )
 class TeamMember {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   late int teamId;
   late String email;
@@ -254,7 +254,7 @@ class Address {
 
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
   late String name;
   late Address address;
 }
@@ -272,7 +272,7 @@ enum UserRole { admin, editor, viewer }
 
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Enumerated(CindelEnumType.name)
   late UserRole role;
@@ -292,7 +292,7 @@ enum AccountStatus {
 
 @collection
 class Account {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Enumerated(CindelEnumType.value, valueField: 'code')
   late AccountStatus status;

@@ -44,9 +44,9 @@ void main() {
       // Assert.
       expect(schema.name, 'users');
       expect(schema.dartName, 'User');
-      expect(schema.idField, 'id');
+      expect(schema.idField, 'dbId');
       expect(fields.map((field) => field.name), [
-        'id',
+        'dbId',
         'name',
         'email',
         'username',
@@ -107,7 +107,7 @@ void main() {
         ..name = 'Ben'
         ..address = 'ben@example.com';
       final user = User()
-        ..id = 7
+        ..dbId = 7
         ..name = 'Jhon'
         ..email = 'demo@example.com'
         ..username = 'jhon'
@@ -128,7 +128,7 @@ void main() {
 
       // Act.
       final document = UserSchema.toDocument(user);
-      final restored = UserSchema.fromDocument({...document, 'id': 7});
+      final restored = UserSchema.fromDocument({...document, 'dbId': 7});
 
       // Assert.
       expect(document, {
@@ -163,7 +163,7 @@ void main() {
           {'name': 'Ben', 'address': 'ben@example.com', 'metadata': null},
         ],
       });
-      expect(restored.id, 7);
+      expect(restored.dbId, 7);
       expect(restored.name, 'Jhon');
       expect(restored.email, 'demo@example.com');
       expect(restored.username, 'jhon');
@@ -204,7 +204,7 @@ void main() {
         ..address = 'ada@example.com'
         ..metadata = (RecipientMetadata()..label = 'primary');
       final user = User()
-        ..id = 7
+        ..dbId = 7
         ..name = 'Jhon'
         ..email = 'demo@example.com'
         ..username = 'jhon'
@@ -247,7 +247,7 @@ void main() {
       // Assert.
       expect(storedValues[3], createdAt.microsecondsSinceEpoch);
       expect(storedValues[13], 1);
-      expect(restored.id, autoIncrement);
+      expect(restored.dbId, autoIncrement);
       expect(restored.name, 'Jhon');
       expect(restored.createdAt, createdAt);
       expect(
@@ -289,7 +289,7 @@ void main() {
     // Covers:
     // - Generated setId function.
     // - Schema metadata used by typed auto-increment writes.
-    // Expected: The generated setter mutates the id field on the typed object.
+    // Expected: The generated setter mutates the dbId field on the typed object.
     test('generates an id setter for auto-increment writes.', () {
       // Arrange.
       final user = User()
@@ -300,7 +300,36 @@ void main() {
       UserSchema.setId!(user, 42);
 
       // Assert.
-      expect(user.id, 42);
+      expect(user.dbId, 42);
+    });
+
+    // Scenario: A generated schema has both Cindel dbId and an API id field.
+    // Covers:
+    // - dbId detection as the internal Cindel document id.
+    // - Normal persistence and query helper generation for a field named id.
+    // Expected: dbId is used as the storage key and id remains a normal field.
+    test('keeps id free for API models when dbId is the Cindel id.', () {
+      // Arrange.
+      final product = ApiProduct()
+        ..dbId = 9
+        ..id = 'api-product-9'
+        ..name = 'Notebook';
+
+      // Act.
+      final document = ApiProductSchema.toDocument(product);
+      final restored = ApiProductSchema.fromDocument({...document, 'dbId': 9});
+
+      // Assert.
+      expect(ApiProductSchema.idField, 'dbId');
+      expect(ApiProductSchema.fields.map((field) => field.name), [
+        'dbId',
+        'id',
+        'name',
+      ]);
+      expect(document, {'id': 'api-product-9', 'name': 'Notebook'});
+      expect(restored.dbId, 9);
+      expect(restored.id, 'api-product-9');
+      expect(restored.name, 'Notebook');
     });
 
     // Scenario: A generated schema hydrates an immutable explicit-id model.
@@ -311,19 +340,22 @@ void main() {
     test('supports immutable explicit-id collection models.', () {
       // Arrange.
       const user = ImmutableUser(
-        id: 7,
+        dbId: 7,
         email: 'immutable@example.com',
         active: true,
       );
 
       // Act.
       final document = ImmutableUserSchema.toDocument(user);
-      final restored = ImmutableUserSchema.fromDocument({...document, 'id': 7});
+      final restored = ImmutableUserSchema.fromDocument({
+        ...document,
+        'dbId': 7,
+      });
 
       // Assert.
       expect(ImmutableUserSchema.setId, isNull);
       expect(document, {'email': 'immutable@example.com', 'active': true});
-      expect(restored.id, 7);
+      expect(restored.dbId, 7);
       expect(restored.email, 'immutable@example.com');
       expect(restored.active, isTrue);
     });
@@ -367,7 +399,7 @@ void main() {
 
       // Act.
       await db.users.put(user);
-      final restored = await db.users.get(user.id);
+      final restored = await db.users.get(user.dbId);
       final createdAtMatches = await db.users
           .where()
           .createdAtBetween(createdAt, createdAt)

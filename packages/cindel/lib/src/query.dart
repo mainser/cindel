@@ -123,9 +123,9 @@ final class CindelFilterField {
     ]);
   }
 
-  /// Matches string fields containing [value] or list fields containing [value]
-  /// as an element.
-  CindelFilterPredicate contains(String value) {
+  /// Matches string fields containing [value] or list fields containing
+  /// [value] as an element.
+  CindelFilterPredicate contains(Object? value) {
     return _FieldFilterPredicate(
       field: _field,
       expected: value,

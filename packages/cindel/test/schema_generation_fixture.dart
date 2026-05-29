@@ -9,7 +9,7 @@ part 'schema_generation_fixture.g.dart';
   ],
 )
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   late String name;
 
@@ -60,17 +60,27 @@ class User {
 @Collection(name: 'immutableUsers')
 class ImmutableUser {
   const ImmutableUser({
-    required this.id,
+    required this.dbId,
     required this.email,
     required this.active,
   });
 
-  final Id id;
+  final Id dbId;
 
   @index
   final String email;
 
   final bool active;
+}
+
+@Collection(name: 'apiProducts')
+class ApiProduct {
+  Id dbId = autoIncrement;
+
+  @index
+  String? id;
+
+  late String name;
 }
 
 @embedded

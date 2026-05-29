@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3
+
+- Updated annotation documentation and examples to use `dbId` as the Cindel
+  collection id field, leaving `id` available for API/domain identifiers.
+
 ## 0.5.2
 
 - Expanded package documentation with clearer usage guidance for annotations,

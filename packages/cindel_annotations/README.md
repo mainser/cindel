@@ -55,7 +55,7 @@ Marks a Dart class as a persisted root collection.
 ```dart
 @Collection(name: 'users')
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   late String name;
   late String email;
@@ -68,7 +68,7 @@ class name.
 ```dart
 @collection
 class Project {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
   late String title;
 }
 ```
@@ -88,7 +88,7 @@ class Address {
 
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
   late String name;
   late Address address;
 }
@@ -103,7 +103,7 @@ Excludes a field from generated persistence.
 ```dart
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   late String name;
 
@@ -127,7 +127,7 @@ lookup helpers.
 ```dart
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @index
   late String name;
@@ -144,7 +144,7 @@ Use `@Index(unique: true)` when a value must be unique in the collection.
 ```dart
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Index(unique: true)
   late String email;
@@ -200,7 +200,7 @@ Composite indexes are declared at the collection level.
   ],
 )
 class TeamMember {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   late int teamId;
   late String email;
@@ -217,7 +217,7 @@ The field order matters because it defines the composite key order.
 ```dart
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
   late String name;
 }
 ```
@@ -230,10 +230,10 @@ You can also assign ids manually:
 ```dart
 @collection
 class User {
-  Id id;
+  Id dbId;
   late String name;
 
-  User({required this.id, required this.name});
+  User({required this.dbId, required this.name});
 }
 
 final user = User(id: 42, name: 'Jhon Doe');
@@ -248,7 +248,7 @@ enum UserRole { admin, editor, viewer }
 
 @collection
 class User {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Enumerated(CindelEnumType.name)
   late UserRole role;
@@ -274,7 +274,7 @@ enum AccountStatus {
 
 @collection
 class Account {
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @Enumerated(CindelEnumType.value, valueField: 'code')
   late AccountStatus status;

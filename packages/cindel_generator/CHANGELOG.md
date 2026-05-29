@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.6
+
+- Changed generated collection id detection to require a field named `dbId`
+  instead of `id`.
+- Allows a normal model field named `id` to be persisted and queried, which
+  keeps API identifiers separate from Cindel's internal storage id.
+- Updated generated native nullable readers and writers to avoid unnecessary
+  casts for nullable primitive values.
+
 ## 0.5.5
 
 - Generated typed query plans now include the metadata needed by the SQLite
