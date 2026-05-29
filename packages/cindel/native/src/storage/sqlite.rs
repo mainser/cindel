@@ -564,68 +564,12 @@ impl SqliteStorage {
     }
 
     fn initialize_transaction(&mut self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
-        if let Some(manifest) = manifest {
-            for collection in &manifest.collections {
-                self.register_collection_schema(collection)?;
-            }
-            return Ok(());
+        if self.persist_schema_metadata {
+            ensure_base_tables(&self.connection)?;
+            ensure_binary_schema_collections_table(&self.connection)?;
+        } else {
+            ensure_runtime_metadata_tables(&self.connection)?;
         }
-
-        self.connection
-            .execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS documents (
-                    collection TEXT NOT NULL,
-                    id INTEGER NOT NULL,
-                    bytes BLOB NOT NULL,
-                    PRIMARY KEY (collection, id)
-                );
-
-                CREATE TABLE IF NOT EXISTS index_entries (
-                    collection TEXT NOT NULL,
-                    index_name TEXT NOT NULL,
-                    value_kind INTEGER NOT NULL,
-                    int_value INTEGER,
-                    real_value REAL,
-                    text_value TEXT,
-                    document_id INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS collection_revisions (
-                    collection TEXT PRIMARY KEY NOT NULL,
-                    revision INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS id_counters (
-                    collection TEXT PRIMARY KEY NOT NULL,
-                    next_id INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS schema_collections (
-                    collection TEXT PRIMARY KEY NOT NULL,
-                    version INTEGER NOT NULL,
-                    schema_bytes BLOB NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS storage_metadata (
-                    key TEXT PRIMARY KEY NOT NULL,
-                    value TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
-                ON index_entries (
-                    collection,
-                    index_name,
-                    value_kind,
-                    int_value,
-                    real_value,
-                    text_value,
-                    document_id
-                );
-                "#,
-            )
-            .map_err(|error| error.to_string())?;
-        ensure_binary_schema_collections_table(&self.connection)?;
         ensure_storage_metadata(
             &self.connection,
             StorageLayoutVersion::SqliteV1,
@@ -638,7 +582,17 @@ impl SqliteStorage {
             DocumentFormatVersion::BinaryV2,
             SchemaMetadataVersion::BinaryV1,
         )?;
-        validate_schema_metadata_records(&self.connection)?;
+        if self.persist_schema_metadata {
+            validate_schema_metadata_records(&self.connection)?;
+        }
+
+        if let Some(manifest) = manifest {
+            for collection in &manifest.collections {
+                self.register_collection_schema(collection)?;
+            }
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -691,7 +645,7 @@ impl SqliteStorage {
         self.connection
             .query_row(&sql, [], |row| row.get::<_, Option<i64>>(0))
             .map_err(|error| error.to_string())
-            .map(|max_id| max_id.map(|id| id + 1).unwrap_or(0))
+            .map(|max_id| max_id.map(|id| id + 1).unwrap_or(1))
     }
 
     fn bump_collection_revision_in_memory(&mut self, collection: &str) -> u64 {
@@ -746,6 +700,11 @@ impl StorageEngine for SqliteStorage {
         self.connection
             .execute_batch("ROLLBACK")
             .map_err(|error| error.to_string())?;
+        let collections = self.schemas.keys().cloned().collect::<Vec<_>>();
+        for collection in collections {
+            let next_id = self.next_collection_row_id(&collection)?;
+            self.id_counters.insert(collection, next_id);
+        }
         self.active_transaction = None;
         self.active_change_sets.clear();
         Ok(())
@@ -760,6 +719,7 @@ impl StorageEngine for SqliteStorage {
             return u64::try_from(id).map_err(|error| error.to_string());
         }
         if self.active_transaction.is_some() {
+            ensure_generic_document_tables(&self.connection)?;
             let id = allocate_id(&self.connection, collection)?;
             return u64::try_from(id).map_err(|error| error.to_string());
         }
@@ -769,6 +729,7 @@ impl StorageEngine for SqliteStorage {
             .transaction()
             .map_err(|error| error.to_string())?;
 
+        ensure_generic_document_tables(&transaction)?;
         let id = allocate_id(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())?;
@@ -777,6 +738,9 @@ impl StorageEngine for SqliteStorage {
 
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
         let id = sqlite_id(id)?;
+        if !table_exists(&self.connection, "documents")? {
+            return Ok(None);
+        }
 
         self.connection
             .query_row(
@@ -789,6 +753,9 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        if !table_exists(&self.connection, "documents")? {
+            return Ok(vec![None; ids.len()]);
+        }
         let mut statement = self
             .connection
             .prepare("SELECT bytes FROM documents WHERE collection = ?1 AND id = ?2")
@@ -818,10 +785,22 @@ impl StorageEngine for SqliteStorage {
 
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String> {
         if self.collection_schema(collection).is_some() {
+            if table_exists(&self.connection, "documents")? {
+                let sql = format!(
+                    "SELECT {SQLITE_ROW_ID_COLUMN} AS id FROM {collection}
+                     UNION
+                     SELECT id FROM documents WHERE collection = ?1
+                     ORDER BY id"
+                );
+                return query_ids(&self.connection, &sql, params![collection]);
+            }
             let sql = format!(
                 "SELECT {SQLITE_ROW_ID_COLUMN} FROM {collection} ORDER BY {SQLITE_ROW_ID_COLUMN}"
             );
             return query_ids(&self.connection, &sql, []);
+        }
+        if !table_exists(&self.connection, "documents")? {
+            return Ok(Vec::new());
         }
         query_ids(
             &self.connection,
@@ -1015,7 +994,11 @@ impl StorageEngine for SqliteStorage {
                 has_collection_table,
             )?;
             if deleted {
-                let revision = bump_collection_revision(&self.connection, collection)?;
+                let revision = if has_collection_table {
+                    self.bump_collection_revision_in_memory(collection)
+                } else {
+                    bump_collection_revision(&self.connection, collection)?
+                };
                 self.record_change(collection, revision, [id as u64]);
             }
             return Ok(());
@@ -1030,11 +1013,14 @@ impl StorageEngine for SqliteStorage {
         let deleted =
             delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
         let mut revision = None;
-        if deleted {
+        if deleted && !has_collection_table {
             revision = Some(bump_collection_revision(&transaction, collection)?);
         }
 
         transaction.commit().map_err(|error| error.to_string())?;
+        if deleted && has_collection_table {
+            revision = Some(self.bump_collection_revision_in_memory(collection));
+        }
         if let Some(revision) = revision {
             self.record_change(collection, revision, [id as u64]);
         }
@@ -1065,7 +1051,11 @@ impl StorageEngine for SqliteStorage {
                 }
             }
             if !deleted_ids.is_empty() {
-                let revision = bump_collection_revision(&self.connection, collection)?;
+                let revision = if has_collection_table {
+                    self.bump_collection_revision_in_memory(collection)
+                } else {
+                    bump_collection_revision(&self.connection, collection)?
+                };
                 self.record_change(collection, revision, deleted_ids);
             }
             return Ok(());
@@ -1088,11 +1078,18 @@ impl StorageEngine for SqliteStorage {
         }
         let revision = if deleted_ids.is_empty() {
             None
+        } else if has_collection_table {
+            None
         } else {
             Some(bump_collection_revision(&transaction, collection)?)
         };
 
         transaction.commit().map_err(|error| error.to_string())?;
+        let revision = if !deleted_ids.is_empty() && has_collection_table {
+            Some(self.bump_collection_revision_in_memory(collection))
+        } else {
+            revision
+        };
         if let Some(revision) = revision {
             self.record_change(collection, revision, deleted_ids);
         }
@@ -1167,7 +1164,27 @@ impl StorageEngine for SqliteStorage {
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
         if self.collection_schema(collection).is_some() {
-            return Ok(*self.collection_revisions.get(collection).unwrap_or(&0));
+            let native_revision = *self.collection_revisions.get(collection).unwrap_or(&0);
+            if !table_exists(&self.connection, "collection_revisions")? {
+                return Ok(native_revision);
+            }
+            let generic_revision = self
+                .connection
+                .query_row(
+                    "SELECT revision FROM collection_revisions WHERE collection = ?1",
+                    params![collection],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .map(u64::try_from)
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+            return Ok(native_revision.max(generic_revision));
+        }
+        if !table_exists(&self.connection, "collection_revisions")? {
+            return Ok(0);
         }
         self.connection
             .query_row(
@@ -1923,6 +1940,7 @@ fn put_document_with_indexes(
     bytes: &[u8],
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
+    ensure_generic_document_tables(connection)?;
     let id = sqlite_id(id)?;
     enforce_unique_indexes(connection, collection, id, indexes)?;
     put_document(connection, collection, id, bytes)?;
@@ -2065,9 +2083,10 @@ fn bind_native_sql_value(
             if value.first() == Some(&b'[') {
                 let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
                 statement.raw_bind_parameter(parameter_index, text)
-            } else {
-                let text = native_string_list_json(value)?;
+            } else if let Ok(text) = native_string_list_json(value) {
                 statement.raw_bind_parameter(parameter_index, text.as_str())
+            } else {
+                statement.raw_bind_parameter(parameter_index, value.as_slice())
             }
         }
         ("object", NativeDocumentValue::Bytes(value)) => {
@@ -2294,13 +2313,17 @@ fn delete_document_with_layout(
             .execute(&sql, params![id])
             .map_err(|error| error.to_string())?;
     }
-    deleted += connection
-        .execute(
-            "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
-            params![collection, id],
-        )
-        .map_err(|error| error.to_string())?;
-    delete_index_entries(connection, collection, id)?;
+    if table_exists(connection, "documents")? {
+        deleted += connection
+            .execute(
+                "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
+                params![collection, id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if table_exists(connection, "index_entries")? {
+        delete_index_entries(connection, collection, id)?;
+    }
     Ok(deleted > 0)
 }
 
@@ -2413,6 +2436,9 @@ fn unique_index_names(
     connection: &Connection,
     collection: &str,
 ) -> Result<std::collections::HashSet<String>, String> {
+    if !table_exists(connection, "schema_collections")? {
+        return Ok(std::collections::HashSet::new());
+    }
     let schema_bytes = connection
         .query_row(
             "SELECT schema_bytes FROM schema_collections WHERE collection = ?1",
@@ -2703,6 +2729,134 @@ fn merge_change_set(
         revision,
         document_ids: ids,
     });
+}
+
+fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS documents (
+                collection TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                bytes BLOB NOT NULL,
+                PRIMARY KEY (collection, id)
+            );
+
+            CREATE TABLE IF NOT EXISTS index_entries (
+                collection TEXT NOT NULL,
+                index_name TEXT NOT NULL,
+                value_kind INTEGER NOT NULL,
+                int_value INTEGER,
+                real_value REAL,
+                text_value TEXT,
+                document_id INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS collection_revisions (
+                collection TEXT PRIMARY KEY NOT NULL,
+                revision INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS id_counters (
+                collection TEXT PRIMARY KEY NOT NULL,
+                next_id INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS schema_collections (
+                collection TEXT PRIMARY KEY NOT NULL,
+                version INTEGER NOT NULL,
+                schema_bytes BLOB NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS storage_metadata (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
+            ON index_entries (
+                collection,
+                index_name,
+                value_kind,
+                int_value,
+                real_value,
+                text_value,
+                document_id
+            );
+            "#,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn ensure_runtime_metadata_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS storage_metadata (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+            "#,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn ensure_generic_document_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS documents (
+                collection TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                bytes BLOB NOT NULL,
+                PRIMARY KEY (collection, id)
+            );
+
+            CREATE TABLE IF NOT EXISTS index_entries (
+                collection TEXT NOT NULL,
+                index_name TEXT NOT NULL,
+                value_kind INTEGER NOT NULL,
+                int_value INTEGER,
+                real_value REAL,
+                text_value TEXT,
+                document_id INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS collection_revisions (
+                collection TEXT PRIMARY KEY NOT NULL,
+                revision INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS id_counters (
+                collection TEXT PRIMARY KEY NOT NULL,
+                next_id INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS cindel_index_entries_lookup
+            ON index_entries (
+                collection,
+                index_name,
+                value_kind,
+                int_value,
+                real_value,
+                text_value,
+                document_id
+            );
+            "#,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|error| error.to_string())
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
@@ -3053,6 +3207,9 @@ fn query_index(
     lower: Option<&IndexValue>,
     upper: Option<&IndexValue>,
 ) -> Result<Vec<u64>, String> {
+    if !table_exists(connection, "index_entries")? {
+        return Ok(Vec::new());
+    }
     let lower = lower.map(SqliteIndexKey::from).transpose()?;
     let upper = upper.map(SqliteIndexKey::from).transpose()?;
     let kind = match (&lower, &upper) {

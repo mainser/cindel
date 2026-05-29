@@ -123,20 +123,10 @@ final class CindelTypedCollection<T> {
     final nativeFieldTypes = _nativeFieldTypes();
     final useNativeWriter = nativeWriter != null && nativeFieldTypes != null;
     final getId = schema.getId!;
-    if (useNativeWriter &&
-        !objects.any((object) => getId(object) == autoIncrement)) {
-      return database.putAllNativeBinaryObjects(
-        schema.name,
-        objects,
-        nativeFieldTypes,
-        getId,
-        nativeWriter,
-      );
-    }
 
     final binaryValues = useNativeWriter ? null : <int, Uint8List>{};
     final seenIds = <int>{};
-    final ids = useNativeWriter ? null : <int>[];
+    final ids = <int>[];
     CindelSetId<T>? setId;
 
     for (final object in objects) {
@@ -153,8 +143,8 @@ final class CindelTypedCollection<T> {
           'Bulk writes cannot contain duplicate ids.',
         );
       }
+      ids.add(id);
       if (!useNativeWriter) {
-        ids!.add(id);
         binaryValues![id] = schema.toBinaryDocument!(object);
       }
     }
@@ -162,10 +152,14 @@ final class CindelTypedCollection<T> {
     if (useNativeWriter) {
       return database.putAllNativeBinaryDocuments(
         schema.name,
-        seenIds.toList(growable: false),
+        ids,
         objects,
         nativeFieldTypes,
         nativeWriter,
+        documents: () => {
+          for (var i = 0; i < objects.length; i += 1)
+            ids[i]: schema.toDocument(objects[i]),
+        },
       );
     }
     return database.putAllBinaryDocuments(schema.name, binaryValues!);

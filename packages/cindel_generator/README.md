@@ -31,6 +31,8 @@ typed database access:
 - Sorting, distinct, property projection, and aggregate helpers.
 - Composite index equality helpers.
 - Embedded object conversion helpers.
+- Embedded object and embedded object list native reader/writer hooks when the
+  model layout supports native typed documents.
 
 The package is a build-time tool. It does not open databases and it does not
 ship native binaries.
@@ -42,12 +44,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.9
+  cindel: ^0.5.10
   cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.7
+  cindel_generator: ^0.5.8
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -308,7 +310,9 @@ Composite indexes generate equality helpers for the configured field set.
 
 ## Embedded Objects
 
-Embedded classes are converted as part of their parent document.
+Embedded classes are converted as part of their parent document. They are value
+objects, not root collections, and can be declared with `@Embedded()` or the
+lowercase `@embedded` constant.
 
 ```dart
 @embedded
@@ -317,16 +321,50 @@ class Address {
   late String country;
 }
 
+@embedded
+class Contact {
+  String? name;
+  String? email;
+  Address? address;
+}
+
 @collection
 class User {
   Id dbId = autoIncrement;
   late String name;
-  late Address address;
+  Contact? primaryContact;
+  List<Contact>? contacts;
 }
 ```
 
-Embedded indexes are not supported by the generator. Index the parent
-collection field instead when you need indexed lookups.
+For single embedded object fields, generated filters include nested object
+helpers. Helpers can continue into nested embedded objects:
+
+```dart
+final users = await db.users
+    .filter()
+    .primaryContact((contact) {
+      return contact.address((address) {
+        return address.cityEqualTo('Santo Domingo');
+      });
+    })
+    .findAll();
+```
+
+The generator also emits:
+
+- embedded conversion helpers used by document and binary serializers,
+- whole-object equality filters such as `primaryContactEqualTo(value)`,
+- embedded-list equality filters such as `contactsEqualTo(values)`,
+- embedded-list element equality filters such as `contactsElementEqualTo(value)`,
+- native writer calls for embedded objects and embedded object lists,
+- native reader calls for embedded objects and embedded object lists.
+
+The generator does not emit nested field query helpers for fields inside
+embedded object lists.
+
+Embedded indexes are not supported by the generator. `@Index` inside an
+embedded class is rejected. Put indexes on root collection fields instead.
 
 ## Enums
 

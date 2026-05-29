@@ -215,8 +215,13 @@ String _emitCollection(_CollectionInfo collection) {
     _emitFilterMethods(buffer, collection, field);
   }
 
+  buffer..writeln('}');
+
+  for (final embedded in collection.embeddedTypes) {
+    _emitEmbeddedFilterClass(buffer, collection, embedded);
+  }
+
   buffer
-    ..writeln('}')
     ..writeln()
     ..writeln('Map<String, Object?> _\$${collection.dartName}ToCindelDocument(')
     ..writeln('  ${collection.dartName} object,')
@@ -677,6 +682,22 @@ void _emitFilterMethods(
       ..writeln('  }');
   }
 
+  if (field.type.kind == _PersistedTypeKind.embedded) {
+    final embeddedFilter = _embeddedFilterClassName(collection, field.type);
+    buffer
+      ..writeln()
+      ..writeln(
+        '  $queryType $methodPrefix('
+        'CindelFilterPredicate Function($embeddedFilter q) filter) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      filter(const $embeddedFilter._(<String>[$fieldLiteral])),',
+      )
+      ..writeln('    );')
+      ..writeln('  }');
+  }
+
   if (field.supportsComparableFilters) {
     final valueType = field.nonNullableDartType;
     final lower = field.toStoredValueExpression('lower', nullableInput: true);
@@ -757,6 +778,179 @@ void _emitFilterMethods(
       ..writeln('    );')
       ..writeln('  }');
   }
+}
+
+void _emitEmbeddedFilterClass(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _EmbeddedInfo embedded,
+) {
+  final className = _embeddedFilterClassName(
+    collection,
+    _PersistedType._(
+      dartType: embedded.dartName,
+      isNullable: false,
+      kind: _PersistedTypeKind.embedded,
+      embeddedInfo: embedded,
+    ),
+  );
+  buffer
+    ..writeln()
+    ..writeln('final class $className {')
+    ..writeln('  const $className._(this._path);')
+    ..writeln()
+    ..writeln('  final List<String> _path;');
+
+  for (final field in embedded.fields) {
+    _emitEmbeddedFilterMethods(buffer, collection, field);
+  }
+
+  buffer.writeln('}');
+}
+
+void _emitEmbeddedFilterMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _EmbeddedFieldInfo field,
+) {
+  final fieldLiteral = _stringLiteral(field.name);
+  final methodPrefix = field.name;
+
+  buffer
+    ..writeln()
+    ..writeln(
+      '  CindelFilterPredicate ${methodPrefix}EqualTo('
+      '${field.dartType} value) {',
+    )
+    ..writeln('    return CindelFilter.path(')
+    ..writeln('      <String>[..._path, $fieldLiteral],')
+    ..writeln('    ).equalTo(')
+    ..writeln(
+      '      ${field.toStoredValueExpression('value', nullableInput: field.isNullable)},',
+    )
+    ..writeln('    );')
+    ..writeln('  }');
+
+  if (field.type.isList) {
+    final elementType = field.type.listElementDartType;
+    final elementValue = field.type.listElementToStoredExpression('value');
+    buffer
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}ElementEqualTo('
+        '$elementType value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).contains($elementValue);')
+      ..writeln('  }');
+  }
+
+  if (field.type.kind == _PersistedTypeKind.embedded) {
+    final embeddedFilter = _embeddedFilterClassName(collection, field.type);
+    buffer
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate $methodPrefix('
+        'CindelFilterPredicate Function($embeddedFilter q) filter) {',
+      )
+      ..writeln(
+        '    return filter($embeddedFilter._(<String>[..._path, $fieldLiteral]));',
+      )
+      ..writeln('  }');
+  }
+
+  if (field.supportsComparableFilters) {
+    final valueType = field.nonNullableDartType;
+    final lower = field.toStoredValueExpression('lower', nullableInput: true);
+    final upper = field.toStoredValueExpression('upper', nullableInput: true);
+    buffer
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}GreaterThan('
+        '$valueType value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).greaterThan(${field.toStoredValueExpression('value')});')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}GreaterThanOrEqualTo('
+        '$valueType value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln(
+        '    ).greaterThanOrEqualTo(${field.toStoredValueExpression('value')});',
+      )
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LessThan('
+        '$valueType value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).lessThan(${field.toStoredValueExpression('value')});')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LessThanOrEqualTo('
+        '$valueType value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln(
+        '    ).lessThanOrEqualTo(${field.toStoredValueExpression('value')});',
+      )
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}Between('
+        '$valueType? lower, $valueType? upper) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).between($lower, $upper);')
+      ..writeln('  }');
+  }
+
+  if (field.nonNullableDartType == 'String') {
+    buffer
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}Contains(String value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).contains(value);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}StartsWith(String value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).startsWith(value);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}EndsWith(String value) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).endsWith(value);')
+      ..writeln('  }');
+  }
+}
+
+String _embeddedFilterClassName(
+  _CollectionInfo collection,
+  _PersistedType type,
+) {
+  return '${collection.dartName}${type.embeddedInfo!.dartName}'
+      'CindelEmbeddedFilter';
 }
 
 final class _ConstructorInfo {
@@ -1018,12 +1212,10 @@ final class _FieldInfo {
   bool get supportsNativeReader {
     if (binaryType == 'list') {
       final element = type.elementType;
-      return element != null &&
-          element.kind == _PersistedTypeKind.primitive &&
-          element.supportsNativeWriterValue;
+      return element != null && element.supportsNativeWriterValue;
     }
     return switch (binaryType) {
-      'bool' || 'int' || 'double' || 'string' => true,
+      'bool' || 'int' || 'double' || 'string' || 'object' => true,
       _ => false,
     };
   }
@@ -1037,11 +1229,12 @@ final class _FieldInfo {
       'int' => 'writeInt',
       'double' => 'writeDouble',
       'string' => 'writeString',
+      'object' => 'writeObject',
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
     final expression = type.toStoredExpression(
       'object.$name',
-      nullableCast: false,
+      nullableCast: binaryType == 'object',
     );
     if (!isNullable) {
       return '  writer.$method($index, $expression);\n';
@@ -1060,6 +1253,36 @@ final class _FieldInfo {
 
   String _nativeListWriteStatement(int index) {
     final element = type.elementType!;
+    if (element.binaryType == 'object') {
+      final expression = type.toStoredExpression(
+        'object.$name',
+        nullableCast: false,
+      );
+      if (!isNullable) {
+        return '''
+  {
+    final list = $expression;
+    writer.writeObjectList(
+      $index,
+      list.cast<Map<String, Object?>?>(),
+    );
+  }
+''';
+      }
+      return '''
+  {
+    final list = $expression;
+    if (list == null) {
+      writer.writeNull($index);
+    } else {
+      writer.writeObjectList(
+        $index,
+        list.cast<Map<String, Object?>?>(),
+      );
+    }
+  }
+''';
+    }
     final method = switch (element.binaryType) {
       'bool' => 'writeBool',
       'int' => 'writeInt',
@@ -1116,9 +1339,18 @@ $writeValue      }
       'int' => 'readInt',
       'double' => 'readDouble',
       'string' => 'readString',
+      'object' => 'readObject',
       final type => throw StateError('Unsupported native reader type `$type`.'),
     };
     final expression = 'reader.$method(documentIndex, $index)';
+    if (binaryType == 'object' && isNullable) {
+      return '''
+(() {
+  final value = $expression;
+  return value == null ? null : ${type._fromStoredExpressionNonNull('value')};
+})()
+''';
+    }
     if (type.kind == _PersistedTypeKind.primitive && isNullable) {
       return expression;
     }
@@ -1127,6 +1359,25 @@ $writeValue      }
 
   String _nativeListReadExpression(int index) {
     final element = type.elementType!;
+    if (element.binaryType == 'object') {
+      final expression = 'reader.readObjectList(documentIndex, $index)';
+      final readValue = element.fromStoredExpression('value');
+      if (isNullable) {
+        return '''
+(() {
+  final value = $expression;
+  return value == null
+      ? null
+      : value.map((value) => $readValue).toList(growable: false);
+})()
+''';
+      }
+      return '''
+($expression ?? const <Map<String, Object?>?>[])
+    .map((value) => $readValue)
+    .toList(growable: false)
+''';
+    }
     if (element.binaryType == 'string' && !element.isNullable) {
       if (isNullable) {
         return '''
@@ -1159,7 +1410,9 @@ reader.readStringList(documentIndex, $index) ?? const <String>[]
     final storedValue = element.isNullable
         ? 'listReader.$method(0, i)'
         : 'listReader.$method(0, i) ?? $storedDefault';
-    final readValue = element.fromStoredExpression(storedValue);
+    final readValue = element.kind == _PersistedTypeKind.primitive
+        ? storedValue
+        : element.fromStoredExpression('($storedValue)');
     if (isNullable) {
       return '''
 (() {
@@ -1460,8 +1713,31 @@ final class _EmbeddedFieldInfo {
   final String name;
   final _PersistedType type;
 
+  String get dartType => type.dartType;
+
+  String get nonNullableDartType {
+    return dartType.endsWith('?')
+        ? dartType.substring(0, dartType.length - 1)
+        : dartType;
+  }
+
+  bool get isNullable => dartType.endsWith('?');
+
+  bool get supportsComparableFilters => type.supportsComparableFilters;
+
   String get toDocumentExpression {
     return type.toStoredExpression('object.$name');
+  }
+
+  String toStoredValueExpression(
+    String variable, {
+    bool nullableInput = false,
+  }) {
+    return type.toStoredExpression(
+      variable,
+      nullableInput: nullableInput,
+      nullableCast: false,
+    );
   }
 
   String fromDocumentExpression(String fieldLiteral) {
@@ -1657,7 +1933,7 @@ final class _PersistedType {
 
   bool get supportsNativeWriterValue {
     return switch (binaryType) {
-      'bool' || 'int' || 'double' || 'string' => true,
+      'bool' || 'int' || 'double' || 'string' || 'object' => true,
       _ => false,
     };
   }

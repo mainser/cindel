@@ -84,6 +84,8 @@ void main() {
       expect(schema.compositeIndexes, hasLength(1));
       expect(schema.compositeIndexes.single.name, 'email_active');
       expect(schema.compositeIndexes.single.fields, ['email', 'active']);
+      expect(schema.writeNativeDocument, isNotNull);
+      expect(schema.readNativeDocument, isNotNull);
       expect(createdAt.dartType, 'DateTime');
       expect(plan.dartType, 'UserPlan');
       expect(primaryRecipient.dartType, 'Recipient?');
@@ -466,12 +468,14 @@ void main() {
       await db.users.put(user);
       final restored = await db.users.get(user.dbId);
       final createdAtMatches = await db.users
-          .where()
+          .all()
+          .filter()
           .createdAtBetween(createdAt, createdAt)
           .findAll();
-      final statusMatches = await db.users
-          .where()
-          .statusEqualTo(UserStatus.blocked)
+      final planMatches = await db.users
+          .all()
+          .filter()
+          .planEqualTo(UserPlan.enterprise)
           .findAll();
       final createdAtValues = await db.users
           .all()
@@ -487,6 +491,20 @@ void main() {
           .all()
           .recipientsProperty()
           .findAll();
+      final primaryRecipientMatches = await db.users
+          .all()
+          .filter()
+          .primaryRecipient((recipient) {
+            return recipient.addressEqualTo('grace@example.com');
+          })
+          .findAll();
+      final metadataMatches = await db.users.all().filter().primaryRecipient((
+        recipient,
+      ) {
+        return recipient.metadata((metadata) {
+          return metadata.labelEqualTo('lead');
+        });
+      }).findAll();
 
       // Assert.
       expect(restored, isNotNull);
@@ -504,7 +522,7 @@ void main() {
         'mary@example.com',
       ]);
       expect(createdAtMatches.map((user) => user.email), ['ada@example.com']);
-      expect(statusMatches.map((user) => user.email), ['ada@example.com']);
+      expect(planMatches.map((user) => user.email), ['ada@example.com']);
       expect(createdAtValues, [createdAt]);
       expect(statusValues, [UserStatus.blocked]);
       expect(planValues, [UserPlan.enterprise]);
@@ -513,6 +531,10 @@ void main() {
         'Grace',
         'Mary',
       ]);
+      expect(primaryRecipientMatches.map((user) => user.email), [
+        'ada@example.com',
+      ]);
+      expect(metadataMatches.map((user) => user.email), ['ada@example.com']);
     });
   });
 }

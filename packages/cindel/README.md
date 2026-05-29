@@ -8,6 +8,7 @@ and Dart apps, powered by a generated Dart API and a compact Rust native core.
 [CRUD](#crud) |
 [Queries](#queries) |
 [Watchers](#watchers) |
+[Embedded Objects](#embedded-objects) |
 [Native Binaries](#native-binaries)
 
 > Cindel is a Flutter-first local database with typed collections, generated
@@ -46,12 +47,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.9
+  cindel: ^0.5.10
   cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.7
+  cindel_generator: ^0.5.8
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -296,7 +297,9 @@ final sub = db.users.watchCollectionLazy().listen((_) {
 
 ## Embedded Objects
 
-Use `@Embedded` for value objects stored inside a parent collection document:
+Use `@Embedded` or `@embedded` for value objects stored inside a parent
+collection document. Embedded objects are not root collections; they are
+serialized as part of the parent object.
 
 ```dart
 @Collection(name: 'emails')
@@ -306,14 +309,54 @@ class Email {
   String? subject;
 
   Recipient? sender;
+
+  List<Recipient>? recipients;
 }
 
 @Embedded()
 class Recipient {
   String? name;
   String? address;
+  RecipientMetadata? metadata;
+}
+
+@embedded
+class RecipientMetadata {
+  String? label;
 }
 ```
+
+Generated filters can query fields inside a single embedded object, including
+nested embedded objects:
+
+```dart
+final messages = await db.emails
+    .filter()
+    .sender((recipient) => recipient.addressEqualTo('ada@example.com'))
+    .findAll();
+
+final leadMessages = await db.emails
+    .filter()
+    .sender((recipient) {
+      return recipient.metadata((metadata) {
+        return metadata.labelEqualTo('lead');
+      });
+    })
+    .findAll();
+```
+
+Embedded object fields and embedded object lists can be stored through the
+native typed document path. The generated writer uses native object/list hooks,
+and the generated reader hydrates embedded objects without requiring a manual
+JSON round-trip.
+
+Generated helpers support equality for the whole embedded value and element
+equality for embedded lists. Nested field filter helpers are generated for
+single embedded object fields. Nested query helpers for fields inside embedded
+object lists are not generated.
+
+Embedded indexes are not supported. Put `@Index` on root collection fields, not
+inside `@Embedded` classes.
 
 ## Supported Platforms
 

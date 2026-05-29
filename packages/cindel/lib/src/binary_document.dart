@@ -141,6 +141,26 @@ Uint8List cindelEncodeSchemaBinaryDocument(
       .takeBytes();
 }
 
+/// Encodes a Cindel binary object payload.
+Uint8List cindelEncodeBinaryObject(Map<String, Object?> value) {
+  return _encodeObject(value);
+}
+
+/// Decodes a Cindel binary object payload.
+Map<String, Object?> cindelDecodeBinaryObject(Uint8List bytes) {
+  return _decodeObject(bytes);
+}
+
+/// Encodes a Cindel binary list payload.
+Uint8List cindelEncodeBinaryList(List<Object?> value) {
+  return _encodeList(value);
+}
+
+/// Decodes a Cindel binary list payload.
+List<Object?> cindelDecodeBinaryList(Uint8List bytes) {
+  return _decodeList(bytes);
+}
+
 /// Decodes schema-specific compact generated document bytes.
 List<Object?> cindelDecodeSchemaBinaryDocument(
   Uint8List bytes,

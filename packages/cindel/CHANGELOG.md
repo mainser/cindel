@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.10
+
+- Added native typed reader and writer support for embedded object fields and
+  embedded object lists.
+- Added generated nested filters for fields inside a single embedded object.
+- Kept embedded object-list nested query helpers unsupported, matching the
+  current Isar-aligned scope.
+- Fixed SQLite native typed reads and projections for generated schemas that
+  store embedded/list payloads in collection tables.
+- Updated the development generator dependency constraint to `^0.5.8`.
+
 ## 0.5.9
 
 - Updated the development generator dependency constraint to `^0.5.7`.

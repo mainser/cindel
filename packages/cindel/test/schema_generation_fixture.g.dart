@@ -196,6 +196,8 @@ final UserSchema = CindelCollectionSchema<User>(
   fromDocument: _$UserFromCindelDocument,
   toBinaryDocument: _$UserToCindelBinaryDocument,
   fromBinaryDocument: _$UserFromCindelBinaryDocument,
+  writeNativeDocument: _$UserWriteCindelNativeDocument,
+  readNativeDocument: _$UserReadCindelNativeDocument,
   getId: _$UserGetCindelId,
   setId: _$UserSetCindelId,
 );
@@ -1173,6 +1175,16 @@ final class UserQueryFilter {
     );
   }
 
+  CindelQuery<User> primaryRecipient(
+    CindelFilterPredicate Function(UserRecipientCindelEmbeddedFilter q) filter,
+  ) {
+    return _query.whereMatches(
+      filter(
+        const UserRecipientCindelEmbeddedFilter._(<String>["primaryRecipient"]),
+      ),
+    );
+  }
+
   CindelQuery<User> recipientsEqualTo(List<Recipient>? value) {
     return _query.whereMatches(
       CindelFilter.field("recipients").equalTo(
@@ -1189,6 +1201,84 @@ final class UserQueryFilter {
         "recipients",
       ).contains(_$RecipientToCindelEmbedded(value)),
     );
+  }
+}
+
+final class UserRecipientCindelEmbeddedFilter {
+  const UserRecipientCindelEmbeddedFilter._(this._path);
+
+  final List<String> _path;
+
+  CindelFilterPredicate nameEqualTo(String? value) {
+    return CindelFilter.path(<String>[..._path, "name"]).equalTo(value);
+  }
+
+  CindelFilterPredicate nameContains(String value) {
+    return CindelFilter.path(<String>[..._path, "name"]).contains(value);
+  }
+
+  CindelFilterPredicate nameStartsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "name"]).startsWith(value);
+  }
+
+  CindelFilterPredicate nameEndsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "name"]).endsWith(value);
+  }
+
+  CindelFilterPredicate addressEqualTo(String? value) {
+    return CindelFilter.path(<String>[..._path, "address"]).equalTo(value);
+  }
+
+  CindelFilterPredicate addressContains(String value) {
+    return CindelFilter.path(<String>[..._path, "address"]).contains(value);
+  }
+
+  CindelFilterPredicate addressStartsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "address"]).startsWith(value);
+  }
+
+  CindelFilterPredicate addressEndsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "address"]).endsWith(value);
+  }
+
+  CindelFilterPredicate metadataEqualTo(RecipientMetadata? value) {
+    return CindelFilter.path(<String>[..._path, "metadata"]).equalTo(
+      value == null ? null : _$RecipientMetadataToCindelEmbedded(value),
+    );
+  }
+
+  CindelFilterPredicate metadata(
+    CindelFilterPredicate Function(UserRecipientMetadataCindelEmbeddedFilter q)
+    filter,
+  ) {
+    return filter(
+      UserRecipientMetadataCindelEmbeddedFilter._(<String>[
+        ..._path,
+        "metadata",
+      ]),
+    );
+  }
+}
+
+final class UserRecipientMetadataCindelEmbeddedFilter {
+  const UserRecipientMetadataCindelEmbeddedFilter._(this._path);
+
+  final List<String> _path;
+
+  CindelFilterPredicate labelEqualTo(String? value) {
+    return CindelFilter.path(<String>[..._path, "label"]).equalTo(value);
+  }
+
+  CindelFilterPredicate labelContains(String value) {
+    return CindelFilter.path(<String>[..._path, "label"]).contains(value);
+  }
+
+  CindelFilterPredicate labelStartsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "label"]).startsWith(value);
+  }
+
+  CindelFilterPredicate labelEndsWith(String value) {
+    return CindelFilter.path(<String>[..._path, "label"]).endsWith(value);
   }
 }
 
@@ -1376,6 +1466,171 @@ User _$UserFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
               ),
             )
             .toList(growable: false);
+  return object;
+}
+
+void _$UserWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  User object,
+) {
+  {
+    final value = object.accessToken;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeString(0, value);
+    }
+  }
+  {
+    final value = object.active;
+    if (value == null) {
+      writer.writeNull(1);
+    } else {
+      writer.writeBool(1, value);
+    }
+  }
+  {
+    final value = object.bio;
+    if (value == null) {
+      writer.writeNull(2);
+    } else {
+      writer.writeString(2, value);
+    }
+  }
+  writer.writeInt(3, object.createdAt.microsecondsSinceEpoch);
+  {
+    final value = object.displayName;
+    if (value == null) {
+      writer.writeNull(4);
+    } else {
+      writer.writeString(4, value);
+    }
+  }
+  writer.writeString(5, object.email);
+  writer.writeString(6, object.name);
+  writer.writeString(7, object.plan.code);
+  {
+    final value = object.primaryRecipient == null
+        ? null
+        : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient);
+    if (value == null) {
+      writer.writeNull(8);
+    } else {
+      writer.writeObject(8, value);
+    }
+  }
+  {
+    final list = object.recipients
+        ?.map((value) => _$RecipientToCindelEmbedded(value))
+        .toList(growable: false);
+    if (list == null) {
+      writer.writeNull(9);
+    } else {
+      writer.writeObjectList(9, list.cast<Map<String, Object?>?>());
+    }
+  }
+  writer.writeString(10, object.role.name);
+  {
+    final list = object.scores;
+    if (list == null) {
+      writer.writeNull(11);
+    } else {
+      final listWriter = writer.beginList(11, list.length);
+      for (var i = 0; i < list.length; i += 1) {
+        listWriter.writeInt(i, list[i]);
+      }
+      writer.endList(listWriter);
+    }
+  }
+  {
+    final value = object.sessionLength?.inMicroseconds;
+    if (value == null) {
+      writer.writeNull(12);
+    } else {
+      writer.writeInt(12, value);
+    }
+  }
+  writer.writeInt(13, object.status.index);
+  {
+    final list = object.tags;
+    final listWriter = writer.beginList(14, list.length);
+    for (var i = 0; i < list.length; i += 1) {
+      listWriter.writeString(i, list[i]);
+    }
+    writer.endList(listWriter);
+  }
+  {
+    final value = object.username;
+    if (value == null) {
+      writer.writeNull(15);
+    } else {
+      writer.writeString(15, value);
+    }
+  }
+}
+
+User _$UserReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = User();
+  object.dbId = reader.readId(documentIndex);
+  object.name = reader.readString(documentIndex, 6) as String;
+  object.email = reader.readString(documentIndex, 5) as String;
+  object.username = reader.readString(documentIndex, 15);
+  object.displayName = reader.readString(documentIndex, 4);
+  object.accessToken = reader.readString(documentIndex, 0);
+  object.bio = reader.readString(documentIndex, 2);
+  object.active = reader.readBool(documentIndex, 1);
+  object.createdAt = DateTime.fromMicrosecondsSinceEpoch(
+    reader.readInt(documentIndex, 3) as int,
+    isUtc: true,
+  );
+  object.sessionLength = reader.readInt(documentIndex, 12) == null
+      ? null
+      : Duration(microseconds: reader.readInt(documentIndex, 12) as int);
+  object.tags = reader.readStringList(documentIndex, 14) ?? const <String>[];
+  object.scores = (() {
+    final listReader = reader.readList(documentIndex, 11);
+    if (listReader == null) {
+      return null;
+    }
+    try {
+      final length = listReader.length;
+      final list = List<int>.filled(length, 0, growable: true);
+      for (var i = 0; i < length; i += 1) {
+        list[i] = listReader.readInt(0, i) ?? 0;
+      }
+      return list;
+    } finally {
+      listReader.release();
+    }
+  })();
+  object.role = UserRole.values.byName(
+    reader.readString(documentIndex, 10) as String,
+  );
+  object.status = UserStatus.values[reader.readInt(documentIndex, 13) as int];
+  object.plan = UserPlan.values.firstWhere(
+    (enumValue) => enumValue.code == reader.readString(documentIndex, 7),
+  );
+  object.primaryRecipient = (() {
+    final value = reader.readObject(documentIndex, 8);
+    return value == null
+        ? null
+        : _$RecipientFromCindelEmbedded((value as Map).cast<String, Object?>());
+  })();
+  object.recipients = (() {
+    final value = reader.readObjectList(documentIndex, 9);
+    return value == null
+        ? null
+        : value
+              .map(
+                (value) => _$RecipientFromCindelEmbedded(
+                  (value as Map).cast<String, Object?>(),
+                ),
+              )
+              .toList(growable: false);
+  })();
   return object;
 }
 

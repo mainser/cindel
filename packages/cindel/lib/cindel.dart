@@ -8,7 +8,11 @@ export 'src/binary_document.dart'
     show
         CindelSchemaBinaryDocumentReader,
         CindelBinaryFieldType,
+        cindelDecodeBinaryList,
+        cindelDecodeBinaryObject,
         cindelDecodeSchemaBinaryDocument,
+        cindelEncodeBinaryList,
+        cindelEncodeBinaryObject,
         cindelEncodeSchemaBinaryDocument;
 export 'src/cindel.dart';
 export 'src/database.dart';

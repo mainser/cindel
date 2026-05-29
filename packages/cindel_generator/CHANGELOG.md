@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.8
+
+- Generated native typed readers and writers for collection schemas containing
+  embedded object fields and embedded object lists.
+- Added generated nested filter helpers for fields inside a single embedded
+  object.
+- Kept embedded object-list nested query helpers unsupported, matching the
+  current Isar-aligned scope.
+
 ## 0.5.7
 
 - Added support for Freezed primary-factory collection models by discovering

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../binary_document.dart';
 import '../schema.dart';
 import 'wire.dart';
 
@@ -1140,6 +1141,32 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
   }
 
   @override
+  void writeObject(int fieldIndex, Map<String, Object?> value) {
+    final bytes = cindelEncodeBinaryObject(value);
+    _stringBytes.withBytes(bytes, (pointer, length) {
+      _functions.nativeBatchWriterWriteBytes(
+        _writer,
+        fieldIndex,
+        pointer,
+        length,
+      );
+    });
+  }
+
+  @override
+  void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
+    final bytes = cindelEncodeBinaryList(value);
+    _stringBytes.withBytes(bytes, (pointer, length) {
+      _functions.nativeBatchWriterWriteBytes(
+        _writer,
+        fieldIndex,
+        pointer,
+        length,
+      );
+    });
+  }
+
+  @override
   CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
     final writer = _functions.nativeBatchWriterBeginList(
       _writer,
@@ -1395,6 +1422,33 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   }
 
   @override
+  Map<String, Object?>? readObject(int documentIndex, int fieldIndex) {
+    if (!_readBytes(documentIndex, fieldIndex)) {
+      return null;
+    }
+    final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
+    return cindelDecodeBinaryObject(Uint8List.fromList(bytes));
+  }
+
+  @override
+  List<Map<String, Object?>?>? readObjectList(
+    int documentIndex,
+    int fieldIndex,
+  ) {
+    if (!_readBytes(documentIndex, fieldIndex)) {
+      return null;
+    }
+    final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
+    final values = cindelDecodeBinaryList(Uint8List.fromList(bytes));
+    return values
+        .map(
+          (value) =>
+              value == null ? null : (value as Map).cast<String, Object?>(),
+        )
+        .toList(growable: false);
+  }
+
+  @override
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) {
     final listReader = _functions.nativeDocumentReaderReadList(
       _reader,
@@ -1405,6 +1459,16 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       return null;
     }
     return _CindelNativeDocumentReader._child(_functions, listReader, this);
+  }
+
+  bool _readBytes(int documentIndex, int fieldIndex) {
+    return _functions.nativeDocumentReaderReadBytes(
+      _reader,
+      documentIndex,
+      fieldIndex,
+      _bytesPointer,
+      _bytesLength,
+    );
   }
 
   @override

@@ -20,7 +20,7 @@ This single import exposes:
 - query/filter helpers,
 - watcher helpers,
 - transaction helpers,
-- generated binary document helpers used by the generator.
+- generated binary and native typed document helpers used by the generator.
 
 ## Opening Databases
 
@@ -114,6 +114,10 @@ Supported values:
 - `Map<String, Object?>`
 
 Unsupported values throw `ArgumentError`.
+
+Embedded generated models are stored as `Map<String, Object?>` values inside
+their parent document. Lists of embedded objects are stored as `List<Object?>`
+containing those maps.
 
 ### `put`
 
@@ -243,37 +247,39 @@ Nested explicit transactions are rejected.
 
 Cindel annotations are re-exported by `package:cindel/cindel.dart`.
 
-### `@Collection`
+### `@Collection` and `@collection`
 
 Marks a class as a persisted root collection.
 
 ```dart
 @Collection(name: 'todos')
 class TodoModel {
-  TodoModel();
-
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @index
   late String title;
 }
 ```
 
-When `name` is omitted, the generator derives a lower-camel-case collection
-name from the class name.
+Use `@Collection(...)` when you need options such as `name` or `indexes`. Use
+the lowercase `@collection` constant when defaults are enough. When `name` is
+omitted, the generator derives a lower-camel-case collection name from the
+class name.
 
-### `@Embedded`
+### `@Embedded` and `@embedded`
 
 Marks a class as an embedded value object stored inside a parent document.
 
 ```dart
 @Embedded()
 class Address {
-  Address();
-
   late String city;
 }
 ```
+
+Embedded classes are not opened as standalone collections. The generator uses
+them when a root `@Collection` contains an embedded field or a list of embedded
+objects.
 
 ### `@Index` and `@index`
 
@@ -304,15 +310,13 @@ Declares collection-level composite indexes.
 @Collection(
   name: 'todos',
   indexes: [
-    CompositeIndex(['completed', 'createdAtMicros']),
+    CompositeIndex(['completed', 'createdAt']),
   ],
 )
 class TodoModel {
-  TodoModel();
-
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
   late bool completed;
-  late int createdAtMicros;
+  late DateTime createdAt;
 }
 ```
 
@@ -343,11 +347,56 @@ String transientText = '';
 ### `Id` and `autoIncrement`
 
 ```dart
-Id id = autoIncrement;
+Id dbId = autoIncrement;
 ```
 
 `Id` is an alias for `int`. `autoIncrement` is a sentinel used by generated
 typed writes to request a native id.
+
+## Freezed Models
+
+Cindel supports Freezed classic classes and Freezed primary factory models.
+
+Classic classes expose concrete final fields:
+
+```dart
+@freezed
+@Collection(name: 'users')
+class User with _$User {
+  const User({
+    required this.dbId,
+    required this.email,
+  });
+
+  @override
+  final Id dbId;
+
+  @override
+  @Index(unique: true)
+  final String email;
+}
+```
+
+Primary factory models read persisted properties from the unnamed factory
+constructor. Cindel annotations can be placed on factory parameters:
+
+```dart
+@freezed
+@Collection(name: 'users')
+abstract class User with _$User {
+  const factory User({
+    required Id dbId,
+    @Index(unique: true) required String email,
+    @Default(true) bool active,
+    @ignore String? transientNote,
+  }) = _User;
+}
+```
+
+Ignored factory parameters must be optional so generated hydration can rebuild
+the object.
+
+IMPORTANT: Freezed union/sealed multi-constructor models are not supported.
 
 ## Generated Typed API
 
@@ -358,21 +407,28 @@ Generated code creates:
 - typed collection helpers,
 - typed where/filter helpers,
 - sort/distinct/property helpers,
-- serializers and binary document readers/writers.
+- serializers and binary document readers/writers,
+- native typed document readers/writers when the field layout supports it,
+- embedded conversion and nested filter helpers when collection fields use
+  `@Embedded` value objects.
 
 Example:
 
 ```dart
 @Collection(name: 'todos')
 class TodoModel {
-  TodoModel();
-
-  Id id = autoIncrement;
+  Id dbId = autoIncrement;
 
   @index
   late String title;
 
   late bool completed;
+
+  @index
+  DateTime createdAt = DateTime.now().toUtc();
+
+  @Index(type: CindelIndexType.multiEntry)
+  List<String> tags = const [];
 }
 ```
 
@@ -385,7 +441,7 @@ final db = await Cindel.open(
 );
 
 await db.todos.put(todo);
-final saved = await db.todos.get(todo.id);
+final saved = await db.todos.get(todo.dbId);
 final matches = await db.todos.where().titleEqualTo('Ship docs').findAll();
 ```
 
@@ -462,9 +518,15 @@ await db.todos.deleteAll([1, 2, 3]);
 Generated where helpers create indexed queries:
 
 ```dart
-final done = await db.todos.where().completedEqualTo(true).findAll();
-final recent = await db.todos.where().createdAtMicrosBetween(a, b).findAll();
+final byTitle = await db.todos.where().titleEqualTo('Ship docs').findAll();
+final byCreatedAt = await db.todos.where().createdAtBetween(a, b).findAll();
 final tagged = await db.todos.where().tagsContains('urgent').findAll();
+```
+
+Fields that are not indexed are queried through `filter()`:
+
+```dart
+final done = await db.todos.filter().completedEqualTo(true).findAll();
 ```
 
 Manual query factories are also public:
@@ -496,6 +558,17 @@ Filters are applied with `whereMatches`.
 final matches = await db.todos
     .all()
     .whereMatches(CindelFilter.field('title').contains('ship'))
+    .findAll();
+```
+
+Nested object paths can be addressed with `CindelFilter.path`:
+
+```dart
+final matches = await db.messages
+    .all()
+    .whereMatches(
+      CindelFilter.path(['sender', 'address']).equalTo('ada@example.com'),
+    )
     .findAll();
 ```
 
@@ -534,7 +607,7 @@ final notDone = CindelFilter.not(
 ```dart
 final sorted = await db.todos
     .all()
-    .sortBy('createdAtMicros', order: CindelSortOrder.descending)
+    .sortBy('createdAt', order: CindelSortOrder.descending)
     .thenBy('title')
     .findAll();
 ```
@@ -576,6 +649,26 @@ final deletedCount = await query.deleteAll();
 `deleteFirst` returns `true` when an object was deleted.
 `deleteAll` returns the number of deleted objects.
 
+### Query Updates
+
+Generated and manual queries can update matching documents with a map of field
+changes:
+
+```dart
+final updatedOne = await db.todos
+    .where()
+    .titleEqualTo('Ship docs')
+    .updateFirst({'completed': true});
+
+final updatedCount = await db.todos
+    .all()
+    .whereMatches(CindelFilter.field('completed').equalTo(false))
+    .updateAll({'completed': true});
+```
+
+`updateFirst` returns `true` when an object was updated. `updateAll` returns the
+number of updated objects.
+
 ## Property Queries
 
 ### Single Property
@@ -594,11 +687,11 @@ final titles = await db.todos.all().titleProperty().findAll();
 ### Aggregates
 
 ```dart
-final count = await db.todos.all().createdAtMicrosProperty().count();
-final min = await db.todos.all().createdAtMicrosProperty().min();
-final max = await db.todos.all().createdAtMicrosProperty().max();
-final sum = await db.todos.all().createdAtMicrosProperty().sum();
-final average = await db.todos.all().createdAtMicrosProperty().average();
+final count = await db.todos.all().createdAtProperty().count();
+final min = await db.todos.all().createdAtProperty().min();
+final max = await db.todos.all().createdAtProperty().max();
+final sum = await db.todos.all().createdAtProperty().sum();
+final average = await db.todos.all().createdAtProperty().average();
 ```
 
 Aggregates are supported for property queries. Unsupported values throw when an
@@ -609,11 +702,88 @@ operation requires comparable or numeric values.
 ```dart
 final rows = await db.todos
     .all()
-    .properties(['id', 'title'])
+    .properties(['dbId', 'title'])
     .findAll();
 ```
 
 Rows are returned as `CindelDocument` maps.
+
+## Embedded Objects
+
+Embedded objects are modeled with `@Embedded()` or `@embedded` and stored inside
+a parent collection document:
+
+```dart
+@Collection(name: 'messages')
+class Message {
+  Id dbId = autoIncrement;
+
+  String? subject;
+
+  Recipient? sender;
+
+  List<Recipient>? recipients;
+}
+
+@embedded
+class Recipient {
+  String? name;
+  String? address;
+  RecipientMetadata? metadata;
+}
+
+@embedded
+class RecipientMetadata {
+  String? label;
+}
+```
+
+Generated document serializers represent embedded values as nested maps:
+
+```dart
+final document = MessageSchema.toDocument(message);
+final sender = document['sender'] as Map<String, Object?>?;
+```
+
+Generated filters support whole-object equality, embedded-list equality,
+embedded-list element equality, and nested field filters for single embedded
+object fields:
+
+```dart
+final bySender = await db.messages
+    .filter()
+    .sender((recipient) => recipient.addressEqualTo('ada@example.com'))
+    .findAll();
+
+final byNestedMetadata = await db.messages
+    .filter()
+    .sender((recipient) {
+      return recipient.metadata((metadata) {
+        return metadata.labelEqualTo('lead');
+      });
+    })
+    .findAll();
+```
+
+Property queries can project embedded values back to typed embedded objects:
+
+```dart
+final senders = await db.messages.all().senderProperty().findAll();
+final recipientLists = await db.messages.all().recipientsProperty().findAll();
+```
+
+Generated native writers and readers support embedded object fields and
+embedded object list fields through `writeObject`, `writeObjectList`,
+`readObject`, and `readObjectList` hooks when the schema supports native typed
+documents.
+
+Current embedded limits:
+
+- Embedded classes are not standalone collections.
+- Nested field helpers are not generated for fields inside embedded object
+  lists.
+- `@Index` inside an embedded class is not supported. Index root collection
+  fields instead.
 
 ## Watchers
 
@@ -820,11 +990,51 @@ enum CindelBinaryFieldType {
 }
 ```
 
-### Generic generated binary format
+Native typed document hooks used by generated schemas:
 
 ```dart
-final bytes = cindelEncodeBinaryDocument(fields);
-final fields = cindelDecodeBinaryDocument(bytes);
+typedef CindelWriteNativeDocument<T> =
+    void Function(CindelNativeDocumentWriter writer, T object);
+
+typedef CindelReadNativeDocument<T> =
+    T Function(CindelNativeDocumentReader reader, int documentIndex);
+```
+
+`CindelNativeDocumentWriter` supports:
+
+- `writeNull`
+- `writeBool`
+- `writeInt`
+- `writeDouble`
+- `writeString`
+- `writeObject`
+- `writeObjectList`
+- `beginList`
+- `endList`
+
+`CindelNativeDocumentReader` supports:
+
+- `length`
+- `isPresent`
+- `readId`
+- `readBool`
+- `readInt`
+- `readDouble`
+- `readString`
+- `readStringList`
+- `readObject`
+- `readObjectList`
+- `readList`
+- `release`
+
+### Generic object/list binary payloads
+
+```dart
+final objectBytes = cindelEncodeBinaryObject({'title': 'Ship docs'});
+final object = cindelDecodeBinaryObject(objectBytes);
+
+final listBytes = cindelEncodeBinaryList(['urgent', null, 'docs']);
+final list = cindelDecodeBinaryList(listBytes);
 ```
 
 ### Schema-specific compact binary format
@@ -859,9 +1069,10 @@ Application code should prefer generated query helpers.
 
 The current public API does not yet include:
 
-- partial update helpers such as Isar-style `updateAll(field: value)`,
 - `exists()` query result helper,
 - dynamic modifiers such as `optional`, `anyOf`, or `allOf`,
+- nested query helpers for fields inside embedded object lists,
+- embedded-field indexes,
 - public migration/export tooling,
 - web backend support,
 - packaged iOS/macOS native binaries.

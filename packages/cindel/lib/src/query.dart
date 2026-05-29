@@ -36,7 +36,16 @@ final class CindelFilter {
     if (field.trim().isEmpty) {
       throw ArgumentError.value(field, 'field', 'Must not be empty.');
     }
-    return CindelFilterField._(field);
+    return CindelFilterField._(<String>[field]);
+  }
+
+  /// Creates a predicate builder for a nested object [path].
+  static CindelFilterField path(Iterable<String> path) {
+    final parts = path.toList(growable: false);
+    if (parts.isEmpty || parts.any((part) => part.trim().isEmpty)) {
+      throw ArgumentError.value(path, 'path', 'Must not contain empty parts.');
+    }
+    return CindelFilterField._(parts);
   }
 
   /// Matches when all [predicates] match.
@@ -63,14 +72,14 @@ final class CindelFilter {
 
 /// Builds predicates for one Cindel document field.
 final class CindelFilterField {
-  const CindelFilterField._(this._field);
+  const CindelFilterField._(this._path);
 
-  final String _field;
+  final List<String> _path;
 
   /// Matches documents where this field equals [value].
   CindelFilterPredicate equalTo(Object? value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.equalTo,
     );
@@ -79,7 +88,7 @@ final class CindelFilterField {
   /// Matches numeric fields greater than [value].
   CindelFilterPredicate greaterThan(num value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.greaterThan,
     );
@@ -88,7 +97,7 @@ final class CindelFilterField {
   /// Matches numeric fields greater than or equal to [value].
   CindelFilterPredicate greaterThanOrEqualTo(num value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.greaterThanOrEqualTo,
     );
@@ -97,7 +106,7 @@ final class CindelFilterField {
   /// Matches numeric fields less than [value].
   CindelFilterPredicate lessThan(num value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.lessThan,
     );
@@ -106,7 +115,7 @@ final class CindelFilterField {
   /// Matches numeric fields less than or equal to [value].
   CindelFilterPredicate lessThanOrEqualTo(num value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.lessThanOrEqualTo,
     );
@@ -127,7 +136,7 @@ final class CindelFilterField {
   /// [value] as an element.
   CindelFilterPredicate contains(Object? value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.contains,
     );
@@ -136,7 +145,7 @@ final class CindelFilterField {
   /// Matches string fields starting with [value].
   CindelFilterPredicate startsWith(String value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.startsWith,
     );
@@ -145,7 +154,7 @@ final class CindelFilterField {
   /// Matches string fields ending with [value].
   CindelFilterPredicate endsWith(String value) {
     return _FieldFilterPredicate(
-      field: _field,
+      path: _path,
       expected: value,
       operation: _FilterOperation.endsWith,
     );
@@ -311,6 +320,13 @@ final class CindelQuery<T> {
       readIds: () => database.queryRangeIds(
         schema.name,
         field,
+        lower: indexedPrefix,
+        upper: indexedPrefix.isEmpty
+            ? null
+            : _inclusivePrefixUpperBound(indexedPrefix),
+      ),
+      nativeSource: CindelNativeIndexRangeQuerySource(
+        indexName: field,
         lower: indexedPrefix,
         upper: indexedPrefix.isEmpty
             ? null
@@ -624,6 +640,10 @@ final class CindelQuery<T> {
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
+    final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments();
+    if (sqliteNativeDocuments != null) {
+      return sqliteNativeDocuments;
+    }
     final nativePlan = _nativePlan();
     if (nativePlan != null) {
       return _database.queryNativePlanDocuments(_schema.name, nativePlan);
@@ -682,7 +702,8 @@ final class CindelQuery<T> {
     final readNativeDocument = _schema.readNativeDocument;
     if (nativePlan == null ||
         readNativeDocument == null ||
-        fieldTypes == null) {
+        fieldTypes == null ||
+        (_database.usesSqliteNativeDocuments && !_canUseSqliteNativePlanner)) {
       return null;
     }
     return () async {
@@ -694,6 +715,289 @@ final class CindelQuery<T> {
       );
       return objects;
     }();
+  }
+
+  Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments() {
+    final dartDocuments = _matchingSqliteNativeDocumentsWithDartPlan();
+    if (dartDocuments != null) {
+      return dartDocuments;
+    }
+    final nativePlan = _nativePlan();
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (!_database.usesSqliteNativeDocuments ||
+        nativePlan == null ||
+        !_canUseSqliteNativePlanner ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+
+    return () async {
+      final objects = await _database.queryNativePlanObjects(
+        _schema.name,
+        nativePlan,
+        fieldTypes,
+        readNativeDocument,
+      );
+      return [for (final object in objects) _documentFromObject(object)];
+    }();
+  }
+
+  Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan() {
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (!_database.usesSqliteNativeDocuments ||
+        _canUseSqliteNativePlanner ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+
+    return () async {
+      final seenIds = <int>{};
+      var documents = <CindelDocument>[];
+      for (final document in await _readDocuments()) {
+        if (_matchesSqliteNativeDartPlan(document)) {
+          documents.add(document);
+          seenIds.add(_idFromDocument(document));
+        }
+      }
+      final objects = await _database.queryNativePlanObjects(
+        _schema.name,
+        const CindelNativeQueryPlan(source: CindelNativeAllQuerySource()),
+        fieldTypes,
+        readNativeDocument,
+      );
+      for (final object in objects) {
+        final document = _documentFromObject(object);
+        final id = _idFromDocument(document);
+        if (!seenIds.contains(id) && _matchesSqliteNativeDartPlan(document)) {
+          documents.add(document);
+          seenIds.add(id);
+        }
+      }
+      if (_sortKeys.isNotEmpty) {
+        documents = _sortDocuments(documents, _sortKeys);
+      } else {
+        documents = _sortDocumentsBySqliteNativeSource(documents);
+      }
+      if (_distinctFields.isNotEmpty) {
+        documents = _distinctDocuments(documents, _distinctFields);
+      }
+      if (_offset > 0 || _limit != null) {
+        documents = _windowDocuments(documents, _offset, _limit);
+      }
+      return documents;
+    }();
+  }
+
+  bool get _canUseSqliteNativePlanner {
+    if (!_database.usesSqliteNativeDocuments ||
+        _sourceFilter != null ||
+        (_filter != null && _nativeFilter == null) ||
+        _distinctFields.isNotEmpty) {
+      return false;
+    }
+    final source = _nativeSource;
+    return switch (source) {
+      null => false,
+      CindelNativeAllQuerySource() => true,
+      CindelNativeCompositeEqualQuerySource() => false,
+      CindelNativeIndexEqualQuerySource(:final indexName) ||
+      CindelNativeIndexRangeQuerySource(
+        :final indexName,
+      ) => switch (_fieldSchema(indexName)) {
+        null => false,
+        final field => switch (field.indexType) {
+          CindelIndexType.hash ||
+          CindelIndexType.words ||
+          CindelIndexType.multiEntry => false,
+          _ => field.binaryType != 'string' || field.indexCaseSensitive,
+        },
+      },
+    };
+  }
+
+  List<CindelDocument> _sortDocumentsBySqliteNativeSource(
+    List<CindelDocument> documents,
+  ) {
+    final source = _nativeSource;
+    if (source is! CindelNativeIndexRangeQuerySource) {
+      return documents;
+    }
+    return _sortDocuments(documents, [
+      _CindelSortKey(source.indexName, CindelSortOrder.ascending),
+    ]);
+  }
+
+  CindelFieldSchema? _fieldSchema(String field) {
+    for (final schemaField in _schema.fields) {
+      if (schemaField.name == field) {
+        return schemaField;
+      }
+    }
+    return null;
+  }
+
+  bool _matchesSqliteNativeDartPlan(CindelDocument document) {
+    if (!_matchesSqliteNativeSource(document)) {
+      return false;
+    }
+    final sourceFilter = _sourceFilter;
+    if (sourceFilter != null && !sourceFilter(document)) {
+      return false;
+    }
+    final filter = _filter;
+    return filter == null || filter.matches(document);
+  }
+
+  bool _matchesSqliteNativeSource(CindelDocument document) {
+    final source = _nativeSource;
+    return switch (source) {
+      null || CindelNativeAllQuerySource() => true,
+      CindelNativeCompositeEqualQuerySource(:final indexName, :final values) =>
+        _matchesCompositeSource(document, indexName, values),
+      CindelNativeIndexEqualQuerySource(:final indexName, :final value) =>
+        _matchesFieldEqualSource(document, indexName, value),
+      CindelNativeIndexRangeQuerySource(
+        :final indexName,
+        :final lower,
+        :final upper,
+      ) =>
+        _matchesFieldRangeSource(document, indexName, lower, upper),
+    };
+  }
+
+  bool _matchesCompositeSource(
+    CindelDocument document,
+    String indexName,
+    List<Object> values,
+  ) {
+    for (final index in _schema.compositeIndexes) {
+      if (index.name != indexName || index.fields.length != values.length) {
+        continue;
+      }
+      for (var i = 0; i < values.length; i += 1) {
+        final field = _fieldSchema(index.fields[i]);
+        if (!_valuesEqualForIndex(
+          document[index.fields[i]],
+          values[i],
+          field,
+        )) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _matchesFieldEqualSource(
+    CindelDocument document,
+    String fieldName,
+    Object value,
+  ) {
+    final field = _fieldSchema(fieldName);
+    if (field == null) {
+      return false;
+    }
+    final actual = document[fieldName];
+    if (field.indexType == CindelIndexType.words) {
+      if (actual is! String || value is! String) {
+        return false;
+      }
+      return cindelSplitWords(
+        actual,
+        caseSensitive: field.indexCaseSensitive,
+      ).contains(_normalizedIndexString(value, field));
+    }
+    if (field.indexType == CindelIndexType.multiEntry) {
+      if (actual is! Iterable) {
+        return false;
+      }
+      return actual.any((item) => _valuesEqualForIndex(item, value, field));
+    }
+    return _valuesEqualForIndex(actual, value, field);
+  }
+
+  bool _matchesFieldRangeSource(
+    CindelDocument document,
+    String fieldName,
+    Object? lower,
+    Object? upper,
+  ) {
+    final field = _fieldSchema(fieldName);
+    if (field == null) {
+      return false;
+    }
+    final actual = document[fieldName];
+    if (field.indexType == CindelIndexType.words) {
+      if (actual is! String) {
+        return false;
+      }
+      return cindelSplitWords(
+        actual,
+        caseSensitive: field.indexCaseSensitive,
+      ).any((token) => _valueInRange(token, lower, upper, field));
+    }
+    return _valueInRange(actual, lower, upper, field);
+  }
+
+  bool _valueInRange(
+    Object? actual,
+    Object? lower,
+    Object? upper,
+    CindelFieldSchema field,
+  ) {
+    if (actual == null) {
+      return false;
+    }
+    if (lower != null && _compareIndexValues(actual, lower, field) < 0) {
+      return false;
+    }
+    if (upper != null && _compareIndexValues(actual, upper, field) > 0) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _valuesEqualForIndex(
+    Object? left,
+    Object? right,
+    CindelFieldSchema? field,
+  ) {
+    if (field == null) {
+      return left == right;
+    }
+    if (left is String && right is String) {
+      return _normalizedIndexString(left, field) ==
+          _normalizedIndexString(right, field);
+    }
+    return left == right;
+  }
+
+  int _compareIndexValues(Object left, Object right, CindelFieldSchema field) {
+    if (left is String && right is String) {
+      return _normalizedIndexString(
+        left,
+        field,
+      ).compareTo(_normalizedIndexString(right, field));
+    }
+    return _compareValues(left, right);
+  }
+
+  String _normalizedIndexString(String value, CindelFieldSchema field) {
+    return field.indexCaseSensitive ? value : value.toLowerCase();
+  }
+
+  CindelDocument _documentFromObject(T object) {
+    final document = _schema.toDocument(object);
+    final getId = _schema.getId;
+    if (getId == null || document.containsKey(_schema.idField)) {
+      return document;
+    }
+    return <String, Object?>{...document, _schema.idField: getId(object)};
   }
 
   Uint8List? _nativeFieldTypes() {
@@ -711,6 +1015,7 @@ final class CindelQuery<T> {
         'double' => 2,
         'string' => 3,
         'list' => 4,
+        'object' => 5,
         _ => null,
       };
       if (value == null) {
@@ -797,8 +1102,7 @@ final class CindelQuery<T> {
     }
     return _database.usesSqliteNativeDocuments &&
         _schema.writeNativeDocument != null &&
-        _schema.readNativeDocument != null &&
-        _nativeSource is CindelNativeAllQuerySource;
+        _schema.readNativeDocument != null;
   }
 
   bool get _canUseNativeProjection =>
@@ -1007,6 +1311,7 @@ final class CindelQuery<T> {
         _sourceFilter != null ||
         _nativeSource is! CindelNativeAllQuerySource ||
         predicate is! _FieldFilterPredicate ||
+        !predicate.isTopLevel ||
         predicate.operation != _FilterOperation.equalTo ||
         predicate.expected == null) {
       return null;
@@ -1110,6 +1415,9 @@ Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
 
 WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   if (predicate is _FieldFilterPredicate) {
+    if (!predicate.isTopLevel) {
+      return null;
+    }
     if (!_isNativeFilterValue(predicate.expected)) {
       return null;
     }
@@ -1230,6 +1538,18 @@ final class CindelPropertyQuery<T, R> {
       return [
         for (final value in values)
           if (decode == null) value as R else decode(value),
+      ];
+    }
+
+    final nativeObjects = await _query._matchingNativeObjects();
+    if (nativeObjects != null) {
+      final decode = _decode;
+      return [
+        for (final object in nativeObjects)
+          if (decode == null)
+            _query._documentFromObject(object)[_field] as R
+          else
+            decode(_query._documentFromObject(object)[_field]),
       ];
     }
 
@@ -1421,6 +1741,14 @@ final class CindelPropertiesQuery<T> {
 
   /// Returns every projected document.
   Future<List<CindelDocument>> findAll() async {
+    final nativeObjects = await _query._matchingNativeObjects();
+    if (nativeObjects != null) {
+      return [
+        for (final object in nativeObjects)
+          _projectDocument(_query._documentFromObject(object), _fields),
+      ];
+    }
+
     final documents = await _query._matchingDocuments();
     return [
       for (final document in documents)
@@ -1436,6 +1764,13 @@ final class CindelPropertiesQuery<T> {
     }
     return documents.first;
   }
+}
+
+CindelDocument _projectDocument(
+  CindelDocument document,
+  Iterable<String> fields,
+) {
+  return {for (final field in fields) field: document[field]};
 }
 
 void _checkFieldName(String field) {
@@ -1554,21 +1889,25 @@ enum _FilterOperation {
 
 final class _FieldFilterPredicate implements CindelFilterPredicate {
   const _FieldFilterPredicate({
-    required this.field,
+    required List<String> path,
     required this.expected,
     required this.operation,
-  });
+  }) : path = path;
 
-  final String field;
+  final List<String> path;
   final Object? expected;
   final _FilterOperation operation;
 
+  bool get isTopLevel => path.length == 1;
+
+  String get field => path.single;
+
   @override
   bool matches(CindelDocument document) {
-    if (!document.containsKey(field)) {
+    final actual = _valueAtPath(document);
+    if (actual == _missingValue) {
       return false;
     }
-    final actual = document[field];
     return switch (operation) {
       _FilterOperation.equalTo => actual == expected,
       _FilterOperation.greaterThan => _compareNumbers(actual, expected) > 0,
@@ -1598,7 +1937,20 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
   String _string(Object? value) {
     return value is String ? value : '';
   }
+
+  Object? _valueAtPath(CindelDocument document) {
+    Object? current = document;
+    for (final part in path) {
+      if (current is! Map<Object?, Object?> || !current.containsKey(part)) {
+        return _missingValue;
+      }
+      current = current[part];
+    }
+    return current;
+  }
 }
+
+const Object _missingValue = Object();
 
 enum _CompositeFilterMode { all, any }
 

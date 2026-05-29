@@ -2151,15 +2151,13 @@ impl CindelNativeBatchWriter {
 
     fn write_null(&mut self, index: usize) -> Result<(), String> {
         match &mut self.mode {
-            NativeBatchWriterMode::Batch {
-                layout, current, ..
-            } => {
-                layout.field_type_result(index)?;
-                let Some(current) = current.as_mut() else {
-                    return Err("native batch writer has no open document".into());
-                };
+            NativeBatchWriterMode::Batch { .. } => {
+                let field_types = self.field_types()?.to_vec();
+                let offsets = self.offsets()?.to_vec();
+                self.field_type(index)?;
+                let current = self.current_mut()?;
                 if let Some(bytes) = current.bytes.as_mut() {
-                    write_null_for_field(&layout.field_types, &layout.offsets, bytes, index)?;
+                    write_null_for_field(&field_types, &offsets, bytes, index)?;
                 }
                 if let Some(values) = current.values.as_mut() {
                     let Some(value) = values.get_mut(index) else {
@@ -2260,10 +2258,9 @@ impl CindelNativeBatchWriter {
 
     fn write_bytes(&mut self, index: usize, payload: &[u8]) -> Result<(), String> {
         match &mut self.mode {
-            NativeBatchWriterMode::Batch {
-                layout, current, ..
-            } => {
-                match layout.field_type_result(index)? {
+            NativeBatchWriterMode::Batch { .. } => {
+                let field_type = self.field_type(index)?;
+                match field_type {
                     NativeBatchFieldType::String
                     | NativeBatchFieldType::List
                     | NativeBatchFieldType::Object => {}
@@ -2272,11 +2269,9 @@ impl CindelNativeBatchWriter {
                 if payload.len() > 0x00ff_ffff {
                     return Err("native batch writer dynamic payload is too large".into());
                 }
-                let static_size = layout.static_size;
-                let offset = layout.absolute_offset_result(index)?;
-                let Some(current) = current.as_mut() else {
-                    return Err("native batch writer has no open document".into());
-                };
+                let static_size = self.static_size()?;
+                let offset = self.absolute_offset(index)?;
+                let current = self.current_mut()?;
                 if let Some(bytes) = current.bytes.as_mut() {
                     let relative = static_size
                         .checked_add(bytes.len().saturating_sub(3 + static_size))
@@ -2531,6 +2526,33 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::Batch { layout, .. } => layout.absolute_offset_result(index),
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer fields have no static offsets".into())
+            }
+        }
+    }
+
+    fn field_types(&self) -> Result<&[NativeBatchFieldType], String> {
+        match &self.mode {
+            NativeBatchWriterMode::Batch { layout, .. } => Ok(&layout.field_types),
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer has no static field types".into())
+            }
+        }
+    }
+
+    fn offsets(&self) -> Result<&[usize], String> {
+        match &self.mode {
+            NativeBatchWriterMode::Batch { layout, .. } => Ok(&layout.offsets),
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer has no static offsets".into())
+            }
+        }
+    }
+
+    fn static_size(&self) -> Result<usize, String> {
+        match &self.mode {
+            NativeBatchWriterMode::Batch { layout, .. } => Ok(layout.static_size),
+            NativeBatchWriterMode::List { .. } => {
+                Err("native list writer has no static size".into())
             }
         }
     }

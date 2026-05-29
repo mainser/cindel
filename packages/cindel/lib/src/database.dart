@@ -427,8 +427,9 @@ class CindelDatabase {
     List<int> ids,
     List<T> objects,
     Uint8List fieldTypes,
-    CindelWriteNativeDocument<T> writeDocument,
-  ) async {
+    CindelWriteNativeDocument<T> writeDocument, {
+    Map<int, CindelDocument>? Function()? documents,
+  }) async {
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
@@ -461,7 +462,7 @@ class CindelDatabase {
     );
     _markNativeCollectionChanged(
       collection,
-      () => CindelChangeSet.upserts(collection, null, ids: ids),
+      () => CindelChangeSet.upserts(collection, documents?.call(), ids: ids),
     );
   }
 
@@ -527,12 +528,7 @@ class CindelDatabase {
     _checkCollection(collection);
     _checkId(id);
 
-    final bytes = _bindings.get(handle, collection, id);
-    if (bytes == null) {
-      return null;
-    }
-
-    return _decodeDocument(collection, bytes, _schemas[collection], id: id);
+    return _documentsByIdsNullable(handle, collection, [id]).single;
   }
 
   /// Returns raw generated binary document bytes, or `null`.
@@ -824,7 +820,10 @@ class CindelDatabase {
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
-    final ids = _queryEqualRawIds(collection, field, value, schemaField);
+    final ids = _mergeQueryIds(
+      _queryEqualRawIds(collection, field, value, schemaField),
+      _querySqliteNativeIndexEqualRawIds(collection, field, value, schemaField),
+    );
     final documents = await _documentsByIds(
       collection,
       schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
@@ -857,7 +856,10 @@ class CindelDatabase {
         'Hash index `${schemaField.name}` requires document verification.',
       );
     }
-    final ids = _queryEqualRawIds(collection, field, value, schemaField);
+    final ids = _mergeQueryIds(
+      _queryEqualRawIds(collection, field, value, schemaField),
+      _querySqliteNativeIndexEqualRawIds(collection, field, value, schemaField),
+    );
     return schemaField.indexType == CindelIndexType.words
         ? _dedupeIds(ids)
         : ids;
@@ -894,12 +896,21 @@ class CindelDatabase {
         : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
-    final ids = _queryRangeRawIds(
-      handle,
-      collection,
-      field,
-      encodedLower?.bytes,
-      encodedUpper?.bytes,
+    final ids = _mergeQueryIds(
+      _queryRangeRawIds(
+        handle,
+        collection,
+        field,
+        encodedLower?.bytes,
+        encodedUpper?.bytes,
+      ),
+      _querySqliteNativeIndexRangeRawIds(
+        collection,
+        field,
+        lower,
+        upper,
+        schemaField,
+      ),
     );
     return _documentsByIds(
       collection,
@@ -935,12 +946,21 @@ class CindelDatabase {
         : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
-    final ids = _queryRangeRawIds(
-      handle,
-      collection,
-      field,
-      encodedLower?.bytes,
-      encodedUpper?.bytes,
+    final ids = _mergeQueryIds(
+      _queryRangeRawIds(
+        handle,
+        collection,
+        field,
+        encodedLower?.bytes,
+        encodedUpper?.bytes,
+      ),
+      _querySqliteNativeIndexRangeRawIds(
+        collection,
+        field,
+        lower,
+        upper,
+        schemaField,
+      ),
     );
     return schemaField.indexType == CindelIndexType.words
         ? _dedupeIds(ids)
@@ -1723,6 +1743,92 @@ class CindelDatabase {
     return schemaField;
   }
 
+  CindelCollectionSchema<dynamic>? _sqliteNativeSchema(String collection) {
+    if (!usesSqliteNativeDocuments) {
+      return null;
+    }
+    final schema = _schemas[collection];
+    final dynamic dynamicSchema = schema;
+    if (schema == null ||
+        dynamicSchema.writeNativeDocument == null ||
+        dynamicSchema.readNativeDocument == null ||
+        _nativeFieldTypes(schema) == null) {
+      return null;
+    }
+    return schema;
+  }
+
+  CindelReadNativeDocument<dynamic> _nativeDocumentReader(
+    CindelCollectionSchema<dynamic> schema,
+  ) {
+    final dynamic dynamicSchema = schema;
+    return (reader, index) => dynamicSchema.readNativeDocument(reader, index);
+  }
+
+  List<int>? _querySqliteNativeIndexEqualRawIds(
+    String collection,
+    String field,
+    Object value,
+    CindelFieldSchema schemaField,
+  ) {
+    if (!_canUseSqliteNativeIndexSource(collection, schemaField)) {
+      return null;
+    }
+    final handle = _checkOpen();
+    final plan = CindelNativeQueryPlan(
+      source: CindelNativeIndexEqualQuerySource(
+        indexName: field,
+        value: value,
+        dedupe: schemaField.indexType == CindelIndexType.words,
+      ),
+    );
+    return _bindings.queryPlanIds(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+    );
+  }
+
+  List<int>? _querySqliteNativeIndexRangeRawIds(
+    String collection,
+    String field,
+    Object? lower,
+    Object? upper,
+    CindelFieldSchema schemaField,
+  ) {
+    if (!_canUseSqliteNativeIndexSource(collection, schemaField)) {
+      return null;
+    }
+    final handle = _checkOpen();
+    final plan = CindelNativeQueryPlan(
+      source: CindelNativeIndexRangeQuerySource(
+        indexName: field,
+        lower: lower,
+        upper: upper,
+        dedupe: schemaField.indexType == CindelIndexType.words,
+      ),
+    );
+    return _bindings.queryPlanIds(
+      handle,
+      collection,
+      _encodeNativeQueryPlan(collection, plan),
+    );
+  }
+
+  bool _canUseSqliteNativeIndexSource(
+    String collection,
+    CindelFieldSchema field,
+  ) {
+    if (_sqliteNativeSchema(collection) == null) {
+      return false;
+    }
+    if (!field.indexCaseSensitive && field.binaryType == 'string') {
+      return false;
+    }
+    return field.indexType != CindelIndexType.words &&
+        field.indexType != CindelIndexType.multiEntry;
+  }
+
   List<int> _queryEqualRawIds(
     String collection,
     String field,
@@ -1744,6 +1850,22 @@ class CindelDatabase {
     Uint8List? upper,
   ) {
     return _bindings.queryIndexRange(handle, collection, field, lower, upper);
+  }
+
+  List<int> _mergeQueryIds(List<int> genericIds, List<int>? nativeIds) {
+    if (nativeIds == null || nativeIds.isEmpty) {
+      return genericIds;
+    }
+    if (genericIds.isEmpty) {
+      return nativeIds;
+    }
+    final seen = <int>{};
+    return [
+      for (final id in genericIds)
+        if (seen.add(id)) id,
+      for (final id in nativeIds)
+        if (seen.add(id)) id,
+    ];
   }
 
   Future<List<CindelDocument>> _documentsByIds(
@@ -1769,7 +1891,7 @@ class CindelDatabase {
     final documents = _decodeBinaryDocumentBatch(
       _bindings.getMany(handle, collection, _encodeIds(ids)),
     );
-    return [
+    final decoded = [
       for (var i = 0; i < documents.length; i += 1)
         if (documents[i] == null)
           null
@@ -1780,6 +1902,57 @@ class CindelDatabase {
             _schemas[collection],
             id: ids[i],
           ),
+    ];
+    if (_sqliteNativeSchema(collection) == null ||
+        decoded.every((document) => document != null)) {
+      return decoded;
+    }
+
+    final missingIndexes = <int>[];
+    final missingIds = <int>[];
+    for (var i = 0; i < decoded.length; i += 1) {
+      if (decoded[i] == null) {
+        missingIndexes.add(i);
+        missingIds.add(ids[i]);
+      }
+    }
+    final nativeDocuments = _sqliteNativeDocumentsByIdsNullable(
+      handle,
+      collection,
+      missingIds,
+    );
+    for (var i = 0; i < missingIndexes.length; i += 1) {
+      decoded[missingIndexes[i]] = nativeDocuments[i];
+    }
+    return decoded;
+  }
+
+  List<CindelDocument?> _sqliteNativeDocumentsByIdsNullable(
+    Pointer<Void> handle,
+    String collection,
+    List<int> ids,
+  ) {
+    final schema = _sqliteNativeSchema(collection);
+    if (schema == null || ids.isEmpty) {
+      return List<CindelDocument?>.filled(ids.length, null);
+    }
+    final dynamic dynamicSchema = schema;
+    final objects = _bindings.getManyNativeDocuments<dynamic>(
+      handle,
+      collection,
+      _encodeIds(ids),
+      _nativeFieldTypes(schema)!,
+      _nativeDocumentReader(schema),
+    );
+    return [
+      for (var i = 0; i < objects.length; i += 1)
+        if (objects[i] == null)
+          null
+        else
+          <String, Object?>{
+            ...dynamicSchema.toDocument(objects[i]),
+            schema.idField: ids[i],
+          },
     ];
   }
 
@@ -1894,17 +2067,32 @@ class CindelDatabase {
     List<WireChangeSet> nativeChanges,
     Map<String, CindelChangeSet> localChanges,
   ) {
-    return [
-      for (final change in nativeChanges)
-        _changeFromNative(change, localChanges[change.collection]),
-    ];
+    if (nativeChanges.isEmpty) {
+      return [
+        for (final change in localChanges.values)
+          if (change.hasUnknownDocuments || change.documents.isNotEmpty) change,
+      ];
+    }
+    final builders = <String, _CindelChangeSetBuilder>{};
+    for (final change in nativeChanges) {
+      builders
+          .putIfAbsent(
+            change.collection,
+            () => _CindelChangeSetBuilder(change.collection),
+          )
+          .add(_changeFromNative(change, localChanges[change.collection]));
+    }
+    return [for (final builder in builders.values) builder.build()];
   }
 
   CindelChangeSet _changeFromNative(
     WireChangeSet change,
     CindelChangeSet? localChange,
   ) {
-    final ids = change.documentIds.toSet();
+    final nativeIds = change.documentIds.toSet();
+    final ids = nativeIds.isEmpty && localChange?.documentIds != null
+        ? localChange!.documentIds!.toSet()
+        : nativeIds;
     final documents = {
       for (final entry
           in (localChange?.documents ?? const <int, CindelDocument>{}).entries)
@@ -2272,6 +2460,32 @@ WireCollectionSchema _schemaWire(CindelCollectionSchema<dynamic> schema) {
         ),
     ],
   );
+}
+
+Uint8List? _nativeFieldTypes(CindelCollectionSchema<dynamic> schema) {
+  final fields = schema.fields.toList(growable: false)
+    ..sort((left, right) => left.name.compareTo(right.name));
+  final binaryFields = fields
+      .where((field) => !field.isId)
+      .toList(growable: false);
+  final bytes = Uint8List(binaryFields.length);
+  for (var i = 0; i < binaryFields.length; i += 1) {
+    final type = binaryFields[i].binaryType;
+    final value = switch (type) {
+      'bool' => 0,
+      'int' => 1,
+      'double' => 2,
+      'string' => 3,
+      'list' => 4,
+      'object' => 5,
+      _ => null,
+    };
+    if (value == null) {
+      return null;
+    }
+    bytes[i] = value;
+  }
+  return bytes;
 }
 
 Uint8List _encodeIndexValue(Object value, CindelFieldSchema field) {
@@ -2661,6 +2875,7 @@ final class _CindelChangeSetBuilder {
   final Map<int, CindelDocument> _documents = {};
   bool _unknownIds = false;
   bool _hasUnknownDocuments = false;
+  int? _revision;
 
   void add(CindelChangeSet change) {
     if (change.documentIds == null) {
@@ -2669,6 +2884,11 @@ final class _CindelChangeSetBuilder {
       _documentIds.addAll(change.documentIds!);
     }
     _hasUnknownDocuments = _hasUnknownDocuments || change.hasUnknownDocuments;
+    final revision = change.revision;
+    if (revision != null) {
+      final current = _revision;
+      _revision = current == null || revision > current ? revision : current;
+    }
     for (final entry in change.documents.entries) {
       _documents[entry.key] = Map<String, Object?>.of(entry.value);
     }
@@ -2681,7 +2901,7 @@ final class _CindelChangeSetBuilder {
       documents: Map<int, CindelDocument>.unmodifiable(_documents),
       hasUnknownDocuments: _hasUnknownDocuments,
       isExternal: false,
-      revision: null,
+      revision: _revision,
     );
   }
 }
@@ -2745,6 +2965,9 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   bool _hasLastSnapshot = false;
   T? _lastSnapshot;
   bool _isPolling = false;
+  bool _needsPoll = false;
+  bool _pendingForce = false;
+  CindelChangeSet? _pendingChange;
 
   Stream<T> get stream => _controller.stream;
 
@@ -2768,6 +2991,11 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
 
   Future<void> poll({bool force = false, CindelChangeSet? change}) async {
     if (_isPolling || _controller.isClosed) {
+      if (!_controller.isClosed) {
+        _needsPoll = true;
+        _pendingForce = _pendingForce || force;
+        _pendingChange ??= change;
+      }
       return;
     }
     if (!force && !_shouldPoll()) {
@@ -2780,7 +3008,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
         _lastRevision = revision;
         return;
       }
-      if (!force && revision == _lastRevision) {
+      if (!force && change == null && revision == _lastRevision) {
         return;
       }
       _lastRevision = revision;
@@ -2804,6 +3032,14 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
       }
     } finally {
       _isPolling = false;
+      if (_needsPoll && !_controller.isClosed) {
+        final pendingForce = _pendingForce;
+        final pendingChange = _pendingChange;
+        _needsPoll = false;
+        _pendingForce = false;
+        _pendingChange = null;
+        unawaited(poll(force: pendingForce, change: pendingChange));
+      }
     }
   }
 

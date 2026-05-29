@@ -50,6 +50,12 @@ abstract interface class CindelNativeDocumentWriter {
   /// Writes a string value to [fieldIndex].
   void writeString(int fieldIndex, String value);
 
+  /// Writes an embedded object value to [fieldIndex].
+  void writeObject(int fieldIndex, Map<String, Object?> value);
+
+  /// Writes an embedded object list value to [fieldIndex].
+  void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value);
+
   /// Starts writing a list value to [fieldIndex].
   CindelNativeDocumentWriter beginList(int fieldIndex, int length);
 
@@ -82,6 +88,15 @@ abstract interface class CindelNativeDocumentReader {
 
   /// Reads a nullable string list value.
   List<String>? readStringList(int documentIndex, int fieldIndex);
+
+  /// Reads a nullable embedded object value.
+  Map<String, Object?>? readObject(int documentIndex, int fieldIndex);
+
+  /// Reads a nullable embedded object list value.
+  List<Map<String, Object?>?>? readObjectList(
+    int documentIndex,
+    int fieldIndex,
+  );
 
   /// Reads a nested list value as a child reader.
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex);

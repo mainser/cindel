@@ -5,6 +5,50 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.10
+
+- Added native typed reader and writer support for embedded object fields and
+  embedded object lists in generated Cindel schemas.
+- Added generated nested filter helpers for fields inside a single embedded
+  object, including nested embedded-object paths.
+- Kept embedded object-list nested query helpers unsupported, matching the
+  current Isar-aligned scope.
+- Fixed SQLite native typed reads and projections for generated schemas that
+  store embedded object and list payloads in collection tables.
+- Updated package and API documentation for embedded objects, embedded lists,
+  nested filters, native object/list hooks, and the current embedded indexing
+  limits.
+- Updated the `cindel` development generator dependency constraint to
+  `^0.5.8`.
+
+## 0.5.9
+
+- Added generated schema coverage for Freezed primary-factory collection
+  models, including persisted properties discovered from the unnamed factory
+  constructor.
+- Reads Cindel annotations such as `@Index`, `@Enumerated`, and `@ignore` from
+  Freezed factory parameters.
+- Kept Freezed union/sealed multi-constructor models unsupported.
+- Updated `cindel` and `cindel_generator` documentation with the supported
+  Freezed primary-factory shape and the unsupported union/sealed limit.
+- Updated the `cindel` development generator dependency constraint to
+  `^0.5.7`.
+
+## 0.5.8
+
+- Changed the generated collection id convention from `id` to `dbId`, leaving
+  `id` free for API/domain identifiers in user models.
+- Allows normal model fields named `id` to be persisted, indexed, queried,
+  sorted, projected, and aggregated like any other field.
+- Removed the old CDBF document compatibility path so generated compact
+  documents use the current backend format as the only supported storage path.
+- Expanded typed filter helpers so generated `contains` filters can represent
+  string, list, and embedded-value containment.
+- Updated `cindel`, `cindel_generator`, and `cindel_annotations`
+  documentation and examples for the `dbId` id field convention.
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  `cindel_flutter_libs` `0.5.8` backend format and `dbId` release line.
+
 ## 0.5.7
 
 - Completed the generated typed SQLite app backend alignment: schema-backed
