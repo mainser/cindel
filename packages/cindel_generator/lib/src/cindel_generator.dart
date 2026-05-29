@@ -28,6 +28,7 @@ const _embeddedChecker = TypeChecker.typeNamed(
 );
 
 const _cindelIdFieldName = 'dbId';
+const _freezedAnnotationNames = {'freezed', 'Freezed'};
 
 /// Generates schemas and serializers for classes annotated with `@collection`.
 final class CindelGenerator extends GeneratorForAnnotation<Collection> {
@@ -46,7 +47,9 @@ final class CindelGenerator extends GeneratorForAnnotation<Collection> {
         element: element,
       );
     }
-    if (element.isAbstract) {
+    final supportsFreezedPrimaryFactory =
+        element.isAbstract && _hasFreezedPrimaryFactory(element);
+    if (element.isAbstract && !supportsFreezedPrimaryFactory) {
       throw InvalidGenerationSourceError(
         '@collection classes must be concrete.',
         element: element,
@@ -508,20 +511,27 @@ final class _CollectionInfo {
     ConstantReader annotation,
   ) {
     final dartName = element.name ?? element.displayName;
-    final fields = element.fields
-        .where(_isPersistedFieldCandidate)
+    final fields = _fieldBackedFields(element);
+    final supportsFreezedPrimaryFactory =
+        fields.isEmpty && _hasFreezedPrimaryFactory(element);
+    final persistedFields = supportsFreezedPrimaryFactory
+        ? _factoryBackedFields(element)
+        : fields;
+
+    final fieldInfos = persistedFields
+        .where((field) => field.isCandidate)
         .map(_FieldInfo.from)
         .whereType<_FieldInfo>()
         .toList(growable: false);
 
-    if (fields.isEmpty) {
+    if (fieldInfos.isEmpty) {
       throw InvalidGenerationSourceError(
         '@collection classes must declare at least one persisted field.',
         element: element,
       );
     }
 
-    final idFields = fields.where((field) => field.isId).toList();
+    final idFields = fieldInfos.where((field) => field.isId).toList();
     if (idFields.length != 1) {
       throw InvalidGenerationSourceError(
         '@collection classes must declare exactly one field named `dbId`.',
@@ -533,9 +543,13 @@ final class _CollectionInfo {
       (constructor) =>
           constructor.name == 'new' && constructor.formalParameters.isEmpty,
     );
-    final fieldConstructor = _ConstructorInfo.from(element, fields);
-    final needsConstructor = fields.any((field) => !field.isAssignable);
-    if (!hasDefaultConstructor && fieldConstructor == null) {
+    final fieldConstructor = supportsFreezedPrimaryFactory
+        ? _ConstructorInfo.fromFreezedPrimaryFactory(element, fieldInfos)
+        : _ConstructorInfo.from(element, fieldInfos);
+    final needsConstructor = fieldInfos.any((field) => !field.isAssignable);
+    if (!supportsFreezedPrimaryFactory &&
+        !hasDefaultConstructor &&
+        fieldConstructor == null) {
       throw InvalidGenerationSourceError(
         '@collection classes need an unnamed constructor with no parameters '
         'or parameters for every persisted field.',
@@ -556,7 +570,7 @@ final class _CollectionInfo {
         : configuredName;
     final compositeIndexes = _CompositeIndexInfo.fromAnnotation(
       annotation,
-      fields,
+      fieldInfos,
       element,
     );
 
@@ -566,10 +580,13 @@ final class _CollectionInfo {
       accessorName: _accessorName(collectionName, dartName),
       schemaName: '${dartName}Schema',
       idField: idFields.single,
-      fields: fields,
+      fields: fieldInfos,
       compositeIndexes: compositeIndexes,
-      embeddedTypes: _collectEmbeddedTypes(fields),
-      constructor: needsConstructor || !hasDefaultConstructor
+      embeddedTypes: _collectEmbeddedTypes(fieldInfos),
+      constructor:
+          supportsFreezedPrimaryFactory ||
+              needsConstructor ||
+              !hasDefaultConstructor
           ? fieldConstructor
           : null,
     );
@@ -756,12 +773,35 @@ final class _ConstructorInfo {
     if (constructors.isEmpty) {
       return null;
     }
-    final constructor = constructors.single;
+    return _fromConstructor(constructors.single, fields);
+  }
 
+  static _ConstructorInfo fromFreezedPrimaryFactory(
+    ClassElement element,
+    List<_FieldInfo> fields,
+  ) {
+    final constructor = _freezedPrimaryFactory(element);
+    if (constructor == null) {
+      throw InvalidGenerationSourceError(
+        '@collection Freezed primary factory classes need exactly one '
+        'unnamed factory constructor.',
+        element: element,
+      );
+    }
+    return _fromConstructor(constructor, fields);
+  }
+
+  static _ConstructorInfo _fromConstructor(
+    ConstructorElement constructor,
+    List<_FieldInfo> fields,
+  ) {
     final fieldsByName = {for (final field in fields) field.name: field};
     final parameters = <_ConstructorParameterInfo>[];
     final seenFields = <String>{};
     for (final parameter in constructor.formalParameters) {
+      if (_ignoreChecker.hasAnnotationOf(parameter)) {
+        continue;
+      }
       final name = parameter.name ?? parameter.displayName;
       final field = fieldsByName[name];
       if (field == null) {
@@ -821,6 +861,52 @@ final class _ConstructorParameterInfo {
   final bool isNamed;
 }
 
+final class _PersistedFieldSource {
+  const _PersistedFieldSource({
+    required this.element,
+    required this.name,
+    required this.type,
+    required this.dartType,
+    required this.isAssignable,
+    required this.isIgnored,
+    required this.isCandidate,
+  });
+
+  factory _PersistedFieldSource.fromField(FieldElement field) {
+    return _PersistedFieldSource(
+      element: field,
+      name: field.name ?? field.displayName,
+      type: field.type,
+      dartType: field.type.getDisplayString(),
+      isAssignable: !field.isFinal && !field.isConst,
+      isIgnored: _ignoreChecker.hasAnnotationOf(field),
+      isCandidate: _isPersistedFieldCandidate(field),
+    );
+  }
+
+  factory _PersistedFieldSource.fromParameter(
+    FormalParameterElement parameter,
+  ) {
+    return _PersistedFieldSource(
+      element: parameter,
+      name: parameter.name ?? parameter.displayName,
+      type: parameter.type,
+      dartType: parameter.type.getDisplayString(),
+      isAssignable: false,
+      isIgnored: _ignoreChecker.hasAnnotationOf(parameter),
+      isCandidate: true,
+    );
+  }
+
+  final Element element;
+  final String name;
+  final DartType type;
+  final String dartType;
+  final bool isAssignable;
+  final bool isIgnored;
+  final bool isCandidate;
+}
+
 final class _FieldInfo {
   _FieldInfo({
     required this.name,
@@ -834,23 +920,28 @@ final class _FieldInfo {
     required this.indexType,
   });
 
-  static _FieldInfo? from(FieldElement element) {
-    if (_ignoreChecker.hasAnnotationOf(element)) {
+  static _FieldInfo? from(_PersistedFieldSource source) {
+    if (source.isIgnored) {
       return null;
     }
 
-    final name = element.name ?? element.displayName;
-    final dartType = element.type.getDisplayString();
-    final type = _PersistedType.from(element, name, dartType);
+    final name = source.name;
+    final dartType = source.dartType;
+    final type = _PersistedType.from(
+      source.element,
+      source.type,
+      name,
+      dartType,
+    );
 
-    final index = _IndexInfo.from(element);
+    final index = _IndexInfo.from(source.element);
     if (index != null &&
         type.isList &&
         index.type != CindelIndexType.multiEntry) {
       throw InvalidGenerationSourceError(
         'Field `$name` uses @Index, but list fields require '
         'CindelIndexType.multiEntry.',
-        element: element,
+        element: source.element,
       );
     }
     if (index?.type == CindelIndexType.multiEntry &&
@@ -858,7 +949,7 @@ final class _FieldInfo {
       throw InvalidGenerationSourceError(
         'Field `$name` uses a multi-entry index, but multi-entry indexes '
         'require primitive list fields.',
-        element: element,
+        element: source.element,
       );
     }
     if (index != null &&
@@ -869,14 +960,14 @@ final class _FieldInfo {
       throw InvalidGenerationSourceError(
         'Field `$name` uses caseSensitive: false, but only String indexes '
         'support case-insensitive lookup.',
-        element: element,
+        element: source.element,
       );
     }
     if (index?.type == CindelIndexType.words && !type.supportsWordIndex) {
       throw InvalidGenerationSourceError(
         'Field `$name` uses a word index, but word indexes require String '
         'fields.',
-        element: element,
+        element: source.element,
       );
     }
 
@@ -884,7 +975,7 @@ final class _FieldInfo {
       name: name,
       dartType: dartType,
       type: type,
-      isAssignable: !element.isFinal && !element.isConst,
+      isAssignable: source.isAssignable,
       isId: name == _cindelIdFieldName,
       isIndexed: index != null,
       isIndexUnique: index?.unique ?? false,
@@ -948,7 +1039,10 @@ final class _FieldInfo {
       'string' => 'writeString',
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
-    final expression = 'object.$name';
+    final expression = type.toStoredExpression(
+      'object.$name',
+      nullableCast: false,
+    );
     if (!isNullable) {
       return '  writer.$method($index, $expression);\n';
     }
@@ -1178,7 +1272,7 @@ final class _IndexInfo {
     required this.type,
   });
 
-  static _IndexInfo? from(FieldElement element) {
+  static _IndexInfo? from(Element element) {
     final annotation = _indexChecker.firstAnnotationOf(
       element,
       throwOnUnresolved: false,
@@ -1354,7 +1448,12 @@ final class _EmbeddedFieldInfo {
     final name = element.name ?? element.displayName;
     return _EmbeddedFieldInfo(
       name: name,
-      type: _PersistedType.from(element, name, element.type.getDisplayString()),
+      type: _PersistedType.from(
+        element,
+        element.type,
+        name,
+        element.type.getDisplayString(),
+      ),
     );
   }
 
@@ -1381,13 +1480,14 @@ final class _PersistedType {
   });
 
   factory _PersistedType.from(
-    FieldElement element,
+    Element element,
+    DartType resolvedType,
     String fieldName,
     String dartType,
   ) {
-    final enumInfo = _EnumInfo.from(element);
+    final enumInfo = _EnumInfo.from(element, resolvedType);
     final type = _PersistedType._fromDartType(
-      type: element.type,
+      type: resolvedType,
       dartType: dartType,
       isNullable: dartType.endsWith('?'),
       enumInfo: enumInfo,
@@ -1702,8 +1802,8 @@ final class _EnumInfo {
     this.valueFieldType,
   });
 
-  static _EnumInfo? from(FieldElement element) {
-    final enumElement = _enumElement(element.type);
+  static _EnumInfo? from(Element element, DartType type) {
+    final enumElement = _enumElement(type);
     if (enumElement == null) {
       final annotation = _enumeratedChecker.firstAnnotationOf(
         element,
@@ -1741,7 +1841,7 @@ final class _EnumInfo {
   static _EnumInfo _fromAnnotation(
     EnumElement enumElement,
     DartObject? annotation,
-    FieldElement field,
+    Element field,
   ) {
     if (annotation == null) {
       return _EnumInfo(
@@ -1868,6 +1968,60 @@ ClassElement? _embeddedElement(DartType type) {
   }
   final element = type.element as ClassElement;
   return _embeddedChecker.hasAnnotationOf(element) ? element : null;
+}
+
+List<_PersistedFieldSource> _fieldBackedFields(ClassElement element) {
+  return element.fields
+      .map(_PersistedFieldSource.fromField)
+      .toList(growable: false);
+}
+
+List<_PersistedFieldSource> _factoryBackedFields(ClassElement element) {
+  final constructor = _freezedPrimaryFactory(element);
+  if (constructor == null) {
+    return const [];
+  }
+  final fields = <_PersistedFieldSource>[];
+  for (final parameter in constructor.formalParameters) {
+    final ignored = _ignoreChecker.hasAnnotationOf(parameter);
+    if (ignored &&
+        (parameter.isRequiredNamed || parameter.isRequiredPositional)) {
+      throw InvalidGenerationSourceError(
+        '@ignore cannot be used on required Freezed factory parameter '
+        '`${parameter.name ?? parameter.displayName}`.',
+        element: parameter,
+      );
+    }
+    fields.add(_PersistedFieldSource.fromParameter(parameter));
+  }
+  return fields;
+}
+
+bool _hasFreezedPrimaryFactory(ClassElement element) {
+  return _hasFreezedAnnotation(element) &&
+      _freezedPrimaryFactory(element) != null;
+}
+
+ConstructorElement? _freezedPrimaryFactory(ClassElement element) {
+  final factories = element.constructors
+      .where((constructor) => constructor.isFactory)
+      .toList(growable: false);
+  if (factories.length != 1) {
+    return null;
+  }
+  final factory = factories.single;
+  return factory.name == 'new' ? factory : null;
+}
+
+bool _hasFreezedAnnotation(ClassElement element) {
+  return element.metadata.annotations.any((annotation) {
+    final name = annotation.element?.displayName;
+    if (name != null && _freezedAnnotationNames.contains(name)) {
+      return true;
+    }
+    final typeName = annotation.computeConstantValue()?.type?.element?.name;
+    return typeName != null && _freezedAnnotationNames.contains(typeName);
+  });
 }
 
 bool _isPersistedFieldCandidate(FieldElement field) {

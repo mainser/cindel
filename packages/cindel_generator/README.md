@@ -6,6 +6,7 @@ builders, filters, projections, and native typed document hooks.
 [Overview](#overview) |
 [Setup](#setup) |
 [Model Shape](#model-shape) |
+[Freezed Models](#freezed-models) |
 [Generated API](#generated-api) |
 [Indexes](#indexes) |
 [Embedded Objects](#embedded-objects) |
@@ -41,12 +42,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.8
+  cindel: ^0.5.9
   cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.6
+  cindel_generator: ^0.5.7
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -102,9 +103,10 @@ final saved = await db.users.where().emailEqualTo('jhon@example.com').findFirst(
 
 Generated collections must follow the rules enforced by the generator:
 
-- `@Collection` can only be used on concrete classes.
+- `@Collection` can only be used on concrete classes, except supported Freezed
+  primary-factory models.
 - A collection must declare at least one persisted field.
-- A collection must declare exactly one persisted field named `id`.
+- A collection must declare exactly one persisted field named `dbId`.
 - A collection needs either an unnamed constructor with no parameters or an
   unnamed constructor with parameters for every persisted field.
 - Collections with final persisted fields need constructor parameters for every
@@ -121,6 +123,69 @@ Supported persisted field shapes are:
 - Lists of supported non-list shapes.
 
 Nested lists are not supported.
+
+## Freezed Models
+
+The generator supports Freezed classic classes when they expose concrete final
+fields:
+
+```dart
+import 'package:cindel/cindel.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'user.freezed.dart';
+part 'user.g.dart';
+
+@freezed
+@Collection(name: 'users')
+class User with _$User {
+  const User({
+    required this.dbId,
+    required this.email,
+    required this.name,
+  });
+
+  @override
+  final Id dbId;
+
+  @override
+  @Index(unique: true)
+  final String email;
+
+  @override
+  final String name;
+}
+```
+
+It also supports the common Freezed primary factory style by reading persisted
+properties from the unnamed factory constructor:
+
+```dart
+import 'package:cindel/cindel.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'user.freezed.dart';
+part 'user.g.dart';
+
+@freezed
+@Collection(name: 'users')
+abstract class User with _$User {
+  const factory User({
+    required Id dbId,
+    required String email,
+    @Index(unique: true) required String username,
+    @Enumerated(CindelEnumType.ordinal) required UserStatus status,
+    @Default(true) bool active,
+    @ignore String? transientNote,
+  }) = _User;
+}
+```
+
+For primary factory models, Cindel annotations such as `@Index`,
+`@Enumerated`, and `@ignore` can be placed on factory parameters. Ignored
+parameters must be optional so generated hydration can rebuild the object.
+
+IMPORTANT: Freezed union/sealed multi-constructor models are not supported.
 
 ## Generated API
 

@@ -360,6 +360,71 @@ void main() {
       expect(restored.active, isTrue);
     });
 
+    // Scenario: A generated schema hydrates a Freezed primary-factory model.
+    // Covers:
+    // - Persisted properties discovered from factory parameters.
+    // - Parameter annotations such as @Index, @Enumerated, and @ignore.
+    // - Constructor-based JSON and binary hydration through the primary factory.
+    // Expected: The Freezed model round-trips and keeps generated value APIs.
+    test('supports Freezed primary-factory collection models.', () {
+      // Arrange.
+      const user = FreezedPrimaryUser(
+        dbId: 11,
+        email: 'factory@example.com',
+        username: 'factory-user',
+        status: UserStatus.active,
+        transientNote: 'not persisted',
+      );
+
+      // Act.
+      final copied = user.copyWith(active: false);
+      final document = FreezedPrimaryUserSchema.toDocument(copied);
+      final restored = FreezedPrimaryUserSchema.fromDocument({
+        ...document,
+        'dbId': 11,
+      });
+      final binaryBytes = FreezedPrimaryUserSchema.toBinaryDocument!(copied);
+      final binaryRestored = FreezedPrimaryUserSchema.fromBinaryDocument!(
+        binaryBytes,
+      );
+
+      // Assert.
+      expect(FreezedPrimaryUserSchema.setId, isNull);
+      expect(FreezedPrimaryUserSchema.fields.map((field) => field.name), [
+        'dbId',
+        'email',
+        'username',
+        'status',
+        'active',
+      ]);
+      expect(
+        FreezedPrimaryUserSchema.fields.singleWhere(
+          (field) => field.name == 'username',
+        ),
+        isA<CindelFieldSchema>()
+            .having((field) => field.isIndexed, 'isIndexed', isTrue)
+            .having((field) => field.isIndexUnique, 'isIndexUnique', isTrue),
+      );
+      expect(document, {
+        'email': 'factory@example.com',
+        'username': 'factory-user',
+        'status': 1,
+        'active': false,
+      });
+      expect(restored.dbId, copied.dbId);
+      expect(restored.email, copied.email);
+      expect(restored.username, copied.username);
+      expect(restored.status, copied.status);
+      expect(restored.active, copied.active);
+      expect(restored.transientNote, isNull);
+      expect(binaryRestored.dbId, autoIncrement);
+      expect(binaryRestored.email, copied.email);
+      expect(binaryRestored.username, copied.username);
+      expect(binaryRestored.status, copied.status);
+      expect(binaryRestored.active, copied.active);
+      expect(binaryRestored.transientNote, isNull);
+    });
+
     // Scenario: A generated schema persists expanded Dart field shapes.
     // Covers:
     // - Native in-memory persistence of encoded DateTime and Duration values.

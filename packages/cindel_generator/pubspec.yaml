@@ -1,6 +1,6 @@
 name: cindel_generator
 description: Source generator for Cindel schemas, serializers, typed collections, and query builders.
-version: 0.5.6
+version: 0.5.7
 homepage: https://github.com/mainser/Cindel
 repository: https://github.com/mainser/Cindel
 issue_tracker: https://github.com/mainser/Cindel/issues

@@ -2055,3 +2055,439 @@ int _$ApiProductGetCindelId(ApiProduct object) {
 void _$ApiProductSetCindelId(ApiProduct object, int id) {
   object.dbId = id;
 }
+
+// ignore_for_file: non_constant_identifier_names
+
+final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
+  name: "freezedPrimaryUsers",
+  dartName: "FreezedPrimaryUser",
+  idField: "dbId",
+  fields: <CindelFieldSchema>[
+    CindelFieldSchema(
+      name: "dbId",
+      dartType: "int",
+      binaryType: "int",
+      isId: true,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "email",
+      dartType: "String",
+      binaryType: "string",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "username",
+      dartType: "String",
+      binaryType: "string",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: true,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "status",
+      dartType: "UserStatus",
+      binaryType: "int",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "active",
+      dartType: "bool",
+      binaryType: "bool",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+  ],
+  compositeIndexes: <CindelCompositeIndexSchema>[],
+  toDocument: _$FreezedPrimaryUserToCindelDocument,
+  fromDocument: _$FreezedPrimaryUserFromCindelDocument,
+  toBinaryDocument: _$FreezedPrimaryUserToCindelBinaryDocument,
+  fromBinaryDocument: _$FreezedPrimaryUserFromCindelBinaryDocument,
+  writeNativeDocument: _$FreezedPrimaryUserWriteCindelNativeDocument,
+  readNativeDocument: _$FreezedPrimaryUserReadCindelNativeDocument,
+  getId: _$FreezedPrimaryUserGetCindelId,
+);
+
+extension FreezedPrimaryUserCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<FreezedPrimaryUser> get freezedPrimaryUsers =>
+      typedCollection(FreezedPrimaryUserSchema);
+}
+
+extension FreezedPrimaryUserCindelQueryAccess
+    on CindelTypedCollection<FreezedPrimaryUser> {
+  FreezedPrimaryUserQueryWhere where() => FreezedPrimaryUserQueryWhere(this);
+
+  FreezedPrimaryUserQueryFilter filter() => FreezedPrimaryUserQueryFilter(
+    CindelQuery.all(database: database, schema: FreezedPrimaryUserSchema),
+  );
+}
+
+extension FreezedPrimaryUserCindelQueryFilterAccess
+    on CindelQuery<FreezedPrimaryUser> {
+  FreezedPrimaryUserQueryFilter filter() => FreezedPrimaryUserQueryFilter(this);
+}
+
+extension FreezedPrimaryUserCindelQueryModifierAccess
+    on CindelQuery<FreezedPrimaryUser> {
+  CindelQuery<FreezedPrimaryUser> sortByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("dbId", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByDbIdDesc() {
+    return sortBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("dbId", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByDbIdDesc() {
+    return thenBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> distinctByDbId() {
+    return distinctBy("dbId");
+  }
+
+  CindelPropertyQuery<FreezedPrimaryUser, int> dbIdProperty() {
+    return property<int>("dbId");
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("email", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByEmailDesc() {
+    return sortBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByEmail({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("email", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByEmailDesc() {
+    return thenBy("email", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> distinctByEmail() {
+    return distinctBy("email");
+  }
+
+  CindelPropertyQuery<FreezedPrimaryUser, String> emailProperty() {
+    return property<String>("email");
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByUsername({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("username", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByUsernameDesc() {
+    return sortBy("username", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByUsername({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("username", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByUsernameDesc() {
+    return thenBy("username", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> distinctByUsername() {
+    return distinctBy("username");
+  }
+
+  CindelPropertyQuery<FreezedPrimaryUser, String> usernameProperty() {
+    return property<String>("username");
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByStatus({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("status", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByStatusDesc() {
+    return sortBy("status", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByStatus({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("status", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByStatusDesc() {
+    return thenBy("status", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> distinctByStatus() {
+    return distinctBy("status");
+  }
+
+  CindelPropertyQuery<FreezedPrimaryUser, UserStatus> statusProperty() {
+    return property<UserStatus>(
+      "status",
+      decode: (value) => UserStatus.values[value as int],
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("active", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> sortByActiveDesc() {
+    return sortBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByActive({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("active", order: order);
+  }
+
+  CindelQuery<FreezedPrimaryUser> thenByActiveDesc() {
+    return thenBy("active", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<FreezedPrimaryUser> distinctByActive() {
+    return distinctBy("active");
+  }
+
+  CindelPropertyQuery<FreezedPrimaryUser, bool> activeProperty() {
+    return property<bool>("active");
+  }
+}
+
+final class FreezedPrimaryUserQueryWhere {
+  const FreezedPrimaryUserQueryWhere(this._collection);
+
+  final CindelTypedCollection<FreezedPrimaryUser> _collection;
+
+  CindelQuery<FreezedPrimaryUser> usernameEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: FreezedPrimaryUserSchema,
+      field: "username",
+      value: value,
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: FreezedPrimaryUserSchema,
+      field: "username",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameBetween(
+    String? lower,
+    String? upper,
+  ) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: FreezedPrimaryUserSchema,
+      field: "username",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
+final class FreezedPrimaryUserQueryFilter {
+  const FreezedPrimaryUserQueryFilter(this._query);
+
+  final CindelQuery<FreezedPrimaryUser> _query;
+
+  CindelQuery<FreezedPrimaryUser> dbIdEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").equalTo(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> dbIdGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").greaterThan(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> dbIdGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> dbIdLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").lessThan(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> dbIdLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> dbIdBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").between(lower, upper),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> emailEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("email").equalTo(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> emailContains(String value) {
+    return _query.whereMatches(CindelFilter.field("email").contains(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> emailStartsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").startsWith(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> emailEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("email").endsWith(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("username").equalTo(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameContains(String value) {
+    return _query.whereMatches(CindelFilter.field("username").contains(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameStartsWith(String value) {
+    return _query.whereMatches(
+      CindelFilter.field("username").startsWith(value),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> usernameEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("username").endsWith(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> statusEqualTo(UserStatus value) {
+    return _query.whereMatches(
+      CindelFilter.field("status").equalTo(value.index),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> activeEqualTo(bool value) {
+    return _query.whereMatches(CindelFilter.field("active").equalTo(value));
+  }
+}
+
+Map<String, Object?> _$FreezedPrimaryUserToCindelDocument(
+  FreezedPrimaryUser object,
+) {
+  return <String, Object?>{
+    "email": object.email,
+    "username": object.username,
+    "status": object.status.index,
+    "active": object.active,
+  };
+}
+
+FreezedPrimaryUser _$FreezedPrimaryUserFromCindelDocument(
+  Map<String, Object?> document,
+) {
+  return FreezedPrimaryUser(
+    dbId: document["dbId"] as int,
+    email: document["email"] as String,
+    username: document["username"] as String,
+    status: UserStatus.values[document["status"] as int],
+    active: document["active"] as bool,
+  );
+}
+
+CindelBinaryDocumentBytes _$FreezedPrimaryUserToCindelBinaryDocument(
+  FreezedPrimaryUser object,
+) {
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[
+      object.active,
+      object.email,
+      object.status.index,
+      object.username,
+    ],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.boolValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.stringValue,
+    ],
+  );
+}
+
+FreezedPrimaryUser _$FreezedPrimaryUserFromCindelBinaryDocument(
+  CindelBinaryDocumentBytes bytes,
+) {
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 15);
+  final Object? field0 = reader.readBool(0, 0);
+  final Object? field1 = reader.readString(1, 1);
+  final Object? field2 = reader.readInt(2, 4);
+  final Object? field3 = reader.readString(3, 12);
+  return FreezedPrimaryUser(
+    dbId: autoIncrement,
+    email: field1 as String,
+    username: field3 as String,
+    status: UserStatus.values[field2 as int],
+    active: field0 as bool,
+  );
+}
+
+void _$FreezedPrimaryUserWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  FreezedPrimaryUser object,
+) {
+  writer.writeBool(0, object.active);
+  writer.writeString(1, object.email);
+  writer.writeInt(2, object.status.index);
+  writer.writeString(3, object.username);
+}
+
+FreezedPrimaryUser _$FreezedPrimaryUserReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return FreezedPrimaryUser(
+    dbId: reader.readId(documentIndex),
+    email: reader.readString(documentIndex, 1) as String,
+    username: reader.readString(documentIndex, 3) as String,
+    status: UserStatus.values[reader.readInt(documentIndex, 2) as int],
+    active: reader.readBool(documentIndex, 0) as bool,
+  );
+}
+
+int _$FreezedPrimaryUserGetCindelId(FreezedPrimaryUser object) {
+  return object.dbId;
+}

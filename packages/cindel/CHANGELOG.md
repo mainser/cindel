@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.9
+
+- Updated the development generator dependency constraint to `^0.5.7`.
+- Added generated schema coverage for Freezed primary-factory collection
+  models, including factory-parameter `@Index` and `@ignore` annotations.
+
 ## 0.5.8
 
 - Changed the generated collection id convention from `id` to `dbId`, leaving

@@ -27,6 +27,7 @@ docs/local_benchmarks/
 examples/cindel_bench/
 examples/cindel_todo/pubspec_overrides.yaml
 tool/benchmark/
+tool/lab_features/
 
 # IDE and OS files
 .idea/

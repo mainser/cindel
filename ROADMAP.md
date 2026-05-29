@@ -52,6 +52,8 @@ Current native backend policy:
 - `@Embedded` value objects and embedded object lists.
 - `@ignore` transient fields.
 - `@Enumerated` enum persistence by name, ordinal, or value field.
+- Freezed classic class and primary-factory collection models, including
+  parameter-level `@Index`, `@Enumerated`, and optional `@ignore` annotations.
 - Supported persisted field shapes:
   - `bool`
   - `int`
@@ -174,6 +176,8 @@ Current native backend policy:
 
 - Keep package READMEs concise and user-facing.
 - Document public limitations directly.
+- Keep Freezed support documented as classic classes and single primary
+  factories only; union/sealed multi-constructor models remain out of scope.
 - Add focused examples for annotations, generator usage, runtime API, and
   Flutter native libraries.
 

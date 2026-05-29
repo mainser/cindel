@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.7
+
+- Added support for Freezed primary-factory collection models by discovering
+  persisted properties from the unnamed factory constructor when no concrete
+  fields are declared.
+- Reads Cindel field annotations such as `@Index`, `@Enumerated`, and `@ignore`
+  from Freezed factory parameters.
+- Updated generated native writers to write stored values for converted field
+  types such as enums.
+- Keeps Freezed union/sealed multi-constructor models unsupported.
+
 ## 0.5.6
 
 - Changed generated collection id detection to require a field named `dbId`

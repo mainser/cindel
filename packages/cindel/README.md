@@ -22,6 +22,8 @@ files as disposable while the optimized native format settles.
 ## Features
 
 - Typed collections generated from regular Dart model classes.
+- Freezed classic class and primary factory models for immutable entities with
+  generated `copyWith`, equality, and hashCode.
 - Rust native core behind Dart FFI.
 - MDBX default backend with SQLite as an explicit secondary backend.
 - Native auto-increment ids.
@@ -44,12 +46,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.8
+  cindel: ^0.5.9
   cindel_flutter_libs: ^0.5.8
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.6
+  cindel_generator: ^0.5.7
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -77,6 +79,63 @@ class User {
   DateTime createdAt = DateTime.now().toUtc();
 }
 ```
+
+#### Freezed classic classes
+
+Cindel can also generate schemas for Freezed classic classes. This lets you keep
+immutable models while Freezed provides `copyWith`, equality, and hashCode:
+
+Freezed models also need `freezed_annotation` as an app dependency and
+`freezed` as a development dependency.
+
+```dart
+import 'package:cindel/cindel.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'user.freezed.dart';
+part 'user.g.dart';
+
+@freezed
+@Collection(name: 'users')
+class User with _$User {
+  const User({
+    required this.dbId,
+    required this.email,
+    required this.name,
+    this.active = true,
+  });
+
+  @override
+  final Id dbId;
+
+  @override
+  @Index(unique: true)
+  final String email;
+
+  @override
+  final String name;
+
+  @override
+  final bool active;
+}
+```
+
+Cindel also supports the common Freezed primary factory style:
+
+```dart
+@freezed
+@Collection(name: 'users')
+abstract class User with _$User {
+  const factory User({
+    required Id dbId,
+    required String email,
+    required String name,
+    @Default(true) bool active,
+  }) = _User;
+}
+```
+
+IMPORTANT: Freezed union/sealed multi-constructor models are not supported.
 
 ### 3. Generate code
 

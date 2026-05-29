@@ -1,5 +1,7 @@
 import 'package:cindel/cindel.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
 
+part 'schema_generation_fixture.freezed.dart';
 part 'schema_generation_fixture.g.dart';
 
 @Collection(
@@ -81,6 +83,19 @@ class ApiProduct {
   String? id;
 
   late String name;
+}
+
+@freezed
+@Collection(name: 'freezedPrimaryUsers')
+abstract class FreezedPrimaryUser with _$FreezedPrimaryUser {
+  const factory FreezedPrimaryUser({
+    required Id dbId,
+    required String email,
+    @Index(unique: true) required String username,
+    @Enumerated(CindelEnumType.ordinal) required UserStatus status,
+    @Default(true) bool active,
+    @ignore String? transientNote,
+  }) = _FreezedPrimaryUser;
 }
 
 @embedded
