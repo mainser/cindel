@@ -377,22 +377,31 @@ final binaryBenchmarkSchema = CindelCollectionSchema<CindelDocument>(
   fields: benchmarkSchema.fields,
   toDocument: (object) => Map<String, Object?>.of(object),
   fromDocument: (document) => Map<String, Object?>.of(document),
-  toBinaryDocument: (object) => cindelEncodeBinaryDocument([
-    object['id'],
-    object['name'],
-    object['email'],
-    object['score'],
-    object['active'],
-  ]),
+  toBinaryDocument: (object) => cindelEncodeSchemaBinaryDocument(
+    [object['name'], object['email'], object['score'], object['active']],
+    const [
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.boolValue,
+    ],
+  ),
   fromBinaryDocument: (bytes) {
-    final fields = cindelDecodeBinaryDocument(bytes);
+    final fields = cindelDecodeSchemaBinaryDocument(bytes, const [
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.intValue,
+      CindelBinaryFieldType.boolValue,
+    ]);
     return {
-      'id': fields[0],
-      'name': fields[1],
-      'email': fields[2],
-      'score': fields[3],
-      'active': fields[4],
+      'name': fields[0],
+      'email': fields[1],
+      'score': fields[2],
+      'active': fields[3],
     };
+  },
+  setId: (object, id) {
+    object['id'] = id;
   },
 );
 

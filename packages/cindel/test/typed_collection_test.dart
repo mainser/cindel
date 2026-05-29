@@ -48,7 +48,7 @@ void main() {
       expect(savedUser, isNotNull);
       if (testStorageBackend == CindelStorageBackend.mdbx) {
         expect(storedBinaryBytes, isNotNull);
-        expect(storedBinaryBytes!.take(4), [0x43, 0x44, 0x42, 0x46]);
+        expect(storedBinaryBytes!.take(3), [61, 0, 0]);
       }
       expect(savedUser!.name, 'Ana');
       expect(savedUser.email, 'ana@example.com');

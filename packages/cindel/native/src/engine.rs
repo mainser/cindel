@@ -327,6 +327,7 @@ impl CindelEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "mdbx")]
     use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
@@ -375,6 +376,11 @@ mod tests {
     #[cfg(feature = "mdbx")]
     #[test]
     fn opens_mdbx_with_schema_manifest_during_open() {
+        // Scenario: MDBX opens with an initial schema manifest.
+        // Covers:
+        // - [CindelEngine::open_with_backend_and_schemas] with MDBX.
+        // - Schema registration during native engine construction.
+        // Expected: The opened engine reports the registered schema version.
         let manifest = SchemaManifest {
             collections: vec![CollectionSchemaManifest {
                 name: "users".into(),

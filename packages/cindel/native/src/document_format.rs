@@ -6,12 +6,8 @@ use std::str;
 use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest, IndexEntry, IndexValue};
 use crate::wire::{decode_value, encode_index_value, WireIndexValue, WireValue};
 
-const MAGIC: &[u8; 4] = b"CDBF";
 const GENERIC_DOCUMENT_MAGIC: &[u8; 4] = b"CGD1";
 const GENERIC_DOCUMENT_VERSION: u32 = 1;
-const FORMAT_VERSION: u16 = 1;
-const HEADER_LEN: usize = 24;
-const SLOT_LEN: usize = 16;
 const NULL_FLAG: u8 = 0x01;
 const COMPACT_NULL_BOOL: u8 = 0xff;
 const COMPACT_NULL_INT: i64 = i64::MIN;
@@ -31,7 +27,6 @@ pub(crate) enum BinaryValue {
     DurationMicros(i64),
     List(Vec<Option<BinaryValue>>),
     Enum(String),
-    Embedded(Vec<Option<BinaryValue>>),
     Object(Vec<(String, Option<BinaryValue>)>),
 }
 
@@ -69,7 +64,6 @@ enum BinaryKind {
     Duration = 6,
     List = 7,
     Enum = 8,
-    Embedded = 9,
     Object = 10,
 }
 
@@ -133,217 +127,9 @@ impl BinaryKind {
             6 => Ok(Self::Duration),
             7 => Ok(Self::List),
             8 => Ok(Self::Enum),
-            9 => Ok(Self::Embedded),
             10 => Ok(Self::Object),
             _ => Err(format!("unknown binary field kind `{tag}`")),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FieldSlot {
-    kind: BinaryKind,
-    flags: u8,
-    static_offset: u32,
-    dynamic_offset: u32,
-    dynamic_len: u32,
-}
-
-impl FieldSlot {
-    fn null() -> Self {
-        Self {
-            kind: BinaryKind::Null,
-            flags: NULL_FLAG,
-            static_offset: 0,
-            dynamic_offset: 0,
-            dynamic_len: 0,
-        }
-    }
-
-    fn is_null(self) -> bool {
-        self.flags & NULL_FLAG != 0 || self.kind == BinaryKind::Null
-    }
-}
-
-pub(crate) struct BinaryDocument<'a> {
-    bytes: &'a [u8],
-    field_count: usize,
-    static_start: usize,
-    dynamic_start: usize,
-    static_len: usize,
-    dynamic_len: usize,
-}
-
-impl<'a> BinaryDocument<'a> {
-    pub(crate) fn parse(bytes: &'a [u8]) -> Result<Self, String> {
-        if bytes.len() > MAX_OBJECT_SIZE {
-            return Err("binary document exceeds the maximum object size".into());
-        }
-        if bytes.len() < HEADER_LEN {
-            return Err("binary document is shorter than the header".into());
-        }
-        if &bytes[0..4] != MAGIC {
-            return Err("binary document has an invalid magic header".into());
-        }
-        let version = read_u16(bytes, 4)?;
-        if version != FORMAT_VERSION {
-            return Err(format!("unsupported binary document version `{version}`"));
-        }
-        let header_len = read_u16(bytes, 6)? as usize;
-        let field_count = read_u16(bytes, 8)? as usize;
-        let static_len = read_u32(bytes, 12)? as usize;
-        let dynamic_len = read_u32(bytes, 16)? as usize;
-        let total_len = read_u32(bytes, 20)? as usize;
-        let expected_header_len = HEADER_LEN + field_count.saturating_mul(SLOT_LEN);
-        if header_len != expected_header_len {
-            return Err("binary document header length does not match field count".into());
-        }
-        if total_len != bytes.len() {
-            return Err("binary document total length does not match buffer length".into());
-        }
-        let static_start = header_len;
-        let dynamic_start = static_start
-            .checked_add(static_len)
-            .ok_or_else(|| "binary document static section overflows".to_string())?;
-        let expected_len = dynamic_start
-            .checked_add(dynamic_len)
-            .ok_or_else(|| "binary document dynamic section overflows".to_string())?;
-        if expected_len != total_len {
-            return Err("binary document sections do not match total length".into());
-        }
-        Ok(Self {
-            bytes,
-            field_count,
-            static_start,
-            dynamic_start,
-            static_len,
-            dynamic_len,
-        })
-    }
-
-    pub(crate) fn field_count(&self) -> usize {
-        self.field_count
-    }
-
-    pub(crate) fn field_value(&self, index: usize) -> Result<Option<BinaryValue>, String> {
-        let slot = self.slot(index)?;
-        if slot.is_null() {
-            return Ok(None);
-        }
-        match slot.kind {
-            BinaryKind::Bool => {
-                let bytes = self.static_payload(slot, 1)?;
-                Ok(Some(BinaryValue::Bool(bytes[0] != 0)))
-            }
-            BinaryKind::Int => Ok(Some(BinaryValue::Int(read_i64(
-                self.static_payload(slot, 8)?,
-                0,
-            )?))),
-            BinaryKind::Double => Ok(Some(BinaryValue::Double(read_f64(
-                self.static_payload(slot, 8)?,
-                0,
-            )?))),
-            BinaryKind::String => Ok(Some(BinaryValue::String(decode_utf8(
-                self.dynamic_payload(slot)?,
-            )?))),
-            BinaryKind::DateTime => Ok(Some(BinaryValue::DateTimeMicros(read_i64(
-                self.static_payload(slot, 8)?,
-                0,
-            )?))),
-            BinaryKind::Duration => Ok(Some(BinaryValue::DurationMicros(read_i64(
-                self.static_payload(slot, 8)?,
-                0,
-            )?))),
-            BinaryKind::List => Ok(Some(BinaryValue::List(decode_list(
-                self.dynamic_payload(slot)?,
-            )?))),
-            BinaryKind::Enum => Ok(Some(BinaryValue::Enum(decode_utf8(
-                self.dynamic_payload(slot)?,
-            )?))),
-            BinaryKind::Embedded => {
-                let nested = BinaryDocument::parse(self.dynamic_payload(slot)?)?;
-                Ok(Some(BinaryValue::Embedded(nested.decode_all()?)))
-            }
-            BinaryKind::Object => Ok(Some(BinaryValue::Object(decode_object(
-                self.dynamic_payload(slot)?,
-            )?))),
-            BinaryKind::Null => Ok(None),
-        }
-    }
-
-    pub(crate) fn field_payload_range(&self, index: usize) -> Result<Option<Range<usize>>, String> {
-        let slot = self.slot(index)?;
-        if slot.is_null() {
-            return Ok(None);
-        }
-        match slot.kind {
-            BinaryKind::Bool => Ok(Some(self.static_range(slot, 1)?)),
-            BinaryKind::Int | BinaryKind::Double | BinaryKind::DateTime | BinaryKind::Duration => {
-                Ok(Some(self.static_range(slot, 8)?))
-            }
-            BinaryKind::String
-            | BinaryKind::List
-            | BinaryKind::Enum
-            | BinaryKind::Embedded
-            | BinaryKind::Object => Ok(Some(self.dynamic_range(slot)?)),
-            BinaryKind::Null => Ok(None),
-        }
-    }
-
-    fn decode_all(&self) -> Result<Vec<Option<BinaryValue>>, String> {
-        (0..self.field_count)
-            .map(|index| self.field_value(index))
-            .collect()
-    }
-
-    fn slot(&self, index: usize) -> Result<FieldSlot, String> {
-        if index >= self.field_count {
-            return Err(format!("field index `{index}` is out of bounds"));
-        }
-        let offset = HEADER_LEN + index * SLOT_LEN;
-        let kind = BinaryKind::from_tag(self.bytes[offset])?;
-        Ok(FieldSlot {
-            kind,
-            flags: self.bytes[offset + 1],
-            static_offset: read_u32(self.bytes, offset + 4)?,
-            dynamic_offset: read_u32(self.bytes, offset + 8)?,
-            dynamic_len: read_u32(self.bytes, offset + 12)?,
-        })
-    }
-
-    fn static_range(&self, slot: FieldSlot, len: usize) -> Result<Range<usize>, String> {
-        let relative = slot.static_offset as usize;
-        let end = relative
-            .checked_add(len)
-            .ok_or_else(|| "binary static field offset overflows".to_string())?;
-        if end > self.static_len {
-            return Err("binary static field is outside the static section".into());
-        }
-        let start = self.static_start + relative;
-        Ok(start..start + len)
-    }
-
-    fn static_payload(&self, slot: FieldSlot, len: usize) -> Result<&'a [u8], String> {
-        let range = self.static_range(slot, len)?;
-        Ok(&self.bytes[range])
-    }
-
-    fn dynamic_range(&self, slot: FieldSlot) -> Result<Range<usize>, String> {
-        let relative = slot.dynamic_offset as usize;
-        let len = slot.dynamic_len as usize;
-        let end = relative
-            .checked_add(len)
-            .ok_or_else(|| "binary dynamic field offset overflows".to_string())?;
-        if end > self.dynamic_len {
-            return Err("binary dynamic field is outside the dynamic section".into());
-        }
-        let start = self.dynamic_start + relative;
-        Ok(start..start + len)
-    }
-
-    fn dynamic_payload(&self, slot: FieldSlot) -> Result<&'a [u8], String> {
-        let range = self.dynamic_range(slot)?;
-        Ok(&self.bytes[range])
     }
 }
 
@@ -563,98 +349,6 @@ pub(crate) fn validate_generic_document(bytes: &[u8]) -> Result<(), String> {
         WireValue::Object(_) => Ok(()),
         _ => Err("generic document root must be an object".into()),
     }
-}
-
-pub(crate) fn write_document(fields: &[Option<BinaryValue>]) -> Result<Vec<u8>, String> {
-    let header_len = HEADER_LEN + fields.len() * SLOT_LEN;
-    if fields.len() > u16::MAX as usize {
-        return Err("binary document cannot contain more than 65535 fields".into());
-    }
-
-    let mut slots = Vec::with_capacity(fields.len());
-    let mut static_section = Vec::new();
-    let mut dynamic_section = Vec::new();
-
-    for field in fields {
-        let Some(value) = field else {
-            slots.push(FieldSlot::null());
-            continue;
-        };
-        let kind = value_kind(value);
-        match value {
-            BinaryValue::Bool(value) => {
-                let offset = push_static(&mut static_section, &[*value as u8])?;
-                slots.push(static_slot(kind, offset));
-            }
-            BinaryValue::Int(value)
-            | BinaryValue::DateTimeMicros(value)
-            | BinaryValue::DurationMicros(value) => {
-                let offset = push_static(&mut static_section, &value.to_le_bytes())?;
-                slots.push(static_slot(kind, offset));
-            }
-            BinaryValue::Double(value) => {
-                if !value.is_finite() {
-                    return Err("binary document double values must be finite".into());
-                }
-                let offset = push_static(&mut static_section, &value.to_le_bytes())?;
-                slots.push(static_slot(kind, offset));
-            }
-            BinaryValue::String(value) | BinaryValue::Enum(value) => {
-                let (offset, len) = push_dynamic(&mut dynamic_section, value.as_bytes())?;
-                slots.push(dynamic_slot(kind, offset, len));
-            }
-            BinaryValue::List(values) => {
-                let bytes = encode_list(values)?;
-                let (offset, len) = push_dynamic(&mut dynamic_section, &bytes)?;
-                slots.push(dynamic_slot(kind, offset, len));
-            }
-            BinaryValue::Embedded(fields) => {
-                let bytes = write_document(fields)?;
-                let (offset, len) = push_dynamic(&mut dynamic_section, &bytes)?;
-                slots.push(dynamic_slot(kind, offset, len));
-            }
-            BinaryValue::Object(entries) => {
-                let bytes = encode_object(entries)?;
-                let (offset, len) = push_dynamic(&mut dynamic_section, &bytes)?;
-                slots.push(dynamic_slot(kind, offset, len));
-            }
-        }
-    }
-
-    let total_len = header_len
-        .checked_add(static_section.len())
-        .and_then(|len| len.checked_add(dynamic_section.len()))
-        .ok_or_else(|| "binary document size overflows".to_string())?;
-    if total_len > MAX_OBJECT_SIZE {
-        return Err("binary document exceeds the maximum object size".into());
-    }
-
-    let mut bytes = Vec::with_capacity(total_len);
-    bytes.extend_from_slice(MAGIC);
-    push_u16(&mut bytes, FORMAT_VERSION);
-    push_u16(&mut bytes, checked_u16(header_len, "header length")?);
-    push_u16(&mut bytes, checked_u16(fields.len(), "field count")?);
-    push_u16(&mut bytes, 0);
-    push_u32(
-        &mut bytes,
-        checked_u32(static_section.len(), "static section length")?,
-    );
-    push_u32(
-        &mut bytes,
-        checked_u32(dynamic_section.len(), "dynamic section length")?,
-    );
-    push_u32(&mut bytes, checked_u32(total_len, "total length")?);
-    for slot in slots {
-        bytes.push(slot.kind as u8);
-        bytes.push(slot.flags);
-        push_u16(&mut bytes, 0);
-        push_u32(&mut bytes, slot.static_offset);
-        push_u32(&mut bytes, slot.dynamic_offset);
-        push_u32(&mut bytes, slot.dynamic_len);
-    }
-    bytes.extend_from_slice(&static_section);
-    bytes.extend_from_slice(&dynamic_section);
-    Ok(bytes)
 }
 
 fn encode_value_record(value: &Option<BinaryValue>) -> Result<Vec<u8>, String> {
@@ -931,7 +625,6 @@ fn value_payload(value: &BinaryValue) -> Result<Vec<u8>, String> {
         }
         BinaryValue::String(value) | BinaryValue::Enum(value) => Ok(value.as_bytes().to_vec()),
         BinaryValue::List(values) => encode_list(values),
-        BinaryValue::Embedded(fields) => write_document(fields),
         BinaryValue::Object(entries) => encode_object(entries),
     }
 }
@@ -946,10 +639,6 @@ fn decode_payload(kind: BinaryKind, payload: &[u8]) -> Result<BinaryValue, Strin
         BinaryKind::Duration => Ok(BinaryValue::DurationMicros(read_i64(payload, 0)?)),
         BinaryKind::List => Ok(BinaryValue::List(decode_list(payload)?)),
         BinaryKind::Enum => Ok(BinaryValue::Enum(decode_utf8(payload)?)),
-        BinaryKind::Embedded => {
-            let nested = BinaryDocument::parse(payload)?;
-            Ok(BinaryValue::Embedded(nested.decode_all()?))
-        }
         BinaryKind::Object => Ok(BinaryValue::Object(decode_object(payload)?)),
         BinaryKind::Null => Err("null payload cannot be decoded as a value".into()),
     }
@@ -965,7 +654,6 @@ fn value_kind(value: &BinaryValue) -> BinaryKind {
         BinaryValue::DurationMicros(_) => BinaryKind::Duration,
         BinaryValue::List(_) => BinaryKind::List,
         BinaryValue::Enum(_) => BinaryKind::Enum,
-        BinaryValue::Embedded(_) => BinaryKind::Embedded,
         BinaryValue::Object(_) => BinaryKind::Object,
     }
 }
@@ -1001,13 +689,6 @@ pub(crate) fn read_binary_field_payload_prepared<'a>(
     bytes: &'a [u8],
     layout: &PreparedBinaryFieldLayout,
 ) -> Result<Option<(&'static str, &'a [u8])>, String> {
-    if bytes.starts_with(MAGIC) {
-        let document = BinaryDocument::parse(bytes)?;
-        let Some(range) = document.field_payload_range(layout.index)? else {
-            return Ok(None);
-        };
-        return Ok(Some((layout.normalized_binary_type, &bytes[range])));
-    }
     validate_prepared_compact_document(bytes, layout.static_size)?;
     let payload = match layout.field_type {
         CompactFieldType::Bool => match bytes[3 + layout.static_offset] {
@@ -1037,17 +718,6 @@ pub(crate) fn read_binary_bool_field_prepared(
     bytes: &[u8],
     layout: &PreparedBinaryFieldLayout,
 ) -> Result<Option<bool>, String> {
-    if bytes.starts_with(MAGIC) {
-        let document = BinaryDocument::parse(bytes)?;
-        return match document.field_value(layout.index)? {
-            Some(BinaryValue::Bool(value)) => Ok(Some(value)),
-            Some(_) => Err(format!(
-                "field index `{}` is not a bool field",
-                layout.index
-            )),
-            None => Ok(None),
-        };
-    }
     if layout.field_type != CompactFieldType::Bool {
         return Err(format!(
             "field index `{}` is not a bool field",
@@ -1068,13 +738,6 @@ pub(crate) fn read_binary_field_at(
     bytes: &[u8],
     index: usize,
 ) -> Result<Option<BinaryValue>, String> {
-    if bytes.starts_with(MAGIC) {
-        let document = BinaryDocument::parse(bytes)?;
-        if index >= document.field_count() {
-            return Ok(None);
-        }
-        return document.field_value(index);
-    }
     let document = CompactBinaryDocument::parse(schema, bytes)?;
     if index >= document.field_count() {
         return Ok(None);
@@ -1142,15 +805,6 @@ pub(crate) fn read_binary_sort_key_at(
     bytes: &[u8],
     index: usize,
 ) -> Result<Option<BinarySortKey>, String> {
-    if bytes.starts_with(MAGIC) {
-        let document = BinaryDocument::parse(bytes)?;
-        if index >= document.field_count() {
-            return Ok(None);
-        }
-        return document
-            .field_value(index)
-            .map(|value| value.map(BinarySortKey::Owned));
-    }
     let document = CompactBinaryDocument::parse(schema, bytes)?;
     if index >= document.field_count() {
         return Ok(None);
@@ -1188,13 +842,10 @@ pub(crate) fn prepare_binary_sort_field(
 }
 
 pub(crate) fn read_prepared_binary_sort_key(
-    schema: &CollectionSchemaManifest,
+    _schema: &CollectionSchemaManifest,
     bytes: &[u8],
     field: &PreparedBinarySortField,
 ) -> Result<Option<BinarySortKey>, String> {
-    if bytes.starts_with(MAGIC) {
-        return read_binary_sort_key_at(schema, bytes, field.index);
-    }
     if bytes.len() > MAX_OBJECT_SIZE {
         return Err("compact binary document exceeds the maximum object size".into());
     }
@@ -1215,7 +866,7 @@ pub(crate) fn read_prepared_binary_string_sort_range(
     bytes: &[u8],
     field: &PreparedBinarySortField,
 ) -> Result<Option<Option<Range<usize>>>, String> {
-    if !field.is_compact_string() || bytes.starts_with(MAGIC) {
+    if !field.is_compact_string() {
         return Ok(None);
     }
     validate_prepared_compact_document(bytes, field.static_size)?;
@@ -1360,11 +1011,120 @@ pub(crate) fn validate_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
 ) -> Result<(), String> {
-    if bytes.starts_with(MAGIC) {
-        BinaryDocument::parse(bytes).map(|_| ())
-    } else {
-        CompactBinaryDocument::parse(schema, bytes).map(|_| ())
+    CompactBinaryDocument::parse(schema, bytes).map(|_| ())
+}
+
+#[cfg(test)]
+pub(crate) fn write_compact_document_for_test(
+    schema: &CollectionSchemaManifest,
+    fields: &[Option<BinaryValue>],
+) -> Result<Vec<u8>, String> {
+    let mut static_size = 0usize;
+    let mut field_layout = Vec::with_capacity(schema.fields.len());
+    for field in &schema.fields {
+        if field.is_id {
+            field_layout.push(None);
+            continue;
+        }
+        let field_type = CompactFieldType::from_field(field)?;
+        field_layout.push(Some((field_type, static_size)));
+        static_size = static_size
+            .checked_add(field_type.static_size())
+            .ok_or_else(|| "compact binary document static size overflows".to_string())?;
     }
+    if fields.len() != schema.fields.len() {
+        return Err("test compact document field count does not match schema".into());
+    }
+    if static_size > 0x00ff_ffff {
+        return Err("test compact document static size exceeds u24".into());
+    }
+    let mut bytes = vec![0; 3 + static_size];
+    write_u24(&mut bytes, 0, static_size)?;
+    let mut dynamic = Vec::new();
+    for (field, layout) in fields.iter().zip(field_layout) {
+        let Some((field_type, static_offset)) = layout else {
+            continue;
+        };
+        let absolute = 3 + static_offset;
+        match (field_type, field) {
+            (CompactFieldType::Bool, Some(BinaryValue::Bool(value))) => {
+                bytes[absolute] = *value as u8
+            }
+            (CompactFieldType::Bool, None) => bytes[absolute] = COMPACT_NULL_BOOL,
+            (CompactFieldType::Int, Some(BinaryValue::Int(value))) => {
+                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            (CompactFieldType::Int, None) => {
+                bytes[absolute..absolute + 8].copy_from_slice(&COMPACT_NULL_INT.to_le_bytes());
+            }
+            (CompactFieldType::Double, Some(BinaryValue::Double(value))) if value.is_finite() => {
+                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            (CompactFieldType::Double, None) => {
+                bytes[absolute..absolute + 8]
+                    .copy_from_slice(&COMPACT_NULL_DOUBLE_BITS.to_le_bytes());
+            }
+            (CompactFieldType::String, Some(BinaryValue::String(value)))
+            | (CompactFieldType::String, Some(BinaryValue::Enum(value))) => {
+                write_test_dynamic(
+                    &mut bytes,
+                    &mut dynamic,
+                    static_size,
+                    static_offset,
+                    value.as_bytes(),
+                )?;
+            }
+            (CompactFieldType::String, None) => write_u24(&mut bytes, absolute, 0)?,
+            (CompactFieldType::List, Some(BinaryValue::List(values))) => {
+                let payload = encode_list(values)?;
+                write_test_dynamic(
+                    &mut bytes,
+                    &mut dynamic,
+                    static_size,
+                    static_offset,
+                    &payload,
+                )?;
+            }
+            (CompactFieldType::List, None) => write_u24(&mut bytes, absolute, 0)?,
+            (CompactFieldType::Object, Some(BinaryValue::Object(entries))) => {
+                let payload = encode_object(entries)?;
+                write_test_dynamic(
+                    &mut bytes,
+                    &mut dynamic,
+                    static_size,
+                    static_offset,
+                    &payload,
+                )?;
+            }
+            (CompactFieldType::Object, None) => write_u24(&mut bytes, absolute, 0)?,
+            _ => return Err("test compact document value does not match schema".into()),
+        }
+    }
+    bytes.extend_from_slice(&dynamic);
+    Ok(bytes)
+}
+
+#[cfg(test)]
+fn write_test_dynamic(
+    bytes: &mut [u8],
+    dynamic: &mut Vec<u8>,
+    static_size: usize,
+    static_offset: usize,
+    payload: &[u8],
+) -> Result<(), String> {
+    if payload.len() > 0x00ff_ffff {
+        return Err("test compact dynamic payload exceeds u24".into());
+    }
+    let relative = static_size
+        .checked_add(dynamic.len())
+        .ok_or_else(|| "test compact dynamic offset overflows".to_string())?;
+    if relative > 0x00ff_ffff {
+        return Err("test compact dynamic offset exceeds u24".into());
+    }
+    write_u24(bytes, 3 + static_offset, relative)?;
+    push_u24(dynamic, payload.len())?;
+    dynamic.extend_from_slice(payload);
+    Ok(())
 }
 
 pub(crate) fn update_binary_fields(
@@ -1436,9 +1196,6 @@ pub(crate) fn apply_prepared_binary_field_updates(
     bytes: &mut [u8],
     prepared: &PreparedBinaryFieldUpdates,
 ) -> Result<(), String> {
-    if bytes.starts_with(MAGIC) {
-        return Err("query updates require compact Cindel binary documents".into());
-    }
     if bytes.len() < 3 {
         return Err("compact binary document is shorter than the header".into());
     }
@@ -1543,12 +1300,6 @@ pub(crate) fn binary_to_wire_value(value: Option<&BinaryValue>) -> Result<WireVa
                 .map(|value| binary_to_wire_value(value.as_ref()))
                 .collect::<Result<Vec<_>, String>>()?,
         ),
-        BinaryValue::Embedded(fields) => WireValue::List(
-            fields
-                .iter()
-                .map(|value| binary_to_wire_value(value.as_ref()))
-                .collect::<Result<Vec<_>, String>>()?,
-        ),
         BinaryValue::Object(entries) => WireValue::Object(
             entries
                 .iter()
@@ -1562,16 +1313,6 @@ pub(crate) fn index_entries_from_binary_document(
     schema: &CollectionSchemaManifest,
     bytes: &[u8],
 ) -> Result<Vec<IndexEntry>, String> {
-    if bytes.starts_with(MAGIC) {
-        let document = BinaryDocument::parse(bytes)?;
-        return index_entries_from_binary_reader(schema, |index| {
-            if index >= document.field_count() {
-                Ok(None)
-            } else {
-                document.field_value(index)
-            }
-        });
-    }
     let document = CompactBinaryDocument::parse(schema, bytes)?;
     index_entries_from_compact_binary_document(schema, &document)
 }
@@ -1581,13 +1322,6 @@ pub(crate) fn for_each_index_entry_from_binary_document(
     bytes: &[u8],
     mut callback: impl FnMut(&str, IndexValue) -> Result<(), String>,
 ) -> Result<(), String> {
-    if bytes.starts_with(MAGIC) {
-        for entry in index_entries_from_binary_document(schema, bytes)? {
-            callback(&entry.name, entry.value)?;
-        }
-        return Ok(());
-    }
-
     let document = CompactBinaryDocument::parse(schema, bytes)?;
     for (index, field) in schema.fields.iter().enumerate() {
         if !field.is_indexed {
@@ -2033,45 +1767,6 @@ fn stable_hash_bytes(value: &[u8]) -> i64 {
     hash as i64
 }
 
-fn static_slot(kind: BinaryKind, static_offset: u32) -> FieldSlot {
-    FieldSlot {
-        kind,
-        flags: 0,
-        static_offset,
-        dynamic_offset: 0,
-        dynamic_len: 0,
-    }
-}
-
-fn dynamic_slot(kind: BinaryKind, dynamic_offset: u32, dynamic_len: u32) -> FieldSlot {
-    FieldSlot {
-        kind,
-        flags: 0,
-        static_offset: 0,
-        dynamic_offset,
-        dynamic_len,
-    }
-}
-
-fn push_static(section: &mut Vec<u8>, payload: &[u8]) -> Result<u32, String> {
-    let offset = checked_u32(section.len(), "static field offset")?;
-    section.extend_from_slice(payload);
-    Ok(offset)
-}
-
-fn push_dynamic(section: &mut Vec<u8>, payload: &[u8]) -> Result<(u32, u32), String> {
-    let offset = checked_u32(section.len(), "dynamic field offset")?;
-    let len = checked_u32(payload.len(), "dynamic field length")?;
-    section.extend_from_slice(payload);
-    Ok((offset, len))
-}
-
-fn checked_u16(value: usize, name: &str) -> Result<u16, String> {
-    value
-        .try_into()
-        .map_err(|_| format!("binary document {name} exceeds u16"))
-}
-
 fn checked_u32(value: usize, name: &str) -> Result<u32, String> {
     value
         .try_into()
@@ -2084,6 +1779,17 @@ fn push_u16(bytes: &mut Vec<u8>, value: u16) {
 
 fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(test)]
+fn push_u24(bytes: &mut Vec<u8>, value: usize) -> Result<(), String> {
+    if value > 0x00ff_ffff {
+        return Err("binary document u24 value exceeds range".into());
+    }
+    bytes.push((value & 0xff) as u8);
+    bytes.push(((value >> 8) & 0xff) as u8);
+    bytes.push(((value >> 16) & 0xff) as u8);
+    Ok(())
 }
 
 fn push_u32_at(bytes: &mut [u8], offset: usize, value: u32) -> Result<(), String> {
@@ -2105,11 +1811,6 @@ fn write_u24(bytes: &mut [u8], offset: usize, value: usize) -> Result<(), String
     target[1] = ((value >> 8) & 0xff) as u8;
     target[2] = ((value >> 16) & 0xff) as u8;
     Ok(())
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
-    let bytes = read_slice(bytes, offset, 2)?;
-    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
@@ -2160,43 +1861,67 @@ fn decode_utf8(bytes: &[u8]) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn test_field(name: &str, binary_type: &str, is_id: bool) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.to_string(),
+            dart_type: binary_type.to_string(),
+            binary_type: binary_type.to_string(),
+            is_id,
+            is_indexed: false,
+            is_index_unique: false,
+            index_case_sensitive: true,
+            index_type: "value".to_string(),
+        }
+    }
+
     #[test]
     fn round_trips_all_supported_value_shapes() {
-        // Scenario: PERF-04 binary format covers every field shape Cindel
-        // currently supports in generated models.
-        // Covers: fixed primitives, strings, dates, durations, nullable
-        // values, primitive lists, enums, embedded objects, and embedded lists.
-        // Expected: A document can be decoded without JSON.
+        // Scenario: PERF-04 compact binary format covers every field shape
+        // Cindel currently supports in generated models.
+        // Covers:
+        // - Compact binary encoding for scalar, list, null, and object values.
+        // - Field-by-field decoding through the schema slot table.
+        // Expected: A compact document can be decoded without JSON.
+        let schema = CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields: vec![
+                test_field("flag", "bool", false),
+                test_field("count", "int", false),
+                test_field("score", "double", false),
+                test_field("name", "string", false),
+                test_field("tags", "list", false),
+                test_field("state", "string", false),
+                test_field("missing", "string", false),
+                test_field("profile", "object", false),
+            ],
+            composite_indexes: Vec::new(),
+        };
         let fields = vec![
             Some(BinaryValue::Bool(true)),
             Some(BinaryValue::Int(-42)),
             Some(BinaryValue::Double(12.5)),
             Some(BinaryValue::String("Cindel".to_string())),
-            Some(BinaryValue::DateTimeMicros(1_773_779_200_000_000)),
-            Some(BinaryValue::DurationMicros(123_456)),
             Some(BinaryValue::List(vec![
                 Some(BinaryValue::Int(7)),
                 Some(BinaryValue::String("tag".to_string())),
                 None,
             ])),
-            Some(BinaryValue::Enum("done".to_string())),
+            Some(BinaryValue::String("done".to_string())),
             None,
-            Some(BinaryValue::Embedded(vec![
+            Some(BinaryValue::Object(vec![(
+                "label".to_string(),
                 Some(BinaryValue::String("nested".to_string())),
-                Some(BinaryValue::Bool(false)),
-            ])),
-            Some(BinaryValue::List(vec![
-                Some(BinaryValue::Embedded(vec![Some(BinaryValue::Int(1))])),
-                Some(BinaryValue::Embedded(vec![Some(BinaryValue::Int(2))])),
-            ])),
+            )])),
         ];
 
-        let bytes = write_document(&fields).unwrap();
-        let document = BinaryDocument::parse(&bytes).unwrap();
+        let bytes = write_compact_document_for_test(&schema, &fields).unwrap();
 
-        assert_eq!(document.field_count(), fields.len());
         for (index, expected) in fields.iter().enumerate() {
-            assert_eq!(&document.field_value(index).unwrap(), expected);
+            assert_eq!(
+                &read_binary_field_at(&schema, &bytes, index).unwrap(),
+                expected
+            );
         }
     }
 
@@ -2204,6 +1929,9 @@ mod tests {
     fn compact_string_lists_decode_like_value_records() {
         // Scenario: Native typed writers store string lists with an Isar-like
         // offset table instead of one generic value record per element.
+        // Covers:
+        // - Compact string-list records.
+        // - Compatibility with the shared list decoder output shape.
         // Expected: Readers still expose the same BinaryValue list shape.
         let legacy = write_list(&[
             Some(BinaryValue::String("time".to_string())),
@@ -2226,27 +1954,38 @@ mod tests {
     }
 
     #[test]
-    fn reads_one_field_without_decoding_other_dynamic_fields() {
+    fn reads_one_compact_field_without_decoding_other_dynamic_fields() {
         // Scenario: Query/index extraction should be able to read one field by
         // offset without materializing unrelated values.
         // Covers: Slot table offsets and lazy field decoding.
         // Expected: A corrupt unrelated string payload does not affect reading
         // a fixed int field, but fails when that string field is requested.
+        let schema = CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields: vec![
+                test_field("score", "int", false),
+                test_field("name", "string", false),
+            ],
+            composite_indexes: Vec::new(),
+        };
         let fields = vec![
             Some(BinaryValue::Int(99)),
             Some(BinaryValue::String("valid".to_string())),
         ];
-        let mut bytes = write_document(&fields).unwrap();
-        let string_range = BinaryDocument::parse(&bytes)
-            .unwrap()
-            .field_payload_range(1)
+        let mut bytes = write_compact_document_for_test(&schema, &fields).unwrap();
+        let layout = prepare_binary_field_layout(&schema, "name").unwrap();
+        let (_, string_payload) = read_binary_field_payload_prepared(&bytes, &layout)
             .unwrap()
             .unwrap();
-        bytes[string_range.start] = 0xFF;
+        let string_start = string_payload.as_ptr() as usize - bytes.as_ptr() as usize;
+        bytes[string_start] = 0xFF;
 
-        let document = BinaryDocument::parse(&bytes).unwrap();
-        assert_eq!(document.field_value(0).unwrap(), Some(BinaryValue::Int(99)));
-        assert!(document.field_value(1).is_err());
+        assert_eq!(
+            read_binary_field(&schema, &bytes, "score").unwrap(),
+            Some(BinaryValue::Int(99))
+        );
+        assert!(read_binary_field(&schema, &bytes, "name").is_err());
     }
 
     #[test]
@@ -2292,11 +2031,10 @@ mod tests {
             ],
             composite_indexes: Vec::new(),
         };
-        let bytes = write_document(&[
-            Some(BinaryValue::Int(7)),
-            Some(BinaryValue::String("Ana".to_string())),
-            None,
-        ])
+        let bytes = write_compact_document_for_test(
+            &schema,
+            &[None, Some(BinaryValue::String("Ana".to_string())), None],
+        )
         .unwrap();
 
         assert_eq!(
@@ -2321,9 +2059,22 @@ mod tests {
         // binary documents.
         // Covers: Header magic and unsupported double values.
         // Expected: Invalid format/version inputs are rejected.
-        assert!(BinaryDocument::parse(b"not-a-document").is_err());
-        assert!(write_document(&[Some(BinaryValue::Double(f64::NAN))]).is_err());
-        assert!(write_document(&[Some(BinaryValue::Double(f64::INFINITY))]).is_err());
+        let schema = CollectionSchemaManifest {
+            name: "scores".to_string(),
+            id_field: "id".to_string(),
+            fields: vec![test_field("score", "double", false)],
+            composite_indexes: Vec::new(),
+        };
+        assert!(validate_binary_document(&schema, b"not-a-document").is_err());
+        assert!(
+            write_compact_document_for_test(&schema, &[Some(BinaryValue::Double(f64::NAN))])
+                .is_err()
+        );
+        assert!(write_compact_document_for_test(
+            &schema,
+            &[Some(BinaryValue::Double(f64::INFINITY))]
+        )
+        .is_err());
     }
 
     #[test]

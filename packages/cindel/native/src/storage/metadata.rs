@@ -443,6 +443,11 @@ mod tests {
 
     #[test]
     fn round_trips_schema_record_metadata() {
+        // Scenario: Native storage persists collection schema metadata.
+        // Covers:
+        // - Schema record binary encoding.
+        // - Schema record binary decoding with the stored version.
+        // Expected: The schema version and manifest round-trip unchanged.
         let schema = user_schema();
         let bytes = encode_schema_record(3, &schema).unwrap();
         let (version, decoded) = decode_schema_record(&bytes).unwrap();
@@ -453,6 +458,11 @@ mod tests {
 
     #[test]
     fn rejects_future_schema_record_versions() {
+        // Scenario: Native storage sees schema metadata from a future format.
+        // Covers:
+        // - Schema record version validation.
+        // - Fail-closed handling for unsupported metadata versions.
+        // Expected: Future schema metadata versions are rejected.
         let schema = user_schema();
         let mut bytes = encode_schema_record(1, &schema).unwrap();
         bytes[4..8].copy_from_slice(&2_u32.to_le_bytes());
@@ -464,6 +474,11 @@ mod tests {
 
     #[test]
     fn rejects_future_wire_schema_manifest_versions() {
+        // Scenario: Native storage receives a future wire schema manifest.
+        // Covers:
+        // - Wire schema manifest version validation.
+        // - Fail-closed handling before metadata conversion.
+        // Expected: Future wire schema manifest versions are rejected.
         let manifest = WireSchemaManifest {
             version: WIRE_SCHEMA_VERSION + 1,
             collections: vec![collection_to_wire(&user_schema())],
@@ -477,6 +492,12 @@ mod tests {
 
     #[test]
     fn rejects_json_and_corrupt_schema_metadata() {
+        // Scenario: Native storage opens schema metadata from unsupported eras or
+        // corrupt payloads.
+        // Covers:
+        // - JSON-era preview metadata rejection.
+        // - Truncated binary schema metadata rejection.
+        // Expected: Invalid schema metadata fails before use.
         assert!(decode_schema_record(br#"{"version":1}"#)
             .unwrap_err()
             .contains("JSON-era preview metadata"));
@@ -485,6 +506,11 @@ mod tests {
 
     #[test]
     fn round_trips_reverse_index_metadata() {
+        // Scenario: Native storage persists reverse index metadata for a row.
+        // Covers:
+        // - Binary reverse-index entry metadata encoding.
+        // - Scalar and list index values in reverse metadata.
+        // Expected: Reverse index entries round-trip unchanged.
         let entries = vec![
             IndexEntry {
                 name: "email".to_string(),
@@ -507,6 +533,11 @@ mod tests {
 
     #[test]
     fn rejects_json_reverse_index_metadata() {
+        // Scenario: Native storage sees reverse index metadata from the JSON-era
+        // preview format.
+        // Covers:
+        // - JSON-era reverse-index metadata detection.
+        // Expected: Old JSON reverse-index metadata is rejected.
         assert!(decode_index_entry_metadata(br#"[{"name":"email"}]"#)
             .unwrap_err()
             .contains("JSON-era preview metadata"));

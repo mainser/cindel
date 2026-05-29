@@ -104,8 +104,25 @@ jobs:
       - name: Run Rust tests without MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Dart package tests with SQLite
-        run: dart test packages/cindel/test -r expanded
+      - name: Run all package tests with SQLite
+        shell: bash
+        run: |
+          mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' | sort)
+          if [ "${#test_dirs[@]}" -eq 0 ]; then
+            echo "::error::No package test directories found."
+            exit 1
+          fi
+
+          for test_dir in "${test_dirs[@]}"; do
+            package_dir="${test_dir%/test}"
+            echo "::group::${test_dir}"
+            if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
+              flutter test "${test_dir}"
+            else
+              dart test "${test_dir}" -r expanded
+            fi
+            echo "::endgroup::"
+          done
 
   mdbx-backend:
     name: MDBX backend tests
@@ -157,5 +174,22 @@ jobs:
       - name: Run Rust tests with MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Dart package tests with MDBX
-        run: dart test packages/cindel/test -r expanded
+      - name: Run all package tests with MDBX
+        shell: bash
+        run: |
+          mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' | sort)
+          if [ "${#test_dirs[@]}" -eq 0 ]; then
+            echo "::error::No package test directories found."
+            exit 1
+          fi
+
+          for test_dir in "${test_dirs[@]}"; do
+            package_dir="${test_dir%/test}"
+            echo "::group::${test_dir}"
+            if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
+              flutter test "${test_dir}"
+            else
+              dart test "${test_dir}" -r expanded
+            fi
+            echo "::endgroup::"
+          done

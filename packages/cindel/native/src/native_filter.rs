@@ -78,12 +78,13 @@ impl NativeFilter {
         }
     }
 
-    pub(crate) fn matches(
+    pub(crate) fn matches_with_id(
         &self,
         schema: &CollectionSchemaManifest,
         bytes: &[u8],
+        id: u64,
     ) -> Result<bool, String> {
-        self.matches_document(schema, bytes)
+        self.matches_document(schema, bytes, Some(id))
     }
 
     pub(crate) fn prepare_for_schema(self, schema: &CollectionSchemaManifest) -> Self {
@@ -172,6 +173,7 @@ impl NativeFilter {
         &self,
         schema: &CollectionSchemaManifest,
         bytes: &[u8],
+        id: Option<u64>,
     ) -> Result<bool, String> {
         match self {
             Self::Field {
@@ -180,6 +182,13 @@ impl NativeFilter {
                 value,
                 layout,
             } => {
+                if schema_field_is_id(schema, field) {
+                    let Some(id) = id else {
+                        return Ok(false);
+                    };
+                    let actual = BinaryValue::Int(id_to_i64(id)?);
+                    return field_matches(&actual, *operation, value);
+                }
                 if layout.is_none()
                     && !schema
                         .fields
@@ -207,7 +216,7 @@ impl NativeFilter {
             }
             Self::All { predicates } => {
                 for predicate in predicates {
-                    if !predicate.matches_document(schema, bytes)? {
+                    if !predicate.matches_document(schema, bytes, id)? {
                         return Ok(false);
                     }
                 }
@@ -215,15 +224,27 @@ impl NativeFilter {
             }
             Self::Any { predicates } => {
                 for predicate in predicates {
-                    if predicate.matches_document(schema, bytes)? {
+                    if predicate.matches_document(schema, bytes, id)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Self::Not { predicate } => Ok(!predicate.matches_document(schema, bytes)?),
+            Self::Not { predicate } => Ok(!predicate.matches_document(schema, bytes, id)?),
         }
     }
+}
+
+fn schema_field_is_id(schema: &CollectionSchemaManifest, field: &str) -> bool {
+    field == schema.id_field
+        || schema
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == field && schema_field.is_id)
+}
+
+fn id_to_i64(id: u64) -> Result<i64, String> {
+    i64::try_from(id).map_err(|_| "document id cannot be represented as a signed integer".into())
 }
 
 fn normalized_binary_type(binary_type: &str) -> &str {
@@ -562,7 +583,7 @@ fn wire_to_binary_value(value: &WireValue) -> Result<Option<BinaryValue>, String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document_format::write_document;
+    use crate::document_format::write_compact_document_for_test;
     use crate::storage::FieldSchemaManifest;
     use crate::wire::encode_filter;
 
@@ -637,20 +658,23 @@ mod tests {
     }
 
     fn document() -> Vec<u8> {
-        write_document(&[
-            Some(BinaryValue::Bool(true)),
-            Some(BinaryValue::Int(42)),
-            Some(BinaryValue::String("Ada Lovelace".to_string())),
-            None,
-            Some(BinaryValue::List(vec![
-                Some(BinaryValue::String("math".to_string())),
-                Some(BinaryValue::String("code".to_string())),
-            ])),
-            Some(BinaryValue::Object(vec![(
-                "label".to_string(),
-                Some(BinaryValue::String("admin".to_string())),
-            )])),
-        ])
+        write_compact_document_for_test(
+            &schema(),
+            &[
+                Some(BinaryValue::Bool(true)),
+                Some(BinaryValue::Int(42)),
+                Some(BinaryValue::String("Ada Lovelace".to_string())),
+                None,
+                Some(BinaryValue::List(vec![
+                    Some(BinaryValue::String("math".to_string())),
+                    Some(BinaryValue::String("code".to_string())),
+                ])),
+                Some(BinaryValue::Object(vec![(
+                    "label".to_string(),
+                    Some(BinaryValue::String("admin".to_string())),
+                )])),
+            ],
+        )
         .unwrap()
     }
 
@@ -687,7 +711,7 @@ mod tests {
         let filter = NativeFilter::decode(&bytes).unwrap();
 
         // Assert.
-        assert!(filter.matches(&schema(), &document()).unwrap());
+        assert!(filter.matches_with_id(&schema(), &document(), 1).unwrap());
     }
 
     // Scenario: Rust prepares an OR filter with schema field layouts.
@@ -728,7 +752,7 @@ mod tests {
         };
         assert_eq!(field, "name");
         assert!(layout.is_some());
-        assert!(filter.matches(&schema(), &document()).unwrap());
+        assert!(filter.matches_with_id(&schema(), &document(), 1).unwrap());
     }
 
     // Scenario: Rust evaluates single-byte string contains inside a native
@@ -767,7 +791,7 @@ mod tests {
         let filter = NativeFilter::decode(&bytes).unwrap();
 
         // Assert.
-        assert!(filter.matches(&schema(), &document()).unwrap());
+        assert!(filter.matches_with_id(&schema(), &document(), 1).unwrap());
     }
 
     // Scenario: Rust evaluates null, list, and object filter operands.
@@ -806,6 +830,6 @@ mod tests {
         let filter = NativeFilter::decode(&bytes).unwrap();
 
         // Assert.
-        assert!(filter.matches(&schema(), &document()).unwrap());
+        assert!(filter.matches_with_id(&schema(), &document(), 1).unwrap());
     }
 }

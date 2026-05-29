@@ -7,6 +7,11 @@ import 'backend_test_support.dart';
 
 void main() {
   group('Cindel schema versions', () {
+    // Scenario: A collection schema is opened for the first time.
+    // Covers:
+    // - Initial schema manifest persistence.
+    // - Public schema version lookup by collection name.
+    // Expected: The registered collection reports schema version 1.
     test('persists the initial schema version.', () async {
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
@@ -19,6 +24,11 @@ void main() {
       expect(await database.schemaVersion('users'), 1);
     });
 
+    // Scenario: A stored collection schema is reopened with an additive field.
+    // Covers:
+    // - Compatible schema evolution.
+    // - Version increments for additive metadata changes.
+    // Expected: Reopening with the expanded schema advances the version to 2.
     test('advances schema version for additive compatible changes.', () async {
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
@@ -37,6 +47,12 @@ void main() {
       expect(await expanded.schemaVersion('users'), 2);
     });
 
+    // Scenario: A stored collection schema is reopened with an incompatible
+    // field type change.
+    // Covers:
+    // - Schema compatibility validation.
+    // - Version preservation after a rejected incompatible open.
+    // Expected: The incompatible open throws and the original version remains 1.
     test(
       'rejects incompatible schema changes without migration support.',
       () async {
@@ -65,6 +81,11 @@ void main() {
       },
     );
 
+    // Scenario: A schema version is requested for a collection that has not
+    // been registered.
+    // Covers:
+    // - Public schema version lookup for missing collections.
+    // Expected: Missing collection versions are reported as null.
     test('returns null for unregistered schema versions.', () async {
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));

@@ -176,8 +176,9 @@ impl MdbxQueryDocumentReader {
                     self.current_bytes.clear();
                     return Ok(false);
                 };
+                let id = decode_document_table_key(key.as_ref())?;
                 if let Some(filter) = &self.filter {
-                    if !filter.matches(&self.schema, bytes.as_ref())? {
+                    if !filter.matches_with_id(&self.schema, bytes.as_ref(), id)? {
                         continue;
                     }
                 }
@@ -187,7 +188,7 @@ impl MdbxQueryDocumentReader {
                 }
                 self.current_bytes.clear();
                 self.current_bytes.extend_from_slice(bytes.as_ref());
-                self.current_id = Some(decode_document_table_key(key.as_ref())?);
+                self.current_id = Some(id);
                 self.current_present = true;
                 self.matched += 1;
                 self.emitted += 1;
@@ -235,7 +236,7 @@ impl MdbxQueryDocumentReader {
                     continue;
                 };
                 if let Some(filter) = &self.filter {
-                    if !filter.matches(&self.schema, bytes.as_ref())? {
+                    if !filter.matches_with_id(&self.schema, bytes.as_ref(), id)? {
                         continue;
                     }
                 }
@@ -726,7 +727,7 @@ impl MdbxStorage {
                 if let Some(bool_query) = direct_bool_index_query(&schema, plan) {
                     for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
                         let (key, bytes) = row.map_err(|error| error.to_string())?;
-                        if !direct_bool_index_query_matches(&schema, bytes.as_ref(), &bool_query)? {
+                        if !direct_bool_index_query_matches(bytes.as_ref(), &bool_query)? {
                             continue;
                         }
                         let id = decode_document_table_key(&key)?;
@@ -1080,7 +1081,7 @@ impl MdbxStorage {
                 continue;
             };
             if let Some(filter) = &filter {
-                if !filter.matches(&schema, &bytes)? {
+                if !filter.matches_with_id(&schema, &bytes, id)? {
                     continue;
                 }
             }
@@ -1136,8 +1137,9 @@ impl MdbxStorage {
 
             for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
                 let (key, bytes) = row.map_err(|error| error.to_string())?;
+                let id = decode_document_table_key(&key)?;
                 if let Some(filter) = filter {
-                    if !filter.matches(schema, bytes.as_ref())? {
+                    if !filter.matches_with_id(schema, bytes.as_ref(), id)? {
                         position += 1;
                         continue;
                     }
@@ -1197,7 +1199,7 @@ impl MdbxStorage {
             if let Some(bool_query) = direct_bool_index_query(schema, plan) {
                 for row in documents_cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
                     let (key, bytes) = row.map_err(|error| error.to_string())?;
-                    if !direct_bool_index_query_matches(schema, bytes.as_ref(), &bool_query)? {
+                    if !direct_bool_index_query_matches(bytes.as_ref(), &bool_query)? {
                         continue;
                     }
                     let id = decode_document_table_key(&key)?;
@@ -1426,8 +1428,9 @@ impl MdbxStorage {
                 .first::<Vec<u8>, Vec<u8>>()
                 .map_err(|error| error.to_string())?;
             while let Some((key, mut bytes)) = current {
+                let id = decode_document_table_key(&key)?;
                 if let Some(filter) = &filter {
-                    if !filter.matches(schema, &bytes)? {
+                    if !filter.matches_with_id(schema, &bytes, id)? {
                         current = cursor
                             .next::<Vec<u8>, Vec<u8>>()
                             .map_err(|error| error.to_string())?;
@@ -1450,7 +1453,7 @@ impl MdbxStorage {
                     .map_err(|error| error.to_string())?;
                 count += 1;
                 if let Some(ids) = ids.as_mut() {
-                    ids.push(decode_document_table_key(&key)?);
+                    ids.push(id);
                 }
                 current = cursor
                     .next::<Vec<u8>, Vec<u8>>()
@@ -2305,7 +2308,7 @@ impl StorageEngine for MdbxStorage {
             let Some(document) = document else {
                 continue;
             };
-            if filter.matches(&schema, &document)? {
+            if filter.matches_with_id(&schema, &document, id)? {
                 ids.push(id);
             }
         }
@@ -2326,22 +2329,14 @@ impl StorageEngine for MdbxStorage {
                 "collection `{collection}` has no registered schema"
             ));
         };
-        if !schema
-            .fields
-            .iter()
-            .any(|schema_field| schema_field.name == field)
-        {
-            return Err(format!(
-                "field `{field}` is not declared in schema `{collection}`"
-            ));
-        }
+        ensure_schema_field(&schema, field)?;
         let documents = self.get_many_stored(collection, candidate_ids)?;
         let mut cells = Vec::new();
-        for document in documents {
+        for (id, document) in candidate_ids.iter().copied().zip(documents) {
             let Some(document) = document else {
                 continue;
             };
-            let value = read_binary_field(&schema, &document, field)?;
+            let value = query_binary_field(&schema, &document, id, field)?;
             cells.push(binary_to_wire_value(value.as_ref())?);
         }
         encode_projection_rows(&WireProjectionRows {
@@ -2366,23 +2361,15 @@ impl StorageEngine for MdbxStorage {
                 "collection `{collection}` has no registered schema"
             ));
         };
-        if !schema
-            .fields
-            .iter()
-            .any(|schema_field| schema_field.name == field)
-        {
-            return Err(format!(
-                "field `{field}` is not declared in schema `{collection}`"
-            ));
-        }
+        ensure_schema_field(&schema, field)?;
 
         let documents = self.get_many_stored(collection, candidate_ids)?;
         let mut values = Vec::new();
-        for document in documents {
+        for (id, document) in candidate_ids.iter().copied().zip(documents) {
             let Some(document) = document else {
                 continue;
             };
-            values.push(read_binary_field(&schema, &document, field)?);
+            values.push(query_binary_field(&schema, &document, id, field)?);
         }
         encode_scalar(&aggregate_binary_values(&values, operation)?)
     }
@@ -2422,7 +2409,7 @@ impl StorageEngine for MdbxStorage {
         let documents = self.execute_query_plan(collection, plan)?;
         let mut cells = Vec::with_capacity(documents.len());
         for document in documents {
-            let value = read_binary_field(&schema, &document.bytes, field)?;
+            let value = query_binary_field(&schema, &document.bytes, document.id, field)?;
             cells.push(binary_to_wire_value(value.as_ref())?);
         }
         encode_projection_rows(&WireProjectionRows {
@@ -2444,7 +2431,12 @@ impl StorageEngine for MdbxStorage {
         let documents = self.execute_query_plan(collection, plan)?;
         let mut values = Vec::new();
         for document in documents {
-            values.push(read_binary_field(&schema, &document.bytes, field)?);
+            values.push(query_binary_field(
+                &schema,
+                &document.bytes,
+                document.id,
+                field,
+            )?);
         }
         encode_scalar(&aggregate_binary_values(&values, operation)?)
     }
@@ -3039,6 +3031,30 @@ fn ensure_schema_field(schema: &CollectionSchemaManifest, field: &str) -> Result
     }
 }
 
+fn schema_field_is_id(schema: &CollectionSchemaManifest, field: &str) -> bool {
+    field == schema.id_field
+        || schema
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == field && schema_field.is_id)
+}
+
+fn query_binary_field(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    id: u64,
+    field: &str,
+) -> Result<Option<BinaryValue>, String> {
+    if schema_field_is_id(schema, field) {
+        return Ok(Some(BinaryValue::Int(id_to_i64(id)?)));
+    }
+    read_binary_field(schema, bytes, field)
+}
+
+fn id_to_i64(id: u64) -> Result<i64, String> {
+    i64::try_from(id).map_err(|_| "document id cannot be represented as a signed integer".into())
+}
+
 fn updates_touch_index(
     schema: &CollectionSchemaManifest,
     updates: &[(String, WireValue)],
@@ -3079,7 +3095,6 @@ struct DirectBoolIndexUpdate {
 }
 
 struct DirectBoolIndexQuery {
-    field_index: usize,
     static_offset: usize,
     static_size: usize,
     value: bool,
@@ -3108,7 +3123,7 @@ fn direct_bool_index_query(
     let mut static_offset = 0usize;
     let mut static_size = 0usize;
     let mut target = None;
-    for (field_index, field) in schema.fields.iter().enumerate() {
+    for field in &schema.fields {
         if field.is_id {
             continue;
         }
@@ -3121,13 +3136,12 @@ fn direct_bool_index_query(
             {
                 return None;
             }
-            target = Some((field_index, static_offset));
+            target = Some(static_offset);
         }
         static_offset = static_offset.checked_add(field_size)?;
         static_size = static_size.checked_add(field_size)?;
     }
-    target.map(|(field_index, static_offset)| DirectBoolIndexQuery {
-        field_index,
+    target.map(|static_offset| DirectBoolIndexQuery {
         static_offset,
         static_size,
         value: *value,
@@ -3135,16 +3149,9 @@ fn direct_bool_index_query(
 }
 
 fn direct_bool_index_query_matches(
-    schema: &CollectionSchemaManifest,
     bytes: &[u8],
     query: &DirectBoolIndexQuery,
 ) -> Result<bool, String> {
-    if bytes.starts_with(b"CDBF") {
-        return Ok(matches!(
-            read_binary_field_at(schema, bytes, query.field_index)?,
-            Some(BinaryValue::Bool(value)) if value == query.value
-        ));
-    }
     if bytes.len() < 3 {
         return Err("compact binary document is shorter than the header".into());
     }
@@ -3221,9 +3228,6 @@ fn write_direct_bool_update(
     bytes: &mut [u8],
     update: &DirectBoolIndexUpdate,
 ) -> Result<(), String> {
-    if bytes.starts_with(b"CDBF") {
-        return Err("legacy binary document format is not supported by direct bool update".into());
-    }
     if bytes.len() < 3 {
         return Err("compact binary document is shorter than the header".into());
     }
@@ -3362,7 +3366,7 @@ fn push_borrowed_planned_document<'a>(
     position: usize,
 ) -> Result<(), String> {
     if let Some(filter) = filter {
-        if !filter.matches(schema, bytes.as_ref())? {
+        if !filter.matches_with_id(schema, bytes.as_ref(), id)? {
             return Ok(());
         }
     }
@@ -3659,7 +3663,7 @@ fn distinct_planned_documents(
         let key = fields
             .iter()
             .map(|field| {
-                read_binary_field(schema, &document.bytes, field)
+                query_binary_field(schema, &document.bytes, document.id, field)
                     .map(|value| binary_distinct_key(value.as_ref()))
             })
             .collect::<Result<Vec<_>, String>>()?
@@ -3683,14 +3687,6 @@ fn binary_distinct_key(value: Option<&BinaryValue>) -> String {
         Some(BinaryValue::Enum(value)) => format!("String:{value}"),
         Some(BinaryValue::List(values)) => format!(
             "List:[{}]",
-            values
-                .iter()
-                .map(|value| binary_distinct_key(value.as_ref()))
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Some(BinaryValue::Embedded(values)) => format!(
-            "Embedded:[{}]",
             values
                 .iter()
                 .map(|value| binary_distinct_key(value.as_ref()))
@@ -4666,9 +4662,6 @@ fn direct_bool_index_key(
     bytes: &[u8],
     index: &DirectBoolDeleteIndex,
 ) -> Result<Option<[u8; 1]>, String> {
-    if bytes.starts_with(b"CDBF") {
-        return Err("legacy binary document format is not supported by direct bool delete".into());
-    }
     if bytes.len() < 3 {
         return Err("compact binary document is shorter than the header".into());
     }
@@ -5387,7 +5380,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::document_format::{write_document, BinaryValue};
+    use crate::document_format::{write_compact_document_for_test, BinaryValue};
     use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
@@ -5691,6 +5684,11 @@ mod tests {
 
     #[test]
     fn streams_index_equal_query_documents() {
+        // Scenario: MDBX streams documents from an index equality query.
+        // Covers:
+        // - Query reader creation for indexed equality plans.
+        // - Document order and payload access from streamed rows.
+        // Expected: Only documents matching the index value are streamed.
         let directory = TemporaryDirectory::new("index_equal_query_reader");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage.register_schemas(&schema_manifest()).unwrap();
@@ -5743,6 +5741,11 @@ mod tests {
 
     #[test]
     fn sorts_bool_index_equal_query_documents() {
+        // Scenario: MDBX filters by a bool index and sorts by a secondary field.
+        // Covers:
+        // - Bool index equality query planning.
+        // - Native sort over compact task documents.
+        // Expected: Matching documents are returned sorted by title.
         let directory = TemporaryDirectory::new("bool_index_equal_sort");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage.register_schemas(&task_schema_manifest()).unwrap();
@@ -5782,6 +5785,11 @@ mod tests {
 
     #[test]
     fn updates_compact_bool_index_documents_without_embedded_id() {
+        // Scenario: MDBX updates compact documents whose id is only in the key.
+        // Covers:
+        // - Query-plan updates over compact bool-indexed documents.
+        // - Index replacement after field mutation.
+        // Expected: Matching rows move from the true index to the false index.
         let directory = TemporaryDirectory::new("bool_index_update_compact_without_id");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage.register_schemas(&task_schema_manifest()).unwrap();
@@ -5845,6 +5853,11 @@ mod tests {
 
     #[test]
     fn skips_change_set_ids_for_unwatched_unindexed_query_updates() {
+        // Scenario: MDBX updates unindexed query matches without requested ids.
+        // Covers:
+        // - Filter-only query-plan updates.
+        // - Optional watcher change-set id collection.
+        // Expected: Documents are updated while no change-set ids are emitted.
         let directory = TemporaryDirectory::new("update_without_change_ids");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage
@@ -5899,6 +5912,11 @@ mod tests {
 
     #[test]
     fn sorts_compact_documents_by_external_id() {
+        // Scenario: MDBX sorts compact documents by their external document id.
+        // Covers:
+        // - Id-field sorting when id is stored in the MDBX key.
+        // - Compact document payloads without embedded id fields.
+        // Expected: Results are ordered by document id, not insertion order.
         let directory = TemporaryDirectory::new("sort_compact_by_external_id");
         let mut storage = MdbxStorage::open(directory.path()).unwrap();
         storage.register_schemas(&task_schema_manifest()).unwrap();
@@ -6341,21 +6359,27 @@ mod tests {
     }
 
     fn user_document(email: &str, id: i64, name: &str, score: i64) -> Vec<u8> {
-        write_document(&[
-            Some(BinaryValue::String(email.to_string())),
-            Some(BinaryValue::Int(id)),
-            Some(BinaryValue::String(name.to_string())),
-            Some(BinaryValue::Int(score)),
-        ])
+        write_compact_document_for_test(
+            &schema_manifest().collections[0],
+            &[
+                Some(BinaryValue::String(email.to_string())),
+                Some(BinaryValue::Int(id)),
+                Some(BinaryValue::String(name.to_string())),
+                Some(BinaryValue::Int(score)),
+            ],
+        )
         .unwrap()
     }
 
     fn task_document(completed: bool, id: i64, title: &str) -> Vec<u8> {
-        write_document(&[
-            Some(BinaryValue::Bool(completed)),
-            Some(BinaryValue::Int(id)),
-            Some(BinaryValue::String(title.to_string())),
-        ])
+        write_compact_document_for_test(
+            &task_schema_manifest().collections[0],
+            &[
+                Some(BinaryValue::Bool(completed)),
+                Some(BinaryValue::Int(id)),
+                Some(BinaryValue::String(title.to_string())),
+            ],
+        )
         .unwrap()
     }
 

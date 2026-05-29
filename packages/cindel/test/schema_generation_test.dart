@@ -263,6 +263,12 @@ void main() {
       expect(restored.recipients?.single.address, 'ada@example.com');
     });
 
+    // Scenario: Native storage returns compact list data for a generated
+    // schema field.
+    // Covers:
+    // - Compact binary list decoding.
+    // - Nullable list item preservation.
+    // Expected: The decoded field preserves the original string and null items.
     test(
       'decodes native compact string list payloads from binary documents.',
       () {
