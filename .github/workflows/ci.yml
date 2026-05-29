@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
-      - dev
   pull_request:
     branches:
       - main
-      - dev
   workflow_dispatch:
 
 concurrency:
@@ -57,20 +55,13 @@ jobs:
       - name: Analyze publishable packages
         run: flutter analyze packages/cindel packages/cindel_annotations packages/cindel_generator packages/cindel_flutter_libs
 
-      - name: Install Todo example dependencies
-        working-directory: examples/cindel_todo
-        run: flutter pub get
-
-      - name: Analyze Todo example
-        working-directory: examples/cindel_todo
-        run: flutter analyze
-
   sqlite-backend:
-    name: SQLite backend tests
+    name: SQLite-only backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
+      CINDEL_TEST_BACKEND: sqlite
 
     steps:
       - name: Checkout
@@ -97,7 +88,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: native-sqlite
+          shared-key: native-sqlite-only
           workspaces: |
             packages/cindel/native -> target
 
@@ -107,13 +98,13 @@ jobs:
       - name: Check Rust formatting
         run: cargo +${{ env.RUST_TOOLCHAIN }} fmt --manifest-path packages/cindel/native/Cargo.toml --check
 
-      - name: Build Rust native core
-        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml
+      - name: Build Rust native core without MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Rust tests
-        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
+      - name: Run Rust tests without MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Dart tests
+      - name: Run Dart package tests with SQLite
         run: dart test packages/cindel/test -r expanded
 
   mdbx-backend:
@@ -166,5 +157,5 @@ jobs:
       - name: Run Rust tests with MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Dart tests with MDBX
+      - name: Run Dart package tests with MDBX
         run: dart test packages/cindel/test -r expanded

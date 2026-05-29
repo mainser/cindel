@@ -28,6 +28,14 @@ Useful project files:
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [ROADMAP.md](ROADMAP.md)
 
+## Benchmarks
+
+Benchmarks provide only a rough indication of database performance, but the results show that Cindel is already quite fast.
+
+<img src=".github/assets/benchmarks.png"/>
+
+If you are interested in more benchmarks or want to check how Cindel performs on your device you can run the [benchmarks](https://github.com/mainser/cindel_benchmark) yourself.
+
 ## License
 
 Cindel is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

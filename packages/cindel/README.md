@@ -285,10 +285,6 @@ final db = await Cindel.openInMemory(schemas: [UserSchema]);
 addTearDown(db.close);
 ```
 
-## Benchmarks
-<img src="https://raw.githubusercontent.com/mainser/Cindel/main/.github/assets/benchmarks.png" width="100%" />
-
-
 ## License
 
 Cindel is licensed under the Apache License, Version 2.0. See the repository
