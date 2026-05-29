@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
@@ -234,38 +236,44 @@ void main() {
     // - Native query-plan update count.
     // - MDBX compact document update without Dart object hydration.
     // Expected: Matching documents are updated and the returned count matches.
-    test('updates all matching native typed query results.', () async {
-      // Arrange.
-      final database = await openTestDatabaseInMemory(
-        schemas: [ImmutableUserSchema],
-        backend: CindelStorageBackend.mdbx,
-      );
-      addTearDown(database.close);
-      await database.immutableUsers.putAll([
-        const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
-        const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
-        const ImmutableUser(dbId: 3, email: 'c@example.com', active: true),
-      ]);
+    test(
+      'updates all matching native typed query results.',
+      () async {
+        // Arrange.
+        final database = await openTestDatabaseInMemory(
+          schemas: [ImmutableUserSchema],
+          backend: CindelStorageBackend.mdbx,
+        );
+        addTearDown(database.close);
+        await database.immutableUsers.putAll([
+          const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
+          const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
+          const ImmutableUser(dbId: 3, email: 'c@example.com', active: true),
+        ]);
 
-      // Act.
-      final updated = await database.immutableUsers
-          .filter()
-          .activeEqualTo(true)
-          .updateAll({'active': false});
-      final activeCount = await database.immutableUsers
-          .filter()
-          .activeEqualTo(true)
-          .count();
-      final inactive = await database.immutableUsers
-          .filter()
-          .activeEqualTo(false)
-          .findAll();
+        // Act.
+        final updated = await database.immutableUsers
+            .filter()
+            .activeEqualTo(true)
+            .updateAll({'active': false});
+        final activeCount = await database.immutableUsers
+            .filter()
+            .activeEqualTo(true)
+            .count();
+        final inactive = await database.immutableUsers
+            .filter()
+            .activeEqualTo(false)
+            .findAll();
 
-      // Assert.
-      expect(updated, 2);
-      expect(activeCount, 0);
-      expect(inactive.map((user) => user.dbId), [1, 2, 3]);
-    });
+        // Assert.
+        expect(updated, 2);
+        expect(activeCount, 0);
+        expect(inactive.map((user) => user.dbId), [1, 2, 3]);
+      },
+      skip: !_runMdbxBackendTests
+          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
+          : false,
+    );
 
     // Scenario: A generated filter starts from the whole collection.
     // Covers:
@@ -746,6 +754,10 @@ Future<CindelDatabase> _openUsersForExecutionOrder() async {
     _user(dbId: 6, name: 'Fox', email: 'team-f@example.com', active: false),
   );
   return database;
+}
+
+bool get _runMdbxBackendTests {
+  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }
 
 User _user({
