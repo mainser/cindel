@@ -1,12 +1,17 @@
 # Changelog
 
+## 0.5.11
+
+- Avoided creating Cindel-only SQLite storage metadata for generated
+  schema-aware SQLite opens, keeping the typed collection table layout 
+  while still validating existing metadata when present.
+
 ## 0.5.10
 
 - Added native typed reader and writer support for embedded object fields and
   embedded object lists.
 - Added generated nested filters for fields inside a single embedded object.
-- Kept embedded object-list nested query helpers unsupported, matching the
-  current Isar-aligned scope.
+- Kept embedded object-list nested query helpers unsupported.
 - Fixed SQLite native typed reads and projections for generated schemas that
   store embedded/list payloads in collection tables.
 - Updated the development generator dependency constraint to `^0.5.8`.

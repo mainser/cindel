@@ -567,23 +567,26 @@ impl SqliteStorage {
         if self.persist_schema_metadata {
             ensure_base_tables(&self.connection)?;
             ensure_binary_schema_collections_table(&self.connection)?;
-        } else {
-            ensure_runtime_metadata_tables(&self.connection)?;
-        }
-        ensure_storage_metadata(
-            &self.connection,
-            StorageLayoutVersion::SqliteV1,
-            DocumentFormatVersion::BinaryV2,
-            SchemaMetadataVersion::BinaryV1,
-        )?;
-        validate_storage_metadata(
-            &self.connection,
-            StorageLayoutVersion::SqliteV1,
-            DocumentFormatVersion::BinaryV2,
-            SchemaMetadataVersion::BinaryV1,
-        )?;
-        if self.persist_schema_metadata {
+            ensure_storage_metadata(
+                &self.connection,
+                StorageLayoutVersion::SqliteV1,
+                DocumentFormatVersion::BinaryV2,
+                SchemaMetadataVersion::BinaryV1,
+            )?;
+            validate_storage_metadata(
+                &self.connection,
+                StorageLayoutVersion::SqliteV1,
+                DocumentFormatVersion::BinaryV2,
+                SchemaMetadataVersion::BinaryV1,
+            )?;
             validate_schema_metadata_records(&self.connection)?;
+        } else if table_exists(&self.connection, "storage_metadata")? {
+            validate_storage_metadata(
+                &self.connection,
+                StorageLayoutVersion::SqliteV1,
+                DocumentFormatVersion::BinaryV2,
+                SchemaMetadataVersion::BinaryV1,
+            )?;
         }
 
         if let Some(manifest) = manifest {
@@ -2788,19 +2791,6 @@ fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn ensure_runtime_metadata_tables(connection: &Connection) -> Result<(), String> {
-    connection
-        .execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS storage_metadata (
-                key TEXT PRIMARY KEY NOT NULL,
-                value TEXT NOT NULL
-            );
-            "#,
-        )
-        .map_err(|error| error.to_string())
-}
-
 fn ensure_generic_document_tables(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
@@ -3744,9 +3734,10 @@ mod tests {
     fn opens_with_schema_manifest_during_open() {
         // Scenario: Dart opens SQLite with generated schemas already available.
         // Covers:
-        // - [SqliteStorage::open_with_schemas] registering schema metadata during open.
+        // - [SqliteStorage::open_with_schemas] registering runtime schema metadata during open.
         // - Keeping SQLite open aligned with Isar's schema-aware open path.
-        // Expected: The collection starts at schema version 1 without a later register call.
+        // Expected: The collection starts at schema version 1 without a later register call
+        // and does not persist Cindel-only metadata tables in schema-aware SQLite mode.
 
         // Arrange.
         let directory = TemporaryDirectory::new("schema_open");
@@ -3757,9 +3748,19 @@ mod tests {
         // Act.
         let storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
         let version = storage.schema_version("users").unwrap();
+        let storage_metadata_table = storage
+            .connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'storage_metadata'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .unwrap();
 
         // Assert.
         assert_eq!(version, Some(1));
+        assert_eq!(storage_metadata_table, None);
     }
 
     #[test]
