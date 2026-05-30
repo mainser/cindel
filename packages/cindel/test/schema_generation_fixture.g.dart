@@ -1551,14 +1551,7 @@ void _$UserWriteCindelNativeDocument(
     }
   }
   writer.writeInt(13, object.status.index);
-  {
-    final list = object.tags;
-    final listWriter = writer.beginList(14, list.length);
-    for (var i = 0; i < list.length; i += 1) {
-      listWriter.writeString(i, list[i]);
-    }
-    writer.endList(listWriter);
-  }
+  cindelWriteNativeStringList(writer, 14, object.tags);
   {
     final value = object.username;
     if (value == null) {

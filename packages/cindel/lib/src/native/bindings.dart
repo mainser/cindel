@@ -1083,7 +1083,8 @@ final class CindelNativeBindings {
   }
 }
 
-final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
+final class _CindelNativeDocumentWriter
+    implements CindelNativeStringListDocumentWriter {
   _CindelNativeDocumentWriter(this._functions, this._writer)
     : _stringBytes = _ReusableNativeBytes(256),
       _largeStringCache = LinkedHashMap<String, Uint8List>(),
@@ -1138,6 +1139,18 @@ final class _CindelNativeDocumentWriter implements CindelNativeDocumentWriter {
     } else {
       _stringBytes.withBytes(cachedBytes, write);
     }
+  }
+
+  @override
+  void writeStringList(int fieldIndex, List<String> value) {
+    _stringBytes.withCompactStringList(value, (pointer, length) {
+      _functions.nativeBatchWriterWriteBytes(
+        _writer,
+        fieldIndex,
+        pointer,
+        length,
+      );
+    });
   }
 
   @override
@@ -1254,6 +1267,45 @@ final class _ReusableNativeBytes {
     }
     pointer.asTypedList(bytes.length).setAll(0, bytes);
     action(pointer, bytes.length);
+  }
+
+  void withCompactStringList(
+    List<String> values,
+    void Function(Pointer<Uint8>, int) action,
+  ) {
+    final staticSize = values.length * 3;
+    if (staticSize > 0x00ff_ffff) {
+      throw StateError('Cindel string list static size is too large.');
+    }
+    var totalLength = 3 + staticSize;
+    for (final value in values) {
+      totalLength += 3 + value.length;
+    }
+    if (totalLength > capacity) {
+      calloc.free(pointer);
+      capacity = totalLength;
+      pointer = calloc<Uint8>(capacity);
+    }
+
+    final bytes = pointer.asTypedList(totalLength);
+    _writeU24Le(bytes, 0, staticSize);
+    var cursor = 3 + staticSize;
+    for (var i = 0; i < values.length; i += 1) {
+      final value = values[i];
+      _writeU24Le(bytes, 3 + i * 3, cursor - 3);
+      _writeU24Le(bytes, cursor, value.length);
+      cursor += 3;
+      for (var j = 0; j < value.length; j += 1) {
+        final codeUnit = value.codeUnitAt(j);
+        if (codeUnit > 0x7f) {
+          withBytes(_encodeCompactStringList(values), action);
+          return;
+        }
+        bytes[cursor] = codeUnit;
+        cursor += 1;
+      }
+    }
+    action(pointer, totalLength);
   }
 
   void free() {
@@ -1591,11 +1643,46 @@ int _readU24Le(Uint8List bytes, int offset) {
   return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
 }
 
+void _writeU24Le(Uint8List bytes, int offset, int value) {
+  if (value > 0x00ff_ffff) {
+    throw StateError('Cindel string list value is too large.');
+  }
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >> 8) & 0xff;
+  bytes[offset + 2] = (value >> 16) & 0xff;
+}
+
 int _readU32Le(Uint8List bytes, int offset) {
   return bytes[offset] |
       (bytes[offset + 1] << 8) |
       (bytes[offset + 2] << 16) |
       (bytes[offset + 3] << 24);
+}
+
+Uint8List _encodeCompactStringList(List<String> values) {
+  final encodedValues = [
+    for (final value in values) Uint8List.fromList(utf8.encode(value)),
+  ];
+  final staticSize = values.length * 3;
+  if (staticSize > 0x00ff_ffff) {
+    throw StateError('Cindel string list static size is too large.');
+  }
+  var totalLength = 3 + staticSize;
+  for (final value in encodedValues) {
+    totalLength += 3 + value.length;
+  }
+  final bytes = Uint8List(totalLength);
+  _writeU24Le(bytes, 0, staticSize);
+  var cursor = 3 + staticSize;
+  for (var i = 0; i < encodedValues.length; i += 1) {
+    final value = encodedValues[i];
+    _writeU24Le(bytes, 3 + i * 3, cursor - 3);
+    _writeU24Le(bytes, cursor, value.length);
+    cursor += 3;
+    bytes.setAll(cursor, value);
+    cursor += value.length;
+  }
+  return bytes;
 }
 
 abstract interface class _CindelNativeFunctions {

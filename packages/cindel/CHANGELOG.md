@@ -5,6 +5,11 @@
 - Avoided creating Cindel-only SQLite storage metadata for generated
   schema-aware SQLite opens, keeping the typed collection table layout 
   while still validating existing metadata when present.
+- Added a direct native string-list writer used by generated typed serializers
+  to reduce MDBX `List<String>` batch insert overhead.
+- Added MDBX native query update support for compact dynamic fields, including
+  generated `List<String>` fields.
+- Updated the development generator dependency constraint to `^0.5.9`.
 
 ## 0.5.10
 

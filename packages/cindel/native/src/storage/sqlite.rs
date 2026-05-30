@@ -3735,7 +3735,7 @@ mod tests {
         // Scenario: Dart opens SQLite with generated schemas already available.
         // Covers:
         // - [SqliteStorage::open_with_schemas] registering runtime schema metadata during open.
-        // - Keeping SQLite open aligned with Isar's schema-aware open path.
+        // - Keeping schema-aware SQLite open focused on collection tables.
         // Expected: The collection starts at schema version 1 without a later register call
         // and does not persist Cindel-only metadata tables in schema-aware SQLite mode.
 

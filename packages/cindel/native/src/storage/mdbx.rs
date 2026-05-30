@@ -5380,7 +5380,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::document_format::{write_compact_document_for_test, BinaryValue};
+    use crate::document_format::{read_binary_field, write_compact_document_for_test, BinaryValue};
     use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
@@ -5911,6 +5911,104 @@ mod tests {
     }
 
     #[test]
+    fn updates_compact_string_list_fields() {
+        // Scenario: MDBX updates a generated compact List<String> field.
+        // Covers:
+        // - Query-plan updates that change dynamic compact payload length.
+        // - The same compact string-list representation used by generated inserts.
+        // Expected: Matching documents receive the new string-list value.
+        let directory = TemporaryDirectory::new("update_compact_string_list");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage
+            .register_schemas(&task_tags_schema_manifest())
+            .unwrap();
+
+        for (id, completed, title, tags) in [
+            (1, true, "Cid", vec!["old"]),
+            (2, false, "Ben", vec!["skip"]),
+            (3, true, "Ana", vec!["stale", "tag"]),
+        ] {
+            storage
+                .put_indexed(
+                    "tasks",
+                    id,
+                    &task_tags_document(completed, title, tags),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let updated = storage
+            .query_plan_update(
+                "tasks",
+                &WireQueryPlan {
+                    source: WireQuerySource::All { dedupe: false },
+                    filter: Some(
+                        crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                            field: "completed".to_string(),
+                            operation: crate::wire::WireFilterOperation::Equal,
+                            value: WireValue::Bool(true),
+                        })
+                        .unwrap(),
+                    ),
+                    sorts: Vec::new(),
+                    distinct_fields: Vec::new(),
+                    offset: 0,
+                    limit: None,
+                },
+                &[(
+                    "tags".to_string(),
+                    WireValue::List(vec![
+                        WireValue::String("fresh".to_string()),
+                        WireValue::String("fast".to_string()),
+                    ]),
+                )],
+                true,
+            )
+            .unwrap();
+
+        let documents = storage
+            .query_plan_documents(
+                "tasks",
+                &WireQueryPlan {
+                    source: WireQuerySource::All { dedupe: false },
+                    filter: None,
+                    sorts: vec![crate::wire::WireQuerySort {
+                        field: "title".to_string(),
+                        ascending: true,
+                    }],
+                    distinct_fields: Vec::new(),
+                    offset: 0,
+                    limit: None,
+                },
+            )
+            .unwrap();
+        let schema = &task_tags_schema_manifest().collections[0];
+        let tags = documents
+            .iter()
+            .map(|bytes| read_binary_field(schema, bytes, "tags").unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(updated, 2);
+        assert_eq!(
+            tags,
+            vec![
+                Some(BinaryValue::List(vec![
+                    Some(BinaryValue::String("fresh".to_string())),
+                    Some(BinaryValue::String("fast".to_string())),
+                ])),
+                Some(BinaryValue::List(vec![Some(BinaryValue::String(
+                    "skip".to_string()
+                ))])),
+                Some(BinaryValue::List(vec![
+                    Some(BinaryValue::String("fresh".to_string())),
+                    Some(BinaryValue::String("fast".to_string())),
+                ])),
+            ]
+        );
+    }
+
+    #[test]
     fn sorts_compact_documents_by_external_id() {
         // Scenario: MDBX sorts compact documents by their external document id.
         // Covers:
@@ -6333,6 +6431,22 @@ mod tests {
         }
     }
 
+    fn task_tags_schema_manifest() -> SchemaManifest {
+        SchemaManifest {
+            collections: vec![CollectionSchemaManifest {
+                name: "tasks".to_string(),
+                id_field: "id".to_string(),
+                fields: vec![
+                    test_field("completed", "bool", false, false),
+                    test_field("id", "int", true, false),
+                    list_field("tags", "List<String>", false),
+                    test_field("title", "String", false, false),
+                ],
+                composite_indexes: Vec::new(),
+            }],
+        }
+    }
+
     fn test_field(
         name: &str,
         dart_type: &str,
@@ -6344,6 +6458,19 @@ mod tests {
             dart_type: dart_type.to_string(),
             binary_type: dart_type.to_string(),
             is_id,
+            is_indexed,
+            is_index_unique: false,
+            index_case_sensitive: true,
+            index_type: "value".to_string(),
+        }
+    }
+
+    fn list_field(name: &str, dart_type: &str, is_indexed: bool) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.to_string(),
+            dart_type: dart_type.to_string(),
+            binary_type: "list".to_string(),
+            is_id: false,
             is_indexed,
             is_index_unique: false,
             index_case_sensitive: true,
@@ -6394,6 +6521,23 @@ mod tests {
         bytes.push((title.len() >> 16) as u8);
         bytes.extend_from_slice(title);
         bytes
+    }
+
+    fn task_tags_document(completed: bool, title: &str, tags: Vec<&str>) -> Vec<u8> {
+        write_compact_document_for_test(
+            &task_tags_schema_manifest().collections[0],
+            &[
+                Some(BinaryValue::Bool(completed)),
+                Some(BinaryValue::Int(0)),
+                Some(BinaryValue::List(
+                    tags.into_iter()
+                        .map(|value| Some(BinaryValue::String(value.to_string())))
+                        .collect(),
+                )),
+                Some(BinaryValue::String(title.to_string())),
+            ],
+        )
+        .unwrap()
     }
 
     struct TemporaryDirectory {

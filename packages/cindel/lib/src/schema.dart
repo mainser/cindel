@@ -63,6 +63,30 @@ abstract interface class CindelNativeDocumentWriter {
   void endList(CindelNativeDocumentWriter listWriter);
 }
 
+/// Optional fast path for generated native serializers writing string lists.
+abstract interface class CindelNativeStringListDocumentWriter
+    implements CindelNativeDocumentWriter {
+  /// Writes a non-null string list value to [fieldIndex].
+  void writeStringList(int fieldIndex, List<String> value);
+}
+
+/// Writes [value] through the fastest string-list path supported by [writer].
+void cindelWriteNativeStringList(
+  CindelNativeDocumentWriter writer,
+  int fieldIndex,
+  List<String> value,
+) {
+  if (writer is CindelNativeStringListDocumentWriter) {
+    writer.writeStringList(fieldIndex, value);
+    return;
+  }
+  final listWriter = writer.beginList(fieldIndex, value.length);
+  for (var i = 0; i < value.length; i += 1) {
+    listWriter.writeString(i, value[i]);
+  }
+  writer.endList(listWriter);
+}
+
 /// Reader used by generated typed deserializers for native binary documents.
 abstract interface class CindelNativeDocumentReader {
   /// Number of documents or list values exposed by this reader.

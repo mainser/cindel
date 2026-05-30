@@ -1283,6 +1283,26 @@ final class _FieldInfo {
   }
 ''';
     }
+    if (element.kind == _PersistedTypeKind.primitive &&
+        _normalizeDartType(element.dartType) == 'String' &&
+        !element.isNullable) {
+      final expression = 'object.$name';
+      if (!isNullable) {
+        return '''
+  cindelWriteNativeStringList(writer, $index, $expression);
+''';
+      }
+      return '''
+  {
+    final list = $expression;
+    if (list == null) {
+      writer.writeNull($index);
+    } else {
+      cindelWriteNativeStringList(writer, $index, list);
+    }
+  }
+''';
+    }
     final method = switch (element.binaryType) {
       'bool' => 'writeBool',
       'int' => 'writeInt',

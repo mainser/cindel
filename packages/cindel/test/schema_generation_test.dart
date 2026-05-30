@@ -536,6 +536,49 @@ void main() {
       ]);
       expect(metadataMatches.map((user) => user.email), ['ada@example.com']);
     });
+
+    // Scenario: A generated query update changes a string-list field.
+    // Covers:
+    // - Native update serialization for compact List<String> fields.
+    // - Reading the updated list back through the generated native reader.
+    // Expected: Matching objects receive the replacement tags list.
+    test(
+      'updates generated string-list fields through native queries.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(schemas: [UserSchema]);
+        final first = User()
+          ..name = 'Ada'
+          ..email = 'ada@example.com'
+          ..active = true
+          ..tags = ['old'];
+        final second = User()
+          ..name = 'Ben'
+          ..email = 'ben@example.com'
+          ..active = false
+          ..tags = ['keep'];
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.users.putAll([first, second]);
+        final updated = await db.users
+            .all()
+            .filter()
+            .activeEqualTo(true)
+            .updateAll({
+              'tags': ['fresh', 'fast'],
+            });
+        final users = await db.users.all().sortByEmail().findAll();
+
+        // Assert.
+        expect(updated, 1);
+        expect(users.map((user) => user.tags), [
+          ['fresh', 'fast'],
+          ['keep'],
+        ]);
+      },
+    );
   });
 }
 

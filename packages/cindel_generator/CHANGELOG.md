@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.9
+
+- Generated native writers now use Cindel's direct string-list writer for
+  `List<String>` fields, avoiding per-element native writer calls during typed
+  batch inserts.
+
 ## 0.5.8
 
 - Generated native typed readers and writers for collection schemas containing

@@ -104,6 +104,10 @@ impl CompactFieldType {
             Self::String | Self::List | Self::Object => 3,
         }
     }
+
+    fn is_dynamic(self) -> bool {
+        matches!(self, Self::String | Self::List | Self::Object)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -324,6 +328,7 @@ impl<'a> CompactBinaryDocument<'a> {
 pub(crate) struct PreparedBinaryFieldUpdates {
     static_size: usize,
     updates: Vec<PreparedBinaryFieldUpdate>,
+    dynamic_fields: Vec<PreparedDynamicField>,
 }
 
 struct PreparedBinaryFieldUpdate {
@@ -331,7 +336,18 @@ struct PreparedBinaryFieldUpdate {
     field_type: CompactFieldType,
     static_offset: usize,
     nullable: bool,
+    dart_type: String,
+    binary_type: String,
     value: WireValue,
+}
+
+struct PreparedDynamicField {
+    field_name: String,
+    field_type: CompactFieldType,
+    static_offset: usize,
+    nullable: bool,
+    dart_type: String,
+    binary_type: String,
 }
 
 pub(crate) fn validate_generic_document(bytes: &[u8]) -> Result<(), String> {
@@ -1129,7 +1145,7 @@ fn write_test_dynamic(
 
 pub(crate) fn update_binary_fields(
     schema: &CollectionSchemaManifest,
-    bytes: &mut [u8],
+    bytes: &mut Vec<u8>,
     updates: &[(String, WireValue)],
 ) -> Result<(), String> {
     let prepared = prepare_binary_field_updates(schema, updates)?;
@@ -1142,6 +1158,7 @@ pub(crate) fn prepare_binary_field_updates(
 ) -> Result<PreparedBinaryFieldUpdates, String> {
     let mut static_size = 0usize;
     let mut field_offsets = Vec::with_capacity(schema.fields.len());
+    let mut dynamic_fields = Vec::new();
     for field in &schema.fields {
         if field.is_id {
             field_offsets.push(None);
@@ -1149,6 +1166,16 @@ pub(crate) fn prepare_binary_field_updates(
         }
         let field_type = CompactFieldType::from_field(field)?;
         field_offsets.push(Some((field_type, static_size)));
+        if field_type.is_dynamic() {
+            dynamic_fields.push(PreparedDynamicField {
+                field_name: field.name.clone(),
+                field_type,
+                static_offset: static_size,
+                nullable: is_nullable_field(field),
+                dart_type: field.dart_type.clone(),
+                binary_type: field.binary_type.clone(),
+            });
+        }
         static_size = static_size
             .checked_add(field_type.static_size())
             .ok_or_else(|| "compact binary document static size overflows".to_string())?;
@@ -1183,17 +1210,20 @@ pub(crate) fn prepare_binary_field_updates(
             field_type,
             static_offset,
             nullable: is_nullable_field(field),
+            dart_type: field.dart_type.clone(),
+            binary_type: field.binary_type.clone(),
             value: value.clone(),
         });
     }
     Ok(PreparedBinaryFieldUpdates {
         static_size,
         updates: prepared,
+        dynamic_fields,
     })
 }
 
 pub(crate) fn apply_prepared_binary_field_updates(
-    bytes: &mut [u8],
+    bytes: &mut Vec<u8>,
     prepared: &PreparedBinaryFieldUpdates,
 ) -> Result<(), String> {
     if bytes.len() < 3 {
@@ -1206,46 +1236,213 @@ pub(crate) fn apply_prepared_binary_field_updates(
     if bytes.len() < 3 + static_size {
         return Err("compact binary document static section is truncated".into());
     }
+    if prepared
+        .updates
+        .iter()
+        .any(|update| update.field_type.is_dynamic())
+    {
+        return rebuild_compact_document_with_updates(bytes, prepared);
+    }
     for update in &prepared.updates {
         let absolute = 3 + update.static_offset;
-        match (update.field_type, &update.value) {
-            (CompactFieldType::Bool, WireValue::Null) if update.nullable => {
-                bytes[absolute] = COMPACT_NULL_BOOL;
+        apply_static_binary_update(bytes, absolute, update)?;
+    }
+    Ok(())
+}
+
+fn rebuild_compact_document_with_updates(
+    bytes: &mut Vec<u8>,
+    prepared: &PreparedBinaryFieldUpdates,
+) -> Result<(), String> {
+    let original = bytes.clone();
+    let static_end = 3usize
+        .checked_add(prepared.static_size)
+        .ok_or_else(|| "compact binary document static section overflows".to_string())?;
+    let mut rebuilt = original
+        .get(0..static_end)
+        .ok_or_else(|| "compact binary document static section is truncated".to_string())?
+        .to_vec();
+    for update in &prepared.updates {
+        if !update.field_type.is_dynamic() {
+            let absolute = 3 + update.static_offset;
+            apply_static_binary_update(&mut rebuilt, absolute, update)?;
+        }
+    }
+    for field in &prepared.dynamic_fields {
+        let update = prepared
+            .updates
+            .iter()
+            .find(|update| update.static_offset == field.static_offset);
+        let absolute = 3 + field.static_offset;
+        let payload = match update {
+            Some(update) => dynamic_update_payload(
+                &update.field_name,
+                update.field_type,
+                update.nullable,
+                &update.dart_type,
+                &update.binary_type,
+                &update.value,
+            )?,
+            None => {
+                compact_dynamic_payload_range(&original, prepared.static_size, field.static_offset)?
+                    .map(|range| original[range].to_vec())
             }
-            (CompactFieldType::Bool, WireValue::Bool(value)) => {
-                bytes[absolute] = u8::from(*value);
-            }
-            (CompactFieldType::Int, WireValue::Null) if update.nullable => {
-                bytes[absolute..absolute + 8].copy_from_slice(&COMPACT_NULL_INT.to_le_bytes());
-            }
-            (CompactFieldType::Int, WireValue::Int(value)) => {
-                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
-            }
-            (CompactFieldType::Double, WireValue::Null) if update.nullable => {
-                bytes[absolute..absolute + 8]
-                    .copy_from_slice(&COMPACT_NULL_DOUBLE_BITS.to_le_bytes());
-            }
-            (CompactFieldType::Double, WireValue::Double(value)) if value.is_finite() => {
-                bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
-            }
-            (CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object, _) => {
-                return Err(format!(
-                    "query updates for dynamic field `{}` are not supported yet",
-                    update.field_name
-                ));
-            }
-            (_, WireValue::Null) => {
-                return Err(format!("field `{}` is not nullable", update.field_name));
-            }
-            _ => {
-                return Err(format!(
-                    "query update value does not match field `{}`",
-                    update.field_name
-                ));
-            }
+        };
+        let Some(payload) = payload else {
+            write_u24(&mut rebuilt, absolute, 0)?;
+            continue;
+        };
+        let relative = rebuilt
+            .len()
+            .checked_sub(3)
+            .ok_or_else(|| "compact binary document dynamic offset underflows".to_string())?;
+        write_u24(&mut rebuilt, absolute, relative)?;
+        push_u24(&mut rebuilt, payload.len())?;
+        rebuilt.extend_from_slice(&payload);
+    }
+    if rebuilt.len() > MAX_OBJECT_SIZE {
+        return Err("compact binary document exceeds the maximum object size".into());
+    }
+    *bytes = rebuilt;
+    Ok(())
+}
+
+fn apply_static_binary_update(
+    bytes: &mut [u8],
+    absolute: usize,
+    update: &PreparedBinaryFieldUpdate,
+) -> Result<(), String> {
+    match (update.field_type, &update.value) {
+        (CompactFieldType::Bool, WireValue::Null) if update.nullable => {
+            bytes[absolute] = COMPACT_NULL_BOOL;
+        }
+        (CompactFieldType::Bool, WireValue::Bool(value)) => {
+            bytes[absolute] = u8::from(*value);
+        }
+        (CompactFieldType::Int, WireValue::Null) if update.nullable => {
+            bytes[absolute..absolute + 8].copy_from_slice(&COMPACT_NULL_INT.to_le_bytes());
+        }
+        (CompactFieldType::Int, WireValue::Int(value)) => {
+            bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        (CompactFieldType::Double, WireValue::Null) if update.nullable => {
+            bytes[absolute..absolute + 8].copy_from_slice(&COMPACT_NULL_DOUBLE_BITS.to_le_bytes());
+        }
+        (CompactFieldType::Double, WireValue::Double(value)) if value.is_finite() => {
+            bytes[absolute..absolute + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        (_, WireValue::Null) => {
+            return Err(format!("field `{}` is not nullable", update.field_name));
+        }
+        _ => {
+            return Err(format!(
+                "query update value does not match field `{}`",
+                update.field_name
+            ));
         }
     }
     Ok(())
+}
+
+fn dynamic_update_payload(
+    field_name: &str,
+    field_type: CompactFieldType,
+    nullable: bool,
+    dart_type: &str,
+    binary_type: &str,
+    value: &WireValue,
+) -> Result<Option<Vec<u8>>, String> {
+    if matches!(value, WireValue::Null) {
+        if nullable {
+            return Ok(None);
+        }
+        return Err(format!("field `{field_name}` is not nullable"));
+    }
+    match (field_type, value) {
+        (CompactFieldType::String, WireValue::String(value)) => Ok(Some(value.as_bytes().to_vec())),
+        (CompactFieldType::List, WireValue::List(values)) => {
+            if is_string_list_type(dart_type, binary_type) {
+                return compact_string_list_update_payload(field_name, dart_type, values).map(Some);
+            }
+            let values = values
+                .iter()
+                .map(wire_value_to_binary_value)
+                .collect::<Result<Vec<_>, String>>()?;
+            encode_list(&values).map(Some)
+        }
+        (CompactFieldType::Object, WireValue::Object(fields)) => {
+            let fields = fields
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), wire_value_to_binary_value(value)?)))
+                .collect::<Result<Vec<_>, String>>()?;
+            encode_object(&fields).map(Some)
+        }
+        _ => Err(format!(
+            "query update value does not match field `{field_name}`"
+        )),
+    }
+}
+
+fn compact_string_list_update_payload(
+    field_name: &str,
+    dart_type: &str,
+    values: &[WireValue],
+) -> Result<Vec<u8>, String> {
+    let allows_null_elements = normalized_dart_type(dart_type).contains("String?");
+    let records = values
+        .iter()
+        .map(|value| match value {
+            WireValue::String(value) => Ok(Some(value.as_bytes().to_vec())),
+            WireValue::Null if allows_null_elements => Ok(None),
+            WireValue::Null => Err(format!(
+                "query update value for field `{field_name}` contains null string-list elements"
+            )),
+            _ => Err(format!(
+                "query update value does not match field `{field_name}`"
+            )),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    write_compact_string_list_records(&records)
+}
+
+fn wire_value_to_binary_value(value: &WireValue) -> Result<Option<BinaryValue>, String> {
+    Ok(match value {
+        WireValue::Null => None,
+        WireValue::Bool(value) => Some(BinaryValue::Bool(*value)),
+        WireValue::Int(value) => Some(BinaryValue::Int(*value)),
+        WireValue::Double(value) if value.is_finite() => Some(BinaryValue::Double(*value)),
+        WireValue::Double(_) => return Err("query update double values must be finite".into()),
+        WireValue::String(value) => Some(BinaryValue::String(value.clone())),
+        WireValue::List(values) => Some(BinaryValue::List(
+            values
+                .iter()
+                .map(wire_value_to_binary_value)
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+        WireValue::Object(fields) => Some(BinaryValue::Object(
+            fields
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), wire_value_to_binary_value(value)?)))
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+    })
+}
+
+fn is_string_list_type(dart_type: &str, binary_type: &str) -> bool {
+    normalized_binary_type(binary_type) == "list"
+        && matches!(
+            normalized_dart_type(dart_type).as_str(),
+            "List<String>" | "List<String?>"
+        )
+}
+
+fn normalized_dart_type(dart_type: &str) -> String {
+    dart_type
+        .strip_suffix('?')
+        .unwrap_or(dart_type)
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
 }
 
 fn validate_prepared_binary_update(
@@ -1265,10 +1462,15 @@ fn validate_prepared_binary_update(
         | (CompactFieldType::Int, WireValue::Int(_)) => Ok(()),
         (CompactFieldType::Double, WireValue::Double(value)) if value.is_finite() => Ok(()),
         (CompactFieldType::String | CompactFieldType::List | CompactFieldType::Object, _) => {
-            Err(format!(
-                "query updates for dynamic field `{}` are not supported yet",
-                field.name
-            ))
+            dynamic_update_payload(
+                &field.name,
+                field_type,
+                is_nullable_field(field),
+                &field.dart_type,
+                &field.binary_type,
+                value,
+            )
+            .map(|_| ())
         }
         (_, WireValue::Null) => Err(format!("field `{}` is not nullable", field.name)),
         _ => Err(format!(
@@ -1781,7 +1983,6 @@ fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
-#[cfg(test)]
 fn push_u24(bytes: &mut Vec<u8>, value: usize) -> Result<(), String> {
     if value > 0x00ff_ffff {
         return Err("binary document u24 value exceeds range".into());
