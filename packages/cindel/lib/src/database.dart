@@ -138,11 +138,22 @@ class CindelDatabase {
   final bool _schemasWereRegisteredOnOpen;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
+  final Set<String> _genericDocumentCollections = {};
   Pointer<Void>? _handle;
   _TransactionMode? _activeTransaction;
 
   bool get usesSqliteNativeDocuments =>
       backend == CindelStorageBackend.sqlite && _schemasWereRegisteredOnOpen;
+
+  /// Returns whether this handle should read [collection] as generic documents.
+  bool collectionHasGenericDocuments(String collection) {
+    return _genericDocumentCollections.contains(collection);
+  }
+
+  /// Marks [collection] for generic document hydration in this handle.
+  void markCollectionHasGenericDocuments(String collection) {
+    _genericDocumentCollections.add(collection);
+  }
 
   /// Opens a database stored under [directory].
   ///
@@ -309,6 +320,7 @@ class CindelDatabase {
     final indexEntries = _indexEntriesFor(collection, value);
     if (indexEntries == null) {
       _bindings.put(handle, collection, id, bytes);
+      markCollectionHasGenericDocuments(collection);
       _markNativeCollectionChanged(
         collection,
         () => CindelChangeSet.upsert(collection, id, value),
@@ -324,6 +336,7 @@ class CindelDatabase {
       bytes,
       _encodeIndexEntries(indexEntries),
     );
+    markCollectionHasGenericDocuments(collection);
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upsert(collection, id, value),
@@ -364,6 +377,7 @@ class CindelDatabase {
       collection,
       _encodeBatchPutEntries(documents),
     );
+    markCollectionHasGenericDocuments(collection);
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upserts(collection, values),

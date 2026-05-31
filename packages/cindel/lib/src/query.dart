@@ -696,7 +696,7 @@ final class CindelQuery<T> {
     return documents.map(_idFromDocument).toList(growable: false);
   }
 
-  Future<List<T>>? _matchingNativeObjects() {
+  Future<List<T>?> _matchingNativeObjects() async {
     final nativePlan = _nativePlan();
     final fieldTypes = _nativeFieldTypes();
     final readNativeDocument = _schema.readNativeDocument;
@@ -706,15 +706,17 @@ final class CindelQuery<T> {
         (_database.usesSqliteNativeDocuments && !_canUseSqliteNativePlanner)) {
       return null;
     }
-    return () async {
-      final objects = await _database.queryNativePlanObjects(
+    try {
+      return await _database.queryNativePlanObjects(
         _schema.name,
         nativePlan,
         fieldTypes,
         readNativeDocument,
       );
-      return objects;
-    }();
+    } on Object {
+      _database.markCollectionHasGenericDocuments(_schema.name);
+      return null;
+    }
   }
 
   Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments() {
@@ -1088,12 +1090,14 @@ final class CindelQuery<T> {
 
   bool get _canUseNativeFilter {
     return _database.backend == CindelStorageBackend.mdbx &&
+        !_database.collectionHasGenericDocuments(_schema.name) &&
         _schema.toBinaryDocument != null &&
         _schema.fromBinaryDocument != null;
   }
 
   bool get _canUseNativePlanner {
-    if (_sourceFilter != null) {
+    if (_sourceFilter != null ||
+        _database.collectionHasGenericDocuments(_schema.name)) {
       return false;
     }
     if (_database.backend == CindelStorageBackend.mdbx) {

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cindel/cindel.dart';
@@ -578,6 +579,52 @@ void main() {
           ['keep'],
         ]);
       },
+    );
+
+    // Scenario: Generated getAll hydrates through the MDBX native cursor reader.
+    // Covers:
+    // - Ordered getAll hits, misses, and repeated ids.
+    // - String and List<String> hydration from compact borrowed MDBX rows.
+    // Expected: Missing ids remain null and repeated hits hydrate consistently.
+    test(
+      'hydrates generated getAll through the MDBX native cursor reader.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.mdbx,
+        );
+        final first = User()
+          ..dbId = 1
+          ..name = 'Ada'
+          ..email = 'ada@example.com'
+          ..active = true
+          ..tags = ['compiler', 'math'];
+        final second = User()
+          ..dbId = 2
+          ..name = 'Ben'
+          ..email = 'ben@example.com'
+          ..active = false
+          ..tags = ['runtime'];
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.users.putAll([first, second]);
+        final users = await db.users.getAll([2, 404, 1, 2]);
+
+        // Assert.
+        expect(users[0]?.email, 'ben@example.com');
+        expect(users[0]?.tags, ['runtime']);
+        expect(users[1], isNull);
+        expect(users[2]?.email, 'ada@example.com');
+        expect(users[2]?.tags, ['compiler', 'math']);
+        expect(users[3]?.email, 'ben@example.com');
+        expect(users[3]?.tags, ['runtime']);
+      },
+      skip: Platform.environment['CINDEL_TEST_MDBX'] != '1'
+          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
+          : false,
     );
   });
 }

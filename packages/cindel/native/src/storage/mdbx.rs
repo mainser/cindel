@@ -60,8 +60,7 @@ pub(crate) struct MdbxCursorDocumentReader {
     _transaction: Transaction<'static, RO, NoWriteMap>,
     ids: Vec<u64>,
     current_index: Option<usize>,
-    current_present: bool,
-    current_bytes: Vec<u8>,
+    current_bytes: Option<Cow<'static, [u8]>>,
 }
 
 impl MdbxCursorDocumentReader {
@@ -71,7 +70,7 @@ impl MdbxCursorDocumentReader {
 
     pub(crate) fn is_present(&mut self, document_index: usize) -> Result<bool, String> {
         self.load(document_index)?;
-        Ok(self.current_present)
+        Ok(self.current_bytes.is_some())
     }
 
     pub(crate) fn document_bytes(
@@ -79,16 +78,12 @@ impl MdbxCursorDocumentReader {
         document_index: usize,
     ) -> Result<Option<&[u8]>, String> {
         self.load(document_index)?;
-        if self.current_present {
-            Ok(Some(&self.current_bytes))
-        } else {
-            Ok(None)
-        }
+        Ok(self.current_bytes.as_deref())
     }
 
     pub(crate) fn document_id(&mut self, document_index: usize) -> Result<Option<u64>, String> {
         self.load(document_index)?;
-        if self.current_present {
+        if self.current_bytes.is_some() {
             Ok(self.ids.get(document_index).copied())
         } else {
             Ok(None)
@@ -100,20 +95,15 @@ impl MdbxCursorDocumentReader {
             return Ok(());
         }
         self.current_index = Some(document_index);
-        self.current_present = false;
-        self.current_bytes.clear();
+        self.current_bytes = None;
         let Some(id) = self.ids.get(document_index).copied() else {
             return Ok(());
         };
-        let bytes = ignore_not_found(
+        self.current_bytes = ignore_not_found(
             self.cursor
-                .set::<Cow<'_, [u8]>>(&document_table_key(id))
+                .set::<Cow<'static, [u8]>>(&document_table_key(id))
                 .map_err(|error| error.to_string()),
         )?;
-        if let Some(bytes) = bytes {
-            self.current_bytes.extend_from_slice(bytes.as_ref());
-            self.current_present = true;
-        }
         Ok(())
     }
 }
@@ -147,14 +137,14 @@ pub(crate) struct MdbxQueryDocumentReader {
     emitted: usize,
     current_id: Option<u64>,
     current_present: bool,
-    current_bytes: Vec<u8>,
+    current_bytes: Option<Cow<'static, [u8]>>,
 }
 
 impl MdbxQueryDocumentReader {
     pub(crate) fn next(&mut self) -> Result<bool, String> {
         if self.limit.is_some_and(|limit| self.emitted >= limit) {
             self.current_present = false;
-            self.current_bytes.clear();
+            self.current_bytes = None;
             return Ok(false);
         }
 
@@ -162,18 +152,18 @@ impl MdbxQueryDocumentReader {
             MdbxQueryCursorSource::Documents { cursor, started } => loop {
                 let row = if *started {
                     cursor
-                        .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .next::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
                         .map_err(|error| error.to_string())?
                 } else {
                     *started = true;
                     cursor
-                        .first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .first::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
                         .map_err(|error| error.to_string())?
                 };
                 let Some((key, bytes)) = row else {
                     self.current_present = false;
                     self.current_id = None;
-                    self.current_bytes.clear();
+                    self.current_bytes = None;
                     return Ok(false);
                 };
                 let id = decode_document_table_key(key.as_ref())?;
@@ -186,8 +176,7 @@ impl MdbxQueryDocumentReader {
                     self.matched += 1;
                     continue;
                 }
-                self.current_bytes.clear();
-                self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_bytes = Some(bytes);
                 self.current_id = Some(id);
                 self.current_present = true;
                 self.matched += 1;
@@ -203,24 +192,24 @@ impl MdbxQueryDocumentReader {
             } => loop {
                 let row = if *started {
                     index_cursor
-                        .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
+                        .next::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
                         .map_err(|error| error.to_string())?
                 } else {
                     *started = true;
                     index_cursor
-                        .set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key)
+                        .set_range::<Cow<'static, [u8]>, Cow<'static, [u8]>>(key)
                         .map_err(|error| error.to_string())?
                 };
                 let Some((entry_key, value)) = row else {
                     self.current_present = false;
                     self.current_id = None;
-                    self.current_bytes.clear();
+                    self.current_bytes = None;
                     return Ok(false);
                 };
                 if entry_key.as_ref() != key.as_slice() {
                     self.current_present = false;
                     self.current_id = None;
-                    self.current_bytes.clear();
+                    self.current_bytes = None;
                     return Ok(false);
                 }
                 let id = decode_u64(&value)?;
@@ -230,7 +219,7 @@ impl MdbxQueryDocumentReader {
                     }
                 }
                 let Some(bytes) = ignore_not_found(
-                    documents_cursor.set::<Cow<'_, [u8]>>(&document_table_key(id)),
+                    documents_cursor.set::<Cow<'static, [u8]>>(&document_table_key(id)),
                 )?
                 else {
                     continue;
@@ -244,8 +233,7 @@ impl MdbxQueryDocumentReader {
                     self.matched += 1;
                     continue;
                 }
-                self.current_bytes.clear();
-                self.current_bytes.extend_from_slice(bytes.as_ref());
+                self.current_bytes = Some(bytes);
                 self.current_id = Some(id);
                 self.current_present = true;
                 self.matched += 1;
@@ -259,6 +247,7 @@ impl MdbxQueryDocumentReader {
                 if *current_index >= documents.len() {
                     self.current_present = false;
                     self.current_id = None;
+                    self.current_bytes = None;
                     return Ok(false);
                 }
                 self.current_id = documents.get(*current_index).map(|document| document.id);
@@ -288,7 +277,7 @@ impl MdbxQueryDocumentReader {
                 Ok(Some(document.bytes.as_ref()))
             }
             MdbxQueryCursorSource::Documents { .. } | MdbxQueryCursorSource::IndexEqual { .. } => {
-                Ok(Some(&self.current_bytes))
+                Ok(self.current_bytes.as_deref())
             }
         }
     }
@@ -680,8 +669,7 @@ impl MdbxStorage {
             _transaction: transaction,
             ids: ids.to_vec(),
             current_index: None,
-            current_present: false,
-            current_bytes: Vec::new(),
+            current_bytes: None,
         })
     }
 
@@ -890,7 +878,7 @@ impl MdbxStorage {
                 emitted: 0,
                 current_id: None,
                 current_present: false,
-                current_bytes: Vec::new(),
+                current_bytes: None,
             }));
         }
 
@@ -969,7 +957,7 @@ impl MdbxStorage {
             emitted: 0,
             current_id: None,
             current_present: false,
-            current_bytes: Vec::new(),
+            current_bytes: None,
         }))
     }
 
@@ -5737,6 +5725,125 @@ mod tests {
             user_document("cid@example.com", 3, "Cid", 10).as_slice()
         );
         assert!(!reader.next().unwrap());
+    }
+
+    #[test]
+    fn cursor_document_reader_handles_hits_misses_and_reloads() {
+        // Scenario: The MDBX point-read cursor reader keeps the current
+        // document borrowed from the read transaction.
+        // Covers:
+        // - Hits and misses in an ordered getAll-style id list.
+        // - Re-reading a previous document after visiting a missing id.
+        // - Document id and byte access using the same loaded row.
+        // Expected: Missing rows do not leak stale bytes, and existing rows
+        //   remain readable while the reader is alive.
+        let directory = TemporaryDirectory::new("cursor_document_reader_borrowed");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        storage
+            .put_indexed(
+                "users",
+                1,
+                &user_document("ana@example.com", 1, "Ana", 10),
+                &[],
+            )
+            .unwrap();
+        storage
+            .put_indexed(
+                "users",
+                2,
+                &user_document("ben@example.com", 2, "Ben", 20),
+                &[],
+            )
+            .unwrap();
+
+        let mut reader = storage
+            .cursor_document_reader("users", &[2, 404, 1, 2])
+            .unwrap();
+
+        assert_eq!(reader.len(), 4);
+        assert!(reader.is_present(0).unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(2));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("ben@example.com", 2, "Ben", 20).as_slice()
+        );
+
+        assert!(!reader.is_present(1).unwrap());
+        assert_eq!(reader.document_id(1).unwrap(), None);
+        assert_eq!(reader.document_bytes(1).unwrap(), None);
+
+        assert!(reader.is_present(2).unwrap());
+        assert_eq!(reader.document_id(2).unwrap(), Some(1));
+        assert_eq!(
+            reader.document_bytes(2).unwrap().unwrap(),
+            user_document("ana@example.com", 1, "Ana", 10).as_slice()
+        );
+
+        assert!(reader.is_present(3).unwrap());
+        assert_eq!(reader.document_id(3).unwrap(), Some(2));
+        assert_eq!(
+            reader.document_bytes(3).unwrap().unwrap(),
+            user_document("ben@example.com", 2, "Ben", 20).as_slice()
+        );
+    }
+
+    #[test]
+    fn streams_all_query_documents_from_borrowed_rows() {
+        // Scenario: MDBX streams an unsorted all-documents query directly from
+        // cursor rows.
+        // Covers:
+        // - The non-sorted `Documents` query-reader source.
+        // - Current-row bytes becoming unavailable after the stream ends.
+        // Expected: Each row is readable exactly while it is current.
+        let directory = TemporaryDirectory::new("all_query_reader_borrowed");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, email, name, score) in [
+            (1, "ana@example.com", "Ana", 10),
+            (2, "ben@example.com", "Ben", 20),
+        ] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(email, id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        let mut reader = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .expect("all-documents queries should stream through MDBX");
+
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(1));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("ana@example.com", 1, "Ana", 10).as_slice()
+        );
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(2));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("ben@example.com", 2, "Ben", 20).as_slice()
+        );
+        assert!(!reader.next().unwrap());
+        assert_eq!(reader.document_bytes(0).unwrap(), None);
+        assert_eq!(reader.document_id(0).unwrap(), None);
     }
 
     #[test]

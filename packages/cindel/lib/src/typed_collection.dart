@@ -187,30 +187,33 @@ final class CindelTypedCollection<T> {
 
   /// Returns typed objects stored under [ids], preserving input order.
   Future<List<T?>> getAll(Iterable<int> ids) async {
+    final idList = ids.toList(growable: false);
     if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
       final nativeReader = schema.readNativeDocument;
       final nativeFieldTypes = _nativeFieldTypes();
-      if (nativeReader != null && nativeFieldTypes != null) {
-        return database.getAllNativeBinaryDocuments(
+      try {
+        if (nativeReader != null && nativeFieldTypes != null) {
+          return await database.getAllNativeBinaryDocuments(
+            schema.name,
+            idList,
+            nativeFieldTypes,
+            nativeReader,
+          );
+        }
+        final documents = await database.getAllBinaryDocuments(
           schema.name,
-          ids,
-          nativeFieldTypes,
-          nativeReader,
+          idList,
         );
+        return [
+          for (var i = 0; i < documents.length; i += 1)
+            documents[i] == null
+                ? null
+                : _objectFromBinaryDocument(documents[i]!, idList[i]),
+        ];
+      } on Object {
+        database.markCollectionHasGenericDocuments(schema.name);
       }
-      final idList = ids.toList(growable: false);
-      final documents = await database.getAllBinaryDocuments(
-        schema.name,
-        idList,
-      );
-      return [
-        for (var i = 0; i < documents.length; i += 1)
-          documents[i] == null
-              ? null
-              : _objectFromBinaryDocument(documents[i]!, idList[i]),
-      ];
     }
-    final idList = ids.toList(growable: false);
     final documents = await database.getAll(schema.name, idList);
     return [
       for (var i = 0; i < documents.length; i += 1)
@@ -301,12 +304,14 @@ final class CindelTypedCollection<T> {
 
   bool get _usesBinaryDocuments {
     return database.backend == CindelStorageBackend.mdbx &&
+        !database.collectionHasGenericDocuments(schema.name) &&
         schema.toBinaryDocument != null &&
         schema.fromBinaryDocument != null;
   }
 
   bool get _usesSqliteNativeDocuments {
     return database.usesSqliteNativeDocuments &&
+        !database.collectionHasGenericDocuments(schema.name) &&
         schema.writeNativeDocument != null &&
         schema.readNativeDocument != null;
   }

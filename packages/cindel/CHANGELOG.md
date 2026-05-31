@@ -9,6 +9,10 @@
   to reduce MDBX `List<String>` batch insert overhead.
 - Added MDBX native query update support for compact dynamic fields, including
   generated `List<String>` fields.
+- Avoided an MDBX document copy while generated native readers hydrate point
+  reads and unsorted query results.
+- Kept generated typed APIs on document hydration after generic writes to the
+  same collection.
 - Updated the development generator dependency constraint to `^0.5.9`.
 
 ## 0.5.10
