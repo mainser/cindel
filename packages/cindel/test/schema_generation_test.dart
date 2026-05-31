@@ -5,7 +5,6 @@ import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
-
 import 'schema_generation_fixture.dart';
 
 void main() {
@@ -588,46 +587,54 @@ void main() {
     // - Unicode and escaped-string fallback preservation.
     // - Ordered getAll hits, misses, and empty lists.
     // Expected: Every list value round-trips exactly through the native reader.
-    test('hydrates SQLite native string lists through generated getAll.', () async {
-      // Arrange.
-      final db = await openTestDatabaseInMemory(
-        schemas: [UserSchema],
-        backend: CindelStorageBackend.sqlite,
-      );
-      final ascii = User()
-        ..dbId = 1
-        ..name = 'Ascii'
-        ..email = 'ascii@example.com'
-        ..tags = ['alpha', 'beta', 'gamma'];
-      final unicode = User()
-        ..dbId = 2
-        ..name = 'Unicode'
-        ..email = 'unicode@example.com'
-        ..tags = ['mañana', 'café', '東京'];
-      final escaped = User()
-        ..dbId = 3
-        ..name = 'Escaped'
-        ..email = 'escaped@example.com'
-        ..tags = ['quote"mark', r'path\to\db', 'line\nbreak', ''];
-      final empty = User()
-        ..dbId = 4
-        ..name = 'Empty'
-        ..email = 'empty@example.com'
-        ..tags = const [];
+    test(
+      'hydrates SQLite native string lists through generated getAll.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.sqlite,
+        );
+        final ascii = User()
+          ..dbId = 1
+          ..name = 'Ascii'
+          ..email = 'ascii@example.com'
+          ..tags = ['alpha', 'beta', 'gamma'];
+        final unicode = User()
+          ..dbId = 2
+          ..name = 'Unicode'
+          ..email = 'unicode@example.com'
+          ..tags = ['mañana', 'café', '東京'];
+        final escaped = User()
+          ..dbId = 3
+          ..name = 'Escaped'
+          ..email = 'escaped@example.com'
+          ..tags = ['quote"mark', r'path\to\db', 'line\nbreak', ''];
+        final empty = User()
+          ..dbId = 4
+          ..name = 'Empty'
+          ..email = 'empty@example.com'
+          ..tags = const [];
 
-      addTearDown(db.close);
+        addTearDown(db.close);
 
-      // Act.
-      await db.users.putAll([ascii, unicode, escaped, empty]);
-      final users = await db.users.getAll([3, 404, 1, 2, 4]);
+        // Act.
+        await db.users.putAll([ascii, unicode, escaped, empty]);
+        final users = await db.users.getAll([3, 404, 1, 2, 4]);
 
-      // Assert.
-      expect(users[0]?.tags, ['quote"mark', r'path\to\db', 'line\nbreak', '']);
-      expect(users[1], isNull);
-      expect(users[2]?.tags, ['alpha', 'beta', 'gamma']);
-      expect(users[3]?.tags, ['mañana', 'café', '東京']);
-      expect(users[4]?.tags, isEmpty);
-    });
+        // Assert.
+        expect(users[0]?.tags, [
+          'quote"mark',
+          r'path\to\db',
+          'line\nbreak',
+          '',
+        ]);
+        expect(users[1], isNull);
+        expect(users[2]?.tags, ['alpha', 'beta', 'gamma']);
+        expect(users[3]?.tags, ['mañana', 'café', '東京']);
+        expect(users[4]?.tags, isEmpty);
+      },
+    );
 
     // Scenario: Generated getAll hydrates through the MDBX native cursor reader.
     // Covers:

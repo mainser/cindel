@@ -30,11 +30,26 @@ Useful project files:
 
 ## Benchmarks
 
-Benchmarks provide only a rough indication of database performance, but the results show that Cindel is already quite fast.
+Benchmarks are a rough signal rather than an absolute performance guarantee,
+but they are useful for tracking whether changes move Cindel in the right
+direction. The charts below compare the current app-style benchmark in both
+small and larger payload modes.
 
-<img src=".github/assets/benchmarks.png"/>
+### Small Payloads
 
-If you are interested in more benchmarks or want to check how Cindel performs on your device you can run the [benchmarks](https://github.com/mainser/cindel_benchmark) yourself.
+`big=false`
+
+<img src=".github/assets/benchmarks.png" alt="Cindel benchmark chart for small payloads"/>
+
+### Larger Payloads
+
+`big=true`
+
+<img src=".github/assets/benchmarks-big.png" alt="Cindel benchmark chart for larger payloads"/>
+
+If you want to inspect more benchmark cases or check how Cindel performs on
+your device, you can run the
+[benchmarks](https://github.com/mainser/cindel_benchmark) yourself.
 
 ## License
 

@@ -5,6 +5,24 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.11
+
+- Avoided creating Cindel-specific SQLite storage metadata for generated
+  schema-aware SQLite opens while preserving collection-table validation.
+- Added a direct native string-list writer for generated typed serializers to
+  reduce MDBX `List<String>` batch insert overhead.
+- Added MDBX native query update support for compact dynamic fields, including
+  generated `List<String>` fields.
+- Avoided an MDBX document copy while generated native readers hydrate point
+  reads and unsorted query results.
+- Added MDBX streaming for unsorted generated index range query results.
+- Added a fast generated SQLite string-list hydration path for native reads,
+  while preserving Unicode and escaped-string fallbacks.
+- Regenerated Windows, Android, and Linux native runtime libraries and updated
+  `cindel_flutter_libs` to `0.5.11`.
+- Updated the `cindel` development generator dependency constraint to
+  `^0.5.9`.
+
 ## 0.5.10
 
 - Added native typed reader and writer support for embedded object fields and
@@ -12,7 +30,7 @@ while the core design settles.
 - Added generated nested filter helpers for fields inside a single embedded
   object, including nested embedded-object paths.
 - Kept embedded object-list nested query helpers unsupported, matching the
-  current Isar-aligned scope.
+  current embedded-object scope.
 - Fixed SQLite native typed reads and projections for generated schemas that
   store embedded object and list payloads in collection tables.
 - Updated package and API documentation for embedded objects, embedded lists,

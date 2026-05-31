@@ -13,7 +13,7 @@
 - Added generated nested filter helpers for fields inside a single embedded
   object.
 - Kept embedded object-list nested query helpers unsupported, matching the
-  current Isar-aligned scope.
+  current embedded-object scope.
 
 ## 0.5.7
 

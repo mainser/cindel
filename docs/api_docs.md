@@ -1012,6 +1012,11 @@ typedef CindelReadNativeDocument<T> =
 - `beginList`
 - `endList`
 
+`CindelNativeStringListDocumentWriter` is an optional writer fast path for
+generated non-null `List<String>` fields. Generated serializers should call
+`cindelWriteNativeStringList(writer, fieldIndex, value)` so writers that do not
+implement the fast path still fall back to `beginList` / `endList`.
+
 `CindelNativeDocumentReader` supports:
 
 - `length`

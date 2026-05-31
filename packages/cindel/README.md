@@ -47,12 +47,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.10
-  cindel_flutter_libs: ^0.5.8
+  cindel: ^0.5.11
+  cindel_flutter_libs: ^0.5.11
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.8
+  cindel_generator: ^0.5.9
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.11
+
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  Cindel `0.5.11` native runtime line.
+- Includes the latest MDBX native read/query optimizations, SQLite string-list
+  hydration improvements, and SQLite schema-aware open behavior.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.8
 
 - Regenerated Windows, Android, and Linux native runtime libraries for the

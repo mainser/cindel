@@ -137,10 +137,10 @@ Current native backend policy:
 
 ### Release Line
 
-- Keep accumulating confirmed fixes in the `0.5.2` line until the next publish
+- Keep accumulating confirmed fixes in the `0.5.11` line until the next publish
   decision.
-- Regenerate native prebuilts before release so `cindel_flutter_libs` matches
-  the current native ABI.
+- Windows, Android, and Linux native prebuilts have been regenerated for the
+  current native ABI.
 - Keep root and package READMEs aligned with the actual package roles.
 - Keep package changelogs current.
 
