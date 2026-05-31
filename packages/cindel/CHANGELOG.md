@@ -11,6 +11,7 @@
   generated `List<String>` fields.
 - Avoided an MDBX document copy while generated native readers hydrate point
   reads and unsorted query results.
+- Added MDBX streaming for unsorted generated index range query results.
 - Kept generated typed APIs on document hydration after generic writes to the
   same collection.
 - Updated the development generator dependency constraint to `^0.5.9`.

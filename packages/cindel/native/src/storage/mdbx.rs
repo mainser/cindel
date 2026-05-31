@@ -120,6 +120,14 @@ enum MdbxQueryCursorSource {
         started: bool,
         seen: Option<HashSet<u64>>,
     },
+    IndexRange {
+        index_cursor: Cursor<'static, RO>,
+        documents_cursor: Cursor<'static, RO>,
+        start: Vec<u8>,
+        end_inclusive: Vec<u8>,
+        started: bool,
+        seen: Option<HashSet<u64>>,
+    },
     Sorted {
         documents: Vec<BorrowedPlannedDocument<'static>>,
         current_index: usize,
@@ -240,6 +248,64 @@ impl MdbxQueryDocumentReader {
                 self.emitted += 1;
                 return Ok(true);
             },
+            MdbxQueryCursorSource::IndexRange {
+                index_cursor,
+                documents_cursor,
+                start,
+                end_inclusive,
+                started,
+                seen,
+            } => loop {
+                let row = if *started {
+                    index_cursor
+                        .next::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
+                        .map_err(|error| error.to_string())?
+                } else {
+                    *started = true;
+                    index_cursor
+                        .set_range::<Cow<'static, [u8]>, Cow<'static, [u8]>>(start)
+                        .map_err(|error| error.to_string())?
+                };
+                let Some((entry_key, value)) = row else {
+                    self.current_present = false;
+                    self.current_id = None;
+                    self.current_bytes = None;
+                    return Ok(false);
+                };
+                if entry_key.as_ref() > end_inclusive.as_slice() {
+                    self.current_present = false;
+                    self.current_id = None;
+                    self.current_bytes = None;
+                    return Ok(false);
+                }
+                let id = decode_u64(&value)?;
+                if let Some(seen) = seen {
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                }
+                let Some(bytes) = ignore_not_found(
+                    documents_cursor.set::<Cow<'static, [u8]>>(&document_table_key(id)),
+                )?
+                else {
+                    continue;
+                };
+                if let Some(filter) = &self.filter {
+                    if !filter.matches_with_id(&self.schema, bytes.as_ref(), id)? {
+                        continue;
+                    }
+                }
+                if self.matched < self.offset {
+                    self.matched += 1;
+                    continue;
+                }
+                self.current_bytes = Some(bytes);
+                self.current_id = Some(id);
+                self.current_present = true;
+                self.matched += 1;
+                self.emitted += 1;
+                return Ok(true);
+            },
             MdbxQueryCursorSource::Sorted {
                 documents,
                 current_index,
@@ -279,6 +345,7 @@ impl MdbxQueryDocumentReader {
             MdbxQueryCursorSource::Documents { .. } | MdbxQueryCursorSource::IndexEqual { .. } => {
                 Ok(self.current_bytes.as_deref())
             }
+            MdbxQueryCursorSource::IndexRange { .. } => Ok(self.current_bytes.as_deref()),
         }
     }
 
@@ -933,7 +1000,50 @@ impl MdbxStorage {
                     seen: dedupe.then(HashSet::new),
                 }
             }
-            WireQuerySource::IndexRange { .. } => return Ok(None),
+            WireQuerySource::IndexRange {
+                index_name,
+                lower,
+                upper,
+                dedupe,
+            } => {
+                let lower = lower
+                    .as_ref()
+                    .map(wire_index_value_to_storage)
+                    .transpose()?;
+                let upper = upper
+                    .as_ref()
+                    .map(wire_index_value_to_storage)
+                    .transpose()?;
+                let range = encode_table_index_range(lower.as_ref(), upper.as_ref())?;
+                let index_table = match open_index_table(&transaction, collection, index_name) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let documents_table = match open_documents_table(&transaction, collection) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(None),
+                };
+                let index_cursor = transaction
+                    .cursor(&index_table)
+                    .map_err(|error| error.to_string())?;
+                let documents_cursor = transaction
+                    .cursor(&documents_table)
+                    .map_err(|error| error.to_string())?;
+                let index_cursor = unsafe {
+                    std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(index_cursor)
+                };
+                let documents_cursor = unsafe {
+                    std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(documents_cursor)
+                };
+                MdbxQueryCursorSource::IndexRange {
+                    index_cursor,
+                    documents_cursor,
+                    start: range.start,
+                    end_inclusive: range.end_inclusive,
+                    started: false,
+                    seen: dedupe.then(HashSet::new),
+                }
+            }
         };
 
         // The libmdbx cursor internally owns a cloned transaction handle and
@@ -5728,6 +5838,182 @@ mod tests {
     }
 
     #[test]
+    fn streams_index_range_query_documents_from_borrowed_rows() {
+        // Scenario: MDBX streams an unsorted index range query directly from
+        // index and document cursors.
+        // Covers:
+        // - The non-sorted `IndexRange` query-reader source.
+        // - Offset/limit without materializing the full range first.
+        // - Additional native filters over streamed document bytes.
+        // Expected: Results preserve index-range order, apply the visible
+        //   window, and expose each current document payload.
+        let directory = TemporaryDirectory::new("index_range_query_reader");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, email, name, score) in [
+            (1, "ana@example.com", "Ana", 10),
+            (2, "ben@example.com", "Ben", 20),
+            (3, "cid@example.com", "Cid", 30),
+            (4, "dee@example.com", "Dee", 40),
+            (5, "eli@example.com", "Eli", 50),
+        ] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(email, id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "score".to_string(),
+                lower: Some(WireIndexValue::Int(15)),
+                upper: Some(WireIndexValue::Int(45)),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: Some(2),
+        };
+
+        let mut reader = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .expect("index range queries should stream through MDBX");
+
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(3));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("cid@example.com", 3, "Cid", 30).as_slice()
+        );
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(4));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            user_document("dee@example.com", 4, "Dee", 40).as_slice()
+        );
+        assert!(!reader.next().unwrap());
+        assert_eq!(reader.document_bytes(0).unwrap(), None);
+        assert_eq!(reader.document_id(0).unwrap(), None);
+
+        let filter = crate::wire::WireFilter::Field {
+            field: "name".to_string(),
+            operation: crate::wire::WireFilterOperation::StartsWith,
+            value: WireValue::String("C".to_string()),
+        };
+        let filtered_plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "score".to_string(),
+                lower: Some(WireIndexValue::Int(0)),
+                upper: Some(WireIndexValue::Int(100)),
+                dedupe: false,
+            },
+            filter: Some(crate::wire::encode_filter(&filter).unwrap()),
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+        let mut filtered_reader = storage
+            .query_document_reader("users", &filtered_plan)
+            .unwrap()
+            .expect("filtered index range queries should stream through MDBX");
+
+        assert!(filtered_reader.next().unwrap());
+        assert_eq!(filtered_reader.document_id(0).unwrap(), Some(3));
+        assert_eq!(
+            filtered_reader.document_bytes(0).unwrap().unwrap(),
+            user_document("cid@example.com", 3, "Cid", 30).as_slice()
+        );
+        assert!(!filtered_reader.next().unwrap());
+    }
+
+    #[test]
+    fn streams_index_range_dedupes_and_skips_missing_documents() {
+        // Scenario: MDBX streams a range from explicit generic-document index
+        // rows where one document appears more than once and one index row
+        // points at a missing document.
+        // Covers:
+        // - `dedupe` handling for range sources.
+        // - Missing document rows being ignored during streaming.
+        // Expected: Each existing id is emitted once, and dangling index rows
+        //   do not produce stale bytes.
+        let directory = TemporaryDirectory::new("index_range_query_reader_dedupe");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        let generic = generic_document();
+        storage
+            .put_indexed(
+                "users",
+                1,
+                &generic,
+                &[
+                    index("score", IndexValue::Int(10)),
+                    index("score", IndexValue::Int(20)),
+                ],
+            )
+            .unwrap();
+        storage
+            .put_indexed("users", 2, &generic, &[index("score", IndexValue::Int(15))])
+            .unwrap();
+        storage
+            .with_write_transaction(|transaction, _tables| {
+                let index_table = create_index_table(transaction, "users", "score")?;
+                transaction
+                    .put(
+                        &index_table,
+                        index_value_key(&IndexValue::Int(12))?,
+                        document_id_key(404),
+                        WriteFlags::empty(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "score".to_string(),
+                lower: Some(WireIndexValue::Int(0)),
+                upper: Some(WireIndexValue::Int(30)),
+                dedupe: true,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+
+        let mut reader = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .expect("deduped index range queries should stream through MDBX");
+
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(1));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            generic.as_slice()
+        );
+        assert!(reader.next().unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(2));
+        assert_eq!(
+            reader.document_bytes(0).unwrap().unwrap(),
+            generic.as_slice()
+        );
+        assert!(!reader.next().unwrap());
+    }
+
+    #[test]
     fn cursor_document_reader_handles_hits_misses_and_reloads() {
         // Scenario: The MDBX point-read cursor reader keeps the current
         // document borrowed from the read transaction.
@@ -6590,6 +6876,14 @@ mod tests {
             name: name.to_string(),
             value,
         }
+    }
+
+    fn generic_document() -> Vec<u8> {
+        vec![
+            0x43, 0x47, 0x44, 0x31, // CGD1
+            1, 0, 0, 0, // version
+            6, 0, 0, 0, 0, // empty object
+        ]
     }
 
     fn user_document(email: &str, id: i64, name: &str, score: i64) -> Vec<u8> {
