@@ -2513,6 +2513,20 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<Vec<u8>, String> {
         let schema = self.required_schema(collection)?;
         ensure_schema_field(&schema, field)?;
+        if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+            let mut writer = ProjectionRowsWriter::new();
+            while reader.next()? {
+                let id = reader
+                    .document_id(0)?
+                    .ok_or_else(|| "query projection reader yielded no document id".to_string())?;
+                let bytes = reader.document_bytes(0)?.ok_or_else(|| {
+                    "query projection reader yielded no document bytes".to_string()
+                })?;
+                let value = query_binary_field(&schema, bytes, id, field)?;
+                writer.push(&binary_to_wire_value(value.as_ref())?)?;
+            }
+            return writer.finish();
+        }
         let documents = self.execute_query_plan(collection, plan)?;
         let mut cells = Vec::with_capacity(documents.len());
         for document in documents {
@@ -3945,6 +3959,121 @@ enum StreamingAggregate {
         sum: f64,
         count: u64,
     },
+}
+
+const WIRE_TAG_NULL: u8 = 0;
+const WIRE_TAG_BOOL: u8 = 1;
+const WIRE_TAG_INT: u8 = 2;
+const WIRE_TAG_DOUBLE: u8 = 3;
+const WIRE_TAG_STRING: u8 = 4;
+const WIRE_TAG_LIST: u8 = 5;
+const WIRE_TAG_OBJECT: u8 = 6;
+
+struct ProjectionRowsWriter {
+    bytes: Vec<u8>,
+    rows: u32,
+}
+
+impl ProjectionRowsWriter {
+    fn new() -> Self {
+        let mut bytes = Vec::with_capacity(8);
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        Self { bytes, rows: 0 }
+    }
+
+    fn push(&mut self, value: &WireValue) -> Result<(), String> {
+        self.rows = self
+            .rows
+            .checked_add(1)
+            .ok_or_else(|| "projection row count overflowed u32".to_string())?;
+        self.write_value(value)
+    }
+
+    fn finish(mut self) -> Result<Vec<u8>, String> {
+        self.bytes[0..4].copy_from_slice(&self.rows.to_le_bytes());
+        Ok(self.bytes)
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.bytes.push(value);
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_f64(&mut self, value: f64) {
+        let value = if value == 0.0 { 0.0 } else { value };
+        let value = if value.is_nan() {
+            f64::from_bits(0x7ff8_0000_0000_0000)
+        } else {
+            value
+        };
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_bool(&mut self, value: bool) {
+        self.write_u8(u8::from(value));
+    }
+
+    fn write_len(&mut self, len: usize) -> Result<(), String> {
+        let len = u32::try_from(len).map_err(|_| "length exceeds u32::MAX".to_string())?;
+        self.write_u32(len);
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.write_len(bytes.len())?;
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn write_string(&mut self, value: &str) -> Result<(), String> {
+        self.write_bytes(value.as_bytes())
+    }
+
+    fn write_value(&mut self, value: &WireValue) -> Result<(), String> {
+        match value {
+            WireValue::Null => self.write_u8(WIRE_TAG_NULL),
+            WireValue::Bool(value) => {
+                self.write_u8(WIRE_TAG_BOOL);
+                self.write_bool(*value);
+            }
+            WireValue::Int(value) => {
+                self.write_u8(WIRE_TAG_INT);
+                self.write_i64(*value);
+            }
+            WireValue::Double(value) => {
+                self.write_u8(WIRE_TAG_DOUBLE);
+                self.write_f64(*value);
+            }
+            WireValue::String(value) => {
+                self.write_u8(WIRE_TAG_STRING);
+                self.write_string(value)?;
+            }
+            WireValue::List(values) => {
+                self.write_u8(WIRE_TAG_LIST);
+                self.write_len(values.len())?;
+                for value in values {
+                    self.write_value(value)?;
+                }
+            }
+            WireValue::Object(fields) => {
+                self.write_u8(WIRE_TAG_OBJECT);
+                self.write_len(fields.len())?;
+                for (name, value) in fields {
+                    self.write_string(name)?;
+                    self.write_value(value)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl StreamingAggregate {
@@ -6788,6 +6917,202 @@ mod tests {
                 .query_plan_aggregate("users", &plan, "score", "sum")
                 .unwrap(),
             encode_scalar(&WireScalar::Double(40.0)).unwrap()
+        );
+    }
+
+    #[test]
+    fn streams_query_plan_projection_for_index_range_window() {
+        // Scenario: MDBX query-plan projection consumes the query document
+        // reader instead of materializing every planned document.
+        // Covers:
+        // - IndexRange source with offset/limit.
+        // - Scalar projection wire encoding.
+        // - Dangling index rows being ignored before window accounting.
+        // Expected: The projected row payload preserves visible query order and
+        //   matches the existing projection wire format.
+        let directory = TemporaryDirectory::new("query_plan_stream_projection");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, name, score) in [
+            (1, "Ana", 10),
+            (2, "Ben", 20),
+            (3, "Cid", 30),
+            (4, "Dee", 40),
+        ] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(&format!("user-{id}@example.com"), id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+        storage
+            .with_write_transaction(|transaction, _tables| {
+                let index_table = create_index_table(transaction, "users", "score")?;
+                transaction
+                    .put(
+                        &index_table,
+                        index_value_key(&IndexValue::Int(25))?,
+                        document_id_key(404),
+                        WriteFlags::empty(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "score".to_string(),
+                lower: Some(WireIndexValue::Int(0)),
+                upper: Some(WireIndexValue::Int(100)),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: Some(2),
+        };
+
+        assert_eq!(
+            storage.query_plan_project("users", &plan, "name").unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![
+                    WireValue::String("Ben".to_string()),
+                    WireValue::String("Cid".to_string()),
+                ],
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            storage.query_plan_project("users", &plan, "score").unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![WireValue::Int(20), WireValue::Int(30)],
+            })
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn streams_query_plan_projection_for_lists_and_sorted_plans() {
+        // Scenario: Query-plan projection still handles dynamic list fields and
+        // sorted plans when the query document reader materializes the sorted
+        // window internally.
+        // Covers:
+        // - List value projection wire encoding.
+        // - Sorted reader source.
+        // Expected: Projection semantics remain identical across scalar and
+        //   nested list values.
+        let directory = TemporaryDirectory::new("query_plan_stream_projection_lists");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage
+            .register_schemas(&task_tags_schema_manifest())
+            .unwrap();
+
+        for (id, completed, title, tags) in [
+            (1, true, "Cid", vec!["fresh", "fast"]),
+            (2, false, "Ana", vec!["slow"]),
+            (3, true, "Ben", vec!["fresh", "stable"]),
+        ] {
+            storage
+                .put_indexed(
+                    "tasks",
+                    id,
+                    &task_tags_document(completed, title, tags),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "title".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: Some(2),
+        };
+
+        assert_eq!(
+            storage.query_plan_project("tasks", &plan, "title").unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![
+                    WireValue::String("Ana".to_string()),
+                    WireValue::String("Ben".to_string()),
+                ],
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            storage.query_plan_project("tasks", &plan, "tags").unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![
+                    WireValue::List(vec![WireValue::String("slow".to_string())]),
+                    WireValue::List(vec![
+                        WireValue::String("fresh".to_string()),
+                        WireValue::String("stable".to_string()),
+                    ]),
+                ],
+            })
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn distinct_query_plan_projection_keeps_materialized_fallback() {
+        // Scenario: Distinct query plans are not supported by the streaming
+        // query document reader.
+        // Covers:
+        // - query_plan_project fallback to execute_query_plan.
+        // Expected: Distinct projection keeps the first visible document for
+        //   each distinct key exactly as before.
+        let directory = TemporaryDirectory::new("query_plan_distinct_projection_fallback");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, name, score) in [(1, "Ana", 10), (2, "Ana", 20), (3, "Ben", 30)] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(&format!("user-{id}@example.com"), id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: vec!["name".to_string()],
+            offset: 0,
+            limit: None,
+        };
+
+        assert_eq!(
+            storage.query_plan_project("users", &plan, "score").unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![WireValue::Int(10), WireValue::Int(30)],
+            })
+            .unwrap()
         );
     }
 

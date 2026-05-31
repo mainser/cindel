@@ -11,6 +11,9 @@ while the core design settles.
   supported `cindel` plans, avoiding full planned-document materialization
   while preserving existing fallback behavior for distinct and unsupported
   plans.
+- Streamed MDBX query-plan property projection for supported `cindel` plans,
+  writing projection rows directly while preserving fallback behavior for
+  distinct and unsupported plans.
 
 ## 0.5.11
 

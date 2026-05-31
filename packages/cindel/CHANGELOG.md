@@ -5,6 +5,9 @@
 - Streamed MDBX query-plan `count` and property aggregate execution for
   supported plans, avoiding full planned-document materialization while
   preserving the existing fallback for distinct and unsupported plans.
+- Streamed MDBX query-plan property projection for supported plans, writing
+  projection rows directly while preserving the existing fallback for distinct
+  and unsupported plans.
 
 ## 0.5.11
 
