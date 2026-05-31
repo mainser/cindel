@@ -1554,6 +1554,10 @@ String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
 
 List<String>? _decodeNativeStringList(Uint8List bytes) {
   if (bytes.isNotEmpty && bytes[0] == 0x5b) {
+    final generatedJsonList = _decodeGeneratedJsonStringList(bytes);
+    if (generatedJsonList != null) {
+      return generatedJsonList;
+    }
     try {
       final values = jsonDecode(utf8.decode(bytes));
       if (values is! List<Object?>) {
@@ -1597,6 +1601,75 @@ List<String>? _decodeNativeStringList(Uint8List bytes) {
     count: staticSize ~/ 3,
     offsetBase: 3,
   );
+}
+
+List<String>? _decodeGeneratedJsonStringList(Uint8List bytes) {
+  if (bytes.length < 2 || bytes[0] != 0x5b) {
+    return null;
+  }
+  var offset = 1;
+  if (bytes[offset] == 0x5d) {
+    return const <String>[];
+  }
+
+  final values = <String>[];
+  while (offset < bytes.length) {
+    final byte = bytes[offset];
+    if (byte == 0x22) {
+      offset += 1;
+      final start = offset;
+      var isAscii = true;
+      while (offset < bytes.length) {
+        final value = bytes[offset];
+        if (value == 0x22) {
+          break;
+        }
+        if (value == 0x5c || value < 0x20) {
+          return null;
+        }
+        if (value > 0x7f) {
+          isAscii = false;
+        }
+        offset += 1;
+      }
+      if (offset >= bytes.length) {
+        return null;
+      }
+      values.add(
+        isAscii
+            ? String.fromCharCodes(bytes, start, offset)
+            : utf8.decode(Uint8List.sublistView(bytes, start, offset)),
+      );
+      offset += 1;
+    } else if (_matchesJsonNull(bytes, offset)) {
+      values.add('');
+      offset += 4;
+    } else {
+      return null;
+    }
+
+    if (offset >= bytes.length) {
+      return null;
+    }
+    final separator = bytes[offset];
+    if (separator == 0x2c) {
+      offset += 1;
+      continue;
+    }
+    if (separator == 0x5d) {
+      return offset + 1 == bytes.length ? values : null;
+    }
+    return null;
+  }
+  return null;
+}
+
+bool _matchesJsonNull(Uint8List bytes, int offset) {
+  return offset + 4 <= bytes.length &&
+      bytes[offset] == 0x6e &&
+      bytes[offset + 1] == 0x75 &&
+      bytes[offset + 2] == 0x6c &&
+      bytes[offset + 3] == 0x6c;
 }
 
 List<String>? _decodeNativeStringListOffsets(
