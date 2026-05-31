@@ -5,6 +5,13 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.12
+
+- Streamed MDBX query-plan `count` and property aggregate execution for
+  supported `cindel` plans, avoiding full planned-document materialization
+  while preserving existing fallback behavior for distinct and unsupported
+  plans.
+
 ## 0.5.11
 
 - Avoided creating Cindel-specific SQLite storage metadata for generated

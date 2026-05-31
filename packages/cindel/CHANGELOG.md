@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.12
+
+- Streamed MDBX query-plan `count` and property aggregate execution for
+  supported plans, avoiding full planned-document materialization while
+  preserving the existing fallback for distinct and unsupported plans.
+
 ## 0.5.11
 
 - Avoided creating Cindel-only SQLite storage metadata for generated

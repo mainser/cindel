@@ -2493,6 +2493,15 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
+        if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+            let mut count = 0_u64;
+            while reader.next()? {
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| "query count overflowed u64".to_string())?;
+            }
+            return Ok(count);
+        }
         Ok(self.execute_query_plan(collection, plan)?.len() as u64)
     }
 
@@ -2526,6 +2535,19 @@ impl StorageEngine for MdbxStorage {
     ) -> Result<Vec<u8>, String> {
         let schema = self.required_schema(collection)?;
         ensure_schema_field(&schema, field)?;
+        if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+            let mut aggregate = StreamingAggregate::new(operation)?;
+            while reader.next()? {
+                let id = reader
+                    .document_id(0)?
+                    .ok_or_else(|| "query aggregate reader yielded no document id".to_string())?;
+                let bytes = reader.document_bytes(0)?.ok_or_else(|| {
+                    "query aggregate reader yielded no document bytes".to_string()
+                })?;
+                aggregate.push(query_binary_field(&schema, bytes, id, field)?)?;
+            }
+            return encode_scalar(&aggregate.finish()?);
+        }
         let documents = self.execute_query_plan(collection, plan)?;
         let mut values = Vec::new();
         for document in documents {
@@ -3905,6 +3927,128 @@ fn aggregate_binary_average(values: &[Option<BinaryValue>]) -> Result<WireScalar
 enum AggregateOrder {
     Min,
     Max,
+}
+
+enum StreamingAggregate {
+    Count {
+        count: i64,
+    },
+    MinMax {
+        order: AggregateOrder,
+        best: Option<BinaryValue>,
+    },
+    Sum {
+        sum: f64,
+        count: u64,
+    },
+    Average {
+        sum: f64,
+        count: u64,
+    },
+}
+
+impl StreamingAggregate {
+    fn new(operation: &str) -> Result<Self, String> {
+        match operation {
+            "count" => Ok(Self::Count { count: 0 }),
+            "min" => Ok(Self::MinMax {
+                order: AggregateOrder::Min,
+                best: None,
+            }),
+            "max" => Ok(Self::MinMax {
+                order: AggregateOrder::Max,
+                best: None,
+            }),
+            "sum" => Ok(Self::Sum { sum: 0.0, count: 0 }),
+            "average" => Ok(Self::Average { sum: 0.0, count: 0 }),
+            _ => Err(format!("unknown aggregate operation `{operation}`")),
+        }
+    }
+
+    fn push(&mut self, value: Option<BinaryValue>) -> Result<(), String> {
+        match self {
+            Self::Count { count } => {
+                if value.is_some() {
+                    *count = count
+                        .checked_add(1)
+                        .ok_or_else(|| "aggregate count overflowed i64".to_string())?;
+                }
+            }
+            Self::MinMax { order, best } => {
+                let Some(value) = value else {
+                    return Ok(());
+                };
+                match &value {
+                    BinaryValue::Int(_)
+                    | BinaryValue::DateTimeMicros(_)
+                    | BinaryValue::DurationMicros(_)
+                    | BinaryValue::Double(_)
+                    | BinaryValue::String(_)
+                    | BinaryValue::Enum(_) => {}
+                    _ => {
+                        return Err(
+                            "min/max aggregates require number, string, or null values".into()
+                        )
+                    }
+                }
+                let replace = match best.as_ref() {
+                    Some(best_value) => {
+                        let comparison = compare_binary_values(Some(&value), Some(best_value));
+                        match order {
+                            AggregateOrder::Min => comparison.is_lt(),
+                            AggregateOrder::Max => comparison.is_gt(),
+                        }
+                    }
+                    None => true,
+                };
+                if replace {
+                    *best = Some(value);
+                }
+            }
+            Self::Sum { sum, count } => {
+                let Some(value) = value else {
+                    return Ok(());
+                };
+                let Some(number) = binary_number(&value) else {
+                    return Err("sum aggregate requires number or null values".into());
+                };
+                *sum += number;
+                *count += 1;
+            }
+            Self::Average { sum, count } => {
+                let Some(value) = value else {
+                    return Ok(());
+                };
+                let Some(number) = binary_number(&value) else {
+                    return Err("average aggregate requires number or null values".into());
+                };
+                *sum += number;
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<WireScalar, String> {
+        match self {
+            Self::Count { count } => Ok(WireScalar::Int(count)),
+            Self::MinMax { best, .. } => binary_value_to_scalar(best.as_ref()),
+            Self::Sum { sum, count } => {
+                if count == 0 {
+                    Ok(WireScalar::Null)
+                } else {
+                    Ok(WireScalar::Double(sum))
+                }
+            }
+            Self::Average { sum, count } => {
+                if count == 0 {
+                    Ok(WireScalar::Null)
+                } else {
+                    Ok(WireScalar::Double(sum / count as f64))
+                }
+            }
+        }
+    }
 }
 
 fn binary_number(value: &BinaryValue) -> Option<f64> {
@@ -6505,6 +6649,145 @@ mod tests {
                 .query_aggregate("users", &[1, 2, 3], "name", "max")
                 .unwrap(),
             encode_scalar(&WireScalar::String("Cid".to_string())).unwrap()
+        );
+    }
+
+    #[test]
+    fn streams_query_plan_count_and_aggregate_for_index_range_window() {
+        // Scenario: MDBX count and aggregate query plans consume the query
+        // document reader instead of materializing every planned document.
+        // Covers:
+        // - IndexRange source with offset/limit.
+        // - Dangling index rows being ignored before window accounting.
+        // - Incremental count, sum, average, min, and max.
+        // Expected: Streaming query-plan operations preserve the same visible
+        //   window and scalar results as the materialized plan.
+        let directory = TemporaryDirectory::new("query_plan_stream_count_aggregate");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, name, score) in [
+            (1, "Ana", 10),
+            (2, "Ben", 20),
+            (3, "Cid", 30),
+            (4, "Dee", 40),
+        ] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(&format!("user-{id}@example.com"), id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+        storage
+            .with_write_transaction(|transaction, _tables| {
+                let index_table = create_index_table(transaction, "users", "score")?;
+                transaction
+                    .put(
+                        &index_table,
+                        index_value_key(&IndexValue::Int(25))?,
+                        document_id_key(404),
+                        WriteFlags::empty(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "score".to_string(),
+                lower: Some(WireIndexValue::Int(0)),
+                upper: Some(WireIndexValue::Int(100)),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: Some(2),
+        };
+
+        assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 2);
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "score", "count")
+                .unwrap(),
+            encode_scalar(&WireScalar::Int(2)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "score", "sum")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(50.0)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "score", "average")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(25.0)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "name", "min")
+                .unwrap(),
+            encode_scalar(&WireScalar::String("Ben".to_string())).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "name", "max")
+                .unwrap(),
+            encode_scalar(&WireScalar::String("Cid".to_string())).unwrap()
+        );
+    }
+
+    #[test]
+    fn distinct_query_plan_count_and_aggregate_keep_materialized_fallback() {
+        // Scenario: Distinct query plans are not supported by the streaming
+        // query document reader.
+        // Covers:
+        // - query_plan_count fallback to execute_query_plan.
+        // - query_plan_aggregate fallback to the existing Vec-based aggregate.
+        // Expected: Distinct semantics remain unchanged while non-distinct
+        //   plans are free to stream.
+        let directory = TemporaryDirectory::new("query_plan_distinct_aggregate_fallback");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+
+        for (id, name, score) in [(1, "Ana", 10), (2, "Ana", 20), (3, "Ben", 30)] {
+            storage
+                .put_indexed(
+                    "users",
+                    id,
+                    &user_document(&format!("user-{id}@example.com"), id as i64, name, score),
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: vec!["name".to_string()],
+            offset: 0,
+            limit: None,
+        };
+
+        assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 2);
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "score", "count")
+                .unwrap(),
+            encode_scalar(&WireScalar::Int(2)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &plan, "score", "sum")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(40.0)).unwrap()
         );
     }
 
