@@ -4,7 +4,11 @@ import 'package:cindel_shop_lite/features/catalog/domain/entities/product.dart';
 abstract interface class CatalogRepository {
   Future<void> seedIfEmpty();
 
-  Stream<List<Product>> watchProducts(CatalogQuery query);
+  Future<List<Product>> readProductsPage(
+    CatalogQuery query, {
+    required int offset,
+    required int limit,
+  });
 
   Future<int> countProducts();
 }

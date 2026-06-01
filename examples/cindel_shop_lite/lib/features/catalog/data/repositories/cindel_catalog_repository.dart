@@ -19,10 +19,20 @@ final class CindelCatalogRepository implements CatalogRepository {
   }
 
   @override
-  Stream<List<Product>> watchProducts(CatalogQuery query) {
-    return _dataSource.watchProducts(query).handleError((Object error) {
+  Future<List<Product>> readProductsPage(
+    CatalogQuery query, {
+    required int offset,
+    required int limit,
+  }) async {
+    try {
+      return await _dataSource.readProductsPage(
+        query,
+        offset: offset,
+        limit: limit,
+      );
+    } catch (error) {
       throw CatalogStorageFailure.from(error);
-    });
+    }
   }
 
   @override

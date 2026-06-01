@@ -40,46 +40,55 @@ final class CatalogStartupProvider
   }
 }
 
-String _$catalogStartupHash() => r'67e45c7309dd6fc99d3ce8dc8d9c06f3c4a4e583';
+String _$catalogStartupHash() => r'1b7ea2fcbb59d8b4eea795217ba8d9925250c97d';
 
-@ProviderFor(catalogProducts)
-final catalogProductsProvider = CatalogProductsProvider._();
+@ProviderFor(CatalogProductsController)
+final catalogProductsControllerProvider = CatalogProductsControllerProvider._();
 
-final class CatalogProductsProvider
+final class CatalogProductsControllerProvider
     extends
-        $FunctionalProvider<
-          AsyncValue<List<Product>>,
-          List<Product>,
-          Stream<List<Product>>
-        >
-    with $FutureModifier<List<Product>>, $StreamProvider<List<Product>> {
-  CatalogProductsProvider._()
+        $AsyncNotifierProvider<CatalogProductsController, CatalogProductsPage> {
+  CatalogProductsControllerProvider._()
     : super(
         from: null,
         argument: null,
         retry: null,
-        name: r'catalogProductsProvider',
+        name: r'catalogProductsControllerProvider',
         isAutoDispose: true,
         dependencies: null,
         $allTransitiveDependencies: null,
       );
 
   @override
-  String debugGetCreateSourceHash() => _$catalogProductsHash();
+  String debugGetCreateSourceHash() => _$catalogProductsControllerHash();
 
   @$internal
   @override
-  $StreamProviderElement<List<Product>> $createElement(
-    $ProviderPointer pointer,
-  ) => $StreamProviderElement(pointer);
-
-  @override
-  Stream<List<Product>> create(Ref ref) {
-    return catalogProducts(ref);
-  }
+  CatalogProductsController create() => CatalogProductsController();
 }
 
-String _$catalogProductsHash() => r'9bb80ad3fddcdea111285e7bc73b6d8efa309a14';
+String _$catalogProductsControllerHash() =>
+    r'4b135abe627c12ee8d86197d893045bfb96285d9';
+
+abstract class _$CatalogProductsController
+    extends $AsyncNotifier<CatalogProductsPage> {
+  FutureOr<CatalogProductsPage> build();
+  @$mustCallSuper
+  @override
+  void runBuild() {
+    final ref =
+        this.ref as $Ref<AsyncValue<CatalogProductsPage>, CatalogProductsPage>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<AsyncValue<CatalogProductsPage>, CatalogProductsPage>,
+              AsyncValue<CatalogProductsPage>,
+              Object?,
+              Object?
+            >;
+    element.handleCreate(ref, build);
+  }
+}
 
 @ProviderFor(catalogProductCount)
 final catalogProductCountProvider = CatalogProductCountProvider._();

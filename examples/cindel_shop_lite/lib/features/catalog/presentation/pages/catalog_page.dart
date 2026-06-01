@@ -12,16 +12,21 @@ class CatalogPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final products = ref.watch(catalogProductsProvider);
+    final products = ref.watch(catalogProductsControllerProvider);
     final startup = ref.watch(catalogStartupProvider);
 
     return ErrorHandlingWidget<dynamic>(
-      providers: [catalogProductsProvider, catalogStartupProvider],
+      providers: [catalogProductsControllerProvider, catalogStartupProvider],
       child: Scaffold(
         appBar: const CatalogAppbar(),
         body: SafeArea(
           child: startup.when(
-            data: (_) => CatalogProductList(products: products),
+            data: (_) => CatalogProductList(
+              products: products,
+              onLoadMore: () => ref
+                  .read(catalogProductsControllerProvider.notifier)
+                  .loadNextPage(),
+            ),
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => CatalogError(
               message: catalogErrorMessage(error),

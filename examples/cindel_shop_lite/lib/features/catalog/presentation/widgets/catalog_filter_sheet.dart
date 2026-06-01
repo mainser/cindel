@@ -54,15 +54,12 @@ class CatalogFilterSheet extends ConsumerWidget {
             ),
             TabBar(
               tabs: [
-                Tab(
-                  icon: const Icon(Icons.category_outlined),
-                  text: l10n.category,
+                _FilterTab(
+                  icon: Icons.category_outlined,
+                  label: l10n.category,
                 ),
-                Tab(
-                  icon: const Icon(Icons.inventory_outlined),
-                  text: l10n.stock,
-                ),
-                Tab(icon: const Icon(Icons.sort), text: l10n.sort),
+                _FilterTab(icon: Icons.inventory_outlined, label: l10n.stock),
+                _FilterTab(icon: Icons.sort, label: l10n.sort),
               ],
             ),
             Expanded(
@@ -86,6 +83,27 @@ class CatalogFilterSheet extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _FilterTab extends StatelessWidget {
+  const _FilterTab({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tab(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 8),
+          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+        ],
       ),
     );
   }

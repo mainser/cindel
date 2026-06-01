@@ -44,19 +44,20 @@ class CatalogAppbar extends HookConsumerWidget implements PreferredSizeWidget {
     return AppBar(
       title: Text(l10n.catalog),
       actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 16),
-          child: Center(
-            child: productCount.when(
-              data: (count) => Chip(
-                avatar: const Icon(Icons.inventory_2_outlined, size: 18),
-                label: Text('$count'),
-              ),
-              loading: () => const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              error: (_, _) => Chip(label: Text(l10n.products.toLowerCase())),
+        Center(
+          child: productCount.when(
+            data: (count) => Chip(
+              avatar: const Icon(Icons.inventory_2_outlined, size: 18),
+              label: Text('$count'),
+              side: BorderSide.none,
+            ),
+            loading: () => const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            error: (_, _) => Chip(
+              label: Text(l10n.products.toLowerCase()),
+              side: BorderSide.none,
             ),
           ),
         ),

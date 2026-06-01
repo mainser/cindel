@@ -7,7 +7,7 @@ import 'package:cindel_shop_lite/features/catalog/domain/entities/product.dart';
 import 'package:cindel_shop_lite/features/catalog/domain/repositories/catalog_repository.dart';
 import 'package:cindel_shop_lite/features/catalog/domain/usecases/count_catalog_products.dart';
 import 'package:cindel_shop_lite/features/catalog/domain/usecases/ensure_catalog_seeded.dart';
-import 'package:cindel_shop_lite/features/catalog/domain/usecases/watch_catalog_products.dart';
+import 'package:cindel_shop_lite/features/catalog/domain/usecases/read_catalog_products_page.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -47,8 +47,8 @@ EnsureCatalogSeeded ensureCatalogSeededUseCase(Ref ref) {
 }
 
 @riverpod
-WatchCatalogProducts watchCatalogProductsUseCase(Ref ref) {
-  return WatchCatalogProducts(ref.watch(catalogRepositoryProvider));
+ReadCatalogProductsPage readCatalogProductsPageUseCase(Ref ref) {
+  return ReadCatalogProductsPage(ref.watch(catalogRepositoryProvider));
 }
 
 @riverpod

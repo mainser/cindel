@@ -1,6 +1,7 @@
 import 'package:adaptive_theme/adaptive_theme.dart';
 import 'package:cindel_shop_lite/core/router/app_router.dart';
 import 'package:cindel_shop_lite/core/theme/app_theme.dart';
+import 'package:cindel_shop_lite/features/catalog/presentation/providers/catalog_providers.dart';
 import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,12 @@ class AppView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    /// The [catalogStartupProvider] is watched to ensure that the app's startup
+    /// logic is executed when the app is launched. This provider is responsible
+    /// for initializing the app's state and loading any necessary data before
+    /// the main UI is displayed.
+    ref.watch(catalogStartupProvider);
+
     /// The [AdaptiveTheme] widget is used to set up the app's theme and allow
     /// the user to switch between light and dark mode.
     ///

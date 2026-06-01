@@ -192,54 +192,54 @@ final class EnsureCatalogSeededUseCaseProvider
 String _$ensureCatalogSeededUseCaseHash() =>
     r'eb602e893cb2202163f7d9f29e090dbb3cb8aa59';
 
-@ProviderFor(watchCatalogProductsUseCase)
-final watchCatalogProductsUseCaseProvider =
-    WatchCatalogProductsUseCaseProvider._();
+@ProviderFor(readCatalogProductsPageUseCase)
+final readCatalogProductsPageUseCaseProvider =
+    ReadCatalogProductsPageUseCaseProvider._();
 
-final class WatchCatalogProductsUseCaseProvider
+final class ReadCatalogProductsPageUseCaseProvider
     extends
         $FunctionalProvider<
-          WatchCatalogProducts,
-          WatchCatalogProducts,
-          WatchCatalogProducts
+          ReadCatalogProductsPage,
+          ReadCatalogProductsPage,
+          ReadCatalogProductsPage
         >
-    with $Provider<WatchCatalogProducts> {
-  WatchCatalogProductsUseCaseProvider._()
+    with $Provider<ReadCatalogProductsPage> {
+  ReadCatalogProductsPageUseCaseProvider._()
     : super(
         from: null,
         argument: null,
         retry: null,
-        name: r'watchCatalogProductsUseCaseProvider',
+        name: r'readCatalogProductsPageUseCaseProvider',
         isAutoDispose: true,
         dependencies: null,
         $allTransitiveDependencies: null,
       );
 
   @override
-  String debugGetCreateSourceHash() => _$watchCatalogProductsUseCaseHash();
+  String debugGetCreateSourceHash() => _$readCatalogProductsPageUseCaseHash();
 
   @$internal
   @override
-  $ProviderElement<WatchCatalogProducts> $createElement(
+  $ProviderElement<ReadCatalogProductsPage> $createElement(
     $ProviderPointer pointer,
   ) => $ProviderElement(pointer);
 
   @override
-  WatchCatalogProducts create(Ref ref) {
-    return watchCatalogProductsUseCase(ref);
+  ReadCatalogProductsPage create(Ref ref) {
+    return readCatalogProductsPageUseCase(ref);
   }
 
   /// {@macro riverpod.override_with_value}
-  Override overrideWithValue(WatchCatalogProducts value) {
+  Override overrideWithValue(ReadCatalogProductsPage value) {
     return $ProviderOverride(
       origin: this,
-      providerOverride: $SyncValueProvider<WatchCatalogProducts>(value),
+      providerOverride: $SyncValueProvider<ReadCatalogProductsPage>(value),
     );
   }
 }
 
-String _$watchCatalogProductsUseCaseHash() =>
-    r'e26d94e86eb851d190cec96c284a304873855de7';
+String _$readCatalogProductsPageUseCaseHash() =>
+    r'18d435d7f5c395d9c318810e552a53a01978bd0f';
 
 @ProviderFor(countCatalogProductsUseCase)
 final countCatalogProductsUseCaseProvider =

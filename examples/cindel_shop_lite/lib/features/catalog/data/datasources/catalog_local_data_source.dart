@@ -20,9 +20,16 @@ final class CatalogLocalDataSource {
     });
   }
 
-  Stream<List<Product>> watchProducts(CatalogQuery catalogQuery) async* {
+  Future<List<Product>> readProductsPage(
+    CatalogQuery catalogQuery, {
+    required int offset,
+    required int limit,
+  }) async {
     final database = await _database;
-    yield* _buildQuery(database, catalogQuery).watch();
+    return _buildQuery(
+      database,
+      catalogQuery,
+    ).offset(offset).limit(limit).findAll();
   }
 
   Future<int> countProducts() async {
