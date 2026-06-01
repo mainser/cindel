@@ -2,7 +2,7 @@ import 'package:cindel_shop_lite/features/catalog/presentation/providers/catalog
 import 'package:cindel_shop_lite/features/catalog/presentation/utils/catalog_messages.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/widgets/catalog_error.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/widgets/product_card.dart';
-import 'package:cindel_shop_lite/features/shared/animations/fade_slide_animation.dart';
+import 'package:cindel_shop_lite/features/shared/animations/fade_scale_animation.dart';
 import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -64,10 +64,8 @@ class CatalogProductList extends HookWidget {
                 if (index >= items.products.length) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                return FadeSlideAnimation(
-                  key: ValueKey(items.products[index].dbId),
-                  begin: 0.2,
-                  delay: Duration(milliseconds: index * 50),
+                return FadeScaleAnimation(
+                  delay: Duration(milliseconds: (index % 2) * 15),
                   child: ProductCard(product: items.products[index]),
                 );
               },

@@ -24,12 +24,12 @@ class FadeSlideAnimation extends HookWidget {
     final controller = useAnimationController(duration: duration);
     final opacity = CurvedAnimation(
       parent: controller,
-      curve: Curves.easeOutCubic,
+      curve: const Interval(0.12, 1, curve: Curves.easeOut),
     );
     final offset = Tween<Offset>(
       begin: isHorizontal ? Offset(begin, 0) : Offset(0, begin),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOutCubic));
+    ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOut));
 
     useEffect(
       () {

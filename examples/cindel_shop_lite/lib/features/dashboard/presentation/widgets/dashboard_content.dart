@@ -18,20 +18,27 @@ class DashboardContent extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
+            // Metrics header
             FadeScaleAnimation(
               delay: const Duration(milliseconds: 200),
               child: _DashboardHeader(metrics: metrics),
             ),
+
+            // Metrics grid
             const SizedBox(height: 16),
             FadeScaleAnimation(
               delay: const Duration(milliseconds: 300),
               child: _MetricGrid(metrics: metrics),
             ),
+
+            // Category stock section
             const SizedBox(height: 16),
             FadeScaleAnimation(
               delay: const Duration(milliseconds: 400),
               child: _CategoryStockSection(metrics: metrics),
             ),
+
+            // Critical stock section
             const SizedBox(height: 16),
             FadeScaleAnimation(
               delay: const Duration(milliseconds: 500),
