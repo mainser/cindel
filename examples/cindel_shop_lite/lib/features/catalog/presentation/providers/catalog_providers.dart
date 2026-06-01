@@ -7,6 +7,10 @@ part 'catalog_providers.g.dart';
 
 const _catalogPageSize = 20;
 
+/// Runs catalog startup work that should happen once when the app launches.
+///
+/// The seed is guarded by the data source, so watching this provider from the
+/// app shell does not duplicate demo products.
 @riverpod
 Future<void> catalogStartup(Ref ref) async {
   await ref.watch(ensureCatalogSeededUseCaseProvider).call();
@@ -15,6 +19,7 @@ Future<void> catalogStartup(Ref ref) async {
     ..invalidate(catalogProductsControllerProvider);
 }
 
+/// Immutable page state for the paginated product grid.
 final class CatalogProductsPage {
   const CatalogProductsPage({
     required this.products,
@@ -39,6 +44,7 @@ final class CatalogProductsPage {
   }
 }
 
+/// Loads and appends catalog pages in response to scroll position.
 @riverpod
 class CatalogProductsController extends _$CatalogProductsController {
   @override
@@ -55,6 +61,7 @@ class CatalogProductsController extends _$CatalogProductsController {
     );
   }
 
+  /// Loads the next page unless a page is already loading or the query is done.
   Future<void> loadNextPage() async {
     final current = state.value;
     if (current == null || current.isLoadingMore || !current.hasMore) {
@@ -86,11 +93,13 @@ class CatalogProductsController extends _$CatalogProductsController {
   }
 }
 
+/// Product count used by catalog chrome and lightweight status surfaces.
 @riverpod
 Future<int> catalogProductCount(Ref ref) {
   return ref.watch(countCatalogProductsUseCaseProvider).call();
 }
 
+/// Stores the active catalog query selected by search and filter controls.
 @riverpod
 class CatalogQueryController extends _$CatalogQueryController {
   @override

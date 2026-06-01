@@ -1,3 +1,4 @@
+import 'package:cindel_shop_lite/features/catalog/domain/entities/product.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/providers/catalog_providers.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/utils/catalog_messages.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/widgets/catalog_error.dart';
@@ -12,11 +13,13 @@ class CatalogProductList extends HookWidget {
   const CatalogProductList({
     required this.products,
     required this.onLoadMore,
+    required this.onAddToCart,
     super.key,
   });
 
   final AsyncValue<CatalogProductsPage> products;
   final VoidCallback onLoadMore;
+  final ValueChanged<Product> onAddToCart;
 
   @override
   Widget build(BuildContext context) {
@@ -58,15 +61,19 @@ class CatalogProductList extends HookWidget {
                 maxCrossAxisExtent: 420,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                mainAxisExtent: 240,
+                mainAxisExtent: 300,
               ),
               itemBuilder: (context, index) {
                 if (index >= items.products.length) {
                   return const Center(child: CircularProgressIndicator());
                 }
+                final product = items.products[index];
                 return FadeScaleAnimation(
                   delay: Duration(milliseconds: (index % 2) * 15),
-                  child: ProductCard(product: items.products[index]),
+                  child: ProductCard(
+                    product: product,
+                    onAddToCart: () => onAddToCart(product),
+                  ),
                 );
               },
             ),
@@ -74,7 +81,8 @@ class CatalogProductList extends HookWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => CatalogError(message: catalogErrorMessage(error)),
+      error: (error, _) =>
+          CatalogError(message: catalogErrorMessage(error, context.l10n)),
     );
   }
 }

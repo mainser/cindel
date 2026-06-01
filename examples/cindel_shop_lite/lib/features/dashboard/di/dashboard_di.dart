@@ -7,11 +7,13 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'dashboard_di.g.dart';
 
+/// Dashboard data source that derives metrics from the shared catalog database.
 @riverpod
 DashboardCatalogDataSource dashboardCatalogDataSource(Ref ref) {
   return DashboardCatalogDataSource(ref.watch(catalogDatabaseProvider.future));
 }
 
+/// Repository boundary for dashboard metrics.
 @riverpod
 DashboardRepository dashboardRepository(Ref ref) {
   return CindelDashboardRepository(
@@ -19,6 +21,7 @@ DashboardRepository dashboardRepository(Ref ref) {
   );
 }
 
+/// Use case for reading the current dashboard inventory snapshot.
 @riverpod
 ReadDashboardMetrics readDashboardMetricsUseCase(Ref ref) {
   return ReadDashboardMetrics(ref.watch(dashboardRepositoryProvider));

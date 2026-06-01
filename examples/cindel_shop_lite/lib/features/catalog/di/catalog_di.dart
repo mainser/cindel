@@ -13,6 +13,10 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'catalog_di.g.dart';
 
+/// Opens the local Cindel database used by the demo catalog.
+///
+/// The app registers only [ProductSchema] today, so catalog, dashboard, and
+/// checkout all operate over the same typed products collection.
 @riverpod
 Future<CindelDatabase> catalogDatabase(Ref ref) async {
   final supportDirectory = await _applicationSupportDirectory();
@@ -25,32 +29,38 @@ Future<CindelDatabase> catalogDatabase(Ref ref) async {
   return database;
 }
 
+/// Builds the stable application-support path for the Shop Lite database.
 Directory cindelShopLiteDatabaseDirectory(Directory supportDirectory) {
   return Directory(
     '${supportDirectory.path}${Platform.pathSeparator}cindel_shop_lite',
   );
 }
 
+/// Provides the catalog data source backed by the shared Cindel database.
 @riverpod
 CatalogLocalDataSource catalogLocalDataSource(Ref ref) {
   return CatalogLocalDataSource(ref.watch(catalogDatabaseProvider.future));
 }
 
+/// Provides the catalog repository used by catalog-facing use cases.
 @riverpod
 CatalogRepository catalogRepository(Ref ref) {
   return CindelCatalogRepository(ref.watch(catalogLocalDataSourceProvider));
 }
 
+/// Use case that inserts deterministic demo products when the database is new.
 @riverpod
 EnsureCatalogSeeded ensureCatalogSeededUseCase(Ref ref) {
   return EnsureCatalogSeeded(ref.watch(catalogRepositoryProvider));
 }
 
+/// Use case for paginated catalog reads.
 @riverpod
 ReadCatalogProductsPage readCatalogProductsPageUseCase(Ref ref) {
   return ReadCatalogProductsPage(ref.watch(catalogRepositoryProvider));
 }
 
+/// Use case for lightweight catalog counts used by UI badges and startup.
 @riverpod
 CountCatalogProducts countCatalogProductsUseCase(Ref ref) {
   return CountCatalogProducts(ref.watch(catalogRepositoryProvider));

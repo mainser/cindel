@@ -1,5 +1,5 @@
 name: cindel_shop_lite
-description: Cindel shop app
+description: Shop app example using cindel, riverpod and freezed.
 version: 1.0.0+1
 publish_to: none
 

@@ -3,6 +3,7 @@ import 'package:cindel_shop_lite/features/dashboard/presentation/widgets/dashboa
 import 'package:cindel_shop_lite/features/dashboard/presentation/widgets/dashboard_section.dart';
 import 'package:cindel_shop_lite/features/dashboard/presentation/widgets/low_stock_product_tile.dart';
 import 'package:cindel_shop_lite/features/shared/animations/fade_scale_animation.dart';
+import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 
 class DashboardContent extends StatelessWidget {
@@ -58,6 +59,7 @@ final class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -90,15 +92,17 @@ final class _DashboardHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Store overview',
+                    l10n.store_overview,
                     style: textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${metrics.totalProducts} products across '
-                    '${metrics.categoryCount} categories',
+                    l10n.products_across_categories(
+                      metrics.totalProducts,
+                      metrics.categoryCount,
+                    ),
                     style: textTheme.bodyMedium?.copyWith(
                       color: colorScheme.onPrimaryContainer,
                     ),
@@ -120,6 +124,7 @@ final class _MetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -132,23 +137,23 @@ final class _MetricGrid extends StatelessWidget {
       children: [
         DashboardMetricTile(
           icon: Icons.inventory_2_outlined,
-          label: 'Products',
+          label: l10n.products,
           value: '${metrics.totalProducts}',
         ),
         DashboardMetricTile(
           icon: Icons.category_outlined,
-          label: 'Categories',
+          label: l10n.categories,
           value: '${metrics.categoryCount}',
         ),
         DashboardMetricTile(
           icon: Icons.warning_amber_outlined,
-          label: 'Low stock',
+          label: l10n.low_stock,
           value: '${metrics.lowStockProducts}',
-          supportingText: '${metrics.outOfStockProducts} out',
+          supportingText: l10n.out_count(metrics.outOfStockProducts),
         ),
         DashboardMetricTile(
           icon: Icons.payments_outlined,
-          label: 'Inventory value',
+          label: l10n.inventory_value,
           value: _formatPrice(metrics.inventoryValueCents),
         ),
       ],
@@ -163,16 +168,17 @@ final class _CategoryStockSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final maxStock = metrics.categories.fold<int>(
       0,
       (max, category) => category.stock > max ? category.stock : max,
     );
 
     return DashboardSection(
-      title: 'Stock by category',
+      title: l10n.stock_by_category,
       icon: Icons.category_outlined,
       child: metrics.categories.isEmpty
-          ? const _EmptyState(message: 'There are no categories yet.')
+          ? _EmptyState(message: l10n.no_categories_yet)
           : Column(
               children: [
                 for (final category in metrics.categories)
@@ -191,6 +197,7 @@ final class _CategoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     final progress = maxStock == 0 ? 0.0 : category.stock / maxStock;
@@ -218,7 +225,7 @@ final class _CategoryRow extends StatelessWidget {
           SizedBox(
             width: 72,
             child: Text(
-              '${category.stock} units',
+              l10n.units_count(category.stock),
               textAlign: TextAlign.end,
               style: textTheme.bodySmall,
             ),
@@ -236,11 +243,12 @@ final class _CriticalStockSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return DashboardSection(
-      title: 'Critical stock',
+      title: l10n.critical_stock,
       icon: Icons.inventory_outlined,
       child: metrics.criticalProducts.isEmpty
-          ? const _EmptyState(message: 'All products have healthy stock.')
+          ? _EmptyState(message: l10n.all_products_have_healthy_stock)
           : Column(
               children: [
                 for (final product in metrics.criticalProducts)

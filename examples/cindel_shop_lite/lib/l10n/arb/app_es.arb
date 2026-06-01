@@ -1,4 +1,111 @@
 {
-    "@@locale": "es"
-    
+    "@@locale": "es",
+    "catalog": "Catalogo",
+    "dashboard": "Dashboard",
+    "shopping": "Carrito",
+    "clear_search": "Limpiar busqueda",
+    "products": "Productos",
+    "search_products": "Buscar productos",
+    "filters": "Filtros",
+    "category": "Categoria",
+    "stock": "Stock",
+    "sort": "Orden",
+    "reset": "Restablecer",
+    "in_stock_only": "Mostrar solo productos en stock",
+    "all_categories": "Todo",
+    "newest_first": "Mas recientes primero",
+    "name_a_z": "Nombre A-Z",
+    "price_low_high": "Precio bajo-alto",
+    "price_high_low": "Precio alto-bajo",
+    "low_stock_first": "Bajo stock primero",
+    "no_products_match_filters": "Ningun producto coincide con los filtros actuales.",
+    "out": "Agotado",
+    "left": "disponibles",
+    "add_to_cart": "Agregar al carrito",
+    "catalog_unavailable": "El catalogo no esta disponible.",
+    "dashboard_unavailable": "El dashboard no esta disponible.",
+    "store_overview": "Resumen de tienda",
+    "products_across_categories": "{productCount} productos en {categoryCount} categorias",
+    "@products_across_categories": {
+        "placeholders": {
+            "productCount": {
+                "type": "int"
+            },
+            "categoryCount": {
+                "type": "int"
+            }
+        }
+    },
+    "categories": "Categorias",
+    "low_stock": "Bajo stock",
+    "out_count": "{count} agotados",
+    "@out_count": {
+        "placeholders": {
+            "count": {
+                "type": "int"
+            }
+        }
+    },
+    "inventory_value": "Valor del inventario",
+    "stock_by_category": "Stock por categoria",
+    "no_categories_yet": "Todavia no hay categorias.",
+    "units_count": "{count} unidades",
+    "@units_count": {
+        "placeholders": {
+            "count": {
+                "type": "int"
+            }
+        }
+    },
+    "critical_stock": "Stock critico",
+    "all_products_have_healthy_stock": "Todos los productos tienen stock saludable.",
+    "product_added_to_cart": "{productName} agregado al carrito.",
+    "@product_added_to_cart": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "product_no_more_stock": "{productName} no tiene mas stock disponible.",
+    "@product_no_more_stock": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "your_cart_is_empty": "Tu carrito esta vacio",
+    "empty_cart_message": "Agrega productos desde el catalogo para simular un checkout.",
+    "open_catalog": "Abrir catalogo",
+    "items": "Items",
+    "subtotal": "Subtotal",
+    "simulate_checkout": "Simular checkout",
+    "checkout_complete_stock_updated": "Checkout completado. Stock actualizado.",
+    "checkout_unavailable": "El checkout no esta disponible.",
+    "checkout_operation_failed": "La operacion de checkout fallo.",
+    "remove": "Quitar",
+    "unit": "Unidad",
+    "total": "Total",
+    "decrease": "Disminuir",
+    "increase": "Aumentar",
+    "product_out_of_stock": "{productName} esta agotado.",
+    "@product_out_of_stock": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "product_only_available": "{productName} solo tiene {available} disponibles.",
+    "@product_only_available": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            },
+            "available": {
+                "type": "int"
+            }
+        }
+    }
 }

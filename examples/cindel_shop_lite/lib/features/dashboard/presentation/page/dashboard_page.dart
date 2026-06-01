@@ -13,25 +13,26 @@ class DashboardPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
     final startup = ref.watch(catalogStartupProvider);
     final metrics = ref.watch(dashboardMetricsProvider);
 
     return ErrorHandlingWidget<dynamic>(
       providers: [catalogStartupProvider, dashboardMetricsProvider],
       child: Scaffold(
-        appBar: AppBar(title: Text(context.l10n.dashboard)),
+        appBar: AppBar(title: Text(l10n.dashboard)),
         body: SafeArea(
           child: startup.when(
             data: (_) => metrics.when(
               data: (data) => DashboardContent(metrics: data),
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (error, _) => DashboardError(
-                message: dashboardErrorMessage(error),
+                message: dashboardErrorMessage(error, l10n),
               ),
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => DashboardError(
-              message: dashboardErrorMessage(error),
+              message: dashboardErrorMessage(error, l10n),
             ),
           ),
         ),

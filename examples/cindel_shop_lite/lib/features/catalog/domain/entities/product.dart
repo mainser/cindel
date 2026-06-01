@@ -4,6 +4,11 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'product.freezed.dart';
 part 'product.g.dart';
 
+/// Product document stored in the local Cindel catalog collection.
+///
+/// This uses Freezed's primary factory style while Cindel generates the schema,
+/// serializers, typed collection accessors, and query builders from the same
+/// class.
 @freezed
 @Collection(name: 'products')
 abstract class Product with _$Product {

@@ -12,7 +12,100 @@
     "sort": "Sort",
     "reset": "Reset",
     "in_stock_only": "Only show products in stock",
+    "all_categories": "All",
+    "newest_first": "Newest first",
+    "name_a_z": "Name A-Z",
+    "price_low_high": "Price low-high",
+    "price_high_low": "Price high-low",
+    "low_stock_first": "Low stock first",
     "no_products_match_filters": "No products match the current catalog filters.",
     "out": "Out",
-    "left": "left"
+    "left": "left",
+    "add_to_cart": "Add to cart",
+    "catalog_unavailable": "Catalog is unavailable.",
+    "dashboard_unavailable": "Dashboard is unavailable.",
+    "store_overview": "Store overview",
+    "products_across_categories": "{productCount} products across {categoryCount} categories",
+    "@products_across_categories": {
+        "placeholders": {
+            "productCount": {
+                "type": "int"
+            },
+            "categoryCount": {
+                "type": "int"
+            }
+        }
+    },
+    "categories": "Categories",
+    "low_stock": "Low stock",
+    "out_count": "{count} out",
+    "@out_count": {
+        "placeholders": {
+            "count": {
+                "type": "int"
+            }
+        }
+    },
+    "inventory_value": "Inventory value",
+    "stock_by_category": "Stock by category",
+    "no_categories_yet": "There are no categories yet.",
+    "units_count": "{count} units",
+    "@units_count": {
+        "placeholders": {
+            "count": {
+                "type": "int"
+            }
+        }
+    },
+    "critical_stock": "Critical stock",
+    "all_products_have_healthy_stock": "All products have healthy stock.",
+    "product_added_to_cart": "{productName} added to cart.",
+    "@product_added_to_cart": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "product_no_more_stock": "{productName} has no more stock available.",
+    "@product_no_more_stock": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "your_cart_is_empty": "Your cart is empty",
+    "empty_cart_message": "Add products from the catalog to simulate a checkout.",
+    "open_catalog": "Open catalog",
+    "items": "Items",
+    "subtotal": "Subtotal",
+    "simulate_checkout": "Simulate checkout",
+    "checkout_complete_stock_updated": "Checkout complete. Stock updated.",
+    "checkout_unavailable": "Checkout is unavailable.",
+    "checkout_operation_failed": "Checkout operation failed.",
+    "remove": "Remove",
+    "unit": "Unit",
+    "total": "Total",
+    "decrease": "Decrease",
+    "increase": "Increase",
+    "product_out_of_stock": "{productName} is out of stock.",
+    "@product_out_of_stock": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            }
+        }
+    },
+    "product_only_available": "{productName} only has {available} available.",
+    "@product_only_available": {
+        "placeholders": {
+            "productName": {
+                "type": "String"
+            },
+            "available": {
+                "type": "int"
+            }
+        }
+    }
 }

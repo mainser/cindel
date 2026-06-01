@@ -3,9 +3,10 @@ import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 
 class ProductCard extends StatelessWidget {
-  const ProductCard({required this.product, super.key});
+  const ProductCard({required this.product, this.onAddToCart, super.key});
 
   final Product product;
+  final VoidCallback? onAddToCart;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +86,17 @@ class ProductCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (onAddToCart != null) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: product.stock == 0 ? null : onAddToCart,
+                  icon: const Icon(Icons.add_shopping_cart),
+                  label: Text(l10n.add_to_cart),
+                ),
+              ),
+            ],
           ],
         ),
       ),

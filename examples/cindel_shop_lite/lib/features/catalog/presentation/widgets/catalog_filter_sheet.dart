@@ -136,7 +136,7 @@ class _CategoryTab extends StatelessWidget {
         final category = _categories[index];
         final selected = category == selectedCategory;
         return ListTile(
-          title: Text(category),
+          title: Text(_categoryLabel(context.l10n, category)),
           trailing: selected ? const Icon(Icons.check) : null,
           selected: selected,
           onTap: () => onChanged(category),
@@ -179,34 +179,35 @@ class _SortTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
-        for (final option in _sortOptions)
+        for (final option in CatalogSort.values)
           ListTile(
-            title: Text(option.label),
-            trailing: option.value == selectedSort
-                ? const Icon(Icons.check)
-                : null,
-            selected: option.value == selectedSort,
-            onTap: () => onChanged(option.value),
+            title: Text(_sortLabel(l10n, option)),
+            trailing: option == selectedSort ? const Icon(Icons.check) : null,
+            selected: option == selectedSort,
+            onTap: () => onChanged(option),
           ),
       ],
     );
   }
 }
 
-const _sortOptions = [
-  _SortOption(CatalogSort.newest, 'Newest first'),
-  _SortOption(CatalogSort.nameAsc, 'Name A-Z'),
-  _SortOption(CatalogSort.priceAsc, 'Price low-high'),
-  _SortOption(CatalogSort.priceDesc, 'Price high-low'),
-  _SortOption(CatalogSort.stockAsc, 'Low stock first'),
-];
+String _categoryLabel(AppLocalizations l10n, String category) {
+  if (category == 'All') {
+    return l10n.all_categories;
+  }
+  return category;
+}
 
-class _SortOption {
-  const _SortOption(this.value, this.label);
-
-  final CatalogSort value;
-  final String label;
+String _sortLabel(AppLocalizations l10n, CatalogSort sort) {
+  return switch (sort) {
+    CatalogSort.newest => l10n.newest_first,
+    CatalogSort.nameAsc => l10n.name_a_z,
+    CatalogSort.priceAsc => l10n.price_low_high,
+    CatalogSort.priceDesc => l10n.price_high_low,
+    CatalogSort.stockAsc => l10n.low_stock_first,
+  };
 }

@@ -1,4 +1,5 @@
 import 'package:cindel_shop_lite/features/catalog/domain/entities/product.dart';
+import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 
 class LowStockProductTile extends StatelessWidget {
@@ -8,6 +9,7 @@ class LowStockProductTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final stockColor = product.stock == 0
@@ -48,7 +50,7 @@ class LowStockProductTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Text(
-            product.stock == 0 ? 'Out' : '${product.stock} left',
+            product.stock == 0 ? l10n.out : '${product.stock} ${l10n.left}',
             style: textTheme.bodyMedium?.copyWith(
               color: stockColor,
               fontWeight: FontWeight.w700,

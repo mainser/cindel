@@ -2,11 +2,17 @@ import 'package:cindel/cindel.dart';
 import 'package:cindel_shop_lite/features/catalog/domain/entities/product.dart';
 import 'package:cindel_shop_lite/features/dashboard/domain/entities/dashboard_metrics.dart';
 
+/// Reads dashboard metrics from the catalog products collection.
+///
+/// Some values use Cindel counts and filtered queries directly; others are
+/// calculated in Dart because this demo keeps dashboard data derived from the
+/// single products collection.
 final class DashboardCatalogDataSource {
   const DashboardCatalogDataSource(this._database);
 
   final Future<CindelDatabase> _database;
 
+  /// Builds the current inventory snapshot shown by the dashboard.
   Future<DashboardMetrics> readMetrics() async {
     final database = await _database;
     final allProducts = await database.products.all().findAll();
