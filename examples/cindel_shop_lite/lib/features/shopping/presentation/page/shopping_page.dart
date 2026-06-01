@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
-class DashboardView extends StatelessWidget {
-  const DashboardView({super.key});
+class ShoppingPage extends StatelessWidget {
+  const ShoppingPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dashboard'),
+        title: const Text('Shopping'),
       ),
       body: const Center(
-        child: Text('Dashboard View'),
+        child: Text('Shopping Page'),
       ),
     );
   }

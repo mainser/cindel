@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-class CatalogView extends StatelessWidget {
-  const CatalogView({super.key});
+class CatalogPage extends StatelessWidget {
+  const CatalogPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -10,7 +10,7 @@ class CatalogView extends StatelessWidget {
         title: const Text('Catalog'),
       ),
       body: const Center(
-        child: Text('Catalog View'),
+        child: Text('Catalog Page'),
       ),
     );
   }

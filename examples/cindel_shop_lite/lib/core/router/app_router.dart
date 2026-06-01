@@ -1,7 +1,7 @@
 import 'package:cindel_shop_lite/app/app.dart';
-import 'package:cindel_shop_lite/features/catalog/view/catalog_view.dart';
-import 'package:cindel_shop_lite/features/dashboard/view/dashboard_view.dart';
-import 'package:cindel_shop_lite/features/shopping/view/shopping_view.dart';
+import 'package:cindel_shop_lite/features/catalog/presentation/pages/catalog_page.dart';
+import 'package:cindel_shop_lite/features/dashboard/presentation/page/dashboard_page.dart';
+import 'package:cindel_shop_lite/features/shopping/presentation/page/shopping_page.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -26,22 +26,22 @@ GoRouter appRouter(Ref ref) {
     routes: [
       // Shell
       ShellRoute(
-        builder: (context, state, child) => ShellView(child: child),
+        builder: (context, state, child) => ShellPage(child: child),
         routes: [
           GoRoute(
             path: AppRoutes.catalog,
             pageBuilder: (context, state) =>
-                _shellPage(state, const CatalogView()),
+                _shellPage(state, const CatalogPage()),
           ),
           GoRoute(
             path: AppRoutes.shopping,
             pageBuilder: (context, state) =>
-                _shellPage(state, const ShoppingView()),
+                _shellPage(state, const ShoppingPage()),
           ),
           GoRoute(
             path: AppRoutes.dashboard,
             pageBuilder: (context, state) =>
-                _shellPage(state, const DashboardView()),
+                _shellPage(state, const DashboardPage()),
           ),
         ],
       ),

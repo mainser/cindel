@@ -3,8 +3,8 @@ import 'package:cindel_shop_lite/l10n/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-class ShellView extends StatelessWidget {
-  const ShellView({required this.child, super.key});
+class ShellPage extends StatelessWidget {
+  const ShellPage({required this.child, super.key});
 
   final Widget child;
 
