@@ -27,7 +27,7 @@ public release.
 ```text
 Cindel/
   docs/                         Project notes and backend evaluation
-  examples/cindel_todo/         Flutter example app
+  examples/cindel_shop_lite/    Flutter example shop app
   packages/cindel/              Public Dart API, FFI bridge, native Rust core
   packages/cindel_annotations/  Public annotations and shared types
   packages/cindel_flutter_libs/ Prebuilt native libraries for Flutter apps
@@ -68,7 +68,7 @@ dart analyze
 cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
 cargo test --manifest-path packages/cindel/native/Cargo.toml
 dart test packages/cindel/test -r expanded
-flutter test examples/cindel_todo
+flutter test examples/cindel_shop_lite
 ```
 
 Flutter app builds should use `cindel_flutter_libs` by default. If a maintainer

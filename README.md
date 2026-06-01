@@ -13,7 +13,7 @@ in the package README:
 - `packages/cindel_generator`: generated schemas, serializers, query builders,
   and typed collection helpers.
 - `packages/cindel_flutter_libs`: prebuilt native libraries for Flutter apps.
-- `examples/cindel_todo`: example Flutter application.
+- `examples/cindel_shop_lite`: example Flutter shop application.
 
 ## Development
 
