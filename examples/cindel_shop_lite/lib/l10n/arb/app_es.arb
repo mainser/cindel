@@ -1,6 +1,4 @@
 {
-    "@@locale": "es",
-    "catalog": "Catálogo",
-    "dashboard": "Tablero",
-    "shopping": "Compras"
+    "@@locale": "es"
+    
 }

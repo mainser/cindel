@@ -2,5 +2,17 @@
     "@@locale": "en",
     "catalog": "Catalog",
     "dashboard": "Dashboard",
-    "shopping": "Shopping"
+    "shopping": "Shopping",
+    "clear_search": "Clear search",
+    "products": "Products",
+    "search_products": "Search products",
+    "filters": "Filters",
+    "category": "Category",
+    "stock": "Stock",
+    "sort": "Sort",
+    "reset": "Reset",
+    "in_stock_only": "Only show products in stock",
+    "no_products_match_filters": "No products match the current catalog filters.",
+    "out": "Out",
+    "left": "left"
 }
