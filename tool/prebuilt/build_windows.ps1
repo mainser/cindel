@@ -21,6 +21,9 @@ cargo build `
   --release `
   --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
   --target x86_64-pc-windows-msvc
+if ($LASTEXITCODE -ne 0) {
+  throw "cargo build failed with exit code $LASTEXITCODE"
+}
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 Copy-Item `

@@ -47,8 +47,8 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.11
-  cindel_flutter_libs: ^0.5.11
+  cindel: ^0.5.12
+  cindel_flutter_libs: ^0.5.12
 
 dev_dependencies:
   build_runner: ^2.15.0

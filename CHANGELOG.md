@@ -14,6 +14,10 @@ while the core design settles.
 - Streamed MDBX query-plan property projection for supported `cindel` plans,
   writing projection rows directly while preserving fallback behavior for
   distinct and unsupported plans.
+- Regenerated Windows, Android, and Linux native runtime libraries and updated
+  `cindel_flutter_libs` to `0.5.12`.
+- Made vendored MDBX bindgen generation pass Cargo's target explicitly so
+  Windows prebuilt builds use the correct FFI type layout.
 
 ## 0.5.11
 

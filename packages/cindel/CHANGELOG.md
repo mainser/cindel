@@ -8,6 +8,8 @@
 - Streamed MDBX query-plan property projection for supported plans, writing
   projection rows directly while preserving the existing fallback for distinct
   and unsupported plans.
+- Made vendored MDBX bindgen generation pass Cargo's target explicitly so
+  Windows native builds use the correct FFI type layout.
 
 ## 0.5.11
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.12
+
+- Regenerated Windows, Android, and Linux native runtime libraries for the
+  Cindel `0.5.12` native runtime line.
+- Includes the MDBX query-plan count, aggregate, and projection streaming
+  optimizations.
+- Keeps MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.11
 
 - Regenerated Windows, Android, and Linux native runtime libraries for the

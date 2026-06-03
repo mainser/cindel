@@ -124,34 +124,30 @@ packages:
   cindel:
     dependency: "direct main"
     description:
-      name: cindel
-      sha256: "3747aeb7d63e291057480f85273d016024c00a8a2162d3af57c392dc6c0109cd"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.5.11"
+      path: "../../packages/cindel"
+      relative: true
+    source: path
+    version: "0.5.12"
   cindel_annotations:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: cindel_annotations
-      sha256: ca2c2f7051c58c8acbb5b62769b758090410b3ca37dc90a4ab3d0613d2b920bb
-      url: "https://pub.dev"
-    source: hosted
+      path: "../../packages/cindel_annotations"
+      relative: true
+    source: path
     version: "0.5.3"
   cindel_flutter_libs:
     dependency: "direct main"
     description:
-      name: cindel_flutter_libs
-      sha256: e9b6182be876e1b608914f28b4b0654d613410574130d63392723e17581ad217
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.5.11"
+      path: "../../packages/cindel_flutter_libs"
+      relative: true
+    source: path
+    version: "0.5.12"
   cindel_generator:
     dependency: "direct dev"
     description:
-      name: cindel_generator
-      sha256: "8a3cde2603063fda374f41490bea88ef1d8c54e900139885f4d456709ee98d63"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../../packages/cindel_generator"
+      relative: true
+    source: path
     version: "0.5.9"
   cli_config:
     dependency: transitive

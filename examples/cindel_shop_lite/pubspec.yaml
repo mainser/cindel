@@ -9,8 +9,8 @@ environment:
 
 dependencies:
   adaptive_theme: ^3.7.2
-  cindel: ^0.5.11
-  cindel_flutter_libs: ^0.5.11
+  cindel: ^0.5.12
+  cindel_flutter_libs: ^0.5.12
   flutter:
     sdk: flutter
   flutter_hooks: ^0.21.3+1
