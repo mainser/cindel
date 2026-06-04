@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/github/actions/workflow/status/mainser/cindel/ci.yml?branch=main&label=tests&labelColor=333940&logo=github">
   </a>
   <a href="https://app.codecov.io/gh/mainser/cindel">
-    <img src="https://img.shields.io/codecov/c/github/mainser/cindel?logo=codecov&logoColor=fff&labelColor=333940&flag=dart-sqlite">
+    <img src="https://img.shields.io/codecov/c/github/mainser/cindel/main?logo=codecov&logoColor=fff&labelColor=333940">
   </a>
 </p>
 
