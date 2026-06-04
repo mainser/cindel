@@ -246,6 +246,11 @@ jobs:
       - name: Set up Dart OIDC publishing
         uses: dart-lang/setup-dart@v1
 
+      - name: Verify GitHub OIDC token availability
+        run: |
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+
       - name: Download prebuilt binaries
         uses: actions/download-artifact@v8
         with:
@@ -279,7 +284,7 @@ jobs:
       - name: Publish release packages
         shell: bash
         run: |
-          publish_package() {
+          matching_release_package() {
             local package_dir="$1"
             local package_name
             local package_version
@@ -289,19 +294,52 @@ jobs:
 
             if [ "${package_version}" != "${RELEASE_VERSION}" ]; then
               echo "Skipping ${package_name} ${package_version}; release tag is ${RELEASE_VERSION}."
-              return
+              return 1
             fi
 
-            echo "::group::Publish ${package_name} ${package_version}"
+            return 0
+          }
+
+          run_pub() {
+            local package_dir="$1"
+            local command="$2"
+
             if grep -q 'sdk:[[:space:]]*flutter' "${package_dir}/pubspec.yaml"; then
-              (cd "${package_dir}" && flutter pub get && flutter pub publish --dry-run && flutter pub publish --force)
+              (cd "${package_dir}" && flutter pub get && flutter pub publish "${command}")
             else
-              (cd "${package_dir}" && dart pub get && dart pub publish --dry-run && dart pub publish --force)
+              (cd "${package_dir}" && dart pub get && dart pub publish "${command}")
             fi
+          }
+
+          dry_run_package() {
+            local package_dir="$1"
+            matching_release_package "${package_dir}" || return 0
+
+            echo "::group::Dry-run ${package_dir}"
+            run_pub "${package_dir}" --dry-run
             echo "::endgroup::"
           }
 
-          publish_package packages/cindel_annotations
-          publish_package packages/cindel_generator
-          publish_package packages/cindel
-          publish_package packages/cindel_flutter_libs
+          publish_package() {
+            local package_dir="$1"
+            matching_release_package "${package_dir}" || return 0
+
+            echo "::group::Publish ${package_dir}"
+            run_pub "${package_dir}" --force
+            echo "::endgroup::"
+          }
+
+          release_packages=(
+            packages/cindel_flutter_libs
+            packages/cindel
+            packages/cindel_annotations
+            packages/cindel_generator
+          )
+
+          for package_dir in "${release_packages[@]}"; do
+            dry_run_package "${package_dir}"
+          done
+
+          for package_dir in "${release_packages[@]}"; do
+            publish_package "${package_dir}"
+          done
