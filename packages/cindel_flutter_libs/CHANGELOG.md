@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.13
+
+- Added iOS and macOS to the advertised Flutter plugin platform set.
+- Prepared release automation to generate Android, iOS, Linux, macOS, and
+  Windows native runtime binaries in GitHub Actions before pub.dev publishing.
+- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.12
 
 - Regenerated Windows, Android, and Linux native runtime libraries for the

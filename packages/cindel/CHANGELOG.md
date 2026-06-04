@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.13
+
+- Declared iOS and macOS as supported Flutter prebuilt platforms through
+  `cindel_flutter_libs`.
+- Added automated tag-based release publishing support for the coordinated
+  `cindel` and `cindel_flutter_libs` release line.
+
 ## 0.5.12
 
 - Streamed MDBX query-plan `count` and property aggregate execution for

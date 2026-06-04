@@ -5,6 +5,14 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.5.13
+
+- Added automated tag-based release publishing that builds native binaries for
+  Android, iOS, Linux, macOS, and Windows in GitHub Actions before publishing.
+- Declared Apple platform support for `cindel` and `cindel_flutter_libs`, with
+  iOS and macOS binaries generated during the release workflow.
+- Updated `cindel` and `cindel_flutter_libs` to `0.5.13`.
+
 ## 0.5.12
 
 - Streamed MDBX query-plan `count` and property aggregate execution for
