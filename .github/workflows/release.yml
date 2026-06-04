@@ -322,7 +322,7 @@ jobs:
             matching_release_package "${package_dir}" || return 0
 
             echo "::group::Publish ${package_dir}"
-            run_pub "${package_dir}" --force --ignore-warnings
+            run_pub "${package_dir}" --force
             echo "::endgroup::"
           }
 
