@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Added current-document native reader FFI entry points for dynamic bytes and
+  list fields, keeping generated MDBX point reads aligned with the active
+  native cursor document.
+- Improved generated typed MDBX `getAll` hydration by avoiding indexed dynamic
+  field reads after the cursor has already selected the current document.
+
 ## 0.5.13
 
 - Declared iOS and macOS as supported Flutter prebuilt platforms through

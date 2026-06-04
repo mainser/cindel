@@ -896,6 +896,32 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_bytes(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_bytes(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> bool {
+    if out_ptr.is_null() || out_len.is_null() {
+        return false;
+    }
+    *out_ptr = std::ptr::null();
+    *out_len = 0;
+    let Some(reader) = reader.as_mut() else {
+        return false;
+    };
+    let Some(document_index) = reader.current_index else {
+        return false;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return false;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_len = bytes.len();
+    true
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_string_value(
     reader: *mut CindelNativeDocumentReader,
     document_index: usize,
@@ -999,12 +1025,61 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_list_bytes(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_list_bytes(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> bool {
+    if out_ptr.is_null() || out_len.is_null() {
+        return false;
+    }
+    *out_ptr = std::ptr::null();
+    *out_len = 0;
+    let Some(reader) = reader.as_mut() else {
+        return false;
+    };
+    let Some(document_index) = reader.current_index else {
+        return false;
+    };
+    let Some(bytes) = reader.read_bytes(document_index, field_index as usize) else {
+        return false;
+    };
+    *out_ptr = bytes.as_ptr();
+    *out_len = bytes.len();
+    true
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cindel_native_document_reader_read_list(
     reader: *mut CindelNativeDocumentReader,
     document_index: usize,
     field_index: u32,
 ) -> *mut CindelNativeDocumentReader {
     let Some(reader) = reader.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    let Some(raw_list) = reader.read_list(document_index, field_index as usize) else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        current_index: None,
+        mode: CindelNativeDocumentReaderMode::RawList {
+            bytes: raw_list.bytes,
+            entries: raw_list.entries,
+        },
+    }))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_list(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+) -> *mut CindelNativeDocumentReader {
+    let Some(reader) = reader.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    let Some(document_index) = reader.current_index else {
         return std::ptr::null_mut();
     };
     let Some(raw_list) = reader.read_list(document_index, field_index as usize) else {

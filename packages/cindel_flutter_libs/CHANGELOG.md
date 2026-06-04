@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Prepared regenerated Flutter native runtime libraries for the Cindel `0.6.0`
+  native reader ABI.
+- Includes the new current-document dynamic field reader symbols required by
+  the Cindel `0.6.0` MDBX typed hydration path.
+- Keeps MDBX and SQLite compiled into the shipped binaries, with MDBX as the
+  default backend and SQLite selectable explicitly.
+
 ## 0.5.13
 
 - Added iOS and macOS to the advertised Flutter plugin platform set.
