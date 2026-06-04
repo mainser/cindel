@@ -1,10 +1,13 @@
 part of 'bindings.dart';
 
 final class _CindelNativeDocumentWriter
-    implements CindelNativeStringListDocumentWriter {
+    implements
+        CindelNativeStringListDocumentWriter,
+        CindelNativeObjectDocumentWriter {
   _CindelNativeDocumentWriter(this._functions, this._writer)
     : _stringBytes = _ReusableNativeBytes(256),
       _largeStringCache = LinkedHashMap<String, Uint8List>(),
+      _fieldNamesCache = LinkedHashMap<List<String>, Uint8List>(),
       _ownsBuffers = true;
 
   _CindelNativeDocumentWriter._child(
@@ -12,12 +15,14 @@ final class _CindelNativeDocumentWriter
     this._writer,
     this._stringBytes,
     this._largeStringCache,
+    this._fieldNamesCache,
   ) : _ownsBuffers = false;
 
   final _CindelNativeFunctions _functions;
   final Pointer<Void> _writer;
   final _ReusableNativeBytes _stringBytes;
   final LinkedHashMap<String, Uint8List> _largeStringCache;
+  final LinkedHashMap<List<String>, Uint8List> _fieldNamesCache;
   final bool _ownsBuffers;
 
   @override
@@ -111,6 +116,7 @@ final class _CindelNativeDocumentWriter
       writer,
       _stringBytes,
       _largeStringCache,
+      _fieldNamesCache,
     );
   }
 
@@ -125,6 +131,45 @@ final class _CindelNativeDocumentWriter
     }
     _functions.nativeBatchWriterEndList(_writer, listWriter._writer);
     listWriter.release();
+  }
+
+  @override
+  CindelNativeDocumentWriter beginObject(
+    int fieldIndex,
+    List<String> fieldNames,
+  ) {
+    final fieldNamesBytes = _cachedFieldNamesBytes(fieldNames);
+    final writer = _withNativeBytes(fieldNamesBytes, (pointer, length) {
+      return _functions.nativeBatchWriterBeginObject(
+        _writer,
+        fieldIndex,
+        pointer,
+        length,
+      );
+    });
+    if (writer == nullptr) {
+      throw StateError('Native Cindel object writer allocation failed.');
+    }
+    return _CindelNativeDocumentWriter._child(
+      _functions,
+      writer,
+      _stringBytes,
+      _largeStringCache,
+      _fieldNamesCache,
+    );
+  }
+
+  @override
+  void endObject(CindelNativeDocumentWriter objectWriter) {
+    if (objectWriter is! _CindelNativeDocumentWriter) {
+      throw ArgumentError.value(
+        objectWriter,
+        'objectWriter',
+        'Must be a Cindel native object writer.',
+      );
+    }
+    _functions.nativeBatchWriterEndObject(_writer, objectWriter._writer);
+    objectWriter.release();
   }
 
   void release() {
@@ -146,6 +191,19 @@ final class _CindelNativeDocumentWriter
       _largeStringCache.remove(_largeStringCache.keys.first);
     }
     _largeStringCache[value] = bytes;
+    return bytes;
+  }
+
+  Uint8List _cachedFieldNamesBytes(List<String> fieldNames) {
+    final existing = _fieldNamesCache[fieldNames];
+    if (existing != null) {
+      return existing;
+    }
+    final bytes = _encodeNativeFieldNames(fieldNames);
+    if (_fieldNamesCache.length >= 16) {
+      _fieldNamesCache.remove(_fieldNamesCache.keys.first);
+    }
+    _fieldNamesCache[fieldNames] = bytes;
     return bytes;
   }
 }

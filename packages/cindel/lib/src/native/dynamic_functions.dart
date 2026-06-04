@@ -172,6 +172,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Void Function(Pointer<Void>, Pointer<Void>),
             void Function(Pointer<Void>, Pointer<Void>)
           >('cindel_native_batch_writer_end_list', isLeaf: true),
+      nativeBatchWriterBeginObject = library
+          .lookupFunction<
+            Pointer<Void> Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
+            Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+          >('cindel_native_batch_writer_begin_object', isLeaf: true),
+      nativeBatchWriterEndObject = library
+          .lookupFunction<
+            Void Function(Pointer<Void>, Pointer<Void>),
+            void Function(Pointer<Void>, Pointer<Void>)
+          >('cindel_native_batch_writer_end_object', isLeaf: true),
       nativeBatchWriterSaveDocument = library
           .lookupFunction<
             Void Function(Pointer<Void>, Uint64),
@@ -470,6 +480,22 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Pointer<Void> Function(Pointer<Void>, Uint32),
             Pointer<Void> Function(Pointer<Void>, int)
           >('cindel_native_document_reader_read_current_list'),
+      nativeDocumentReaderReadObject = library
+          .lookupFunction<
+            Pointer<Void> Function(
+              Pointer<Void>,
+              Size,
+              Uint32,
+              Pointer<Uint8>,
+              Size,
+            ),
+            Pointer<Void> Function(Pointer<Void>, int, int, Pointer<Uint8>, int)
+          >('cindel_native_document_reader_read_object'),
+      nativeDocumentReaderReadCurrentObject = library
+          .lookupFunction<
+            Pointer<Void> Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
+            Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+          >('cindel_native_document_reader_read_current_object'),
       nativeDocumentReaderFree = library
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -1092,6 +1118,13 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final void Function(Pointer<Void>, Pointer<Void>) nativeBatchWriterEndList;
 
   @override
+  final Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  nativeBatchWriterBeginObject;
+
+  @override
+  final void Function(Pointer<Void>, Pointer<Void>) nativeBatchWriterEndObject;
+
+  @override
   final void Function(Pointer<Void>, int) nativeBatchWriterSaveDocument;
 
   @override
@@ -1259,6 +1292,14 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final Pointer<Void> Function(Pointer<Void>, int)
   nativeDocumentReaderReadCurrentList;
+
+  @override
+  final Pointer<Void> Function(Pointer<Void>, int, int, Pointer<Uint8>, int)
+  nativeDocumentReaderReadObject;
+
+  @override
+  final Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  nativeDocumentReaderReadCurrentObject;
 
   @override
   final void Function(Pointer<Void>) nativeDocumentReaderFree;

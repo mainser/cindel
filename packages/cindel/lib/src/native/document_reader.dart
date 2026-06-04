@@ -1,6 +1,7 @@
 part of 'bindings.dart';
 
-final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
+final class _CindelNativeDocumentReader
+    implements CindelNativeDocumentReader, CindelNativeObjectDocumentReader {
   _CindelNativeDocumentReader(
     this._functions,
     this._reader, {
@@ -14,6 +15,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
        _stringIsAscii = calloc<Bool>(),
        _stringInternId = calloc<Uint64>(),
        _idValue = calloc<Uint64>(),
+       _fieldNamesCache = LinkedHashMap<List<String>, Uint8List>(),
        _ownsScratch = true;
 
   _CindelNativeDocumentReader._child(
@@ -29,6 +31,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
       _stringIsAscii = parent._stringIsAscii,
       _stringInternId = parent._stringInternId,
       _idValue = parent._idValue,
+      _fieldNamesCache = parent._fieldNamesCache,
       _ownsScratch = false;
 
   final _CindelNativeFunctions _functions;
@@ -42,6 +45,7 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
   final Pointer<Bool> _stringIsAscii;
   final Pointer<Uint64> _stringInternId;
   final Pointer<Uint64> _idValue;
+  final LinkedHashMap<List<String>, Uint8List> _fieldNamesCache;
   final bool _ownsScratch;
   bool _released = false;
 
@@ -207,6 +211,35 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
     return _CindelNativeDocumentReader._child(_functions, listReader, this);
   }
 
+  @override
+  CindelNativeDocumentReader? readObjectReader(
+    int documentIndex,
+    int fieldIndex,
+    List<String> fieldNames,
+  ) {
+    final fieldNamesBytes = _cachedFieldNamesBytes(fieldNames);
+    final objectReader = _stringBytesWith(fieldNamesBytes, (pointer, length) {
+      return _useCurrentDocument
+          ? _functions.nativeDocumentReaderReadCurrentObject(
+              _reader,
+              fieldIndex,
+              pointer,
+              length,
+            )
+          : _functions.nativeDocumentReaderReadObject(
+              _reader,
+              documentIndex,
+              fieldIndex,
+              pointer,
+              length,
+            );
+    });
+    if (objectReader == nullptr) {
+      return null;
+    }
+    return _CindelNativeDocumentReader._child(_functions, objectReader, this);
+  }
+
   bool _readBytes(int documentIndex, int fieldIndex) {
     return _useCurrentDocument
         ? _functions.nativeDocumentReaderReadCurrentBytes(
@@ -222,6 +255,32 @@ final class _CindelNativeDocumentReader implements CindelNativeDocumentReader {
             _bytesPointer,
             _bytesLength,
           );
+  }
+
+  T _stringBytesWith<T>(
+    Uint8List bytes,
+    T Function(Pointer<Uint8> pointer, int length) action,
+  ) {
+    final pointer = calloc<Uint8>(bytes.length);
+    try {
+      pointer.asTypedList(bytes.length).setAll(0, bytes);
+      return action(pointer, bytes.length);
+    } finally {
+      calloc.free(pointer);
+    }
+  }
+
+  Uint8List _cachedFieldNamesBytes(List<String> fieldNames) {
+    final existing = _fieldNamesCache[fieldNames];
+    if (existing != null) {
+      return existing;
+    }
+    final bytes = _encodeNativeFieldNames(fieldNames);
+    if (_fieldNamesCache.length >= 16) {
+      _fieldNamesCache.remove(_fieldNamesCache.keys.first);
+    }
+    _fieldNamesCache[fieldNames] = bytes;
+    return bytes;
   }
 
   @override

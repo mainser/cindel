@@ -568,6 +568,62 @@ void main() {
       expect(metadataMatches.map((user) => user.email), ['ada@example.com']);
     });
 
+    // Scenario: Generated native serializers write and read embedded objects
+    // without falling back to Dart document maps.
+    // Covers:
+    // - Nullable embedded object fields.
+    // - List<embedded> fields.
+    // - Nested embedded object fields inside a list element.
+    // Expected: Native storage preserves null object fields and nested list
+    // values through the generated writer/reader path.
+    test(
+      'round-trips embedded objects through generated native serializers.',
+      () async {
+        // Arrange.
+        expect(UserSchema.writeNativeDocument, isNotNull);
+        expect(UserSchema.readNativeDocument, isNotNull);
+
+        final db = await openTestDatabaseInMemory(schemas: [UserSchema]);
+        final leadRecipient = Recipient()
+          ..name = 'Ada'
+          ..address = 'ada@example.com'
+          ..metadata = (RecipientMetadata()..label = 'lead');
+        final secondaryRecipient = Recipient()
+          ..name = 'Grace'
+          ..address = 'grace@example.com'
+          ..metadata = (RecipientMetadata()..label = 'secondary');
+        final nullPrimaryUser = User()
+          ..name = 'No primary'
+          ..email = 'no-primary@example.com'
+          ..primaryRecipient = null
+          ..recipients = [leadRecipient];
+        final nestedListUser = User()
+          ..name = 'Nested list'
+          ..email = 'nested-list@example.com'
+          ..primaryRecipient = secondaryRecipient
+          ..recipients = [leadRecipient, secondaryRecipient];
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.users.putAll([nullPrimaryUser, nestedListUser]);
+        final restored = await db.users.getAll([
+          nullPrimaryUser.dbId,
+          nestedListUser.dbId,
+        ]);
+
+        // Assert.
+        expect(restored, hasLength(2));
+        expect(restored[0]?.primaryRecipient, isNull);
+        expect(restored[0]?.recipients?.single.metadata?.label, 'lead');
+        expect(restored[1]?.primaryRecipient?.metadata?.label, 'secondary');
+        expect(restored[1]?.recipients?.map((recipient) => recipient.address), [
+          'ada@example.com',
+          'grace@example.com',
+        ]);
+      },
+    );
+
     // Scenario: A generated query update changes a string-list field.
     // Covers:
     // - Native update serialization for compact List<String> fields.

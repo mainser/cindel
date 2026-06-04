@@ -4,6 +4,11 @@
 
 - Added generated nested filter support for fields inside embedded object list
   elements, such as `recipientsElement((recipient) => ...)`.
+- Added a Rust native embedded object writer/reader path for generated typed
+  serializers, avoiding intermediate Dart document maps for embedded object
+  fields, embedded object lists, and nested embedded objects.
+- Added native FFI entry points for embedded object child writers and readers,
+  including list-element embedded objects and nested embedded payloads.
 - Made embedded object equality and embedded-list element equality compare
   stored map/list values deeply instead of by Dart object identity.
 - Added current-document native reader FFI entry points for dynamic bytes and

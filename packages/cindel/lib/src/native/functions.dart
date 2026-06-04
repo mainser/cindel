@@ -84,6 +84,11 @@ abstract interface class _CindelNativeFunctions {
 
   void Function(Pointer<Void>, Pointer<Void>) get nativeBatchWriterEndList;
 
+  Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterBeginObject;
+
+  void Function(Pointer<Void>, Pointer<Void>) get nativeBatchWriterEndObject;
+
   void Function(Pointer<Void>, int) get nativeBatchWriterSaveDocument;
 
   void Function(Pointer<Void>) get nativeBatchWriterEndDocument;
@@ -190,6 +195,12 @@ abstract interface class _CindelNativeFunctions {
 
   Pointer<Void> Function(Pointer<Void>, int)
   get nativeDocumentReaderReadCurrentList;
+
+  Pointer<Void> Function(Pointer<Void>, int, int, Pointer<Uint8>, int)
+  get nativeDocumentReaderReadObject;
+
+  Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeDocumentReaderReadCurrentObject;
 
   void Function(Pointer<Void>) get nativeDocumentReaderFree;
 

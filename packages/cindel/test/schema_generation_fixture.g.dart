@@ -1518,23 +1518,33 @@ void _$UserWriteCindelNativeDocument(
   writer.writeString(6, object.name);
   writer.writeString(7, object.plan.code);
   {
-    final value = object.primaryRecipient == null
-        ? null
-        : _$RecipientToCindelEmbedded(object.primaryRecipient as Recipient);
+    final value = object.primaryRecipient;
     if (value == null) {
       writer.writeNull(8);
     } else {
-      writer.writeObject(8, value);
+      cindelWriteNativeObject<Recipient>(
+        writer,
+        8,
+        _$RecipientCindelNativeFieldNames,
+        value,
+        _$RecipientWriteCindelNativeEmbedded,
+        _$RecipientToCindelEmbedded,
+      );
     }
   }
   {
-    final list = object.recipients
-        ?.map((value) => _$RecipientToCindelEmbedded(value))
-        .toList(growable: false);
+    final list = object.recipients;
     if (list == null) {
       writer.writeNull(9);
     } else {
-      writer.writeObjectList(9, list.cast<Map<String, Object?>?>());
+      cindelWriteNativeObjectList<Recipient>(
+        writer,
+        9,
+        _$RecipientCindelNativeFieldNames,
+        list,
+        _$RecipientWriteCindelNativeEmbedded,
+        _$RecipientToCindelEmbedded,
+      );
     }
   }
   writer.writeString(10, object.role.name);
@@ -1614,23 +1624,24 @@ User _$UserReadCindelNativeDocument(
   object.plan = UserPlan.values.firstWhere(
     (enumValue) => enumValue.code == reader.readString(documentIndex, 7),
   );
-  object.primaryRecipient = (() {
-    final value = reader.readObject(documentIndex, 8);
-    return value == null
-        ? null
-        : _$RecipientFromCindelEmbedded((value as Map).cast<String, Object?>());
-  })();
+  object.primaryRecipient = cindelReadNativeObject<Recipient>(
+    reader,
+    documentIndex,
+    8,
+    _$RecipientCindelNativeFieldNames,
+    _$RecipientReadCindelNativeEmbedded,
+    _$RecipientFromCindelEmbedded,
+  );
   object.recipients = (() {
-    final value = reader.readObjectList(documentIndex, 9);
-    return value == null
-        ? null
-        : value
-              .map(
-                (value) => _$RecipientFromCindelEmbedded(
-                  (value as Map).cast<String, Object?>(),
-                ),
-              )
-              .toList(growable: false);
+    final value = cindelReadNativeObjectList<Recipient>(
+      reader,
+      documentIndex,
+      9,
+      _$RecipientCindelNativeFieldNames,
+      _$RecipientReadCindelNativeEmbedded,
+      _$RecipientFromCindelEmbedded,
+    );
+    return value == null ? null : value.cast<Recipient>();
   })();
   return object;
 }
@@ -1642,6 +1653,12 @@ int _$UserGetCindelId(User object) {
 void _$UserSetCindelId(User object, int id) {
   object.dbId = id;
 }
+
+const _$RecipientCindelNativeFieldNames = <String>[
+  "name",
+  "address",
+  "metadata",
+];
 
 Map<String, Object?> _$RecipientToCindelEmbedded(Recipient object) {
   return <String, Object?>{
@@ -1669,6 +1686,63 @@ Recipient _$RecipientFromCindelEmbedded(Map<String, Object?> document) {
   return object;
 }
 
+void _$RecipientWriteCindelNativeEmbedded(
+  CindelNativeDocumentWriter writer,
+  Recipient object,
+) {
+  {
+    final value = object.name;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeString(0, value);
+    }
+  }
+  {
+    final value = object.address;
+    if (value == null) {
+      writer.writeNull(1);
+    } else {
+      writer.writeString(1, value);
+    }
+  }
+  {
+    final value = object.metadata;
+    if (value == null) {
+      writer.writeNull(2);
+    } else {
+      cindelWriteNativeObject<RecipientMetadata>(
+        writer,
+        2,
+        _$RecipientMetadataCindelNativeFieldNames,
+        value,
+        _$RecipientMetadataWriteCindelNativeEmbedded,
+        _$RecipientMetadataToCindelEmbedded,
+      );
+    }
+  }
+}
+
+Recipient _$RecipientReadCindelNativeEmbedded(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = Recipient();
+  object.name = reader.readString(documentIndex, 0);
+  object.address = reader.readString(documentIndex, 1);
+  object.metadata = cindelReadNativeObject<RecipientMetadata>(
+    reader,
+    documentIndex,
+    2,
+    _$RecipientMetadataCindelNativeFieldNames,
+    _$RecipientMetadataReadCindelNativeEmbedded,
+    _$RecipientMetadataFromCindelEmbedded,
+  );
+  return object;
+}
+
+const _$RecipientMetadataCindelNativeFieldNames = <String>["label"];
+
 Map<String, Object?> _$RecipientMetadataToCindelEmbedded(
   RecipientMetadata object,
 ) {
@@ -1682,6 +1756,29 @@ RecipientMetadata _$RecipientMetadataFromCindelEmbedded(
   object.label = document["label"] == null
       ? null
       : document["label"] as String?;
+  return object;
+}
+
+void _$RecipientMetadataWriteCindelNativeEmbedded(
+  CindelNativeDocumentWriter writer,
+  RecipientMetadata object,
+) {
+  {
+    final value = object.label;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeString(0, value);
+    }
+  }
+}
+
+RecipientMetadata _$RecipientMetadataReadCindelNativeEmbedded(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = RecipientMetadata();
+  object.label = reader.readString(documentIndex, 0);
   return object;
 }
 

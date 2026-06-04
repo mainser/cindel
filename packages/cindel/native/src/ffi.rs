@@ -20,7 +20,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    29
+    30
 }
 
 #[no_mangle]
@@ -424,6 +424,55 @@ pub unsafe extern "C" fn cindel_native_batch_writer_end_list(
     }
     let list_writer = *Box::from_raw(list_writer);
     writer.record(|writer| writer.end_list(list_writer));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_begin_object(
+    writer: *mut CindelNativeBatchWriter,
+    index: u32,
+    field_names_ptr: *const u8,
+    field_names_len: usize,
+) -> *mut CindelNativeBatchWriter {
+    let Some(writer) = writer.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    if writer.failed {
+        return std::ptr::null_mut();
+    }
+    let Some(field_name_bytes) = read_bytes(field_names_ptr, field_names_len) else {
+        writer.failed = true;
+        return std::ptr::null_mut();
+    };
+    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
+        writer.failed = true;
+        return std::ptr::null_mut();
+    };
+    match writer.begin_object(index as usize, field_names) {
+        Ok(object_writer) => Box::into_raw(Box::new(object_writer)),
+        Err(_) => {
+            writer.failed = true;
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_end_object(
+    writer: *mut CindelNativeBatchWriter,
+    object_writer: *mut CindelNativeBatchWriter,
+) {
+    let Some(writer) = writer.as_mut() else {
+        if !object_writer.is_null() {
+            drop(Box::from_raw(object_writer));
+        }
+        return;
+    };
+    if object_writer.is_null() {
+        writer.failed = true;
+        return;
+    }
+    let object_writer = *Box::from_raw(object_writer);
+    writer.record(|writer| writer.end_object(object_writer));
 }
 
 #[no_mangle]
@@ -1090,6 +1139,70 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_current_list(
         mode: CindelNativeDocumentReaderMode::RawList {
             bytes: raw_list.bytes,
             entries: raw_list.entries,
+        },
+    }))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_object(
+    reader: *mut CindelNativeDocumentReader,
+    document_index: usize,
+    field_index: u32,
+    field_names_ptr: *const u8,
+    field_names_len: usize,
+) -> *mut CindelNativeDocumentReader {
+    let Some(reader) = reader.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    let Some(field_name_bytes) = read_bytes(field_names_ptr, field_names_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
+        return std::ptr::null_mut();
+    };
+    let Some(raw_object) = reader.read_object(document_index, field_index as usize, field_names)
+    else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        current_index: None,
+        mode: CindelNativeDocumentReaderMode::RawObject {
+            field_names: raw_object.field_names,
+            bytes: raw_object.bytes,
+            entries: raw_object.entries,
+        },
+    }))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_read_current_object(
+    reader: *mut CindelNativeDocumentReader,
+    field_index: u32,
+    field_names_ptr: *const u8,
+    field_names_len: usize,
+) -> *mut CindelNativeDocumentReader {
+    let Some(reader) = reader.as_mut() else {
+        return std::ptr::null_mut();
+    };
+    let Some(document_index) = reader.current_index else {
+        return std::ptr::null_mut();
+    };
+    let Some(field_name_bytes) = read_bytes(field_names_ptr, field_names_len) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
+        return std::ptr::null_mut();
+    };
+    let Some(raw_object) = reader.read_object(document_index, field_index as usize, field_names)
+    else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(CindelNativeDocumentReader {
+        current_index: None,
+        mode: CindelNativeDocumentReaderMode::RawObject {
+            field_names: raw_object.field_names,
+            bytes: raw_object.bytes,
+            entries: raw_object.entries,
         },
     }))
 }
@@ -2057,6 +2170,11 @@ enum NativeBatchWriterMode {
         records: Vec<Option<Vec<u8>>>,
         encoding: NativeListEncoding,
     },
+    Object {
+        parent_index: usize,
+        field_names: Vec<String>,
+        records: Vec<Option<Vec<u8>>>,
+    },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -2101,6 +2219,11 @@ enum CindelNativeDocumentReaderMode {
         bytes: Vec<u8>,
         entries: Vec<NativeRawListEntry>,
     },
+    RawObject {
+        field_names: Vec<String>,
+        bytes: Vec<u8>,
+        entries: Vec<NativeRawObjectEntry>,
+    },
 }
 
 struct NativeRawListEntry {
@@ -2115,6 +2238,20 @@ struct NativeRawList {
     entries: Vec<NativeRawListEntry>,
 }
 
+struct NativeRawObjectEntry {
+    name: String,
+    kind: u8,
+    is_null: bool,
+    payload_start: usize,
+    payload_len: usize,
+}
+
+struct NativeRawObject {
+    field_names: Vec<String>,
+    bytes: Vec<u8>,
+    entries: Vec<NativeRawObjectEntry>,
+}
+
 const NATIVE_VALUE_NULL: u8 = 0;
 const NATIVE_VALUE_BOOL: u8 = 1;
 const NATIVE_VALUE_INT: u8 = 2;
@@ -2124,6 +2261,7 @@ const NATIVE_VALUE_DATETIME: u8 = 5;
 const NATIVE_VALUE_DURATION: u8 = 6;
 const NATIVE_VALUE_LIST: u8 = 7;
 const NATIVE_VALUE_ENUM: u8 = 8;
+const NATIVE_VALUE_OBJECT: u8 = 10;
 const NATIVE_VALUE_NULL_FLAG: u8 = 0x01;
 
 struct NativeBatchLayout {
@@ -2166,6 +2304,18 @@ impl CindelNativeBatchWriter {
                 parent_index,
                 records: vec![None; length],
                 encoding: NativeListEncoding::Unknown,
+            },
+            failed: false,
+        }
+    }
+
+    fn new_object(parent_index: usize, field_names: Vec<String>) -> Self {
+        let length = field_names.len();
+        Self {
+            mode: NativeBatchWriterMode::Object {
+                parent_index,
+                field_names,
+                records: vec![None; length],
             },
             failed: false,
         }
@@ -2221,6 +2371,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer cannot begin a document".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer cannot begin a document".into())
+            }
         }
     }
 
@@ -2253,6 +2406,9 @@ impl CindelNativeBatchWriter {
                 *value = None;
                 Ok(())
             }
+            NativeBatchWriterMode::Object { records, .. } => {
+                write_object_record(records, index, write_value_record(&None)?)
+            }
         }
     }
 
@@ -2275,6 +2431,9 @@ impl CindelNativeBatchWriter {
             } => {
                 ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Bool(value)))
+            }
+            NativeBatchWriterMode::Object { records, .. } => {
+                write_object_value_record(records, index, Some(BinaryValue::Bool(value)))
             }
         }
     }
@@ -2302,6 +2461,9 @@ impl CindelNativeBatchWriter {
                 ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Int(value)))
             }
+            NativeBatchWriterMode::Object { records, .. } => {
+                write_object_value_record(records, index, Some(BinaryValue::Int(value)))
+            }
         }
     }
 
@@ -2327,6 +2489,9 @@ impl CindelNativeBatchWriter {
             } => {
                 ensure_generic_list_records(records, encoding)?;
                 write_list_value_record(records, index, Some(BinaryValue::Double(value)))
+            }
+            NativeBatchWriterMode::Object { records, .. } => {
+                write_object_value_record(records, index, Some(BinaryValue::Double(value)))
             }
         }
     }
@@ -2377,11 +2542,21 @@ impl CindelNativeBatchWriter {
                     write_list_record(records, index, record)
                 }
             },
+            NativeBatchWriterMode::Object { records, .. } => write_object_value_record(
+                records,
+                index,
+                Some(BinaryValue::String(
+                    String::from_utf8(payload.to_vec())
+                        .map_err(|_| "native object writer string is invalid utf-8")?,
+                )),
+            ),
         }
     }
 
     fn begin_list(&mut self, index: usize, length: usize) -> Result<Self, String> {
-        self.require_field(index, NativeBatchFieldType::List)?;
+        if matches!(&self.mode, NativeBatchWriterMode::Batch { .. }) {
+            self.require_field(index, NativeBatchFieldType::List)?;
+        }
         Ok(Self::new_list(index, length))
     }
 
@@ -2404,7 +2579,61 @@ impl CindelNativeBatchWriter {
         } else {
             write_list_records(&records)?
         };
-        self.write_bytes(parent_index, &bytes)
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch { .. } => self.write_bytes(parent_index, &bytes),
+            NativeBatchWriterMode::Object { records, .. } => write_object_record(
+                records,
+                parent_index,
+                typed_value_record(NATIVE_VALUE_LIST, &bytes),
+            ),
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => {
+                ensure_generic_list_records(records, encoding)?;
+                write_list_record(
+                    records,
+                    parent_index,
+                    typed_value_record(NATIVE_VALUE_LIST, &bytes),
+                )
+            }
+        }
+    }
+
+    fn begin_object(&mut self, index: usize, field_names: Vec<String>) -> Result<Self, String> {
+        if matches!(&self.mode, NativeBatchWriterMode::Batch { .. }) {
+            self.require_field(index, NativeBatchFieldType::Object)?;
+        }
+        Ok(Self::new_object(index, field_names))
+    }
+
+    fn end_object(&mut self, object_writer: Self) -> Result<(), String> {
+        let NativeBatchWriterMode::Object {
+            parent_index,
+            field_names,
+            records,
+        } = object_writer.mode
+        else {
+            return Err("native batch writer expected an object writer".into());
+        };
+        let bytes = write_object_records(&field_names, &records)?;
+        match &mut self.mode {
+            NativeBatchWriterMode::Batch { .. } => self.write_bytes(parent_index, &bytes),
+            NativeBatchWriterMode::Object { records, .. } => write_object_record(
+                records,
+                parent_index,
+                typed_value_record(NATIVE_VALUE_OBJECT, &bytes),
+            ),
+            NativeBatchWriterMode::List {
+                records, encoding, ..
+            } => {
+                ensure_generic_list_records(records, encoding)?;
+                write_list_record(
+                    records,
+                    parent_index,
+                    typed_value_record(NATIVE_VALUE_OBJECT, &bytes),
+                )
+            }
+        }
     }
 
     fn write_native_string_list_json(
@@ -2469,6 +2698,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer cannot end a document".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer cannot end a document".into())
+            }
         }
     }
 
@@ -2509,6 +2741,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer cannot save a document".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer cannot save a document".into())
+            }
         }
     }
 
@@ -2524,6 +2759,9 @@ impl CindelNativeBatchWriter {
                 }
             }
             NativeBatchWriterMode::List { .. } => {
+                Err("native batch writer expected a document writer".into())
+            }
+            NativeBatchWriterMode::Object { .. } => {
                 Err("native batch writer expected a document writer".into())
             }
         }
@@ -2546,6 +2784,9 @@ impl CindelNativeBatchWriter {
                 }
             }
             NativeBatchWriterMode::List { .. } => {
+                Err("native batch writer expected a document writer".into())
+            }
+            NativeBatchWriterMode::Object { .. } => {
                 Err("native batch writer expected a document writer".into())
             }
         }
@@ -2575,6 +2816,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer has no current document".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer has no current document".into())
+            }
         }
     }
 
@@ -2583,6 +2827,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::Batch { layout, .. } => layout.field_type_result(index),
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer fields are dynamically typed".into())
+            }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer fields are dynamically typed".into())
             }
         }
     }
@@ -2602,6 +2849,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer fields have no static offsets".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer fields have no static offsets".into())
+            }
         }
     }
 
@@ -2610,6 +2860,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::Batch { layout, .. } => Ok(&layout.field_types),
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer has no static field types".into())
+            }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer has no static field types".into())
             }
         }
     }
@@ -2620,6 +2873,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer has no static offsets".into())
             }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer has no static offsets".into())
+            }
         }
     }
 
@@ -2628,6 +2884,9 @@ impl CindelNativeBatchWriter {
             NativeBatchWriterMode::Batch { layout, .. } => Ok(layout.static_size),
             NativeBatchWriterMode::List { .. } => {
                 Err("native list writer has no static size".into())
+            }
+            NativeBatchWriterMode::Object { .. } => {
+                Err("native object writer has no static size".into())
             }
         }
     }
@@ -2640,6 +2899,70 @@ fn write_list_value_record(
 ) -> Result<(), String> {
     let record = write_value_record(&value)?;
     write_list_record(records, index, record)
+}
+
+fn write_object_value_record(
+    records: &mut [Option<Vec<u8>>],
+    index: usize,
+    value: Option<BinaryValue>,
+) -> Result<(), String> {
+    let record = write_value_record(&value)?;
+    write_object_record(records, index, record)
+}
+
+fn write_object_records(
+    field_names: &[String],
+    records: &[Option<Vec<u8>>],
+) -> Result<Vec<u8>, String> {
+    if field_names.len() != records.len() {
+        return Err("native object writer field name count mismatch".into());
+    }
+    let mut ordered = field_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            (
+                name.as_str(),
+                records[index]
+                    .clone()
+                    .unwrap_or_else(|| write_value_record(&None).unwrap()),
+            )
+        })
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.0.cmp(right.0));
+
+    let mut bytes = Vec::new();
+    push_u32_local(
+        &mut bytes,
+        checked_u32_local(ordered.len(), "object field count")?,
+    );
+    for (name, record) in ordered {
+        push_u32_local(
+            &mut bytes,
+            checked_u32_local(name.len(), "object field name length")?,
+        );
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.extend_from_slice(&record);
+    }
+    Ok(bytes)
+}
+
+fn typed_value_record(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut record = Vec::with_capacity(8 + payload.len());
+    record.push(kind);
+    record.push(0);
+    record.extend_from_slice(&0u16.to_le_bytes());
+    record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    record.extend_from_slice(payload);
+    record
+}
+
+fn checked_u32_local(value: usize, name: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{name} is too large"))
+}
+
+fn push_u32_local(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 fn ensure_generic_list_records(
@@ -2672,6 +2995,20 @@ fn write_list_record(
     let Some(slot) = records.get_mut(index) else {
         return Err(format!(
             "native list writer index `{index}` is out of range"
+        ));
+    };
+    *slot = Some(record);
+    Ok(())
+}
+
+fn write_object_record(
+    records: &mut [Option<Vec<u8>>],
+    index: usize,
+    record: Vec<u8>,
+) -> Result<(), String> {
+    let Some(slot) = records.get_mut(index) else {
+        return Err(format!(
+            "native object writer index `{index}` is out of range"
         ));
     };
     *slot = Some(record);
@@ -2728,6 +3065,7 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => 0,
             CindelNativeDocumentReaderMode::RawList { entries, .. } => entries.len(),
+            CindelNativeDocumentReaderMode::RawObject { field_names, .. } => field_names.len(),
         }
     }
 
@@ -2740,7 +3078,8 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => true,
             CindelNativeDocumentReaderMode::Batch { .. }
             | CindelNativeDocumentReaderMode::SqliteCursor { .. }
-            | CindelNativeDocumentReaderMode::RawList { .. } => false,
+            | CindelNativeDocumentReaderMode::RawList { .. }
+            | CindelNativeDocumentReaderMode::RawObject { .. } => false,
         }
     }
 
@@ -2757,7 +3096,8 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
             CindelNativeDocumentReaderMode::Batch { .. }
             | CindelNativeDocumentReaderMode::SqliteCursor { .. }
-            | CindelNativeDocumentReaderMode::RawList { .. } => false,
+            | CindelNativeDocumentReaderMode::RawList { .. }
+            | CindelNativeDocumentReaderMode::RawObject { .. } => false,
         };
         if has_next {
             self.current_index = Some(0);
@@ -2797,6 +3137,9 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
                 document_index < entries.len()
             }
+            CindelNativeDocumentReaderMode::RawObject { field_names, .. } => {
+                document_index < field_names.len()
+            }
         };
         self.current_index = Some(document_index);
         present
@@ -2819,7 +3162,8 @@ impl CindelNativeDocumentReader {
             CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
                 cursor.document_id(document_index).ok().flatten()
             }
-            CindelNativeDocumentReaderMode::RawList { .. } => None,
+            CindelNativeDocumentReaderMode::RawList { .. }
+            | CindelNativeDocumentReaderMode::RawObject { .. } => None,
         }
     }
 
@@ -2873,6 +3217,17 @@ impl CindelNativeDocumentReader {
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_BOOL || entry.payload_len != 1 {
+                    return None;
+                }
+                Some(*bytes.get(entry.payload_start)? != 0)
+            }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(field_names, entries, field_index)?;
                 if entry.is_null || entry.kind != NATIVE_VALUE_BOOL || entry.payload_len != 1 {
                     return None;
                 }
@@ -2950,6 +3305,28 @@ impl CindelNativeDocumentReader {
                         .ok()?,
                 ))
             }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(field_names, entries, field_index)?;
+                if entry.is_null
+                    || !matches!(
+                        entry.kind,
+                        NATIVE_VALUE_INT | NATIVE_VALUE_DATETIME | NATIVE_VALUE_DURATION
+                    )
+                    || entry.payload_len != 8
+                {
+                    return None;
+                }
+                Some(i64::from_le_bytes(
+                    bytes
+                        .get(entry.payload_start..entry.payload_start + 8)?
+                        .try_into()
+                        .ok()?,
+                ))
+            }
         }
     }
 
@@ -3006,6 +3383,27 @@ impl CindelNativeDocumentReader {
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_DOUBLE || entry.payload_len != 8 {
+                    return None;
+                }
+                let value = f64::from_le_bytes(
+                    bytes
+                        .get(entry.payload_start..entry.payload_start + 8)?
+                        .try_into()
+                        .ok()?,
+                );
+                if value.is_finite() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(field_names, entries, field_index)?;
                 if entry.is_null || entry.kind != NATIVE_VALUE_DOUBLE || entry.payload_len != 8 {
                     return None;
                 }
@@ -3117,6 +3515,18 @@ impl CindelNativeDocumentReader {
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
                 bytes.get(entry.payload_start..end)
             }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(field_names, entries, field_index)?;
+                if entry.is_null || !matches!(entry.kind, NATIVE_VALUE_STRING | NATIVE_VALUE_ENUM) {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                bytes.get(entry.payload_start..end)
+            }
         }
     }
 
@@ -3146,6 +3556,60 @@ impl CindelNativeDocumentReader {
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
                 parse_native_raw_list(bytes.get(entry.payload_start..end)?).ok()
+            }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(field_names, entries, field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_LIST {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                parse_native_raw_list(bytes.get(entry.payload_start..end)?).ok()
+            }
+        }
+    }
+
+    fn read_object(
+        &mut self,
+        document_index: usize,
+        field_index: usize,
+        field_names: Vec<String>,
+    ) -> Option<NativeRawObject> {
+        match &mut self.mode {
+            CindelNativeDocumentReaderMode::Batch { .. }
+            | CindelNativeDocumentReaderMode::SqliteCursor { .. }
+            | CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => {
+                parse_native_raw_object(self.read_bytes(document_index, field_index)?, field_names)
+                    .ok()
+            }
+            #[cfg(feature = "mdbx")]
+            CindelNativeDocumentReaderMode::MdbxCursor { .. }
+            | CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => {
+                parse_native_raw_object(self.read_bytes(document_index, field_index)?, field_names)
+                    .ok()
+            }
+            CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
+                let entry = entries.get(field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_OBJECT {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names).ok()
+            }
+            CindelNativeDocumentReaderMode::RawObject {
+                field_names: parent_field_names,
+                bytes,
+                entries,
+            } => {
+                let entry = raw_object_entry(parent_field_names, entries, field_index)?;
+                if entry.is_null || entry.kind != NATIVE_VALUE_OBJECT {
+                    return None;
+                }
+                let end = entry.payload_start.checked_add(entry.payload_len)?;
+                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names).ok()
             }
         }
     }
@@ -3206,6 +3670,85 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
         bytes: bytes.to_vec(),
         entries,
     })
+}
+
+fn parse_native_raw_object(
+    bytes: &[u8],
+    field_names: Vec<String>,
+) -> Result<NativeRawObject, String> {
+    let count = read_u32_le(bytes, 0)? as usize;
+    let mut offset = 4usize;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name_len = read_u32_le(bytes, offset)? as usize;
+        offset = offset
+            .checked_add(4)
+            .ok_or_else(|| "native object name offset overflow".to_string())?;
+        let name = std::str::from_utf8(read_native_slice(bytes, offset, name_len)?)
+            .map_err(|_| "native object field name contains invalid utf-8".to_string())?
+            .to_string();
+        offset = offset
+            .checked_add(name_len)
+            .ok_or_else(|| "native object name offset overflow".to_string())?;
+        let header = read_native_slice(bytes, offset, 8)?;
+        let kind = header[0];
+        let flags = header[1];
+        let payload_len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        offset += 8;
+        let payload_start = offset;
+        let payload_end = payload_start
+            .checked_add(payload_len)
+            .ok_or_else(|| "native object value payload offset overflow".to_string())?;
+        read_native_slice(bytes, payload_start, payload_len)?;
+        offset = payload_end;
+        entries.push(NativeRawObjectEntry {
+            name,
+            kind,
+            is_null: flags & NATIVE_VALUE_NULL_FLAG != 0 || kind == NATIVE_VALUE_NULL,
+            payload_start,
+            payload_len,
+        });
+    }
+    if offset != bytes.len() {
+        return Err("native object contains trailing bytes".into());
+    }
+    Ok(NativeRawObject {
+        bytes: bytes.to_vec(),
+        field_names,
+        entries,
+    })
+}
+
+fn raw_object_entry<'a>(
+    field_names: &[String],
+    entries: &'a [NativeRawObjectEntry],
+    field_index: usize,
+) -> Option<&'a NativeRawObjectEntry> {
+    let name = field_names.get(field_index)?;
+    entries.iter().find(|entry| &entry.name == name)
+}
+
+fn decode_native_field_names(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let count = read_u32_le(bytes, 0)? as usize;
+    let mut offset = 4usize;
+    let mut names = Vec::with_capacity(count);
+    for _ in 0..count {
+        let length = read_u32_le(bytes, offset)? as usize;
+        offset = offset
+            .checked_add(4)
+            .ok_or_else(|| "native field names offset overflow".to_string())?;
+        let name = std::str::from_utf8(read_native_slice(bytes, offset, length)?)
+            .map_err(|_| "native field name contains invalid utf-8".to_string())?
+            .to_string();
+        offset = offset
+            .checked_add(length)
+            .ok_or_else(|| "native field names offset overflow".to_string())?;
+        names.push(name);
+    }
+    if offset != bytes.len() {
+        return Err("native field names contains trailing bytes".into());
+    }
+    Ok(names)
 }
 
 fn parse_native_nested_string_list(bytes: &[u8]) -> Result<NativeRawList, String> {

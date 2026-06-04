@@ -70,6 +70,32 @@ abstract interface class CindelNativeStringListDocumentWriter
   void writeStringList(int fieldIndex, List<String> value);
 }
 
+/// Optional fast path for generated native serializers writing embedded
+/// objects without building intermediate Dart maps.
+abstract interface class CindelNativeObjectDocumentWriter
+    implements CindelNativeDocumentWriter {
+  /// Starts writing an embedded object value to [fieldIndex].
+  CindelNativeDocumentWriter beginObject(
+    int fieldIndex,
+    List<String> fieldNames,
+  );
+
+  /// Finishes an embedded object value started with [beginObject].
+  void endObject(CindelNativeDocumentWriter objectWriter);
+}
+
+/// Optional fast path for generated native deserializers reading embedded
+/// objects without decoding the whole payload into a Dart map.
+abstract interface class CindelNativeObjectDocumentReader
+    implements CindelNativeDocumentReader {
+  /// Reads an embedded object value as a child reader.
+  CindelNativeDocumentReader? readObjectReader(
+    int documentIndex,
+    int fieldIndex,
+    List<String> fieldNames,
+  );
+}
+
 /// Writes [value] through the fastest string-list path supported by [writer].
 void cindelWriteNativeStringList(
   CindelNativeDocumentWriter writer,
@@ -85,6 +111,150 @@ void cindelWriteNativeStringList(
     listWriter.writeString(i, value[i]);
   }
   writer.endList(listWriter);
+}
+
+/// Writes an embedded object through the fastest object path supported by
+/// [writer].
+void cindelWriteNativeObject<T>(
+  CindelNativeDocumentWriter writer,
+  int fieldIndex,
+  List<String> fieldNames,
+  T value,
+  void Function(CindelNativeDocumentWriter writer, T value) writeNative,
+  Map<String, Object?> Function(T value) toDocument,
+) {
+  if (writer is CindelNativeObjectDocumentWriter) {
+    final objectWriter = writer.beginObject(fieldIndex, fieldNames);
+    writeNative(objectWriter, value);
+    writer.endObject(objectWriter);
+    return;
+  }
+  writer.writeObject(fieldIndex, toDocument(value));
+}
+
+/// Writes an embedded object list through the fastest object path supported by
+/// [writer].
+void cindelWriteNativeObjectList<T>(
+  CindelNativeDocumentWriter writer,
+  int fieldIndex,
+  List<String> fieldNames,
+  List<T?> value,
+  void Function(CindelNativeDocumentWriter writer, T value) writeNative,
+  Map<String, Object?> Function(T value) toDocument,
+) {
+  if (writer is CindelNativeObjectDocumentWriter) {
+    final listWriter = writer.beginList(fieldIndex, value.length);
+    final objectListWriter = listWriter is CindelNativeObjectDocumentWriter
+        ? listWriter
+        : null;
+    try {
+      for (var index = 0; index < value.length; index += 1) {
+        final element = value[index];
+        if (element == null) {
+          listWriter.writeNull(index);
+          continue;
+        }
+        if (objectListWriter == null) {
+          listWriter.writeObject(index, toDocument(element));
+        } else {
+          final objectWriter = objectListWriter.beginObject(index, fieldNames);
+          writeNative(objectWriter, element);
+          objectListWriter.endObject(objectWriter);
+        }
+      }
+    } finally {
+      writer.endList(listWriter);
+    }
+    return;
+  }
+  writer.writeObjectList(
+    fieldIndex,
+    value
+        .map((element) => element == null ? null : toDocument(element))
+        .toList(growable: false),
+  );
+}
+
+/// Reads an embedded object through the fastest object path supported by
+/// [reader].
+T? cindelReadNativeObject<T>(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+  int fieldIndex,
+  List<String> fieldNames,
+  T Function(CindelNativeDocumentReader reader, int documentIndex) readNative,
+  T Function(Map<String, Object?> document) fromDocument,
+) {
+  if (reader is CindelNativeObjectDocumentReader) {
+    final objectReader = reader.readObjectReader(
+      documentIndex,
+      fieldIndex,
+      fieldNames,
+    );
+    if (objectReader == null) {
+      return null;
+    }
+    try {
+      return readNative(objectReader, 0);
+    } finally {
+      objectReader.release();
+    }
+  }
+  final document = reader.readObject(documentIndex, fieldIndex);
+  return document == null ? null : fromDocument(document);
+}
+
+/// Reads an embedded object list through the fastest object path supported by
+/// [reader].
+List<T?>? cindelReadNativeObjectList<T>(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+  int fieldIndex,
+  List<String> fieldNames,
+  T Function(CindelNativeDocumentReader reader, int documentIndex) readNative,
+  T Function(Map<String, Object?> document) fromDocument,
+) {
+  if (reader is CindelNativeObjectDocumentReader) {
+    final listReader = reader.readList(documentIndex, fieldIndex);
+    if (listReader == null) {
+      return null;
+    }
+    try {
+      final objectListReader = listReader is CindelNativeObjectDocumentReader
+          ? listReader
+          : null;
+      return [
+        for (var index = 0; index < listReader.length; index += 1)
+          (() {
+            if (objectListReader == null) {
+              final document = listReader.readObject(0, index);
+              return document == null ? null : fromDocument(document);
+            }
+            final objectReader = objectListReader.readObjectReader(
+              0,
+              index,
+              fieldNames,
+            );
+            if (objectReader == null) {
+              return null;
+            }
+            try {
+              return readNative(objectReader, 0);
+            } finally {
+              objectReader.release();
+            }
+          })(),
+      ];
+    } finally {
+      listReader.release();
+    }
+  }
+  final documents = reader.readObjectList(documentIndex, fieldIndex);
+  return documents == null
+      ? null
+      : documents
+            .map((document) => document == null ? null : fromDocument(document))
+            .toList(growable: false);
 }
 
 /// Reader used by generated typed deserializers for native binary documents.

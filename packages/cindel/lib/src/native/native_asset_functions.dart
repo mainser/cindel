@@ -124,6 +124,14 @@ final class _NativeAssetCindelNativeFunctions
       _cindelNativeBatchWriterEndList;
 
   @override
+  Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterBeginObject => _cindelNativeBatchWriterBeginObject;
+
+  @override
+  void Function(Pointer<Void>, Pointer<Void>) get nativeBatchWriterEndObject =>
+      _cindelNativeBatchWriterEndObject;
+
+  @override
   void Function(Pointer<Void>, int) get nativeBatchWriterSaveDocument =>
       _cindelNativeBatchWriterSaveDocument;
 
@@ -286,6 +294,15 @@ final class _NativeAssetCindelNativeFunctions
   Pointer<Void> Function(Pointer<Void>, int)
   get nativeDocumentReaderReadCurrentList =>
       _cindelNativeDocumentReaderReadCurrentList;
+
+  @override
+  Pointer<Void> Function(Pointer<Void>, int, int, Pointer<Uint8>, int)
+  get nativeDocumentReaderReadObject => _cindelNativeDocumentReaderReadObject;
+
+  @override
+  Pointer<Void> Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeDocumentReaderReadCurrentObject =>
+      _cindelNativeDocumentReaderReadCurrentObject;
 
   @override
   void Function(Pointer<Void>) get nativeDocumentReaderFree =>
@@ -849,6 +866,26 @@ external void _cindelNativeBatchWriterEndList(
   Pointer<Void> listWriter,
 );
 
+@Native<Pointer<Void> Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_native_batch_writer_begin_object',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelNativeBatchWriterBeginObject(
+  Pointer<Void> writer,
+  int fieldIndex,
+  Pointer<Uint8> fieldNames,
+  int fieldNamesLength,
+);
+
+@Native<Void Function(Pointer<Void>, Pointer<Void>)>(
+  symbol: 'cindel_native_batch_writer_end_object',
+  assetId: _assetId,
+)
+external void _cindelNativeBatchWriterEndObject(
+  Pointer<Void> writer,
+  Pointer<Void> objectWriter,
+);
+
 @Native<Void Function(Pointer<Void>, Uint64)>(
   symbol: 'cindel_native_batch_writer_save_document',
   assetId: _assetId,
@@ -1243,6 +1280,28 @@ external Pointer<Void> _cindelNativeDocumentReaderReadList(
 external Pointer<Void> _cindelNativeDocumentReaderReadCurrentList(
   Pointer<Void> reader,
   int fieldIndex,
+);
+
+@Native<
+  Pointer<Void> Function(Pointer<Void>, Size, Uint32, Pointer<Uint8>, Size)
+>(symbol: 'cindel_native_document_reader_read_object', assetId: _assetId)
+external Pointer<Void> _cindelNativeDocumentReaderReadObject(
+  Pointer<Void> reader,
+  int documentIndex,
+  int fieldIndex,
+  Pointer<Uint8> fieldNames,
+  int fieldNamesLength,
+);
+
+@Native<Pointer<Void> Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_native_document_reader_read_current_object',
+  assetId: _assetId,
+)
+external Pointer<Void> _cindelNativeDocumentReaderReadCurrentObject(
+  Pointer<Void> reader,
+  int fieldIndex,
+  Pointer<Uint8> fieldNames,
+  int fieldNamesLength,
 );
 
 @Native<Void Function(Pointer<Void>)>(

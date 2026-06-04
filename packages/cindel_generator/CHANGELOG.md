@@ -6,6 +6,11 @@
   elements, such as `contactsElement((contact) => ...)`.
 - Allows embedded-list element helpers to continue into nested embedded object
   fields, matching the single-embedded callback query style.
+- Generated native embedded helper functions for embedded schemas so collection
+  native writers and readers can encode/decode embedded objects without
+  building intermediate Dart maps.
+- Generated collection native serializers now use the embedded native fast path
+  for object fields, `List<object>` fields, and nested embedded object fields.
 
 ## 0.5.9
 

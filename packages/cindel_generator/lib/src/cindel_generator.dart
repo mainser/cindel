@@ -412,6 +412,15 @@ void _emitObjectHydration(
 void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
   buffer
     ..writeln()
+    ..writeln(
+      'const _\$${embedded.dartName}CindelNativeFieldNames = <String>[',
+    );
+  for (final field in embedded.fields) {
+    buffer.writeln('  ${_stringLiteral(field.name)},');
+  }
+  buffer
+    ..writeln('];')
+    ..writeln()
     ..writeln('Map<String, Object?> _\$${embedded.dartName}ToCindelEmbedded(')
     ..writeln('  ${embedded.dartName} object,')
     ..writeln(') {')
@@ -436,6 +445,37 @@ void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
     buffer.writeln(
       '  object.${field.name} = '
       '${field.fromDocumentExpression(_stringLiteral(field.name))};',
+    );
+  }
+
+  buffer
+    ..writeln('  return object;')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('void _\$${embedded.dartName}WriteCindelNativeEmbedded(')
+    ..writeln('  CindelNativeDocumentWriter writer,')
+    ..writeln('  ${embedded.dartName} object,')
+    ..writeln(') {');
+
+  for (var index = 0; index < embedded.fields.length; index += 1) {
+    buffer.write(embedded.fields[index].nativeWriteStatement(index));
+  }
+
+  buffer
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      '${embedded.dartName} _\$${embedded.dartName}ReadCindelNativeEmbedded(',
+    )
+    ..writeln('  CindelNativeDocumentReader reader,')
+    ..writeln('  int documentIndex,')
+    ..writeln(') {')
+    ..writeln('  final object = ${embedded.dartName}();');
+
+  for (var index = 0; index < embedded.fields.length; index += 1) {
+    final field = embedded.fields[index];
+    buffer.writeln(
+      '  object.${field.name} = ${field.nativeReadExpression(index)};',
     );
   }
 
@@ -1256,12 +1296,42 @@ final class _FieldInfo {
     if (binaryType == 'list') {
       return _nativeListWriteStatement(index);
     }
+    if (binaryType == 'object') {
+      final typeName = type.embeddedInfo!.dartName;
+      final expression = 'object.$name';
+      final write =
+          '''
+      cindelWriteNativeObject<${type.dartTypeWithoutNull}>(
+        writer,
+        $index,
+        _\$${typeName}CindelNativeFieldNames,
+        value,
+        _\$${typeName}WriteCindelNativeEmbedded,
+        _\$${typeName}ToCindelEmbedded,
+      );
+''';
+      if (!isNullable) {
+        return '''
+  {
+    final value = $expression;
+$write  }
+''';
+      }
+      return '''
+  {
+    final value = $expression;
+    if (value == null) {
+      writer.writeNull($index);
+    } else {
+$write    }
+  }
+''';
+    }
     final method = switch (binaryType) {
       'bool' => 'writeBool',
       'int' => 'writeInt',
       'double' => 'writeDouble',
       'string' => 'writeString',
-      'object' => 'writeObject',
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
     final expression = type.toStoredExpression(
@@ -1286,19 +1356,24 @@ final class _FieldInfo {
   String _nativeListWriteStatement(int index) {
     final element = type.elementType!;
     if (element.binaryType == 'object') {
-      final expression = type.toStoredExpression(
-        'object.$name',
-        nullableCast: false,
+      final typeName = element.embeddedInfo!.dartName;
+      final expression = 'object.$name';
+      final write =
+          '''
+      cindelWriteNativeObjectList<${element.dartTypeWithoutNull}>(
+        writer,
+        $index,
+        _\$${typeName}CindelNativeFieldNames,
+        list,
+        _\$${typeName}WriteCindelNativeEmbedded,
+        _\$${typeName}ToCindelEmbedded,
       );
+''';
       if (!isNullable) {
         return '''
   {
     final list = $expression;
-    writer.writeObjectList(
-      $index,
-      list.cast<Map<String, Object?>?>(),
-    );
-  }
+$write  }
 ''';
       }
       return '''
@@ -1307,11 +1382,7 @@ final class _FieldInfo {
     if (list == null) {
       writer.writeNull($index);
     } else {
-      writer.writeObjectList(
-        $index,
-        list.cast<Map<String, Object?>?>(),
-      );
-    }
+$write    }
   }
 ''';
     }
@@ -1386,23 +1457,27 @@ $writeValue      }
     if (binaryType == 'list') {
       return _nativeListReadExpression(index);
     }
+    if (binaryType == 'object') {
+      final typeName = type.embeddedInfo!.dartName;
+      final expression =
+          'cindelReadNativeObject<${type.dartTypeWithoutNull}>('
+          'reader, documentIndex, $index, '
+          '_\$${typeName}CindelNativeFieldNames, '
+          '_\$${typeName}ReadCindelNativeEmbedded, '
+          '_\$${typeName}FromCindelEmbedded)';
+      if (isNullable) {
+        return expression;
+      }
+      return '($expression)!';
+    }
     final method = switch (binaryType) {
       'bool' => 'readBool',
       'int' => 'readInt',
       'double' => 'readDouble',
       'string' => 'readString',
-      'object' => 'readObject',
       final type => throw StateError('Unsupported native reader type `$type`.'),
     };
     final expression = 'reader.$method(documentIndex, $index)';
-    if (binaryType == 'object' && isNullable) {
-      return '''
-(() {
-  final value = $expression;
-  return value == null ? null : ${type._fromStoredExpressionNonNull('value')};
-})()
-''';
-    }
     if (type.kind == _PersistedTypeKind.primitive && isNullable) {
       return expression;
     }
@@ -1412,23 +1487,31 @@ $writeValue      }
   String _nativeListReadExpression(int index) {
     final element = type.elementType!;
     if (element.binaryType == 'object') {
-      final expression = 'reader.readObjectList(documentIndex, $index)';
-      final readValue = element.fromStoredExpression('value');
+      final typeName = element.embeddedInfo!.dartName;
+      final expression =
+          'cindelReadNativeObjectList<${element.dartTypeWithoutNull}>('
+          'reader, documentIndex, $index, '
+          '_\$${typeName}CindelNativeFieldNames, '
+          '_\$${typeName}ReadCindelNativeEmbedded, '
+          '_\$${typeName}FromCindelEmbedded)';
+      final fallback = element.isNullable
+          ? 'const <${element.dartType}>[]'
+          : 'const <${element.dartTypeWithoutNull}?>[]';
       if (isNullable) {
+        if (element.isNullable) {
+          return expression;
+        }
         return '''
 (() {
   final value = $expression;
-  return value == null
-      ? null
-      : value.map((value) => $readValue).toList(growable: false);
+  return value == null ? null : value.cast<${element.dartTypeWithoutNull}>();
 })()
 ''';
       }
-      return '''
-($expression ?? const <Map<String, Object?>?>[])
-    .map((value) => $readValue)
-    .toList(growable: false)
-''';
+      if (element.isNullable) {
+        return '$expression ?? $fallback';
+      }
+      return '($expression ?? $fallback).cast<${element.dartTypeWithoutNull}>()';
     }
     if (element.binaryType == 'string' && !element.isNullable) {
       if (isNullable) {
@@ -1568,6 +1651,9 @@ reader.readStringList(documentIndex, $index) ?? const <String>[]
   }
 
   bool get isNullable => dartType.endsWith('?');
+
+  String get dartTypeWithoutNull =>
+      isNullable ? dartType.substring(0, dartType.length - 1) : dartType;
 }
 
 final class _IndexInfo {
@@ -1795,6 +1881,28 @@ final class _EmbeddedFieldInfo {
   String fromDocumentExpression(String fieldLiteral) {
     return type.fromStoredExpression('document[$fieldLiteral]');
   }
+
+  String nativeWriteStatement(int index) {
+    return _asFieldInfo.nativeWriteStatement(index);
+  }
+
+  String nativeReadExpression(int index) {
+    return _asFieldInfo.nativeReadExpression(index);
+  }
+
+  _FieldInfo get _asFieldInfo {
+    return _FieldInfo(
+      name: name,
+      dartType: dartType,
+      type: type,
+      isAssignable: true,
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    );
+  }
 }
 
 final class _PersistedType {
@@ -1911,6 +2019,9 @@ final class _PersistedType {
   final _EnumInfo? enumInfo;
   final _EmbeddedInfo? embeddedInfo;
   final _PersistedType? elementType;
+
+  String get dartTypeWithoutNull =>
+      isNullable ? dartType.substring(0, dartType.length - 1) : dartType;
 
   bool get isList => kind == _PersistedTypeKind.list;
 

@@ -30,6 +30,23 @@ T _withNullableNativeBytes<T>(
   return _withNativeBytes(bytes, action);
 }
 
+Uint8List _encodeNativeFieldNames(List<String> fieldNames) {
+  final encodedNames = [for (final name in fieldNames) utf8.encode(name)];
+  final length =
+      4 + encodedNames.fold<int>(0, (sum, name) => sum + 4 + name.length);
+  final bytes = Uint8List(length);
+  final data = bytes.buffer.asByteData();
+  data.setUint32(0, encodedNames.length, Endian.little);
+  var offset = 4;
+  for (final name in encodedNames) {
+    data.setUint32(offset, name.length, Endian.little);
+    offset += 4;
+    bytes.setRange(offset, offset + name.length, name);
+    offset += name.length;
+  }
+  return bytes;
+}
+
 List<int> _queryIds(
   int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
   action,
