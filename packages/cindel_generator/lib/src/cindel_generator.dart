@@ -682,6 +682,23 @@ void _emitFilterMethods(
       ..writeln('  }');
   }
 
+  final element = field.type.elementType;
+  if (field.type.isList && element?.kind == _PersistedTypeKind.embedded) {
+    final embeddedFilter = _embeddedFilterClassName(collection, element!);
+    buffer
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}Element('
+        'CindelFilterPredicate Function($embeddedFilter q) filter) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      filter(const $embeddedFilter._(<String>[$fieldLiteral])),',
+      )
+      ..writeln('    );')
+      ..writeln('  }');
+  }
+
   if (field.type.kind == _PersistedTypeKind.embedded) {
     final embeddedFilter = _embeddedFilterClassName(collection, field.type);
     buffer
@@ -843,6 +860,21 @@ void _emitEmbeddedFilterMethods(
       ..writeln('    return CindelFilter.path(')
       ..writeln('      <String>[..._path, $fieldLiteral],')
       ..writeln('    ).contains($elementValue);')
+      ..writeln('  }');
+  }
+
+  final element = field.type.elementType;
+  if (field.type.isList && element?.kind == _PersistedTypeKind.embedded) {
+    final embeddedFilter = _embeddedFilterClassName(collection, element!);
+    buffer
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}Element('
+        'CindelFilterPredicate Function($embeddedFilter q) filter) {',
+      )
+      ..writeln(
+        '    return filter($embeddedFilter._(<String>[..._path, $fieldLiteral]));',
+      )
       ..writeln('  }');
   }
 

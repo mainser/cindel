@@ -443,7 +443,8 @@ void main() {
         ..metadata = (RecipientMetadata()..label = 'lead');
       final secondaryRecipient = Recipient()
         ..name = 'Mary'
-        ..address = 'mary@example.com';
+        ..address = 'mary@example.com'
+        ..metadata = (RecipientMetadata()..label = 'secondary');
       final user = User()
         ..name = 'Ada'
         ..email = 'ada@example.com'
@@ -498,6 +499,27 @@ void main() {
             return recipient.addressEqualTo('grace@example.com');
           })
           .findAll();
+      final primaryRecipientEqualMatches = await db.users
+          .all()
+          .filter()
+          .primaryRecipientEqualTo(primaryRecipient)
+          .findAll();
+      final recipientElementMatches = await db.users
+          .all()
+          .filter()
+          .recipientsElement((recipient) {
+            return recipient.addressEqualTo('mary@example.com');
+          })
+          .findAll();
+      final recipientElementMetadataMatches = await db.users
+          .all()
+          .filter()
+          .recipientsElement((recipient) {
+            return recipient.metadata((metadata) {
+              return metadata.labelEqualTo('secondary');
+            });
+          })
+          .findAll();
       final metadataMatches = await db.users.all().filter().primaryRecipient((
         recipient,
       ) {
@@ -532,6 +554,15 @@ void main() {
         'Mary',
       ]);
       expect(primaryRecipientMatches.map((user) => user.email), [
+        'ada@example.com',
+      ]);
+      expect(primaryRecipientEqualMatches.map((user) => user.email), [
+        'ada@example.com',
+      ]);
+      expect(recipientElementMatches.map((user) => user.email), [
+        'ada@example.com',
+      ]);
+      expect(recipientElementMetadataMatches.map((user) => user.email), [
         'ada@example.com',
       ]);
       expect(metadataMatches.map((user) => user.email), ['ada@example.com']);

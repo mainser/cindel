@@ -5,6 +5,17 @@ All notable Cindel workspace changes will be documented here.
 Cindel is pre-1.0.0, so breaking API and packaging changes can still happen
 while the core design settles.
 
+## 0.6.0
+
+- Added generated nested filter support for fields inside embedded object list
+  elements, such as `recipientsElement((recipient) => ...)`.
+- Made embedded object equality and embedded-list element equality compare
+  stored map/list values deeply instead of by Dart object identity.
+- Added current-document native reader FFI entry points for dynamic bytes and
+  list fields, improving generated MDBX typed hydration for point reads and
+  `getAll`.
+- Updated `cindel`, `cindel_generator`, and `cindel_flutter_libs` to `0.6.0`.
+
 ## 0.5.13
 
 - Added automated tag-based release publishing that builds native binaries for

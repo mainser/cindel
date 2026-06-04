@@ -2,11 +2,16 @@
 
 ## 0.6.0
 
+- Added generated nested filter support for fields inside embedded object list
+  elements, such as `recipientsElement((recipient) => ...)`.
+- Made embedded object equality and embedded-list element equality compare
+  stored map/list values deeply instead of by Dart object identity.
 - Added current-document native reader FFI entry points for dynamic bytes and
   list fields, keeping generated MDBX point reads aligned with the active
   native cursor document.
 - Improved generated typed MDBX `getAll` hydration by avoiding indexed dynamic
   field reads after the cursor has already selected the current document.
+- Updated the development generator dependency constraint to `^0.6.0`.
 
 ## 0.5.13
 

@@ -409,8 +409,8 @@ Generated code creates:
 - sort/distinct/property helpers,
 - serializers and binary document readers/writers,
 - native typed document readers/writers when the field layout supports it,
-- embedded conversion and nested filter helpers when collection fields use
-  `@Embedded` value objects.
+- embedded conversion and nested filter helpers when collection fields or list
+  elements use `@Embedded` value objects.
 
 Example:
 
@@ -568,6 +568,18 @@ final matches = await db.messages
     .all()
     .whereMatches(
       CindelFilter.path(['sender', 'address']).equalTo('ada@example.com'),
+    )
+    .findAll();
+```
+
+When a path reaches a list, Cindel evaluates the remaining path against each
+element and matches when any element satisfies the predicate:
+
+```dart
+final matches = await db.messages
+    .all()
+    .whereMatches(
+      CindelFilter.path(['recipients', 'address']).equalTo('mary@example.com'),
     )
     .findAll();
 ```
@@ -746,8 +758,8 @@ final sender = document['sender'] as Map<String, Object?>?;
 ```
 
 Generated filters support whole-object equality, embedded-list equality,
-embedded-list element equality, and nested field filters for single embedded
-object fields:
+embedded-list element equality, nested field filters for single embedded object
+fields, and nested field filters for elements inside embedded object lists:
 
 ```dart
 final bySender = await db.messages
@@ -763,7 +775,27 @@ final byNestedMetadata = await db.messages
       });
     })
     .findAll();
+
+final byRecipient = await db.messages
+    .filter()
+    .recipientsElement((recipient) {
+      return recipient.addressEqualTo('mary@example.com');
+    })
+    .findAll();
+
+final byRecipientMetadata = await db.messages
+    .filter()
+    .recipientsElement((recipient) {
+      return recipient.metadata((metadata) {
+        return metadata.labelEqualTo('secondary');
+      });
+    })
+    .findAll();
 ```
+
+Whole embedded object equality and embedded-list element equality compare the
+stored map/list value deeply, so equivalent embedded values match even though
+the Dart map instances are different.
 
 Property queries can project embedded values back to typed embedded objects:
 
@@ -780,8 +812,6 @@ documents.
 Current embedded limits:
 
 - Embedded classes are not standalone collections.
-- Nested field helpers are not generated for fields inside embedded object
-  lists.
 - `@Index` inside an embedded class is not supported. Index root collection
   fields instead.
 
@@ -1076,10 +1106,8 @@ The current public API does not yet include:
 
 - `exists()` query result helper,
 - dynamic modifiers such as `optional`, `anyOf`, or `allOf`,
-- nested query helpers for fields inside embedded object lists,
 - embedded-field indexes,
 - public migration/export tooling,
-- web backend support,
-- packaged iOS/macOS native binaries.
+- web backend support.
 
 SQLite remains selectable, but MDBX is the default optimized backend.

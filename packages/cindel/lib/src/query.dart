@@ -1908,12 +1908,17 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
 
   @override
   bool matches(CindelDocument document) {
-    final actual = _valueAtPath(document);
-    if (actual == _missingValue) {
-      return false;
+    for (final actual in _valuesAtPath(document, 0)) {
+      if (_matchesValue(actual)) {
+        return true;
+      }
     }
+    return false;
+  }
+
+  bool _matchesValue(Object? actual) {
     return switch (operation) {
-      _FilterOperation.equalTo => actual == expected,
+      _FilterOperation.equalTo => _deepEquals(actual, expected),
       _FilterOperation.greaterThan => _compareNumbers(actual, expected) > 0,
       _FilterOperation.greaterThanOrEqualTo =>
         _compareNumbers(actual, expected) >= 0,
@@ -1922,7 +1927,7 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
         _compareNumbers(actual, expected) <= 0,
       _FilterOperation.contains =>
         actual is Iterable
-            ? actual.any((value) => value == expected)
+            ? actual.any((value) => _deepEquals(value, expected))
             : _string(actual).contains(_string(expected)),
       _FilterOperation.startsWith => _string(
         actual,
@@ -1942,19 +1947,64 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
     return value is String ? value : '';
   }
 
-  Object? _valueAtPath(CindelDocument document) {
-    Object? current = document;
-    for (final part in path) {
-      if (current is! Map<Object?, Object?> || !current.containsKey(part)) {
-        return _missingValue;
-      }
-      current = current[part];
+  Iterable<Object?> _valuesAtPath(Object? current, int pathIndex) sync* {
+    if (pathIndex == path.length) {
+      yield current;
+      return;
     }
-    return current;
+    if (current is Map<Object?, Object?>) {
+      final part = path[pathIndex];
+      if (!current.containsKey(part)) {
+        return;
+      }
+      yield* _valuesAtPath(current[part], pathIndex + 1);
+      return;
+    }
+    if (current is Iterable<Object?>) {
+      for (final value in current) {
+        yield* _valuesAtPath(value, pathIndex);
+      }
+    }
   }
 }
 
-const Object _missingValue = Object();
+bool _deepEquals(Object? left, Object? right) {
+  if (identical(left, right) || left == right) {
+    return true;
+  }
+  if (left is Map<Object?, Object?> && right is Map<Object?, Object?>) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key)) {
+        return false;
+      }
+      if (!_deepEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is Iterable<Object?> && right is Iterable<Object?>) {
+    final leftIterator = left.iterator;
+    final rightIterator = right.iterator;
+    while (true) {
+      final leftHasNext = leftIterator.moveNext();
+      final rightHasNext = rightIterator.moveNext();
+      if (leftHasNext != rightHasNext) {
+        return false;
+      }
+      if (!leftHasNext) {
+        return true;
+      }
+      if (!_deepEquals(leftIterator.current, rightIterator.current)) {
+        return false;
+      }
+    }
+  }
+  return false;
+}
 
 enum _CompositeFilterMode { all, any }
 

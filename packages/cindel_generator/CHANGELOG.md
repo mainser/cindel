@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Generated nested filter helpers for fields inside embedded object list
+  elements, such as `contactsElement((contact) => ...)`.
+- Allows embedded-list element helpers to continue into nested embedded object
+  fields, matching the single-embedded callback query style.
+
 ## 0.5.9
 
 - Generated native writers now use Cindel's direct string-list writer for

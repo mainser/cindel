@@ -33,6 +33,8 @@ typed database access:
 - Embedded object conversion helpers.
 - Embedded object and embedded object list native reader/writer hooks when the
   model layout supports native typed documents.
+- Nested filter helpers for single embedded objects and embedded object list
+  elements.
 
 The package is a build-time tool. It does not open databases and it does not
 ship native binaries.
@@ -44,12 +46,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.10
-  cindel_flutter_libs: ^0.5.8
+  cindel: ^0.6.0
+  cindel_flutter_libs: ^0.6.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.8
+  cindel_generator: ^0.6.0
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -349,6 +351,15 @@ final users = await db.users
       });
     })
     .findAll();
+
+final team = await db.users
+    .filter()
+    .contactsElement((contact) {
+      return contact.address((address) {
+        return address.countryEqualTo('DO');
+      });
+    })
+    .findAll();
 ```
 
 The generator also emits:
@@ -357,11 +368,9 @@ The generator also emits:
 - whole-object equality filters such as `primaryContactEqualTo(value)`,
 - embedded-list equality filters such as `contactsEqualTo(values)`,
 - embedded-list element equality filters such as `contactsElementEqualTo(value)`,
+- embedded-list nested element filters such as `contactsElement((contact) => ...)`,
 - native writer calls for embedded objects and embedded object lists,
 - native reader calls for embedded objects and embedded object lists.
-
-The generator does not emit nested field query helpers for fields inside
-embedded object lists.
 
 Embedded indexes are not supported by the generator. `@Index` inside an
 embedded class is rejected. Put indexes on root collection fields instead.

@@ -47,12 +47,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.5.13
-  cindel_flutter_libs: ^0.5.13
+  cindel: ^0.6.0
+  cindel_flutter_libs: ^0.6.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.5.9
+  cindel_generator: ^0.6.0
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -343,6 +343,22 @@ final leadMessages = await db.emails
       });
     })
     .findAll();
+
+final maryMessages = await db.emails
+    .filter()
+    .recipientsElement((recipient) {
+      return recipient.addressEqualTo('mary@example.com');
+    })
+    .findAll();
+
+final secondaryMessages = await db.emails
+    .filter()
+    .recipientsElement((recipient) {
+      return recipient.metadata((metadata) {
+        return metadata.labelEqualTo('secondary');
+      });
+    })
+    .findAll();
 ```
 
 Embedded object fields and embedded object lists can be stored through the
@@ -352,8 +368,7 @@ JSON round-trip.
 
 Generated helpers support equality for the whole embedded value and element
 equality for embedded lists. Nested field filter helpers are generated for
-single embedded object fields. Nested query helpers for fields inside embedded
-object lists are not generated.
+single embedded object fields and for elements inside embedded object lists.
 
 Embedded indexes are not supported. Put `@Index` on root collection fields, not
 inside `@Embedded` classes.

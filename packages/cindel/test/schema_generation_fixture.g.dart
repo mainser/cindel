@@ -1202,6 +1202,14 @@ final class UserQueryFilter {
       ).contains(_$RecipientToCindelEmbedded(value)),
     );
   }
+
+  CindelQuery<User> recipientsElement(
+    CindelFilterPredicate Function(UserRecipientCindelEmbeddedFilter q) filter,
+  ) {
+    return _query.whereMatches(
+      filter(const UserRecipientCindelEmbeddedFilter._(<String>["recipients"])),
+    );
+  }
 }
 
 final class UserRecipientCindelEmbeddedFilter {
