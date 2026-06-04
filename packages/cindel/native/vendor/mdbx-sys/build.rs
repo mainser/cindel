@@ -241,6 +241,10 @@ fn main() {
         cc_builder.define("MDBX_APPLE_SPEED_INSTEADOF_DURABILITY", "1");
     }
 
+    if target.contains("apple-ios") {
+        cc_builder.flag_if_supported("-fno-stack-check");
+    }
+
     let cflags = cc_builder.get_compiler().cflags_env();
     cc_builder.define("MDBX_BUILD_FLAGS", format!("{:?}", cflags).as_str());
 
