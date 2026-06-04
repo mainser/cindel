@@ -2,6 +2,9 @@
 
 ## 0.6.0
 
+- Added `CindelQuery.optional`, `CindelQuery.anyOf`, and
+  `CindelQuery.allOf` dynamic query modifiers for conditional and repeated
+  filter composition.
 - Added generated nested filter support for fields inside embedded object list
   elements, such as `recipientsElement((recipient) => ...)`.
 - Added a Rust native embedded object writer/reader path for generated typed

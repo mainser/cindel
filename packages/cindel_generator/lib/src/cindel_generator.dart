@@ -215,6 +215,8 @@ String _emitCollection(_CollectionInfo collection) {
     _emitFilterMethods(buffer, collection, field);
   }
 
+  _emitQueryFilterModifierMethods(buffer, collection);
+
   buffer..writeln('}');
 
   for (final embedded in collection.embeddedTypes) {
@@ -2509,6 +2511,47 @@ String _normalizeDartType(String dartType) {
   return dartType.endsWith('?')
       ? dartType.substring(0, dartType.length - 1)
       : dartType;
+}
+
+void _emitQueryFilterModifierMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+) {
+  final dartName = collection.dartName;
+  final filterName = collection.queryFilterName;
+  buffer
+    ..writeln()
+    ..writeln(
+      '  CindelQuery<$dartName> optional('
+      'bool enabled, CindelQuery<$dartName> Function($filterName q) option) {',
+    )
+    ..writeln(
+      '    return _query.optional('
+      'enabled, (query) => option($filterName(query)));',
+    )
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  CindelQuery<$dartName> anyOf<E>('
+      'Iterable<E> items, '
+      'CindelQuery<$dartName> Function($filterName q, E item) option) {',
+    )
+    ..writeln(
+      '    return _query.anyOf('
+      'items, (query, item) => option($filterName(query), item));',
+    )
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  CindelQuery<$dartName> allOf<E>('
+      'Iterable<E> items, '
+      'CindelQuery<$dartName> Function($filterName q, E item) option) {',
+    )
+    ..writeln(
+      '    return _query.allOf('
+      'items, (query, item) => option($filterName(query), item));',
+    )
+    ..writeln('  }');
 }
 
 void _emitIndexedWhereMethods(

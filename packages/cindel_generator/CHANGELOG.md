@@ -2,6 +2,8 @@
 
 ## 0.6.0
 
+- Generated query filter wrappers now expose `optional`, `anyOf`, and `allOf`
+  dynamic modifiers for typed filter helper composition.
 - Generated nested filter helpers for fields inside embedded object list
   elements, such as `contactsElement((contact) => ...)`.
 - Allows embedded-list element helpers to continue into nested embedded object

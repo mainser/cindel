@@ -1210,6 +1210,33 @@ final class UserQueryFilter {
       filter(const UserRecipientCindelEmbeddedFilter._(<String>["recipients"])),
     );
   }
+
+  CindelQuery<User> optional(
+    bool enabled,
+    CindelQuery<User> Function(UserQueryFilter q) option,
+  ) {
+    return _query.optional(enabled, (query) => option(UserQueryFilter(query)));
+  }
+
+  CindelQuery<User> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<User> Function(UserQueryFilter q, E item) option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(UserQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<User> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<User> Function(UserQueryFilter q, E item) option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(UserQueryFilter(query), item),
+    );
+  }
 }
 
 final class UserRecipientCindelEmbeddedFilter {
@@ -2022,6 +2049,38 @@ final class ImmutableUserQueryFilter {
   CindelQuery<ImmutableUser> activeEqualTo(bool value) {
     return _query.whereMatches(CindelFilter.field("active").equalTo(value));
   }
+
+  CindelQuery<ImmutableUser> optional(
+    bool enabled,
+    CindelQuery<ImmutableUser> Function(ImmutableUserQueryFilter q) option,
+  ) {
+    return _query.optional(
+      enabled,
+      (query) => option(ImmutableUserQueryFilter(query)),
+    );
+  }
+
+  CindelQuery<ImmutableUser> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<ImmutableUser> Function(ImmutableUserQueryFilter q, E item)
+    option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(ImmutableUserQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<ImmutableUser> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<ImmutableUser> Function(ImmutableUserQueryFilter q, E item)
+    option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(ImmutableUserQueryFilter(query), item),
+    );
+  }
 }
 
 Map<String, Object?> _$ImmutableUserToCindelDocument(ImmutableUser object) {
@@ -2335,6 +2394,36 @@ final class ApiProductQueryFilter {
 
   CindelQuery<ApiProduct> nameEndsWith(String value) {
     return _query.whereMatches(CindelFilter.field("name").endsWith(value));
+  }
+
+  CindelQuery<ApiProduct> optional(
+    bool enabled,
+    CindelQuery<ApiProduct> Function(ApiProductQueryFilter q) option,
+  ) {
+    return _query.optional(
+      enabled,
+      (query) => option(ApiProductQueryFilter(query)),
+    );
+  }
+
+  CindelQuery<ApiProduct> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<ApiProduct> Function(ApiProductQueryFilter q, E item) option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(ApiProductQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<ApiProduct> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<ApiProduct> Function(ApiProductQueryFilter q, E item) option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(ApiProductQueryFilter(query), item),
+    );
   }
 }
 
@@ -2756,6 +2845,45 @@ final class FreezedPrimaryUserQueryFilter {
 
   CindelQuery<FreezedPrimaryUser> activeEqualTo(bool value) {
     return _query.whereMatches(CindelFilter.field("active").equalTo(value));
+  }
+
+  CindelQuery<FreezedPrimaryUser> optional(
+    bool enabled,
+    CindelQuery<FreezedPrimaryUser> Function(FreezedPrimaryUserQueryFilter q)
+    option,
+  ) {
+    return _query.optional(
+      enabled,
+      (query) => option(FreezedPrimaryUserQueryFilter(query)),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<FreezedPrimaryUser> Function(
+      FreezedPrimaryUserQueryFilter q,
+      E item,
+    )
+    option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(FreezedPrimaryUserQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<FreezedPrimaryUser> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<FreezedPrimaryUser> Function(
+      FreezedPrimaryUserQueryFilter q,
+      E item,
+    )
+    option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(FreezedPrimaryUserQueryFilter(query), item),
+    );
   }
 }
 

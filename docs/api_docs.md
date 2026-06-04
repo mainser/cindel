@@ -614,6 +614,38 @@ final notDone = CindelFilter.not(
 );
 ```
 
+### Dynamic Query Modifiers
+
+`CindelQuery` supports dynamic modifiers for building conditional filters
+without branching the whole query chain:
+
+```dart
+final matches = await db.todos
+    .all()
+    .optional(searchText.isNotEmpty, (query) {
+      return query.filter().titleContains(searchText);
+    })
+    .anyOf(selectedTags, (query, tag) {
+      return query.filter().tagsContains(tag);
+    })
+    .allOf(requiredWords, (query, word) {
+      return query.filter().titleContains(word);
+    })
+    .findAll();
+```
+
+Generated filter wrappers expose the same modifiers directly:
+
+```dart
+final matches = await db.todos
+    .filter()
+    .optional(showOpenOnly, (query) => query.completedEqualTo(false))
+    .anyOf(selectedTags, (query, tag) => query.tagsContains(tag))
+    .findAll();
+```
+
+Empty `anyOf` matches nothing. Empty `allOf` is a no-op.
+
 ### Sorting
 
 ```dart
@@ -1105,7 +1137,6 @@ Application code should prefer generated query helpers.
 The current public API does not yet include:
 
 - `exists()` query result helper,
-- dynamic modifiers such as `optional`, `anyOf`, or `allOf`,
 - embedded-field indexes,
 - public migration/export tooling,
 - web backend support.

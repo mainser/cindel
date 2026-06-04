@@ -226,8 +226,9 @@ final activeUsers = await db.users
     .findAll();
 ```
 
-Generated query modifiers include field sorting, descending sorting, distinct
-helpers, and property query accessors:
+Generated query modifiers include dynamic `optional` / `anyOf` / `allOf`
+filter composition, field sorting, descending sorting, distinct helpers, and
+property query accessors:
 
 ```dart
 final names = await db.users

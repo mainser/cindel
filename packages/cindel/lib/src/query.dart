@@ -12,6 +12,13 @@ typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
 typedef _CindelDocumentFilter = bool Function(CindelDocument document);
 typedef _CindelIdReader = Future<List<int>> Function();
 
+/// Applies an optional query modifier.
+typedef CindelQueryOption<T> = CindelQuery<T> Function(CindelQuery<T> query);
+
+/// Applies a repeated query modifier for [E] items.
+typedef CindelQueryRepeatOption<T, E> =
+    CindelQuery<T> Function(CindelQuery<T> query, E item);
+
 /// Sort direction for Cindel query results.
 enum CindelSortOrder {
   /// Ascending order.
@@ -421,6 +428,53 @@ final class CindelQuery<T> {
           ? predicate
           : CindelFilter.all([existing, predicate]),
     );
+  }
+
+  /// Applies [option] only when [enabled] is true.
+  ///
+  /// This is useful for dynamic queries where a filter should only be added
+  /// when an input value is present.
+  CindelQuery<T> optional(bool enabled, CindelQueryOption<T> option) {
+    return enabled ? option(this) : this;
+  }
+
+  /// Applies [option] for each item and ORs the generated filters together.
+  ///
+  /// If [items] is empty, the query matches nothing. The [option] callback may
+  /// only add filters; sort, distinct, window, projection, or source changes are
+  /// rejected because those cannot be represented as one OR filter group.
+  CindelQuery<T> anyOf<E>(
+    Iterable<E> items,
+    CindelQueryRepeatOption<T, E> option,
+  ) {
+    final itemList = items.toList(growable: false);
+    if (itemList.isEmpty) {
+      return whereMatches(CindelFilter.any(const []));
+    }
+    final predicates = [
+      for (final item in itemList) _modifierPredicate(option, item),
+    ];
+    return whereMatches(CindelFilter.any(predicates));
+  }
+
+  /// Applies [option] for each item and ANDs the generated filters together.
+  ///
+  /// If [items] is empty, the query is returned unchanged. The [option]
+  /// callback may only add filters; sort, distinct, window, projection, or
+  /// source changes are rejected because those cannot be represented as one AND
+  /// filter group.
+  CindelQuery<T> allOf<E>(
+    Iterable<E> items,
+    CindelQueryRepeatOption<T, E> option,
+  ) {
+    final itemList = items.toList(growable: false);
+    if (itemList.isEmpty) {
+      return this;
+    }
+    final predicates = [
+      for (final item in itemList) _modifierPredicate(option, item),
+    ];
+    return whereMatches(CindelFilter.all(predicates));
   }
 
   /// Sorts this query by [field].
@@ -1365,12 +1419,45 @@ final class CindelQuery<T> {
     return null;
   }
 
+  CindelFilterPredicate _modifierPredicate<E>(
+    CindelQueryRepeatOption<T, E> option,
+    E item,
+  ) {
+    final base = _copyWith(
+      filter: CindelFilter.all(const []),
+      clearFilter: true,
+    );
+    final modified = option(base, item);
+    if (!_hasSameModifierShape(base, modified)) {
+      throw ArgumentError.value(
+        modified,
+        'option',
+        'anyOf/allOf options may only add filters.',
+      );
+    }
+    return modified._filter ?? CindelFilter.all(const []);
+  }
+
+  bool _hasSameModifierShape(CindelQuery<T> base, CindelQuery<T> modified) {
+    return identical(base._database, modified._database) &&
+        identical(base._schema, modified._schema) &&
+        identical(base._readDocuments, modified._readDocuments) &&
+        identical(base._sourceFilter, modified._sourceFilter) &&
+        identical(base._readIds, modified._readIds) &&
+        base._nativeSource == modified._nativeSource &&
+        _sortKeyListsEqual(base._sortKeys, modified._sortKeys) &&
+        _stringListsEqual(base._distinctFields, modified._distinctFields) &&
+        base._offset == modified._offset &&
+        base._limit == modified._limit;
+  }
+
   CindelQuery<T> _copyWith({
     CindelFilterPredicate? filter,
     List<_CindelSortKey>? sortKeys,
     List<String>? distinctFields,
     int? offset,
     int? limit,
+    bool clearFilter = false,
   }) {
     return CindelQuery._(
       database: _database,
@@ -1379,13 +1466,39 @@ final class CindelQuery<T> {
       sourceFilter: _sourceFilter,
       readIds: _readIds,
       nativeSource: _nativeSource,
-      filter: filter ?? _filter,
+      filter: clearFilter ? filter : filter ?? _filter,
       sortKeys: sortKeys ?? _sortKeys,
       distinctFields: distinctFields ?? _distinctFields,
       offset: offset ?? _offset,
       limit: limit ?? _limit,
     );
   }
+}
+
+bool _sortKeyListsEqual(List<_CindelSortKey> left, List<_CindelSortKey> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i += 1) {
+    final leftKey = left[i];
+    final rightKey = right[i];
+    if (leftKey.field != rightKey.field || leftKey.order != rightKey.order) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _stringListsEqual(List<String> left, List<String> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i += 1) {
+    if (left[i] != right[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 CindelFieldSchema _schemaField<T>(

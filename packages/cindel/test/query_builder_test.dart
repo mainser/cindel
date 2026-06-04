@@ -456,6 +456,83 @@ void main() {
       expect(users.map((user) => user.name), ['Dee', 'Ana']);
     });
 
+    // Scenario: Dynamic query modifiers compose generated filter helpers.
+    // Covers:
+    // - [CindelQuery.optional] preserving or applying a query part.
+    // - Generated query filter [anyOf] and [allOf] helpers.
+    // - Empty [anyOf] and [allOf] behavior matching Isar semantics.
+    // Expected: Optional filters can be toggled, repeated filters are grouped
+    // with OR/AND, empty anyOf matches nothing, and empty allOf is a no-op.
+    test('supports optional, anyOf, and allOf query modifiers.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final optionalDisabled = await database.users
+          .all()
+          .optional(false, (query) {
+            return query.filter().activeEqualTo(false);
+          })
+          .sortByDbId()
+          .findAll();
+      final optionalEnabled = await database.users.all().optional(true, (
+        query,
+      ) {
+        return query.filter().activeEqualTo(false);
+      }).findAll();
+      final anyMatches = await database.users
+          .filter()
+          .anyOf(['Ana', 'Dee'], (query, name) {
+            return query.nameEqualTo(name);
+          })
+          .sortByDbId()
+          .findAll();
+      final indexedAnyMatches = await database.users
+          .all()
+          .anyOf(['team@example.com', 'solo@example.com'], (query, email) {
+            return query.filter().emailEqualTo(email);
+          })
+          .sortByDbId()
+          .findAll();
+      final emptyAnyMatches = await database.users.filter().anyOf(<String>[], (
+        query,
+        name,
+      ) {
+        return query.nameEqualTo(name);
+      }).findAll();
+      final allMatches = await database.users
+          .filter()
+          .allOf(['team', 'example'], (query, token) {
+            return query.emailContains(token);
+          })
+          .sortByDbId()
+          .findAll();
+      final emptyAllMatches = await database.users
+          .where()
+          .emailStartsWith('team')
+          .filter()
+          .allOf(<String>[], (query, token) {
+            return query.emailContains(token);
+          })
+          .sortByDbId()
+          .findAll();
+
+      // Assert.
+      expect(optionalDisabled.map((user) => user.name), [
+        'Ana',
+        'Ben',
+        'Cid',
+        'Dee',
+      ]);
+      expect(optionalEnabled.map((user) => user.name), ['Cid']);
+      expect(anyMatches.map((user) => user.name), ['Ana', 'Dee']);
+      expect(indexedAnyMatches.map((user) => user.name), ['Ana', 'Ben', 'Cid']);
+      expect(emptyAnyMatches, isEmpty);
+      expect(allMatches.map((user) => user.name), ['Ana', 'Cid', 'Dee']);
+      expect(emptyAllMatches.map((user) => user.name), ['Ana', 'Cid', 'Dee']);
+    });
+
     // Scenario: A query sorts, offsets, and limits typed results.
     // Covers:
     // - Generated sortBy and descending helpers.
