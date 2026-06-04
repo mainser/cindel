@@ -49,6 +49,18 @@ jobs:
       - name: Install Flutter workspace dependencies
         run: flutter pub get
 
+      - name: Install example dependencies
+        shell: bash
+        run: |
+          mapfile -t example_dirs < <(find examples -mindepth 1 -maxdepth 1 -type d | sort)
+          for example_dir in "${example_dirs[@]}"; do
+            if [ -f "${example_dir}/pubspec.yaml" ]; then
+              echo "::group::${example_dir}"
+              (cd "${example_dir}" && flutter pub get)
+              echo "::endgroup::"
+            fi
+          done
+
       - name: Check Dart formatting
         run: dart format --output=none --set-exit-if-changed .
 
