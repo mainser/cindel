@@ -422,7 +422,7 @@ jobs:
         run: |
           release_notes="Cindel ${RELEASE_VERSION} release.
 
-Native binaries are attached here for direct testing and tooling use. They are also embedded in the published cindel_flutter_libs package."
+          Native binaries are attached here for direct testing and tooling use. They are also embedded in the published cindel_flutter_libs package."
 
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" \
