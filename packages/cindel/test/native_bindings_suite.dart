@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:cindel/cindel.dart';
@@ -22,6 +23,51 @@ void main({bool includeMdbxOnlyTests = false}) {
 
       // Assert.
       expect(abiVersion, 30);
+    });
+
+    // Scenario: A native index-range query is issued without either bound.
+    // Covers:
+    // - Null lower/upper values crossing the FFI boundary as native null bytes.
+    // - Native failure status conversion for an invalid range request.
+    // Expected: The native call is made and rejected as a query-index-range
+    //   StateError.
+    test('passes null index range bounds to native calls.', () {
+      // Arrange.
+      final bindings = CindelNativeBindings();
+      final handle = bindings.open(':memory:', backend: _nativeBackendId);
+      expect(handle.address, isNot(0));
+      addTearDown(() => bindings.close(handle));
+
+      // Act / Assert.
+      expect(
+        () => bindings.queryIndexRange(handle, 'users', 'age', null, null),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('query index range'),
+          ),
+        ),
+      );
+    });
+
+    // Scenario: A caller invokes native bindings directly with a negative id.
+    // Covers:
+    // - Native binding id validation before the FFI function is called.
+    // Expected: Invalid ids fail with ArgumentError without touching native.
+    test('rejects negative ids before native FFI calls.', () {
+      // Arrange.
+      final bindings = CindelNativeBindings();
+
+      // Act / Assert.
+      expect(
+        () => bindings.delete(nullptr.cast<Void>(), 'users', -1),
+        throwsA(
+          isA<ArgumentError>()
+              .having((error) => error.name, 'name', 'id')
+              .having((error) => error.invalidValue, 'invalidValue', -1),
+        ),
+      );
     });
 
     // Scenario: A database is opened and then closed through the public API.
@@ -466,4 +512,11 @@ void main({bool includeMdbxOnlyTests = false}) {
 /// Creates an isolated directory for tests that open a [Cindel] database.
 Future<Directory> _createDatabaseDirectory() {
   return Directory.systemTemp.createTemp('cindel_');
+}
+
+int get _nativeBackendId {
+  return switch (testStorageBackend) {
+    CindelStorageBackend.sqlite => 0,
+    CindelStorageBackend.mdbx => 1,
+  };
 }

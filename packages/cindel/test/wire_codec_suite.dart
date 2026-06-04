@@ -37,6 +37,27 @@ void main() {
       expect(decodeIndexValue(bytes(indexValueFixture)), value);
     });
 
+    // Scenario: Dart sends every index value tag to Rust.
+    // Covers:
+    // - Null, bool, int, double, string, and list index value tags.
+    // Expected: Every index value variant round-trips through the wire codec.
+    test('encodes and decodes all index value variants', () {
+      // Arrange.
+      const values = [
+        WireIndexValue.nullValue(),
+        WireIndexValue.bool(false),
+        WireIndexValue.int(-7),
+        WireIndexValue.double(2.5),
+        WireIndexValue.string('A'),
+        WireIndexValue.list([WireIndexValue.nullValue()]),
+      ];
+
+      // Act / Assert.
+      for (final value in values) {
+        expect(decodeIndexValue(encodeIndexValue(value)), value);
+      }
+    });
+
     // Scenario: A Dart caller receives or sends a scalar query result.
     // Covers:
     // - Scalar double tag and little-endian f64 payload.
@@ -49,6 +70,26 @@ void main() {
       // Act / Assert.
       expect(encodeScalar(value), scalarFixture);
       expect(decodeScalar(bytes(scalarFixture)), value);
+    });
+
+    // Scenario: Dart receives every scalar tag from Rust.
+    // Covers:
+    // - Null, bool, int, double, and string scalar tags.
+    // Expected: Every scalar variant round-trips through the wire codec.
+    test('encodes and decodes all scalar variants', () {
+      // Arrange.
+      const values = [
+        WireScalar.nullValue(),
+        WireScalar.bool(false),
+        WireScalar.int(-7),
+        WireScalar.double(-0.0),
+        WireScalar.string('A'),
+      ];
+
+      // Act / Assert.
+      for (final value in values) {
+        expect(decodeScalar(encodeScalar(value)), value);
+      }
     });
 
     // Scenario: Dart sends a native filter AST to Rust.
@@ -79,6 +120,55 @@ void main() {
       expect(decodeFilter(bytes(filterFixture)), filter);
     });
 
+    // Scenario: Dart sends every native filter operation to Rust.
+    // Covers:
+    // - All WireFilterOperation tag mappings.
+    // - Any-filter encoding.
+    // Expected: Every filter operation and the any combinator round-trip.
+    test('encodes and decodes all filter operations', () {
+      // Arrange.
+      const filters = WireFilter.any([
+        WireFilter.field(
+          field: 'age',
+          operation: WireFilterOperation.lessThan,
+          value: WireValue.int(30),
+        ),
+        WireFilter.field(
+          field: 'age',
+          operation: WireFilterOperation.lessThanOrEqual,
+          value: WireValue.int(30),
+        ),
+        WireFilter.field(
+          field: 'age',
+          operation: WireFilterOperation.greaterThan,
+          value: WireValue.int(30),
+        ),
+        WireFilter.field(
+          field: 'age',
+          operation: WireFilterOperation.greaterThanOrEqual,
+          value: WireValue.int(30),
+        ),
+        WireFilter.field(
+          field: 'tags',
+          operation: WireFilterOperation.contains,
+          value: WireValue.string('admin'),
+        ),
+        WireFilter.field(
+          field: 'email',
+          operation: WireFilterOperation.endsWith,
+          value: WireValue.string('.dev'),
+        ),
+        WireFilter.field(
+          field: 'deletedAt',
+          operation: WireFilterOperation.isNull,
+          value: WireValue.nullValue(),
+        ),
+      ]);
+
+      // Act / Assert.
+      expect(decodeFilter(encodeFilter(filters)), filters);
+    });
+
     // Scenario: Dart sends a native query plan to Rust.
     // Covers:
     // - Query source, sort, distinct, offset, and limit encoding.
@@ -103,6 +193,55 @@ void main() {
       // Act / Assert.
       expect(encodeQueryPlan(plan), queryPlanFixture);
       expect(decodeQueryPlan(bytes(queryPlanFixture)), plan);
+    });
+
+    // Scenario: Dart sends all query source variants.
+    // Covers:
+    // - All source, index-equal, and open index-range query source tags.
+    // - Null filter and null limit query-plan flags.
+    // Expected: Query source variants round-trip without losing flags.
+    test('encodes and decodes query plan source variants', () {
+      // Arrange.
+      const plans = [
+        WireQueryPlan(
+          source: WireQuerySource.all(dedupe: true),
+          filter: null,
+          sorts: [],
+          distinctFields: [],
+          offset: 0,
+          limit: null,
+        ),
+        WireQueryPlan(
+          source: WireQuerySource.indexEqual(
+            indexName: 'email',
+            value: WireIndexValue.nullValue(),
+            dedupe: false,
+          ),
+          filter: null,
+          sorts: [],
+          distinctFields: [],
+          offset: 1,
+          limit: null,
+        ),
+        WireQueryPlan(
+          source: WireQuerySource.indexRange(
+            indexName: 'email',
+            lower: null,
+            upper: null,
+            dedupe: true,
+          ),
+          filter: null,
+          sorts: [],
+          distinctFields: [],
+          offset: 2,
+          limit: null,
+        ),
+      ];
+
+      // Act / Assert.
+      for (final plan in plans) {
+        expect(decodeQueryPlan(encodeQueryPlan(plan)), plan);
+      }
     });
 
     // Scenario: Rust returns compact post-commit watcher change sets.
@@ -190,6 +329,44 @@ void main() {
       // Act / Assert.
       expect(encodeProjectionRows(rows), projectionRowsFixture);
       expect(decodeProjectionRows(bytes(projectionRowsFixture)), rows);
+    });
+
+    // Scenario: Rust returns projected object cells.
+    // Covers:
+    // - WireValue double and object tags.
+    // Expected: Nested projected values round-trip.
+    test('encodes and decodes object projection cells', () {
+      // Arrange.
+      const rows = WireProjectionRows(
+        rowCount: 1,
+        columnCount: 2,
+        cells: [
+          WireValue.double(2.5),
+          WireValue.object([
+            WireObjectEntry('name', WireValue.string('Ana')),
+            WireObjectEntry('active', WireValue.bool(true)),
+          ]),
+        ],
+      );
+
+      // Act / Assert.
+      expect(decodeProjectionRows(encodeProjectionRows(rows)), rows);
+    });
+
+    // Scenario: Dart attempts to encode an invalid projection matrix.
+    // Covers:
+    // - Projection cell count validation before writing bytes.
+    // Expected: Invalid dimensions throw FormatException.
+    test('rejects projection rows with mismatched cell count', () {
+      // Arrange.
+      const rows = WireProjectionRows(
+        rowCount: 2,
+        columnCount: 2,
+        cells: [WireValue.nullValue()],
+      );
+
+      // Act / Assert.
+      expect(() => encodeProjectionRows(rows), throwsFormatException);
     });
 
     // Scenario: Dart registers schema metadata through a binary manifest.
@@ -301,6 +478,20 @@ void main() {
         () => decodeScalar(bytes([wireTagBool, 2])),
         throwsFormatException,
       );
+    });
+
+    // Scenario: Dart callers attempt to write integers outside wire bounds.
+    // Covers:
+    // - Unsigned 32-bit and 64-bit writer range checks.
+    // Expected: Invalid integer bounds throw RangeError before bytes are built.
+    test('rejects out-of-range writer integers', () {
+      // Arrange.
+      final writer = CindelWireWriter();
+
+      // Act / Assert.
+      expect(() => writer.writeUint32(-1), throwsRangeError);
+      expect(() => writer.writeUint32(0x100000000), throwsRangeError);
+      expect(() => writer.writeUint64(-1), throwsRangeError);
     });
   });
 }

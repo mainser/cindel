@@ -722,6 +722,51 @@ void main({bool includeMdbxOnlyTests = false}) {
       },
     );
 
+    // Scenario: Generated native serializers exceed their reusable scratch
+    // buffers and carry non-ASCII strings through the native reader.
+    // Covers:
+    // - Large string writes through reusable byte-buffer growth.
+    // - Large compact List<String> writes through reusable list-buffer growth.
+    // - UTF-8 string and compact string-list decoding.
+    // Expected: Large and non-ASCII values round-trip through SQLite native
+    //   generated serializers without falling back to generic documents.
+    test(
+      'round-trips large and unicode values through native document codecs.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.sqlite,
+        );
+        final accessToken = 'token-${List.filled(300, 'x').join()}';
+        final tags = [
+          for (var index = 0; index < 40; index += 1)
+            'tag_${index.toString().padLeft(2, '0')}_'
+                '${List.filled(8, 'y').join()}',
+          'mañana',
+          'café',
+          '東京',
+        ];
+        final user = User()
+          ..dbId = 1
+          ..name = 'José'
+          ..email = 'jose@example.com'
+          ..accessToken = accessToken
+          ..tags = tags;
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.users.put(user);
+        final restored = await db.users.get(1);
+
+        // Assert.
+        expect(restored?.name, 'José');
+        expect(restored?.accessToken, accessToken);
+        expect(restored?.tags, tags);
+      },
+    );
+
     // Scenario: Generated getAll hydrates through the MDBX native cursor reader.
     // Covers:
     // - Ordered getAll hits, misses, and repeated ids.
