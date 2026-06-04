@@ -301,6 +301,18 @@ jobs:
             return 0
           }
 
+          package_version_published() {
+            local package_dir="$1"
+            local package_name
+            local package_version
+
+            package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
+            package_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
+
+            curl -fsS "https://pub.dev/api/packages/${package_name}" |
+              grep -q "\"version\":\"${package_version}\""
+          }
+
           run_pub() {
             local package_dir="$1"
             shift
@@ -312,6 +324,11 @@ jobs:
             local package_dir="$1"
             matching_release_package "${package_dir}" || return 0
 
+            if package_version_published "${package_dir}"; then
+              echo "Skipping dry-run for already published ${package_dir}."
+              return 0
+            fi
+
             echo "::group::Dry-run ${package_dir}"
             run_pub "${package_dir}" --dry-run --ignore-warnings
             echo "::endgroup::"
@@ -320,6 +337,11 @@ jobs:
           publish_package() {
             local package_dir="$1"
             matching_release_package "${package_dir}" || return 0
+
+            if package_version_published "${package_dir}"; then
+              echo "Skipping already published ${package_dir}."
+              return 0
+            fi
 
             echo "::group::Publish ${package_dir}"
             run_pub "${package_dir}" --force
@@ -340,3 +362,76 @@ jobs:
           for package_dir in "${release_packages[@]}"; do
             publish_package "${package_dir}"
           done
+
+  github_release:
+    name: Create GitHub release assets
+    needs:
+      - validate
+      - publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Prepare GitHub release assets
+        shell: bash
+        run: |
+          if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
+            artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
+          elif [ -d release-artifacts/cindel_flutter_libs ]; then
+            artifact_libs_dir=release-artifacts/cindel_flutter_libs
+          else
+            echo "::error::Could not find cindel_flutter_libs in downloaded artifacts."
+            find release-artifacts -maxdepth 4 -type d -print
+            exit 1
+          fi
+
+          mkdir -p github-release-assets
+          cp "${artifact_libs_dir}/android/src/main/jniLibs/arm64-v8a/libcindel_native.so" \
+            github-release-assets/cindel_native_android_arm64.so
+          cp "${artifact_libs_dir}/android/src/main/jniLibs/armeabi-v7a/libcindel_native.so" \
+            github-release-assets/cindel_native_android_armv7.so
+          cp "${artifact_libs_dir}/android/src/main/jniLibs/x86_64/libcindel_native.so" \
+            github-release-assets/cindel_native_android_x64.so
+          cp "${artifact_libs_dir}/linux/libcindel_native.so" \
+            github-release-assets/cindel_native_linux_x64.so
+          cp "${artifact_libs_dir}/macos/libcindel_native.dylib" \
+            github-release-assets/cindel_native_macos_universal.dylib
+          cp "${artifact_libs_dir}/windows/cindel_native.dll" \
+            github-release-assets/cindel_native_windows_x64.dll
+
+          (
+            cd "${artifact_libs_dir}/ios"
+            zip -qr "${GITHUB_WORKSPACE}/github-release-assets/cindel_native_ios.xcframework.zip" \
+              cindel.xcframework
+          )
+
+          ls -lh github-release-assets
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          release_notes="Cindel ${RELEASE_VERSION} release.
+
+Native binaries are attached here for direct testing and tooling use. They are also embedded in the published cindel_flutter_libs package."
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes "${release_notes}"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes "${release_notes}"
+          fi
+
+          gh release upload "${GITHUB_REF_NAME}" github-release-assets/* --clobber
