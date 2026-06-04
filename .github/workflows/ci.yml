@@ -68,13 +68,90 @@ jobs:
       - name: Analyze publishable packages
         run: flutter analyze packages/cindel packages/cindel_annotations packages/cindel_generator packages/cindel_flutter_libs
 
+  dart-package-tests:
+    name: Dart package tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Cache Dart packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock', 'examples/**/pubspec.lock', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install Flutter workspace dependencies
+        run: flutter pub get
+
+      - name: Run backend-neutral package tests and collect coverage
+        shell: bash
+        run: |
+          rm -rf coverage/dart-packages
+          mkdir -p coverage/dart-packages/raw
+
+          dart test packages/cindel/test/core_dart_test.dart \
+            -r expanded \
+            --coverage=coverage/dart-packages/raw/packages_cindel_core
+
+          mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' -not -path 'packages/cindel/test' | sort)
+          if [ "${#test_dirs[@]}" -eq 0 ]; then
+            echo "::error::No backend-neutral package test directories found."
+            exit 1
+          fi
+
+          for test_dir in "${test_dirs[@]}"; do
+            package_dir="${test_dir%/test}"
+            coverage_dir="coverage/dart-packages/raw/${package_dir//\//_}"
+            echo "::group::${test_dir}"
+            if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
+              flutter test "${test_dir}"
+            else
+              mkdir -p "${coverage_dir}"
+              dart test "${test_dir}" -r expanded --coverage="${coverage_dir}"
+            fi
+            echo "::endgroup::"
+          done
+
+          if find coverage/dart-packages/raw -name '*.json' -print -quit | grep -q .; then
+            dart run coverage:format_coverage \
+              --lcov \
+              --in=coverage/dart-packages/raw \
+              --out=coverage/dart-packages/lcov.info \
+              --package=. \
+              --base-directory=. \
+              --report-on=packages/cindel/lib \
+              --report-on=packages/cindel_annotations/lib \
+              --report-on=packages/cindel_generator/lib
+          fi
+
+      - name: Upload Dart package coverage to Codecov
+        if: ${{ hashFiles('coverage/dart-packages/lcov.info') != '' }}
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/dart-packages/lcov.info
+          flags: dart-packages
+          name: dart-packages
+          fail_ci_if_error: true
+
   sqlite-backend:
-    name: SQLite-only backend tests
+    name: SQLite backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
-      CINDEL_TEST_BACKEND: sqlite
 
     steps:
       - name: Checkout
@@ -117,46 +194,29 @@ jobs:
       - name: Run Rust tests without MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run all package tests with SQLite and collect coverage
+      - name: Run Cindel package tests with SQLite and collect coverage
         shell: bash
         run: |
-          rm -rf coverage
-          mkdir -p coverage/raw
+          rm -rf coverage/sqlite
+          mkdir -p coverage/sqlite/raw
 
-          mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' | sort)
-          if [ "${#test_dirs[@]}" -eq 0 ]; then
-            echo "::error::No package test directories found."
-            exit 1
-          fi
-
-          for test_dir in "${test_dirs[@]}"; do
-            package_dir="${test_dir%/test}"
-            coverage_dir="coverage/raw/${package_dir//\//_}"
-            echo "::group::${test_dir}"
-            if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
-              flutter test "${test_dir}"
-            else
-              mkdir -p "${coverage_dir}"
-              dart test "${test_dir}" -r expanded --coverage="${coverage_dir}"
-            fi
-            echo "::endgroup::"
-          done
+          dart test packages/cindel/test/sqlite_backend_test.dart \
+            -r expanded \
+            --coverage=coverage/sqlite/raw
 
           dart run coverage:format_coverage \
             --lcov \
-            --in=coverage/raw \
-            --out=coverage/lcov.info \
+            --in=coverage/sqlite/raw \
+            --out=coverage/sqlite/lcov.info \
             --package=. \
             --base-directory=. \
-            --report-on=packages/cindel/lib \
-            --report-on=packages/cindel_annotations/lib \
-            --report-on=packages/cindel_generator/lib
+            --report-on=packages/cindel/lib
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
+          files: coverage/sqlite/lcov.info
           flags: dart-sqlite
           name: dart-sqlite
           fail_ci_if_error: true
@@ -167,8 +227,6 @@ jobs:
     timeout-minutes: 20
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
-      CINDEL_TEST_BACKEND: mdbx
-      CINDEL_TEST_MDBX: "1"
 
     steps:
       - name: Checkout
@@ -211,22 +269,5 @@ jobs:
       - name: Run Rust tests with MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run all package tests with MDBX
-        shell: bash
-        run: |
-          mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' | sort)
-          if [ "${#test_dirs[@]}" -eq 0 ]; then
-            echo "::error::No package test directories found."
-            exit 1
-          fi
-
-          for test_dir in "${test_dirs[@]}"; do
-            package_dir="${test_dir%/test}"
-            echo "::group::${test_dir}"
-            if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
-              flutter test "${test_dir}"
-            else
-              dart test "${test_dir}" -r expanded
-            fi
-            echo "::endgroup::"
-          done
+      - name: Run Cindel package tests with MDBX
+        run: dart test packages/cindel/test/mdbx_backend_test.dart -r expanded

@@ -34,3 +34,6 @@ tool/lab_features/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Flutter/Dart/Pub related
+/coverage/

@@ -6,7 +6,7 @@ import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
 
-void main() {
+void main({bool includeMdbxOnlyTests = false}) {
   group('Cindel native bindings', () {
     // Scenario: The Rust dynamic library is available through native assets.
     // Covers:
@@ -54,9 +54,8 @@ void main() {
     // - MDBX becoming the public API default.
     // Expected: New database handles use MDBX unless callers request another
     //   backend explicitly.
-    test(
-      'opens with MDBX as the default backend.',
-      () async {
+    if (includeMdbxOnlyTests) {
+      test('opens with MDBX as the default backend.', () async {
         // Arrange.
         final database = await Cindel.openInMemory();
         addTearDown(database.close);
@@ -69,11 +68,8 @@ void main() {
         expect(defaultCindelStorageBackend, CindelStorageBackend.mdbx);
         expect(database.backend, CindelStorageBackend.mdbx);
         expect(storedUser, {'name': 'Ana'});
-      },
-      skip: !_runMdbxBackendTests
-          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
-          : false,
-    );
+      });
+    }
 
     // Scenario: A caller explicitly selects the secondary SQLite backend.
     // Covers:
@@ -103,9 +99,8 @@ void main() {
     // - Basic read/write behavior through MDBX.
     // Expected: MDBX works when the loaded native library was built with the
     //   native `mdbx` Cargo feature.
-    test(
-      'opens with an explicit MDBX backend.',
-      () async {
+    if (includeMdbxOnlyTests) {
+      test('opens with an explicit MDBX backend.', () async {
         // Arrange.
         final database = await openTestDatabaseInMemory(
           backend: CindelStorageBackend.mdbx,
@@ -119,11 +114,8 @@ void main() {
         // Assert.
         expect(database.backend, CindelStorageBackend.mdbx);
         expect(storedUser, {'name': 'Ana'});
-      },
-      skip: !_runMdbxBackendTests
-          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
-          : false,
-    );
+      });
+    }
 
     // Scenario: A document is written, read, and deleted from SQLite storage.
     // Covers:
@@ -474,8 +466,4 @@ void main() {
 /// Creates an isolated directory for tests that open a [Cindel] database.
 Future<Directory> _createDatabaseDirectory() {
   return Directory.systemTemp.createTemp('cindel_');
-}
-
-bool get _runMdbxBackendTests {
-  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }

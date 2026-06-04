@@ -7,7 +7,7 @@ import 'backend_test_support.dart';
 
 import 'schema_generation_fixture.dart';
 
-void main() {
+void main({bool includeMdbxOnlyTests = false}) {
   group('Cindel query builder', () {
     // Scenario: A generated where helper queries an indexed field by equality.
     // Covers:
@@ -308,9 +308,8 @@ void main() {
     // - Native query-plan update count.
     // - MDBX compact document update without Dart object hydration.
     // Expected: Matching documents are updated and the returned count matches.
-    test(
-      'updates all matching native typed query results.',
-      () async {
+    if (includeMdbxOnlyTests) {
+      test('updates all matching native typed query results.', () async {
         // Arrange.
         final database = await openTestDatabaseInMemory(
           schemas: [ImmutableUserSchema],
@@ -341,11 +340,8 @@ void main() {
         expect(updated, 2);
         expect(activeCount, 0);
         expect(inactive.map((user) => user.dbId), [1, 2, 3]);
-      },
-      skip: !_runMdbxBackendTests
-          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
-          : false,
-    );
+      });
+    }
 
     // Scenario: A generated filter starts from the whole collection.
     // Covers:
@@ -819,123 +815,126 @@ void main() {
     // - Native update rejection for generic rows.
     // Expected: Typed reads hydrate through the document mapper instead of the
     // native binary reader, while native-only updates remain unsupported.
-    test(
-      'uses document hydration for typed APIs after generic MDBX writes.',
-      () async {
-        // Arrange.
-        final directory = await Directory.systemTemp.createTemp(
-          'cindel_query_builder_generic_mdbx_',
-        );
-        addTearDown(() => directory.delete(recursive: true));
-        var database = await openTestDatabase(
-          directory: directory.path,
-          schemas: [UserSchema],
-          backend: CindelStorageBackend.mdbx,
-        );
-        addTearDown(() => database.close());
-        await database.put(
-          'users',
-          1,
-          _genericUser(
-            id: 1,
-            name: 'Ana',
-            email: 'team@example.com',
-            active: true,
-            tags: ['flutter'],
-          ),
-        );
-        await database.put(
-          'users',
-          2,
-          _genericUser(
-            id: 2,
-            name: 'Ben',
-            email: 'solo@example.com',
-            active: true,
-          ),
-        );
-        await database.put(
-          'users',
-          3,
-          _genericUser(
-            id: 3,
-            name: 'Cid',
-            email: 'team-alpha@example.com',
-            active: false,
-            tags: ['database'],
-          ),
-        );
+    if (includeMdbxOnlyTests) {
+      test(
+        'uses document hydration for typed APIs after generic MDBX writes.',
+        () async {
+          // Arrange.
+          final directory = await Directory.systemTemp.createTemp(
+            'cindel_query_builder_generic_mdbx_',
+          );
+          addTearDown(() => directory.delete(recursive: true));
+          var database = await openTestDatabase(
+            directory: directory.path,
+            schemas: [UserSchema],
+            backend: CindelStorageBackend.mdbx,
+          );
+          addTearDown(() => database.close());
+          await database.put(
+            'users',
+            1,
+            _genericUser(
+              id: 1,
+              name: 'Ana',
+              email: 'team@example.com',
+              active: true,
+              tags: ['flutter'],
+            ),
+          );
+          await database.put(
+            'users',
+            2,
+            _genericUser(
+              id: 2,
+              name: 'Ben',
+              email: 'solo@example.com',
+              active: true,
+            ),
+          );
+          await database.put(
+            'users',
+            3,
+            _genericUser(
+              id: 3,
+              name: 'Cid',
+              email: 'team-alpha@example.com',
+              active: false,
+              tags: ['database'],
+            ),
+          );
 
-        // Act.
-        final sameHandleById = await database.users.getAll([2, 404, 1]);
-        final sameHandleTeamUsers = await database.users
-            .where()
-            .emailStartsWith('team')
-            .sortByName()
-            .findAll();
-        await database.close();
-        database = await openTestDatabase(
-          directory: directory.path,
-          schemas: [UserSchema],
-          backend: CindelStorageBackend.mdbx,
-        );
-        final reopenedById = await database.users.getAll([2, 404, 1]);
-        final reopenedTeamUsers = await database.users
-            .where()
-            .emailStartsWith('team')
-            .sortByName()
-            .findAll();
-        final teamCount = await database.users
-            .where()
-            .emailStartsWith('team')
-            .count();
-        final names = await database.users
-            .all()
-            .sortByDbId()
-            .nameProperty()
-            .findAll();
-        final rows = await database.users.all().sortByDbId().properties([
-          'name',
-          'active',
-        ]).findAll();
-        final deleted = await database.users
-            .where()
-            .emailEqualTo('solo@example.com')
-            .deleteFirst();
-        final remainingIds = await database.users
-            .all()
-            .sortByDbId()
-            .dbIdProperty()
-            .findAll();
-        final update = database.users
-            .where()
-            .emailEqualTo('team@example.com')
-            .updateAll({'active': false});
+          // Act.
+          final sameHandleById = await database.users.getAll([2, 404, 1]);
+          final sameHandleTeamUsers = await database.users
+              .where()
+              .emailStartsWith('team')
+              .sortByName()
+              .findAll();
+          await database.close();
+          database = await openTestDatabase(
+            directory: directory.path,
+            schemas: [UserSchema],
+            backend: CindelStorageBackend.mdbx,
+          );
+          final reopenedById = await database.users.getAll([2, 404, 1]);
+          final reopenedTeamUsers = await database.users
+              .where()
+              .emailStartsWith('team')
+              .sortByName()
+              .findAll();
+          final teamCount = await database.users
+              .where()
+              .emailStartsWith('team')
+              .count();
+          final names = await database.users
+              .all()
+              .sortByDbId()
+              .nameProperty()
+              .findAll();
+          final rows = await database.users.all().sortByDbId().properties([
+            'name',
+            'active',
+          ]).findAll();
+          final deleted = await database.users
+              .where()
+              .emailEqualTo('solo@example.com')
+              .deleteFirst();
+          final remainingIds = await database.users
+              .all()
+              .sortByDbId()
+              .dbIdProperty()
+              .findAll();
+          final update = database.users
+              .where()
+              .emailEqualTo('team@example.com')
+              .updateAll({'active': false});
 
-        // Assert.
-        expect(sameHandleById.map((user) => user?.name), ['Ben', null, 'Ana']);
-        expect(sameHandleTeamUsers.map((user) => user.name), ['Ana', 'Cid']);
-        expect(reopenedById.map((user) => user?.name), ['Ben', null, 'Ana']);
-        expect(reopenedTeamUsers.map((user) => user.name), ['Ana', 'Cid']);
-        expect(reopenedTeamUsers.map((user) => user.tags), [
-          ['flutter'],
-          ['database'],
-        ]);
-        expect(teamCount, 2);
-        expect(names, ['Ana', 'Ben', 'Cid']);
-        expect(rows, [
-          {'name': 'Ana', 'active': true},
-          {'name': 'Ben', 'active': true},
-          {'name': 'Cid', 'active': false},
-        ]);
-        expect(deleted, isTrue);
-        expect(remainingIds, [1, 3]);
-        await expectLater(update, throwsA(isA<UnsupportedError>()));
-      },
-      skip: !_runMdbxBackendTests
-          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
-          : false,
-    );
+          // Assert.
+          expect(sameHandleById.map((user) => user?.name), [
+            'Ben',
+            null,
+            'Ana',
+          ]);
+          expect(sameHandleTeamUsers.map((user) => user.name), ['Ana', 'Cid']);
+          expect(reopenedById.map((user) => user?.name), ['Ben', null, 'Ana']);
+          expect(reopenedTeamUsers.map((user) => user.name), ['Ana', 'Cid']);
+          expect(reopenedTeamUsers.map((user) => user.tags), [
+            ['flutter'],
+            ['database'],
+          ]);
+          expect(teamCount, 2);
+          expect(names, ['Ana', 'Ben', 'Cid']);
+          expect(rows, [
+            {'name': 'Ana', 'active': true},
+            {'name': 'Ben', 'active': true},
+            {'name': 'Cid', 'active': false},
+          ]);
+          expect(deleted, isTrue);
+          expect(remainingIds, [1, 3]);
+          await expectLater(update, throwsA(isA<UnsupportedError>()));
+        },
+      );
+    }
 
     // Scenario: Query modifiers are combined in the documented order.
     // Covers:
@@ -1031,10 +1030,6 @@ Future<CindelDatabase> _openUsersForExecutionOrder() async {
     _user(dbId: 6, name: 'Fox', email: 'team-f@example.com', active: false),
   );
   return database;
-}
-
-bool get _runMdbxBackendTests {
-  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }
 
 User _user({

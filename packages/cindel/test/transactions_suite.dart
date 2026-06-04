@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
@@ -8,7 +7,7 @@ import 'backend_test_support.dart';
 
 import 'schema_generation_fixture.dart';
 
-void main() {
+void main({bool includeMdbxOnlyTests = false}) {
   group('Cindel transactions', () {
     // Scenario: Multiple writes are committed through the public transaction
     // wrapper.
@@ -241,9 +240,8 @@ void main() {
     // - Native id counter rollback through the selected backend.
     // Expected: MDBX matches the public transaction behavior currently
     //   provided by SQLite.
-    test(
-      'supports transactions with an explicit MDBX backend.',
-      () async {
+    if (includeMdbxOnlyTests) {
+      test('supports transactions with an explicit MDBX backend.', () async {
         // Arrange.
         final database = await openTestDatabaseInMemory(
           schemas: [UserSchema],
@@ -275,11 +273,8 @@ void main() {
         expect(await database.get('users', 1), {'name': 'Ana', 'dbId': 1});
         expect(savedUser.dbId, 2);
         expect(await database.users.get(savedUser.dbId), isNotNull);
-      },
-      skip: !_runMdbxBackendTests
-          ? 'Requires CINDEL_TEST_MDBX=1 and a native library built with mdbx.'
-          : false,
-    );
+      });
+    }
   });
 }
 
@@ -294,10 +289,6 @@ Future<void> _waitUntil(
     }
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
-}
-
-bool get _runMdbxBackendTests {
-  return Platform.environment['CINDEL_TEST_MDBX'] == '1';
 }
 
 User _user(int id, String name, bool active) {

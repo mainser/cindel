@@ -1,15 +1,12 @@
-import 'dart:io';
-
 import 'package:cindel/cindel.dart';
 
-final CindelStorageBackend testStorageBackend = switch (Platform
-    .environment['CINDEL_TEST_BACKEND']
-    ?.toLowerCase()) {
-  'mdbx' => CindelStorageBackend.mdbx,
-  'default' => defaultCindelStorageBackend,
-  'sqlite' || null || '' => CindelStorageBackend.sqlite,
-  final backend => throw UnsupportedError('Unknown test backend `$backend`.'),
-};
+var _testStorageBackend = CindelStorageBackend.sqlite;
+
+CindelStorageBackend get testStorageBackend => _testStorageBackend;
+
+void configureTestStorageBackend(CindelStorageBackend backend) {
+  _testStorageBackend = backend;
+}
 
 Future<CindelDatabase> openTestDatabase({
   required String directory,
