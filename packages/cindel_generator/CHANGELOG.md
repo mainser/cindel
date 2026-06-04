@@ -4,6 +4,8 @@
 
 - Generated query filter wrappers now expose `optional`, `anyOf`, and `allOf`
   dynamic modifiers for typed filter helper composition.
+- Generated Isar-style list filter helpers for element equality, empty/non-empty
+  lists, exact length, inclusive/exclusive length bounds, and length ranges.
 - Generated nested filter helpers for fields inside embedded object list
   elements, such as `contactsElement((contact) => ...)`.
 - Allows embedded-list element helpers to continue into nested embedded object

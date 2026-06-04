@@ -5,6 +5,9 @@
 - Added `CindelQuery.optional`, `CindelQuery.anyOf`, and
   `CindelQuery.allOf` dynamic query modifiers for conditional and repeated
   filter composition.
+- Added list-length and list-empty filter predicates, plus generated
+  Isar-style list helpers such as `tagsIsEmpty`, `tagsLengthGreaterThan`, and
+  `tagsLengthBetween`.
 - Added generated nested filter support for fields inside embedded object list
   elements, such as `recipientsElement((recipient) => ...)`.
 - Added a Rust native embedded object writer/reader path for generated typed

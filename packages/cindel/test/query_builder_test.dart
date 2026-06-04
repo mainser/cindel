@@ -124,6 +124,78 @@ void main() {
       expect(users.map((user) => user.name), ['Ana', 'Dee']);
     });
 
+    // Scenario: Generated list query helpers filter by collection size.
+    // Covers:
+    // - Generated [UserQueryWhere.tagsIsEmpty].
+    // - Generated [UserQueryWhere.tagsIsNotEmpty].
+    // - Generated [UserQueryWhere.tagsLengthEqualTo].
+    // - Generated [UserQueryWhere.tagsLengthLessThan].
+    // - Generated [UserQueryWhere.tagsLengthGreaterThan].
+    // - Generated [UserQueryWhere.tagsLengthBetween].
+    // Expected: Empty, non-empty, exact, inclusive, and exclusive length
+    // filters match Isar-style list query semantics.
+    test('finds typed objects by list length helpers.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final emptyTags = await database.users
+          .all()
+          .filter()
+          .tagsIsEmpty()
+          .sortByDbId()
+          .findAll();
+      final nonEmptyTags = await database.users
+          .all()
+          .filter()
+          .tagsIsNotEmpty()
+          .sortByDbId()
+          .findAll();
+      final lengthTwo = await database.users
+          .all()
+          .filter()
+          .tagsLengthEqualTo(2)
+          .sortByDbId()
+          .findAll();
+      final lengthLessThanTwo = await database.users
+          .all()
+          .filter()
+          .tagsLengthLessThan(2)
+          .sortByDbId()
+          .findAll();
+      final lengthGreaterThanTwoInclusive = await database.users
+          .all()
+          .filter()
+          .tagsLengthGreaterThan(2, include: true)
+          .sortByDbId()
+          .findAll();
+      final lengthBetween = await database.users
+          .all()
+          .filter()
+          .tagsLengthBetween(1, 2, includeLower: true, includeUpper: false)
+          .sortByDbId()
+          .findAll();
+      final databaseTags = await database.users
+          .all()
+          .filter()
+          .tagsElementEqualTo('database')
+          .sortByDbId()
+          .findAll();
+
+      // Assert.
+      expect(emptyTags.map((user) => user.name), ['Ben', 'Cid']);
+      expect(nonEmptyTags.map((user) => user.name), ['Ana', 'Dee']);
+      expect(lengthTwo.map((user) => user.name), ['Ana', 'Dee']);
+      expect(lengthLessThanTwo.map((user) => user.name), ['Ben', 'Cid']);
+      expect(lengthGreaterThanTwoInclusive.map((user) => user.name), [
+        'Ana',
+        'Dee',
+      ]);
+      expect(lengthBetween.map((user) => user.name), isEmpty);
+      expect(databaseTags.map((user) => user.name), ['Ana']);
+    });
+
     // Scenario: A query requests just the first matching object.
     // Covers:
     // - [CindelQuery.findFirst].

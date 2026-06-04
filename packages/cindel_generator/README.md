@@ -239,6 +239,22 @@ final names = await db.users
     .findAll();
 ```
 
+List fields generate Isar-style element and length helpers:
+
+```dart
+final tagged = await db.users
+    .filter()
+    .tagsElementEqualTo('flutter')
+    .findAll();
+
+final emptyTags = await db.users.filter().tagsIsEmpty().findAll();
+
+final shortTagLists = await db.users
+    .filter()
+    .tagsLengthLessThan(3, include: true)
+    .findAll();
+```
+
 ## Indexes
 
 The generator reads `@index`, `@Index(...)`, and collection-level

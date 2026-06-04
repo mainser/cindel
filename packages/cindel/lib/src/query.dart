@@ -149,6 +149,68 @@ final class CindelFilterField {
     );
   }
 
+  /// Matches list fields with no elements.
+  CindelFilterPredicate isEmpty() {
+    return _FieldFilterPredicate(
+      path: _path,
+      expected: null,
+      operation: _FilterOperation.isEmpty,
+    );
+  }
+
+  /// Matches list fields with at least one element.
+  CindelFilterPredicate isNotEmpty() {
+    return _FieldFilterPredicate(
+      path: _path,
+      expected: null,
+      operation: _FilterOperation.isNotEmpty,
+    );
+  }
+
+  /// Matches list fields with exactly [length] elements.
+  CindelFilterPredicate lengthEqualTo(int length) {
+    return _FieldFilterPredicate(
+      path: _path,
+      expected: length,
+      operation: _FilterOperation.lengthEqualTo,
+    );
+  }
+
+  /// Matches list fields shorter than [length].
+  CindelFilterPredicate lengthLessThan(int length, {bool include = false}) {
+    return _FieldFilterPredicate(
+      path: _path,
+      expected: length,
+      operation: include
+          ? _FilterOperation.lengthLessThanOrEqualTo
+          : _FilterOperation.lengthLessThan,
+    );
+  }
+
+  /// Matches list fields longer than [length].
+  CindelFilterPredicate lengthGreaterThan(int length, {bool include = false}) {
+    return _FieldFilterPredicate(
+      path: _path,
+      expected: length,
+      operation: include
+          ? _FilterOperation.lengthGreaterThanOrEqualTo
+          : _FilterOperation.lengthGreaterThan,
+    );
+  }
+
+  /// Matches list fields whose length is inside the requested range.
+  CindelFilterPredicate lengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return CindelFilter.all([
+      lengthGreaterThan(lower, include: includeLower),
+      lengthLessThan(upper, include: includeUpper),
+    ]);
+  }
+
   /// Matches string fields starting with [value].
   CindelFilterPredicate startsWith(String value) {
     return _FieldFilterPredicate(
@@ -1539,9 +1601,13 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
       return null;
     }
     final value = _nativeFilterValue(predicate.expected);
+    final operation = _nativeFilterOperation(predicate.operation, value);
+    if (operation == null) {
+      return null;
+    }
     return WireFilter.field(
       field: predicate.field,
-      operation: _nativeFilterOperation(predicate.operation, value),
+      operation: operation,
       value: value,
     );
   }
@@ -1572,7 +1638,7 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   return null;
 }
 
-WireFilterOperation _nativeFilterOperation(
+WireFilterOperation? _nativeFilterOperation(
   _FilterOperation operation,
   WireValue value,
 ) {
@@ -1589,6 +1655,13 @@ WireFilterOperation _nativeFilterOperation(
     _FilterOperation.contains => WireFilterOperation.contains,
     _FilterOperation.startsWith => WireFilterOperation.startsWith,
     _FilterOperation.endsWith => WireFilterOperation.endsWith,
+    _FilterOperation.isEmpty ||
+    _FilterOperation.isNotEmpty ||
+    _FilterOperation.lengthEqualTo ||
+    _FilterOperation.lengthGreaterThan ||
+    _FilterOperation.lengthGreaterThanOrEqualTo ||
+    _FilterOperation.lengthLessThan ||
+    _FilterOperation.lengthLessThanOrEqualTo => null,
   };
 }
 
@@ -2000,6 +2073,13 @@ enum _FilterOperation {
   lessThan,
   lessThanOrEqualTo,
   contains,
+  isEmpty,
+  isNotEmpty,
+  lengthEqualTo,
+  lengthGreaterThan,
+  lengthGreaterThanOrEqualTo,
+  lengthLessThan,
+  lengthLessThanOrEqualTo,
   startsWith,
   endsWith,
 }
@@ -2042,6 +2122,33 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
         actual is Iterable
             ? actual.any((value) => _deepEquals(value, expected))
             : _string(actual).contains(_string(expected)),
+      _FilterOperation.isEmpty => _listLength(actual) == 0,
+      _FilterOperation.isNotEmpty => (_listLength(actual) ?? 0) > 0,
+      _FilterOperation.lengthEqualTo => _matchesLength(
+        actual,
+        expected,
+        (comparison) => comparison == 0,
+      ),
+      _FilterOperation.lengthGreaterThan => _matchesLength(
+        actual,
+        expected,
+        (comparison) => comparison > 0,
+      ),
+      _FilterOperation.lengthGreaterThanOrEqualTo => _matchesLength(
+        actual,
+        expected,
+        (comparison) => comparison >= 0,
+      ),
+      _FilterOperation.lengthLessThan => _matchesLength(
+        actual,
+        expected,
+        (comparison) => comparison < 0,
+      ),
+      _FilterOperation.lengthLessThanOrEqualTo => _matchesLength(
+        actual,
+        expected,
+        (comparison) => comparison <= 0,
+      ),
       _FilterOperation.startsWith => _string(
         actual,
       ).startsWith(_string(expected)),
@@ -2054,6 +2161,27 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
       return -1;
     }
     return actual.compareTo(expected);
+  }
+
+  bool _matchesLength(
+    Object? actual,
+    Object? expected,
+    bool Function(int comparison) test,
+  ) {
+    final comparison = _compareLength(actual, expected);
+    return comparison != null && test(comparison);
+  }
+
+  int? _compareLength(Object? actual, Object? expected) {
+    final length = _listLength(actual);
+    if (length == null || expected is! num) {
+      return null;
+    }
+    return length.compareTo(expected);
+  }
+
+  int? _listLength(Object? actual) {
+    return actual is Iterable ? actual.length : null;
   }
 
   String _string(Object? value) {

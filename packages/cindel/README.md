@@ -259,6 +259,22 @@ final names = await db.users
 final maxId = await db.users.all().dbIdProperty().max();
 ```
 
+List fields expose Isar-style element and length helpers:
+
+```dart
+final flutterUsers = await db.users
+    .filter()
+    .tagsElementEqualTo('flutter')
+    .findAll();
+
+final usersWithoutTags = await db.users.filter().tagsIsEmpty().findAll();
+
+final usersWithOneOrTwoTags = await db.users
+    .filter()
+    .tagsLengthBetween(1, 2)
+    .findAll();
+```
+
 The lower-level manual document API remains available:
 
 ```dart

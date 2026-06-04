@@ -1141,6 +1141,48 @@ final class UserQueryFilter {
     return _query.whereMatches(CindelFilter.field("tags").contains(value));
   }
 
+  CindelQuery<User> tagsIsEmpty() {
+    return _query.whereMatches(CindelFilter.field("tags").isEmpty());
+  }
+
+  CindelQuery<User> tagsIsNotEmpty() {
+    return _query.whereMatches(CindelFilter.field("tags").isNotEmpty());
+  }
+
+  CindelQuery<User> tagsLengthEqualTo(int length) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthEqualTo(length),
+    );
+  }
+
+  CindelQuery<User> tagsLengthLessThan(int length, {bool include = false}) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthLessThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> tagsLengthGreaterThan(int length, {bool include = false}) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthGreaterThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> tagsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthBetween(
+        lower,
+        upper,
+        includeLower: includeLower,
+        includeUpper: includeUpper,
+      ),
+    );
+  }
+
   CindelQuery<User> scoresEqualTo(List<int>? value) {
     return _query.whereMatches(
       CindelFilter.field(
@@ -1151,6 +1193,51 @@ final class UserQueryFilter {
 
   CindelQuery<User> scoresElementEqualTo(int value) {
     return _query.whereMatches(CindelFilter.field("scores").contains(value));
+  }
+
+  CindelQuery<User> scoresIsEmpty() {
+    return _query.whereMatches(CindelFilter.field("scores").isEmpty());
+  }
+
+  CindelQuery<User> scoresIsNotEmpty() {
+    return _query.whereMatches(CindelFilter.field("scores").isNotEmpty());
+  }
+
+  CindelQuery<User> scoresLengthEqualTo(int length) {
+    return _query.whereMatches(
+      CindelFilter.field("scores").lengthEqualTo(length),
+    );
+  }
+
+  CindelQuery<User> scoresLengthLessThan(int length, {bool include = false}) {
+    return _query.whereMatches(
+      CindelFilter.field("scores").lengthLessThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> scoresLengthGreaterThan(
+    int length, {
+    bool include = false,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("scores").lengthGreaterThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> scoresLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("scores").lengthBetween(
+        lower,
+        upper,
+        includeLower: includeLower,
+        includeUpper: includeUpper,
+      ),
+    );
   }
 
   CindelQuery<User> roleEqualTo(UserRole value) {
@@ -1200,6 +1287,56 @@ final class UserQueryFilter {
       CindelFilter.field(
         "recipients",
       ).contains(_$RecipientToCindelEmbedded(value)),
+    );
+  }
+
+  CindelQuery<User> recipientsIsEmpty() {
+    return _query.whereMatches(CindelFilter.field("recipients").isEmpty());
+  }
+
+  CindelQuery<User> recipientsIsNotEmpty() {
+    return _query.whereMatches(CindelFilter.field("recipients").isNotEmpty());
+  }
+
+  CindelQuery<User> recipientsLengthEqualTo(int length) {
+    return _query.whereMatches(
+      CindelFilter.field("recipients").lengthEqualTo(length),
+    );
+  }
+
+  CindelQuery<User> recipientsLengthLessThan(
+    int length, {
+    bool include = false,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("recipients").lengthLessThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> recipientsLengthGreaterThan(
+    int length, {
+    bool include = false,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field(
+        "recipients",
+      ).lengthGreaterThan(length, include: include),
+    );
+  }
+
+  CindelQuery<User> recipientsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("recipients").lengthBetween(
+        lower,
+        upper,
+        includeLower: includeLower,
+        includeUpper: includeUpper,
+      ),
     );
   }
 

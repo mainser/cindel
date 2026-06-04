@@ -721,6 +721,64 @@ void _emitFilterMethods(
         '      CindelFilter.field($fieldLiteral).contains($elementValue),',
       )
       ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}IsEmpty() {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).isEmpty(),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}IsNotEmpty() {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln('      CindelFilter.field($fieldLiteral).isNotEmpty(),')
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  $queryType ${methodPrefix}LengthEqualTo(int length) {')
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).lengthEqualTo(length),',
+      )
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}LengthLessThan('
+        'int length, {bool include = false}) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral)'
+        '.lengthLessThan(length, include: include),',
+      )
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}LengthGreaterThan('
+        'int length, {bool include = false}) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral)'
+        '.lengthGreaterThan(length, include: include),',
+      )
+      ..writeln('    );')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  $queryType ${methodPrefix}LengthBetween('
+        'int lower, int upper, '
+        '{bool includeLower = true, bool includeUpper = true}) {',
+      )
+      ..writeln('    return _query.whereMatches(')
+      ..writeln(
+        '      CindelFilter.field($fieldLiteral).lengthBetween('
+        'lower, upper, '
+        'includeLower: includeLower, includeUpper: includeUpper),',
+      )
+      ..writeln('    );')
       ..writeln('  }');
   }
 
@@ -902,6 +960,57 @@ void _emitEmbeddedFilterMethods(
       ..writeln('    return CindelFilter.path(')
       ..writeln('      <String>[..._path, $fieldLiteral],')
       ..writeln('    ).contains($elementValue);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  CindelFilterPredicate ${methodPrefix}IsEmpty() {')
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).isEmpty();')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln('  CindelFilterPredicate ${methodPrefix}IsNotEmpty() {')
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).isNotEmpty();')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LengthEqualTo(int length) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).lengthEqualTo(length);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LengthLessThan('
+        'int length, {bool include = false}) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).lengthLessThan(length, include: include);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LengthGreaterThan('
+        'int length, {bool include = false}) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln('    ).lengthGreaterThan(length, include: include);')
+      ..writeln('  }')
+      ..writeln()
+      ..writeln(
+        '  CindelFilterPredicate ${methodPrefix}LengthBetween('
+        'int lower, int upper, '
+        '{bool includeLower = true, bool includeUpper = true}) {',
+      )
+      ..writeln('    return CindelFilter.path(')
+      ..writeln('      <String>[..._path, $fieldLiteral],')
+      ..writeln(
+        '    ).lengthBetween(lower, upper, '
+        'includeLower: includeLower, includeUpper: includeUpper);',
+      )
       ..writeln('  }');
   }
 

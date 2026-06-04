@@ -593,8 +593,30 @@ Field predicates:
 - `lessThanOrEqualTo`
 - `between`
 - `contains`
+- `isEmpty`
+- `isNotEmpty`
+- `lengthEqualTo`
+- `lengthLessThan`
+- `lengthGreaterThan`
+- `lengthBetween`
 - `startsWith`
 - `endsWith`
+
+List fields also get generated Isar-style helpers:
+
+```dart
+final tagged = await db.todos
+    .filter()
+    .tagsElementEqualTo('urgent')
+    .findAll();
+
+final empty = await db.todos.filter().tagsIsEmpty().findAll();
+
+final sized = await db.todos
+    .filter()
+    .tagsLengthBetween(1, 3, includeUpper: false)
+    .findAll();
+```
 
 Boolean composition:
 
@@ -626,7 +648,7 @@ final matches = await db.todos
       return query.filter().titleContains(searchText);
     })
     .anyOf(selectedTags, (query, tag) {
-      return query.filter().tagsContains(tag);
+      return query.filter().tagsElementEqualTo(tag);
     })
     .allOf(requiredWords, (query, word) {
       return query.filter().titleContains(word);
@@ -640,7 +662,7 @@ Generated filter wrappers expose the same modifiers directly:
 final matches = await db.todos
     .filter()
     .optional(showOpenOnly, (query) => query.completedEqualTo(false))
-    .anyOf(selectedTags, (query, tag) => query.tagsContains(tag))
+    .anyOf(selectedTags, (query, tag) => query.tagsElementEqualTo(tag))
     .findAll();
 ```
 
