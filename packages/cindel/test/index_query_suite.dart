@@ -223,6 +223,85 @@ void main() {
       await expectLater(range, throwsA(isA<StateError>()));
     });
 
+    // Scenario: Callers request only ids from indexed database queries.
+    // Covers:
+    // - [CindelDatabase.queryEqualIds] over normal and word indexes.
+    // - [CindelDatabase.queryRangeIds] over normal indexes.
+    // - Hash-index and missing-bound validation on id-only query APIs.
+    // Expected: Id-only queries return the same matching ids as document
+    //   queries and reject invalid index shapes before returning ids.
+    test('returns ids for indexed equality and range queries.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      await database.put(
+        'users',
+        1,
+        _user(
+          1,
+          'Ana',
+          'a@example.com',
+          accessToken: 'secret-a',
+          bio: 'Local database',
+        ),
+      );
+      await database.put(
+        'users',
+        2,
+        _user(
+          2,
+          'Ben',
+          'b@example.com',
+          accessToken: 'secret-b',
+          bio: 'Remote database',
+        ),
+      );
+      await database.put(
+        'users',
+        3,
+        _user(
+          3,
+          'Cid',
+          'c@example.com',
+          accessToken: 'secret-c',
+          bio: 'Local runtime',
+        ),
+      );
+
+      // Act.
+      final exactIds = await database.queryEqualIds(
+        'users',
+        'email',
+        'b@example.com',
+      );
+      final wordIds = await database.queryEqualIds('users', 'bio', 'database');
+      final rangeIds = await database.queryRangeIds(
+        'users',
+        'email',
+        lower: 'b@example.com',
+        upper: 'c@example.com',
+      );
+      final hashExactIds = database.queryEqualIds(
+        'users',
+        'accessToken',
+        'secret-b',
+      );
+      final hashRangeIds = database.queryRangeIds(
+        'users',
+        'accessToken',
+        lower: 'secret-a',
+      );
+      final missingBounds = database.queryRangeIds('users', 'email');
+
+      // Assert.
+      expect(exactIds, [2]);
+      expect(wordIds, [1, 2]);
+      expect(rangeIds, [2, 3]);
+      await expectLater(hashExactIds, throwsA(isA<StateError>()));
+      await expectLater(hashRangeIds, throwsA(isA<StateError>()));
+      await expectLater(missingBounds, throwsA(isA<ArgumentError>()));
+    });
+
     // Scenario: A string field is indexed as words.
     // Covers:
     // - [CindelIndexType.words] generated metadata.

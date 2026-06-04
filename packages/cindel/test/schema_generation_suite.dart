@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:cindel/cindel.dart';
+import 'package:cindel/src/native/wire.dart';
 import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
@@ -623,6 +624,55 @@ void main({bool includeMdbxOnlyTests = false}) {
       },
     );
 
+    // Scenario: Callers use the direct database native writer APIs instead of
+    // going through a generated typed collection.
+    // Covers:
+    // - [CindelDatabase.putAllNativeBinaryObjects] writing ids from typed
+    //   objects.
+    // - [CindelDatabase.putAllNativeBinaryDocuments] argument validation.
+    // - Generated native writer metadata supplied directly by callers.
+    // Expected: Direct native object writes store readable typed objects and
+    //   mismatched ids/object counts are rejected before FFI.
+    test(
+      'stores typed objects through direct native database writer APIs.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.sqlite,
+        );
+        final user = User()
+          ..dbId = 1
+          ..name = 'Ana'
+          ..email = 'ana@example.com'
+          ..tags = ['direct', 'native'];
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.putAllNativeBinaryObjects<User>(
+          'users',
+          [user],
+          _userNativeFieldTypes(),
+          UserSchema.getId!,
+          UserSchema.writeNativeDocument!,
+        );
+        final restored = await db.users.get(1);
+        final mismatchedIds = db.putAllNativeBinaryDocuments<User>(
+          'users',
+          [2, 3],
+          [user],
+          _userNativeFieldTypes(),
+          UserSchema.writeNativeDocument!,
+        );
+
+        // Assert.
+        expect(restored?.name, 'Ana');
+        expect(restored?.tags, ['direct', 'native']);
+        await expectLater(mismatchedIds, throwsA(isA<ArgumentError>()));
+      },
+    );
+
     // Scenario: A generated query update changes a string-list field.
     // Covers:
     // - Native update serialization for compact List<String> fields.
@@ -810,8 +860,97 @@ void main({bool includeMdbxOnlyTests = false}) {
           expect(users[3]?.tags, ['runtime']);
         },
       );
+
+      // Scenario: The raw MDBX binary database APIs are called directly.
+      // Covers:
+      // - [CindelDatabase.putAllBinaryDocuments] batch binary writes.
+      // - [CindelDatabase.getAllBinaryDocuments] ordered raw byte reads.
+      // - [CindelDatabase.queryNativeFilterIds] native binary filtering.
+      // - [CindelDatabase.queryNativeProjection] native field projection.
+      // Expected: Raw binary rows preserve order, missing ids stay null, and
+      //   native filtering/projection reads generated binary documents.
+      test(
+        'stores and queries raw MDBX binary document database paths.',
+        () async {
+          // Arrange.
+          final db = await openTestDatabaseInMemory(
+            schemas: [UserSchema],
+            backend: CindelStorageBackend.mdbx,
+          );
+          final active = User()
+            ..dbId = 1
+            ..name = 'Ana'
+            ..email = 'ana@example.com'
+            ..active = true;
+          final inactive = User()
+            ..dbId = 2
+            ..name = 'Ben'
+            ..email = 'ben@example.com'
+            ..active = false;
+          final values = <int, Uint8List>{
+            1: UserSchema.toBinaryDocument!(active),
+            2: UserSchema.toBinaryDocument!(inactive),
+          };
+          final filter = encodeFilter(
+            const WireFilter.field(
+              field: 'active',
+              operation: WireFilterOperation.equal,
+              value: WireValue.bool(true),
+            ),
+          );
+
+          addTearDown(db.close);
+
+          // Act.
+          await db.putAllBinaryDocuments(
+            'users',
+            values,
+            documents: {
+              1: UserSchema.toDocument(active),
+              2: UserSchema.toDocument(inactive),
+            },
+          );
+          final stored = await db.getAllBinaryDocuments('users', [2, 404, 1]);
+          final matchingIds = await db.queryNativeFilterIds('users', [
+            1,
+            2,
+          ], filter);
+          final projectedNames = await db.queryNativeProjection('users', [
+            1,
+            2,
+          ], 'name');
+
+          // Assert.
+          expect(stored[0], orderedEquals(values[2]!));
+          expect(stored[1], isNull);
+          expect(stored[2], orderedEquals(values[1]!));
+          expect(matchingIds, [1]);
+          expect(projectedNames, ['Ana', 'Ben']);
+        },
+      );
     }
   });
+}
+
+Uint8List _userNativeFieldTypes() {
+  return Uint8List.fromList(const [
+    3, // accessToken
+    0, // active
+    3, // bio
+    1, // createdAt
+    3, // displayName
+    3, // email
+    3, // name
+    3, // plan
+    5, // primaryRecipient
+    4, // recipients
+    3, // role
+    4, // scores
+    1, // sessionLength
+    1, // status
+    4, // tags
+    3, // username
+  ]);
 }
 
 Uint8List _compactSingleListDocument(List<String?> values) {

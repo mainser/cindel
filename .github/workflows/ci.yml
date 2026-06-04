@@ -269,5 +269,29 @@ jobs:
       - name: Run Rust tests with MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run Cindel package tests with MDBX
-        run: dart test packages/cindel/test/mdbx_backend_test.dart -r expanded
+      - name: Run Cindel package tests with MDBX and collect coverage
+        shell: bash
+        run: |
+          rm -rf coverage/mdbx
+          mkdir -p coverage/mdbx/raw
+
+          dart test packages/cindel/test/mdbx_backend_test.dart \
+            -r expanded \
+            --coverage=coverage/mdbx/raw
+
+          dart run coverage:format_coverage \
+            --lcov \
+            --in=coverage/mdbx/raw \
+            --out=coverage/mdbx/lcov.info \
+            --package=. \
+            --base-directory=. \
+            --report-on=packages/cindel/lib
+
+      - name: Upload MDBX coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/mdbx/lcov.info
+          flags: dart-mdbx
+          name: dart-mdbx
+          fail_ci_if_error: true
