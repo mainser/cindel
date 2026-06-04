@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,7 +36,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Release tags must look like v1.2.3 or v1.2.3-dev.1."
+            echo "::error::Release runs must use a tag ref like v1.2.3 or v1.2.3-dev.1. For workflow_dispatch, select the tag instead of a branch."
             exit 1
           fi
 
