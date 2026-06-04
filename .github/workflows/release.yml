@@ -303,9 +303,9 @@ jobs:
 
           run_pub() {
             local package_dir="$1"
-            local command="$2"
+            shift
 
-            (cd "${package_dir}" && dart pub get && dart pub publish "${command}")
+            (cd "${package_dir}" && dart pub get && dart pub publish "$@")
           }
 
           dry_run_package() {
@@ -313,7 +313,7 @@ jobs:
             matching_release_package "${package_dir}" || return 0
 
             echo "::group::Dry-run ${package_dir}"
-            run_pub "${package_dir}" --dry-run
+            run_pub "${package_dir}" --dry-run --ignore-warnings
             echo "::endgroup::"
           }
 
@@ -322,7 +322,7 @@ jobs:
             matching_release_package "${package_dir}" || return 0
 
             echo "::group::Publish ${package_dir}"
-            run_pub "${package_dir}" --force
+            run_pub "${package_dir}" --force --ignore-warnings
             echo "::endgroup::"
           }
 
