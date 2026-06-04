@@ -16,6 +16,9 @@ require_command() {
 
 build_target() {
   local target="$1"
+  local sdk="$2"
+  export SDKROOT
+  SDKROOT="$(xcrun --sdk "${sdk}" --show-sdk-path)"
   cargo build \
     --release \
     --manifest-path "${NATIVE_DIR}/Cargo.toml" \
@@ -36,13 +39,16 @@ if [ -z "${LIBCLANG_PATH:-}" ]; then
   fi
 fi
 
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-13.0}"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
+
 cd "${REPO_ROOT}"
 
-build_target aarch64-apple-ios
-build_target aarch64-apple-ios-sim
-build_target x86_64-apple-ios
-build_target aarch64-apple-darwin
-build_target x86_64-apple-darwin
+build_target aarch64-apple-ios iphoneos
+build_target aarch64-apple-ios-sim iphonesimulator
+build_target x86_64-apple-ios iphonesimulator
+build_target aarch64-apple-darwin macosx
+build_target x86_64-apple-darwin macosx
 
 mkdir -p "${LIBS_DIR}/ios/build/ios-arm64"
 mkdir -p "${LIBS_DIR}/ios/build/ios-simulator"

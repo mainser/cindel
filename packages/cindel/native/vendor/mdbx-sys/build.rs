@@ -145,6 +145,17 @@ fn windows_bindgen_include_paths() -> Vec<PathBuf> {
     paths
 }
 
+fn bindgen_clang_target(target: &str) -> &str {
+    match target {
+        "aarch64-apple-ios" => "arm64-apple-ios13.0",
+        "aarch64-apple-ios-sim" => "arm64-apple-ios13.0-simulator",
+        "x86_64-apple-ios" => "x86_64-apple-ios13.0-simulator",
+        "aarch64-apple-darwin" => "arm64-apple-macosx10.15",
+        "x86_64-apple-darwin" => "x86_64-apple-macosx10.15",
+        _ => target,
+    }
+}
+
 fn main() {
     let target = env::var("TARGET").unwrap();
     let mut mdbx = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -165,7 +176,7 @@ fn main() {
         .generate_comments(false)
         .disable_header_comment()
         .formatter(Formatter::None)
-        .clang_arg(format!("--target={target}"));
+        .clang_arg(format!("--target={}", bindgen_clang_target(&target)));
 
     if target.contains("windows") {
         bindings = bindings
@@ -189,6 +200,12 @@ fn main() {
         // `libmdbx` wrapper expects the MDBX value length to be Rust `usize`,
         // matching libmdbx's own custom value struct layout.
         bindings = bindings.clang_arg("-D__sun");
+    }
+
+    if target.contains("apple") {
+        if let Ok(sdkroot) = env::var("SDKROOT") {
+            bindings = bindings.clang_arg("-isysroot").clang_arg(sdkroot);
+        }
     }
 
     let bindings = bindings.generate().expect("Unable to generate bindings");
