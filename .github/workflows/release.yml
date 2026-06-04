@@ -74,7 +74,7 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android NDK
         shell: pwsh
@@ -102,7 +102,7 @@ jobs:
             -Destination $out
 
       - name: Upload Android binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cindel-prebuilt-android
           path: release-artifacts/packages
@@ -135,7 +135,7 @@ jobs:
             release-artifacts/packages/cindel_flutter_libs/linux/libcindel_native.so
 
       - name: Upload Linux binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cindel-prebuilt-linux
           path: release-artifacts/packages
@@ -174,7 +174,7 @@ jobs:
             -Destination "$out\cindel_native.dll"
 
       - name: Upload Windows binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cindel-prebuilt-windows
           path: release-artifacts/packages
@@ -212,7 +212,7 @@ jobs:
             release-artifacts/packages/cindel_flutter_libs/macos/libcindel_native.dylib
 
       - name: Upload Apple binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cindel-prebuilt-apple
           path: release-artifacts/packages
@@ -247,14 +247,24 @@ jobs:
         uses: dart-lang/setup-dart@v1
 
       - name: Download prebuilt binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
 
       - name: Install prebuilt binaries into package
         run: |
-          rsync -a release-artifacts/packages/cindel_flutter_libs/ packages/cindel_flutter_libs/
+          if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
+            artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
+          elif [ -d release-artifacts/cindel_flutter_libs ]; then
+            artifact_libs_dir=release-artifacts/cindel_flutter_libs
+          else
+            echo "::error::Could not find cindel_flutter_libs in downloaded artifacts."
+            find release-artifacts -maxdepth 4 -type d -print
+            exit 1
+          fi
+
+          rsync -a "${artifact_libs_dir}/" packages/cindel_flutter_libs/
           test -f packages/cindel_flutter_libs/android/src/main/jniLibs/arm64-v8a/libcindel_native.so
           test -f packages/cindel_flutter_libs/android/src/main/jniLibs/armeabi-v7a/libcindel_native.so
           test -f packages/cindel_flutter_libs/android/src/main/jniLibs/x86_64/libcindel_native.so

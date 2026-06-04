@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install LLVM/libclang
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
@@ -60,7 +60,7 @@ jobs:
             > backend-benchmark.csv
 
       - name: Upload benchmark CSV
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-benchmark
           path: backend-benchmark.csv
