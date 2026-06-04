@@ -305,11 +305,7 @@ jobs:
             local package_dir="$1"
             local command="$2"
 
-            if grep -q 'sdk:[[:space:]]*flutter' "${package_dir}/pubspec.yaml"; then
-              (cd "${package_dir}" && flutter pub get && flutter pub publish "${command}")
-            else
-              (cd "${package_dir}" && dart pub get && dart pub publish "${command}")
-            fi
+            (cd "${package_dir}" && dart pub get && dart pub publish "${command}")
           }
 
           dry_run_package() {
