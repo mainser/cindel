@@ -117,9 +117,12 @@ jobs:
       - name: Run Rust tests without MDBX
         run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
 
-      - name: Run all package tests with SQLite
+      - name: Run all package tests with SQLite and collect coverage
         shell: bash
         run: |
+          rm -rf coverage
+          mkdir -p coverage/raw
+
           mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' | sort)
           if [ "${#test_dirs[@]}" -eq 0 ]; then
             echo "::error::No package test directories found."
@@ -128,14 +131,35 @@ jobs:
 
           for test_dir in "${test_dirs[@]}"; do
             package_dir="${test_dir%/test}"
+            coverage_dir="coverage/raw/${package_dir//\//_}"
             echo "::group::${test_dir}"
             if grep -q 'sdk: flutter' "${package_dir}/pubspec.yaml"; then
               flutter test "${test_dir}"
             else
-              dart test "${test_dir}" -r expanded
+              mkdir -p "${coverage_dir}"
+              dart test "${test_dir}" -r expanded --coverage="${coverage_dir}"
             fi
             echo "::endgroup::"
           done
+
+          dart run coverage:format_coverage \
+            --lcov \
+            --in=coverage/raw \
+            --out=coverage/lcov.info \
+            --package=. \
+            --base-directory=. \
+            --report-on=packages/cindel/lib \
+            --report-on=packages/cindel_annotations/lib \
+            --report-on=packages/cindel_generator/lib
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          flags: dart-sqlite
+          name: dart-sqlite
+          fail_ci_if_error: true
 
   mdbx-backend:
     name: MDBX backend tests

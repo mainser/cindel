@@ -1,43 +1,79 @@
-# Cindel Database
+<h1 align="center">Cindel</h1>
 
-Extremely fast, easy to use and fully async NoSQL local database for Flutter 
-and Dart apps, powered by a generated Dart API and a compact Rust native core.
+<p align="center">
+  <a href="https://pub.dev/packages/cindel">
+    <img src="https://img.shields.io/pub/v/cindel?label=pub.dev&labelColor=333940&color=0175C2&logo=dart">
+  </a>
+  <a href="https://github.com/mainser/cindel/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/mainser/cindel/ci.yml?branch=main&label=tests&labelColor=333940&logo=github">
+  </a>
+  <a href="https://app.codecov.io/gh/mainser/cindel">
+    <img src="https://img.shields.io/codecov/c/github/mainser/cindel?logo=codecov&logoColor=fff&labelColor=333940&flag=dart-sqlite">
+  </a>
+</p>
 
-[Quickstart](#quickstart) |
-[Features](#features) |
-[CRUD](#crud) |
-[Queries](#queries) |
-[Watchers](#watchers) |
-[Embedded Objects](#embedded-objects) |
-[Native Binaries](#native-binaries)
+<p align="center">
+  <strong>Flutter-first local database with generated Dart APIs and a compact Rust native core.</strong>
+</p>
 
-> Cindel is a Flutter-first local database with typed collections, generated
-> schemas, MDBX storage by default, and SQLite available only when requested.
+<p align="center">
+  Typed collections &middot; MDBX by default &middot; SQLite optional &middot; Native binaries for Flutter
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> &middot;
+  <a href="#features">Features</a> &middot;
+  <a href="#crud">CRUD</a> &middot;
+  <a href="#queries">Queries</a> &middot;
+  <a href="#watchers">Watchers</a> &middot;
+  <a href="#embedded-objects">Embedded Objects</a> &middot;
+  <a href="#native-binaries">Native Binaries</a>
+</p>
+
+## At a Glance
+
+| Area | Cindel provides |
+| --- | --- |
+| Data model | Typed collections generated from Dart classes |
+| Storage | MDBX by default, SQLite only when requested |
+| Runtime | Rust native core behind Dart FFI |
+| Flutter support | Prebuilt native binaries through `cindel_flutter_libs` |
+| Queries | Indexes, filters, sorting, pagination, projections, and aggregates |
+| Reactivity | Document, collection, object, query, and lazy watchers |
 
 ## Status
 
-Cindel is in active pre-1.0 development. The API and storage format can still
-change before a stable release. New projects should treat old preview database
-files as disposable while the optimized native format settles.
+Cindel is in active pre-1.0 development. APIs and storage format may still
+change before a stable release, so preview database files should be treated as
+disposable while the optimized native format settles.
 
 ## Features
 
-- Typed collections generated from regular Dart model classes.
-- Freezed classic class and primary factory models for immutable entities with
-  generated `copyWith`, equality, and hashCode.
+### Generated Dart API
+
+- Typed collections from regular Dart model classes.
+- Freezed classic class and primary factory model support.
+- Schema metadata and compatible additive schema version bumps.
+
+### Storage and Runtime
+
 - Rust native core behind Dart FFI.
 - MDBX default backend with SQLite as an explicit secondary backend.
-- Native auto-increment ids.
+- Native auto-increment ids and in-memory databases for tests.
 - Bulk writes, reads, updates, and deletes.
-- Indexed equality, range, prefix, unique, hash, case-insensitive, word-token,
-  composite, and primitive-list queries.
+- Explicit read and write transactions.
+
+### Querying
+
+- Equality, range, prefix, unique, hash, case-insensitive, word-token,
+  composite, and primitive-list indexes.
 - Filter builders, sorting, pagination, distinct, property projections, and
   property aggregates.
-- Explicit read and write transactions.
+
+### Reactivity and Models
+
 - Document, collection, object, query, and lazy watchers.
 - Embedded objects and embedded object lists.
-- In-memory databases for tests.
-- Schema metadata and compatible additive schema version bumps.
 
 ## Quickstart
 
@@ -414,6 +450,29 @@ Use in-memory databases for fast tests:
 final db = await Cindel.openInMemory(schemas: [UserSchema]);
 addTearDown(db.close);
 ```
+
+## Benchmarks
+
+Benchmarks are a rough signal rather than an absolute performance guarantee,
+but they are useful for tracking whether changes move Cindel in the right
+direction. The charts below compare the current app-style benchmark in both
+small and larger payload modes.
+
+### Small Payloads
+
+`big=false`
+
+<img src="https://raw.githubusercontent.com/mainser/cindel/main/.github/assets/benchmarks.png" alt="Cindel benchmark chart for small payloads"/>
+
+### Larger Payloads
+
+`big=true`
+
+<img src="https://raw.githubusercontent.com/mainser/cindel/main/.github/assets/benchmarks-big.png" alt="Cindel benchmark chart for larger payloads"/>
+
+If you want to inspect more benchmark cases or check how Cindel performs on
+your device, you can run the
+[benchmarks](https://github.com/mainser/cindel_benchmark) yourself.
 
 ## License
 

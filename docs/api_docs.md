@@ -320,6 +320,11 @@ class TodoModel {
 }
 ```
 
+The fields listed in a `CompositeIndex` do not need their own `@Index`
+annotation. The composite index is generated from the collection-level
+declaration above. Add `@Index` to `completed` or `createdAt` only if you also
+want to query either field independently.
+
 ### `@Enumerated`
 
 Controls enum persistence.
