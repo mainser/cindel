@@ -14,7 +14,9 @@ topics:
 
 platforms:
   android:
+  ios:
   linux:
+  macos:
   windows:
 
 environment:

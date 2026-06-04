@@ -360,11 +360,8 @@ inside `@Embedded` classes.
 
 ## Supported Platforms
 
-The current package line ships prebuilt Flutter libraries for Android, Windows,
-and Linux through `cindel_flutter_libs`.
-
-iOS and macOS are planned but are not advertised as supported until their
-native binaries are generated and validated.
+The current package line ships prebuilt Flutter libraries for Android, iOS,
+Linux, macOS, and Windows through `cindel_flutter_libs`.
 
 ## Native Binaries
 

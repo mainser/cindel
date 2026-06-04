@@ -76,33 +76,24 @@ final db = await Cindel.open(
 The current package declares Flutter plugin support for:
 
 - Android
-- Windows
+- iOS
 - Linux
+- macOS
+- Windows
 
 Current binary locations:
 
 - Android: `android/src/main/jniLibs/<abi>/libcindel_native.so`
-- Windows: `windows/cindel_native.dll`
+- iOS: `ios/cindel.xcframework`
 - Linux: `linux/libcindel_native.so`
+- macOS: `macos/libcindel_native.dylib`
+- Windows: `windows/cindel_native.dll`
 
 Android ABIs currently included:
 
 - `arm64-v8a`
 - `armeabi-v7a`
 - `x86_64`
-
-## Planned Platforms
-
-The package contains plugin scaffolding for Apple platforms, but Apple native
-runtime binaries are not part of the current advertised platform set.
-
-Planned binary locations:
-
-- iOS: `ios/cindel.xcframework`
-- macOS: `macos/libcindel_native.dylib`
-
-iOS and macOS should be advertised only after those binaries are generated,
-bundled, and validated.
 
 ## What It Contains
 

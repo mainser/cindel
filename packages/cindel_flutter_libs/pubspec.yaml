@@ -28,7 +28,11 @@ flutter:
       android:
         package: dev.cindel.cindel_flutter_libs
         pluginClass: CindelFlutterLibsPlugin
+      ios:
+        pluginClass: CindelFlutterLibsPlugin
       linux:
+        pluginClass: CindelFlutterLibsPlugin
+      macos:
         pluginClass: CindelFlutterLibsPlugin
       windows:
         pluginClass: CindelFlutterLibsPlugin

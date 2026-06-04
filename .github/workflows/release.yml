@@ -1,0 +1,296 @@
+name: Cindel release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.41.9
+  RUST_TOOLCHAIN: 1.90.0
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag and main ancestry
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tags must look like v1.2.3 or v1.2.3-dev.1."
+            exit 1
+          fi
+
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} must point to a commit contained in origin/main."
+            exit 1
+          fi
+
+          for pubspec in \
+            packages/cindel/pubspec.yaml \
+            packages/cindel_flutter_libs/pubspec.yaml; do
+            package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${pubspec}" | head -n 1)"
+            package_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${pubspec}" | head -n 1)"
+            if [ "${package_version}" != "${version}" ]; then
+              echo "::error::${package_name} is ${package_version}, but release tag is ${version}. cindel and cindel_flutter_libs must match the release tag."
+              exit 1
+            fi
+          done
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  build_android:
+    name: Build Android binaries
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal
+          rustup default $env:RUST_TOOLCHAIN
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        shell: pwsh
+        run: |
+          $ndkVersion = '27.0.12077973'
+          sdkmanager --install "ndk;$ndkVersion"
+          $ndkHome = Join-Path $env:ANDROID_HOME "ndk\$ndkVersion"
+          echo "ANDROID_NDK_HOME=$ndkHome" >> $env:GITHUB_ENV
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm -y --no-progress
+
+      - name: Build Android prebuilt libraries
+        shell: pwsh
+        run: .\tool\prebuilt\build_android.ps1
+
+      - name: Collect Android binaries
+        shell: pwsh
+        run: |
+          $out = 'release-artifacts\packages\cindel_flutter_libs\android\src\main'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Recurse -Force `
+            -LiteralPath 'packages\cindel_flutter_libs\android\src\main\jniLibs' `
+            -Destination $out
+
+      - name: Upload Android binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cindel-prebuilt-android
+          path: release-artifacts/packages
+          if-no-files-found: error
+
+  build_linux:
+    name: Build Linux binary
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install LLVM/libclang
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+          rustup target add x86_64-unknown-linux-gnu
+
+      - name: Build Linux prebuilt library
+        run: ./tool/prebuilt/build_linux.sh
+
+      - name: Collect Linux binary
+        run: |
+          mkdir -p release-artifacts/packages/cindel_flutter_libs/linux
+          cp packages/cindel_flutter_libs/linux/libcindel_native.so \
+            release-artifacts/packages/cindel_flutter_libs/linux/libcindel_native.so
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cindel-prebuilt-linux
+          path: release-artifacts/packages
+          if-no-files-found: error
+
+  build_windows:
+    name: Build Windows binary
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal
+          rustup default $env:RUST_TOOLCHAIN
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm -y --no-progress
+
+      - name: Build Windows prebuilt library
+        shell: pwsh
+        run: .\tool\prebuilt\build_windows.ps1
+
+      - name: Collect Windows binary
+        shell: pwsh
+        run: |
+          $out = 'release-artifacts\packages\cindel_flutter_libs\windows'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Force `
+            -LiteralPath 'packages\cindel_flutter_libs\windows\cindel_native.dll' `
+            -Destination "$out\cindel_native.dll"
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cindel-prebuilt-windows
+          path: release-artifacts/packages
+          if-no-files-found: error
+
+  build_apple:
+    name: Build Apple binaries
+    needs: validate
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+          rustup target add \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin
+
+      - name: Build Apple prebuilt libraries
+        run: ./tool/prebuilt/build_apple.sh
+
+      - name: Collect Apple binaries
+        run: |
+          mkdir -p release-artifacts/packages/cindel_flutter_libs/ios
+          mkdir -p release-artifacts/packages/cindel_flutter_libs/macos
+          cp -R packages/cindel_flutter_libs/ios/cindel.xcframework \
+            release-artifacts/packages/cindel_flutter_libs/ios/cindel.xcframework
+          cp packages/cindel_flutter_libs/macos/libcindel_native.dylib \
+            release-artifacts/packages/cindel_flutter_libs/macos/libcindel_native.dylib
+
+      - name: Upload Apple binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cindel-prebuilt-apple
+          path: release-artifacts/packages
+          if-no-files-found: error
+
+  publish:
+    name: Publish matching packages
+    needs:
+      - validate
+      - build_android
+      - build_linux
+      - build_windows
+      - build_apple
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Dart OIDC publishing
+        uses: dart-lang/setup-dart@v1
+
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Install prebuilt binaries into package
+        run: |
+          rsync -a release-artifacts/packages/cindel_flutter_libs/ packages/cindel_flutter_libs/
+          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/arm64-v8a/libcindel_native.so
+          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/armeabi-v7a/libcindel_native.so
+          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/x86_64/libcindel_native.so
+          test -f packages/cindel_flutter_libs/linux/libcindel_native.so
+          test -f packages/cindel_flutter_libs/windows/cindel_native.dll
+          test -d packages/cindel_flutter_libs/ios/cindel.xcframework
+          test -f packages/cindel_flutter_libs/macos/libcindel_native.dylib
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Publish release packages
+        shell: bash
+        run: |
+          publish_package() {
+            local package_dir="$1"
+            local package_name
+            local package_version
+
+            package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
+            package_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
+
+            if [ "${package_version}" != "${RELEASE_VERSION}" ]; then
+              echo "Skipping ${package_name} ${package_version}; release tag is ${RELEASE_VERSION}."
+              return
+            fi
+
+            echo "::group::Publish ${package_name} ${package_version}"
+            if grep -q 'sdk:[[:space:]]*flutter' "${package_dir}/pubspec.yaml"; then
+              (cd "${package_dir}" && flutter pub get && flutter pub publish --dry-run && flutter pub publish --force)
+            else
+              (cd "${package_dir}" && dart pub get && dart pub publish --dry-run && dart pub publish --force)
+            fi
+            echo "::endgroup::"
+          }
+
+          publish_package packages/cindel_annotations
+          publish_package packages/cindel_generator
+          publish_package packages/cindel
+          publish_package packages/cindel_flutter_libs
