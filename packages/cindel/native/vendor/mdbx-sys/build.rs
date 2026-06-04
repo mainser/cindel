@@ -2,7 +2,10 @@ use bindgen::{
     callbacks::{IntKind, ParseCallbacks},
     Formatter,
 };
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug)]
 struct Callbacks;
@@ -56,6 +59,92 @@ impl ParseCallbacks for Callbacks {
     }
 }
 
+fn add_existing_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.exists() && !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn latest_child_dir(path: &Path) -> Option<PathBuf> {
+    let mut dirs = fs::read_dir(path)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs.pop()
+}
+
+fn add_windows_sdk_includes(paths: &mut Vec<PathBuf>, root: PathBuf, version: Option<String>) {
+    let include_root = root.join("Include");
+    let version_dir = version
+        .map(|version| include_root.join(version.trim_end_matches('\\')))
+        .filter(|path| path.exists())
+        .or_else(|| latest_child_dir(&include_root));
+
+    if let Some(version_dir) = version_dir {
+        for name in ["ucrt", "shared", "um", "winrt"] {
+            add_existing_path(paths, version_dir.join(name));
+        }
+    }
+}
+
+fn find_visual_studio_includes(paths: &mut Vec<PathBuf>, root: &Path) {
+    let Ok(editions) = fs::read_dir(root) else {
+        return;
+    };
+
+    for edition in editions.filter_map(Result::ok).map(|entry| entry.path()) {
+        let Ok(instances) = fs::read_dir(edition) else {
+            continue;
+        };
+
+        for instance in instances.filter_map(Result::ok).map(|entry| entry.path()) {
+            let msvc_root = instance.join("VC").join("Tools").join("MSVC");
+            if let Some(version_dir) = latest_child_dir(&msvc_root) {
+                add_existing_path(paths, version_dir.join("include"));
+            }
+        }
+    }
+}
+
+fn windows_bindgen_include_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Some(include) = env::var_os("INCLUDE") {
+        for path in env::split_paths(&include) {
+            add_existing_path(&mut paths, path);
+        }
+    }
+
+    if let Ok(vctools) = env::var("VCToolsInstallDir") {
+        add_existing_path(&mut paths, PathBuf::from(vctools).join("include"));
+    }
+
+    let sdk_version = env::var("WindowsSDKVersion").ok();
+    if let Ok(sdk_dir) = env::var("WindowsSdkDir") {
+        add_windows_sdk_includes(&mut paths, PathBuf::from(sdk_dir), sdk_version.clone());
+    }
+
+    add_windows_sdk_includes(
+        &mut paths,
+        PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10"),
+        sdk_version,
+    );
+
+    find_visual_studio_includes(
+        &mut paths,
+        Path::new(r"C:\Program Files\Microsoft Visual Studio"),
+    );
+    find_visual_studio_includes(
+        &mut paths,
+        Path::new(r"C:\Program Files (x86)\Microsoft Visual Studio"),
+    );
+
+    paths
+}
+
 fn main() {
     let target = env::var("TARGET").unwrap();
     let mut mdbx = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -75,7 +164,24 @@ fn main() {
         .prepend_enum_name(false)
         .generate_comments(false)
         .disable_header_comment()
-        .formatter(Formatter::None);
+        .formatter(Formatter::None)
+        .clang_arg(format!("--target={target}"));
+
+    if target.contains("windows") {
+        bindings = bindings
+            .clang_arg("-D_WIN32_WINNT=0x0600")
+            .clang_arg("-DWIN32")
+            .clang_arg("-D_WIN32")
+            .clang_arg("-D_WINDOWS")
+            .clang_arg("-fms-extensions")
+            .clang_arg("-fdeclspec");
+
+        for include_path in windows_bindgen_include_paths() {
+            bindings = bindings
+                .clang_arg("-isystem")
+                .clang_arg(include_path.to_string_lossy().into_owned());
+        }
+    }
 
     if target.contains("android") {
         // Android's system `struct iovec` exposes `iov_len` through a platform
@@ -117,6 +223,7 @@ fn main() {
     if target.contains("windows") {
         cc_builder
             .define("MDBX_LOCK_SUFFIX", "L\".lock\"")
+            .define("_WIN32_WINNT", "0x0600")
             .define("MDBX_WITHOUT_MSVC_CRT", "1")
             .define("UNICODE", "1")
             .define("HAVE_LIBM", "1");
@@ -143,6 +250,7 @@ fn main() {
         println!(r"cargo:rustc-link-lib=dylib=kernel32");
         println!(r"cargo:rustc-link-lib=dylib=advapi32");
         println!(r"cargo:rustc-link-lib=dylib=ole32");
+        println!(r"cargo:rustc-link-lib=dylib=psapi");
     }
 
     cc_builder.file(mdbx.join("mdbx.c")).compile("libmdbx.a");
