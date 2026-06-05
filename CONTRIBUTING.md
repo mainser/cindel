@@ -17,7 +17,6 @@ Cindel currently has a working vertical slice:
 - Simple indexes and equality/range queries.
 - Dart streams for document and collection watchers.
 - Schema version registration and compatible additive migrations.
-- A Rust benchmark baseline for backend evaluation.
 
 The API is still experimental. Breaking changes may happen before a first
 public release.
@@ -75,12 +74,6 @@ Flutter app builds should use `cindel_flutter_libs` by default. If a maintainer
 needs to validate Dart native-assets instead of prebuilt binaries, temporarily
 set `hooks.user_defines.cindel.build_native_assets` to `true` in the workspace
 `pubspec.yaml` and regenerate the affected prebuilt binaries afterward.
-
-Run the backend benchmark baseline with:
-
-```powershell
-cargo run --release --manifest-path packages/cindel/native/Cargo.toml --bin cindel_bench -- --documents 10000 --query-repeats 1000
-```
 
 ## Testing Style
 
@@ -168,7 +161,7 @@ Use concise, imperative commit messages:
 ```text
 Add indexed query support
 Fix schema compatibility validation
-Document backend benchmark baseline
+Update release documentation
 ```
 
 ## License

@@ -1,10 +1,10 @@
 name: cindel
 description: Ultra-fast, lightweight NoSQL local database for Flutter and Dart apps, powered by a compact Rust native core.
 version: 0.6.0
-homepage: https://github.com/mainser/Cindel
-repository: https://github.com/mainser/Cindel
-issue_tracker: https://github.com/mainser/Cindel/issues
-documentation: https://github.com/mainser/Cindel/tree/main/packages/cindel#readme
+homepage: https://github.com/mainser/cindel
+repository: https://github.com/mainser/cindel
+issue_tracker: https://github.com/mainser/cindel/issues
+documentation: https://github.com/mainser/cindel/tree/main/packages/cindel#readme
 topics:
   - database
   - nosql
