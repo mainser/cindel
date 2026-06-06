@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
+import 'cindel_error.dart';
 import 'generic_document.dart';
 import 'native/bindings.dart';
 import 'native/wire.dart';
@@ -157,8 +158,8 @@ class CindelDatabase {
 
   /// Opens a database stored under [directory].
   ///
-  /// Throws an [ArgumentError] when [directory] is empty and a [StateError] when
-  /// the native engine cannot be opened.
+  /// Throws an [ArgumentError] when [directory] is empty and a
+  /// [CindelOpenError] when the native engine cannot be opened.
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
@@ -255,9 +256,7 @@ class CindelDatabase {
       handle = bindings.open(directory, backend: backend._nativeId);
     }
     if (handle == nullptr) {
-      throw StateError(
-        'Failed to open Cindel native engine with backend `${backend.name}`.',
-      );
+      throw CindelOpenError(backend: backend.name);
     }
     return CindelDatabase._(
       directory: directory,
@@ -290,7 +289,8 @@ class CindelDatabase {
   /// Runs [action] inside a native read transaction.
   ///
   /// Read transactions provide a consistent snapshot for the reads performed by
-  /// this database handle. Write operations inside [readTxn] throw [StateError].
+  /// this database handle. Write operations inside [readTxn] throw
+  /// [CindelTransactionError].
   Future<T> readTxn<T>(Future<T> Function() action) {
     return _runTransaction(_TransactionMode.read, action);
   }
@@ -307,8 +307,8 @@ class CindelDatabase {
   /// Stores [value] in [collection] under [id].
   ///
   /// Throws an [ArgumentError] when [collection], [id], or [value] is invalid.
-  /// Throws a [StateError] when this database is already closed or the native
-  /// write fails.
+  /// Throws a [CindelDatabaseClosedError] when this database is already closed
+  /// or a [CindelNativeError] when the native write fails.
   Future<void> put(String collection, int id, CindelDocument value) async {
     final handle = _checkOpen();
     _checkCanWrite();
@@ -535,8 +535,8 @@ class CindelDatabase {
   /// Returns the document stored in [collection] under [id], or `null`.
   ///
   /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a
-  /// [StateError] when this database is already closed or the native read
-  /// returns invalid data.
+  /// [CindelDatabaseClosedError] when this database is already closed or a
+  /// [CindelNativeError] when the native read returns invalid data.
   Future<CindelDocument?> get(String collection, int id) async {
     final handle = _checkOpen();
     _checkCollection(collection);
@@ -676,8 +676,8 @@ class CindelDatabase {
   /// Deletes the document stored in [collection] under [id], if it exists.
   ///
   /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a
-  /// [StateError] when this database is already closed or the native delete
-  /// fails.
+  /// [CindelDatabaseClosedError] when this database is already closed or a
+  /// [CindelNativeError] when the native delete fails.
   Future<void> delete(String collection, int id) async {
     final handle = _checkOpen();
     _checkCanWrite();
@@ -824,8 +824,9 @@ class CindelDatabase {
 
   /// Returns documents whose indexed [field] equals [value].
   ///
-  /// Throws an [ArgumentError] when the input is invalid. Throws a [StateError]
-  /// when [collection] has no registered schema or [field] is not indexed.
+  /// Throws an [ArgumentError] when the input is invalid. Throws a
+  /// [CindelSchemaError] when [collection] has no registered schema or a
+  /// [CindelQueryError] when [field] is not indexed.
   Future<List<CindelDocument>> queryEqual(
     String collection,
     String field,
@@ -866,7 +867,7 @@ class CindelDatabase {
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
     if (schemaField.indexType == CindelIndexType.hash) {
-      throw StateError(
+      throw CindelQueryError(
         'Hash index `${schemaField.name}` requires document verification.',
       );
     }
@@ -894,7 +895,7 @@ class CindelDatabase {
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
     if (schemaField.indexType == CindelIndexType.hash) {
-      throw StateError(
+      throw CindelQueryError(
         'Hash index `${schemaField.name}` only supports equality queries.',
       );
     }
@@ -944,7 +945,7 @@ class CindelDatabase {
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
     if (schemaField.indexType == CindelIndexType.hash) {
-      throw StateError(
+      throw CindelQueryError(
         'Hash index `${schemaField.name}` only supports equality queries.',
       );
     }
@@ -1030,7 +1031,9 @@ class CindelDatabase {
     );
     final rows = decodeProjectionRows(bytes);
     if (rows.columnCount != 1) {
-      throw StateError('Native Cindel returned an invalid projection shape.');
+      throw CindelNativeError(
+        'Native Cindel returned an invalid projection shape.',
+      );
     }
     return [for (final cell in rows.cells) _wireValueToObject(cell)];
   }
@@ -1132,7 +1135,9 @@ class CindelDatabase {
     if (value is int) {
       return value;
     }
-    throw StateError('Native Cindel returned a non-integer query count.');
+    throw CindelNativeError(
+      'Native Cindel returned a non-integer query count.',
+    );
   }
 
   Future<List<Object?>> queryNativePlanProjection(
@@ -1153,7 +1158,9 @@ class CindelDatabase {
       ),
     );
     if (rows.columnCount != 1) {
-      throw StateError('Native Cindel returned an invalid projection shape.');
+      throw CindelNativeError(
+        'Native Cindel returned an invalid projection shape.',
+      );
     }
     return [for (final cell in rows.cells) _wireValueToObject(cell)];
   }
@@ -1248,14 +1255,16 @@ class CindelDatabase {
   Pointer<Void> _checkOpen() {
     final handle = _handle;
     if (handle == null) {
-      throw StateError('CindelDatabase is closed.');
+      throw CindelDatabaseClosedError();
     }
     return handle;
   }
 
   void _checkCanWrite() {
     if (_activeTransaction == _TransactionMode.read) {
-      throw StateError('Cannot write inside a Cindel read transaction.');
+      throw CindelTransactionError(
+        'Cannot write inside a Cindel read transaction.',
+      );
     }
   }
 
@@ -1265,7 +1274,9 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     if (_activeTransaction != null) {
-      throw StateError('Cindel does not support nested transactions yet.');
+      throw CindelTransactionError(
+        'Cindel does not support nested transactions yet.',
+      );
     }
 
     final previousChanges = Map<String, _CindelChangeSetBuilder>.of(
@@ -1435,9 +1446,7 @@ class CindelDatabase {
       final key = _uniqueValueKey(entry.field, entry.originalValue);
       final existingId = seen[key];
       if (existingId != null && existingId != entry.id) {
-        throw StateError(
-          'Unique index `${entry.field.name}` already contains this value.',
-        );
+        throw CindelUniqueIndexError(entry.field.name);
       }
       seen[key] = entry.id;
     }
@@ -1474,9 +1483,7 @@ class CindelDatabase {
         for (final candidate in candidates) {
           final candidateId = candidate[_schemas[collection]!.idField];
           if (candidateId != documentEntry.key) {
-            throw StateError(
-              'Unique index `${schemaField.name}` already contains this value.',
-            );
+            throw CindelUniqueIndexError(schemaField.name);
           }
         }
       }
@@ -1486,7 +1493,7 @@ class CindelDatabase {
   CindelFieldSchema _checkIndexedField(String collection, String field) {
     final schema = _schemas[collection];
     if (schema == null) {
-      throw StateError(
+      throw CindelSchemaError(
         'Collection `$collection` has no registered Cindel schema.',
       );
     }
@@ -1497,12 +1504,12 @@ class CindelDatabase {
       }
     }
 
-    throw StateError('Field `$field` is not indexed for `$collection`.');
+    throw CindelQueryError('Field `$field` is not indexed for `$collection`.');
   }
 
   void _checkBinaryBackend() {
     if (backend != CindelStorageBackend.mdbx) {
-      throw StateError(
+      throw CindelSchemaError(
         'Cindel binary documents require the MDBX storage backend.',
       );
     }
@@ -1512,7 +1519,7 @@ class CindelDatabase {
     if (backend == CindelStorageBackend.mdbx || usesSqliteNativeDocuments) {
       return;
     }
-    throw StateError(
+    throw CindelQueryError(
       'Native Cindel query plans require MDBX or SQLite native documents.',
     );
   }
@@ -1551,13 +1558,13 @@ class CindelDatabase {
     _checkIndexName(indexName);
     final schema = _schemas[collection];
     if (schema == null) {
-      throw StateError(
+      throw CindelSchemaError(
         'Collection `$collection` has no registered Cindel schema.',
       );
     }
     final composite = schema.compositeIndexes.firstWhere(
       (index) => index.name == indexName,
-      orElse: () => throw StateError(
+      orElse: () => throw CindelQueryError(
         'Composite index `$indexName` is not registered for `$collection`.',
       ),
     );
@@ -1693,13 +1700,13 @@ class CindelDatabase {
   ) {
     final schema = _schemas[collection];
     if (schema == null) {
-      throw StateError(
+      throw CindelSchemaError(
         'Collection `$collection` has no registered Cindel schema.',
       );
     }
     final composite = schema.compositeIndexes.firstWhere(
       (index) => index.name == indexName,
-      orElse: () => throw StateError(
+      orElse: () => throw CindelQueryError(
         'Composite index `$indexName` is not registered for `$collection`.',
       ),
     );
@@ -1744,7 +1751,9 @@ class CindelDatabase {
   CindelFieldSchema _indexedFieldSchema(String collection, String field) {
     final schemaField = _requireSchemaField(collection, field);
     if (!schemaField.isIndexed) {
-      throw StateError('Field `$field` is not indexed for `$collection`.');
+      throw CindelQueryError(
+        'Field `$field` is not indexed for `$collection`.',
+      );
     }
     return schemaField;
   }
@@ -1752,7 +1761,9 @@ class CindelDatabase {
   CindelFieldSchema _requireSchemaField(String collection, String field) {
     final schemaField = _fieldSchema(collection, field);
     if (schemaField == null) {
-      throw StateError('Field `$field` is not registered for `$collection`.');
+      throw CindelSchemaError(
+        'Field `$field` is not registered for `$collection`.',
+      );
     }
     return schemaField;
   }
@@ -1986,7 +1997,7 @@ class CindelDatabase {
       readRevision: () {
         final handle = _handle;
         if (handle == null) {
-          throw StateError('CindelDatabase is closed.');
+          throw CindelDatabaseClosedError();
         }
         return _bindings.collectionRevision(handle, collection);
       },
@@ -2216,7 +2227,7 @@ CindelDocument _decodeDocument(
     }
   }
 
-  throw StateError(
+  throw CindelNativeError(
     'Native Cindel returned an unsupported document payload for `$collection`.',
   );
 }
@@ -2270,14 +2281,18 @@ List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {
   var offset = 0;
   int readUint8() {
     if (offset + 1 > bytes.length) {
-      throw StateError('Native Cindel returned a truncated binary batch.');
+      throw CindelNativeError(
+        'Native Cindel returned a truncated binary batch.',
+      );
     }
     return bytes[offset++];
   }
 
   int readUint32() {
     if (offset + 4 > bytes.length) {
-      throw StateError('Native Cindel returned a truncated binary batch.');
+      throw CindelNativeError(
+        'Native Cindel returned a truncated binary batch.',
+      );
     }
     final value = data.getUint32(offset, Endian.little);
     offset += 4;
@@ -2291,19 +2306,25 @@ List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {
     final length = readUint32();
     if (present == 0) {
       if (length != 0) {
-        throw StateError('Native Cindel returned an invalid binary batch.');
+        throw CindelNativeError(
+          'Native Cindel returned an invalid binary batch.',
+        );
       }
       documents.add(null);
       continue;
     }
     if (present != 1 || offset + length > bytes.length) {
-      throw StateError('Native Cindel returned an invalid binary batch.');
+      throw CindelNativeError(
+        'Native Cindel returned an invalid binary batch.',
+      );
     }
     documents.add(Uint8List.sublistView(bytes, offset, offset + length));
     offset += length;
   }
   if (offset != bytes.length) {
-    throw StateError('Native Cindel returned trailing binary batch bytes.');
+    throw CindelNativeError(
+      'Native Cindel returned trailing binary batch bytes.',
+    );
   }
   return documents;
 }

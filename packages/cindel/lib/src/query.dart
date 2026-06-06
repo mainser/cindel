@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
+import 'cindel_error.dart';
 import 'database.dart';
 import 'native/wire.dart';
 import 'schema.dart';
@@ -355,7 +356,9 @@ final class CindelQuery<T> {
   }) {
     final schemaField = _schemaField(schema, field);
     if (schemaField.indexType == CindelIndexType.hash) {
-      throw StateError('Hash index `$field` only supports equality queries.');
+      throw CindelQueryError(
+        'Hash index `$field` only supports equality queries.',
+      );
     }
     final indexedPrefix = schemaField.indexCaseSensitive
         ? prefix
@@ -749,7 +752,7 @@ final class CindelQuery<T> {
     if (value is int) {
       return value;
     }
-    throw StateError(
+    throw CindelSchemaError(
       'Generated schema `${_schema.dartName}` returned a non-int id field '
       '`${_schema.idField}`.',
     );
@@ -1572,12 +1575,14 @@ CindelFieldSchema _schemaField<T>(
       return schemaField;
     }
   }
-  throw StateError('Field `$field` is not part of `${schema.dartName}`.');
+  throw CindelSchemaError(
+    'Field `$field` is not part of `${schema.dartName}`.',
+  );
 }
 
 void _checkWordsIndex(CindelFieldSchema field) {
   if (field.indexType != CindelIndexType.words) {
-    throw StateError('Field `${field.name}` is not a word index.');
+    throw CindelQueryError('Field `${field.name}` is not a word index.');
   }
 }
 
@@ -1771,7 +1776,7 @@ final class CindelPropertyQuery<T, R> {
       if (value is num) {
         return value.toInt();
       }
-      throw StateError('Native Cindel returned a non-numeric count.');
+      throw CindelNativeError('Native Cindel returned a non-numeric count.');
     }
 
     var count = 0;
@@ -1812,7 +1817,7 @@ final class CindelPropertyQuery<T, R> {
       if (value is num) {
         return value;
       }
-      throw StateError('Native Cindel returned a non-numeric sum.');
+      throw CindelNativeError('Native Cindel returned a non-numeric sum.');
     }
     return _sum(await findAll());
   }
@@ -1828,7 +1833,7 @@ final class CindelPropertyQuery<T, R> {
       if (value is num) {
         return value.toDouble();
       }
-      throw StateError('Native Cindel returned a non-numeric average.');
+      throw CindelNativeError('Native Cindel returned a non-numeric average.');
     }
     return _average(await findAll());
   }
@@ -1862,7 +1867,7 @@ final class CindelPropertyQuery<T, R> {
         continue;
       }
       if (value is! Comparable<dynamic>) {
-        throw StateError(
+        throw CindelQueryError(
           'Property aggregate `${order.name}` requires comparable values.',
         );
       }
@@ -1891,7 +1896,7 @@ final class CindelPropertyQuery<T, R> {
         continue;
       }
       if (value is! num) {
-        throw StateError('Property sum requires numeric values.');
+        throw CindelQueryError('Property sum requires numeric values.');
       }
       sum += value;
       count += 1;
@@ -1907,7 +1912,7 @@ final class CindelPropertyQuery<T, R> {
         continue;
       }
       if (value is! num) {
-        throw StateError('Property average requires numeric values.');
+        throw CindelQueryError('Property average requires numeric values.');
       }
       sum += value;
       count += 1;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- Added documented Cindel-specific runtime errors exported from the public API,
+  while keeping them compatible with existing `StateError` handling.
+
 ## 0.6.0
 
 - Added `CindelQuery.optional`, `CindelQuery.anyOf`, and

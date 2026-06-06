@@ -1,3 +1,4 @@
+import 'cindel_error.dart';
 import 'database.dart';
 import 'schema.dart';
 import 'text.dart';
@@ -6,8 +7,8 @@ import 'text.dart';
 abstract final class Cindel {
   /// Opens a database stored under [directory].
   ///
-  /// Throws an [ArgumentError] when [directory] is empty and a [StateError] when
-  /// the native engine cannot be opened.
+  /// Throws an [ArgumentError] when [directory] is empty and a
+  /// [CindelOpenError] when the native engine cannot be opened.
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],

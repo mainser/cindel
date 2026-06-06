@@ -15,6 +15,7 @@ export 'src/binary_document.dart'
         cindelEncodeBinaryObject,
         cindelEncodeSchemaBinaryDocument;
 export 'src/cindel.dart';
+export 'src/cindel_error.dart';
 export 'src/database.dart';
 export 'src/query.dart';
 export 'src/schema.dart';
