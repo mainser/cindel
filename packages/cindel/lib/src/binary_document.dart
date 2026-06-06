@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+// Binary documents have two related payload shapes:
+// - schema-backed compact documents used by generated typed serializers;
+// - nested object/list value records used inside dynamic fields.
+
 const _nullFlag = 0x01;
 const _compactNullBool = 0xff;
 const _compactNullInt = -9223372036854775808;
@@ -9,14 +13,28 @@ const _compactStringListMarker = 0xffffffff;
 const _compactStringListKind = 1;
 const _compactStringListHeaderLength = 9;
 
-/// Schema-backed field types used by Cindel's compact generated document
-/// layout.
+/// Field kind used by Cindel's schema-backed compact document layout.
+///
+/// Generated serializers pass one entry per persisted field. Fixed-size values
+/// live directly in the static section; dynamic values store a 24-bit pointer
+/// to their payload in the dynamic section.
 enum CindelBinaryFieldType {
+  /// Nullable `bool`, stored in one static byte.
   boolValue,
+
+  /// Nullable `int`, stored as little-endian signed 64-bit data.
   intValue,
+
+  /// Nullable finite `double`, stored as little-endian 64-bit float data.
   doubleValue,
+
+  /// Nullable UTF-8 `String`, stored in the dynamic section.
   stringValue,
+
+  /// Nullable binary list payload, stored in the dynamic section.
   listValue,
+
+  /// Nullable binary object payload, stored in the dynamic section.
   objectValue,
 }
 
@@ -44,8 +62,11 @@ enum _BinaryKind {
   }
 }
 
-/// Encodes generated field values using the schema-specific static/dynamic
-/// layout used by the optimized typed path.
+/// Encodes generated field values into a schema-backed compact document.
+///
+/// [fields] and [fieldTypes] must have matching order and length. Primitive
+/// fields are written into the static section, while strings, lists, and objects
+/// are appended to the dynamic section and referenced by 24-bit offsets.
 Uint8List cindelEncodeSchemaBinaryDocument(
   List<Object?> fields,
   List<CindelBinaryFieldType> fieldTypes,
@@ -141,27 +162,34 @@ Uint8List cindelEncodeSchemaBinaryDocument(
       .takeBytes();
 }
 
-/// Encodes a Cindel binary object payload.
+/// Encodes a nested object payload for a Cindel binary document.
+///
+/// Object keys are written in sorted order so equal objects produce stable
+/// bytes.
 Uint8List cindelEncodeBinaryObject(Map<String, Object?> value) {
   return _encodeObject(value);
 }
 
-/// Decodes a Cindel binary object payload.
+/// Decodes a nested object payload from a Cindel binary document.
 Map<String, Object?> cindelDecodeBinaryObject(Uint8List bytes) {
   return _decodeObject(bytes);
 }
 
-/// Encodes a Cindel binary list payload.
+/// Encodes a nested list payload for a Cindel binary document.
 Uint8List cindelEncodeBinaryList(List<Object?> value) {
   return _encodeList(value);
 }
 
-/// Decodes a Cindel binary list payload.
+/// Decodes a nested list payload from a Cindel binary document.
 List<Object?> cindelDecodeBinaryList(Uint8List bytes) {
   return _decodeList(bytes);
 }
 
-/// Decodes schema-specific compact generated document bytes.
+/// Decodes a schema-backed compact document into positional field values.
+///
+/// [fieldTypes] must be the same schema layout used for encoding. Generated
+/// hydration normally prefers [CindelSchemaBinaryDocumentReader] when it only
+/// needs selected fields.
 List<Object?> cindelDecodeSchemaBinaryDocument(
   Uint8List bytes,
   List<CindelBinaryFieldType> fieldTypes,
@@ -191,12 +219,20 @@ List<Object?> cindelDecodeSchemaBinaryDocument(
   return values;
 }
 
-/// Direct reader for schema-specific compact generated document bytes.
+/// Direct reader for schema-backed compact document bytes.
 ///
 /// Generated hydration code uses this reader to pull only the fields it assigns
 /// to the Dart model, avoiding the intermediate `List<Object?>` allocation used
 /// by [cindelDecodeSchemaBinaryDocument].
+///
+/// Reader methods accept [fieldIndex] to mirror generated serializer calls; the
+/// current binary location is determined by the generated static offset.
 final class CindelSchemaBinaryDocumentReader {
+  /// Creates a reader for [bytes] with the expected static section size.
+  ///
+  /// [staticSize] is generated from the collection schema. The constructor
+  /// validates that the stored payload matches that schema before any field is
+  /// read.
   CindelSchemaBinaryDocumentReader(this.bytes, {required this.staticSize}) {
     if (bytes.length < 3) {
       throw StateError('Compact binary document is shorter than the header.');
@@ -216,10 +252,15 @@ final class CindelSchemaBinaryDocumentReader {
     );
   }
 
+  /// Raw schema-backed compact document bytes.
   final Uint8List bytes;
+
+  /// Expected static section length, excluding the 3-byte header.
   final int staticSize;
+
   ByteData? _byteData;
 
+  /// Reads a nullable `bool` at [staticOffset].
   bool? readBool(int fieldIndex, int staticOffset) {
     final absolute = 3 + staticOffset;
     return switch (bytes[absolute]) {
@@ -230,30 +271,37 @@ final class CindelSchemaBinaryDocumentReader {
     };
   }
 
+  /// Reads a nullable `int` at [staticOffset].
   int? readInt(int fieldIndex, int staticOffset) {
     final value = _byteData!.getInt64(3 + staticOffset, Endian.little);
     return value == _compactNullInt ? null : value;
   }
 
+  /// Reads a nullable finite `double` at [staticOffset].
   double? readDouble(int fieldIndex, int staticOffset) {
     return _readCompactDouble(_byteData!, 3 + staticOffset);
   }
 
+  /// Reads a nullable UTF-8 `String` at [staticOffset].
   String? readString(int fieldIndex, int staticOffset) {
     final payload = _readCompactDynamic(bytes, staticSize, staticOffset);
     return payload == null ? null : utf8.decode(payload);
   }
 
+  /// Reads a nullable nested list payload at [staticOffset].
   List<Object?>? readList(int fieldIndex, int staticOffset) {
     final payload = _readCompactDynamic(bytes, staticSize, staticOffset);
     return payload == null ? null : _decodeList(payload);
   }
 
+  /// Reads a nullable nested object payload at [staticOffset].
   Map<String, Object?>? readObject(int fieldIndex, int staticOffset) {
     final payload = _readCompactDynamic(bytes, staticSize, staticOffset);
     return payload == null ? null : _decodeObject(payload);
   }
 }
+
+// Nested value records used by list/object payloads.
 
 final class _BinaryValue {
   const _BinaryValue(this.kind, this.value);
@@ -282,6 +330,9 @@ final class _BinaryValue {
   final _BinaryKind kind;
   final Object value;
 }
+
+// Compact string-list payloads are emitted by the native layer for generated
+// List<String> fields and decoded here before falling back to value records.
 
 Uint8List _encodeList(List<Object?> values) {
   final writer = _BytesWriter();
@@ -544,6 +595,8 @@ final class _BytesWriter {
   }
 }
 
+// Little-endian primitive helpers.
+
 Uint8List _uint16Bytes(int value) {
   return Uint8List(2)..buffer.asByteData().setUint16(0, value, Endian.little);
 }
@@ -577,6 +630,8 @@ double _readFloat64(Uint8List bytes, int offset) {
       .asByteData(bytes.offsetInBytes, bytes.lengthInBytes)
       .getFloat64(offset, Endian.little);
 }
+
+// Schema-backed compact static/dynamic field helpers.
 
 int _compactStaticSize(CindelBinaryFieldType type) {
   return switch (type) {

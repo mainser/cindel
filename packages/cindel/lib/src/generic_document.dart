@@ -3,10 +3,21 @@ import 'dart:typed_data';
 
 import 'native/wire.dart';
 
+// GenericDocumentV1 is the storage envelope used by the manual
+// `CindelCollection` document API. Generated typed collections use the
+// schema-backed binary document format instead.
+//
+// Layout:
+// - 4-byte magic header: CGD1.
+// - 32-bit little-endian format version.
+// - One Cindel wire value whose root must be an object.
 const _genericDocumentMagic = [0x43, 0x47, 0x44, 0x31]; // CGD1
 const _genericDocumentVersion = 1;
 
-/// Returns whether [bytes] has Cindel's generic manual document envelope.
+/// Returns whether [bytes] starts with Cindel's generic document envelope.
+///
+/// This only checks the magic header and version. Use
+/// [cindelDecodeGenericDocument] when the payload must be fully validated.
 bool cindelIsGenericDocument(Uint8List bytes) {
   if (bytes.length < 8) {
     return false;
@@ -21,6 +32,11 @@ bool cindelIsGenericDocument(Uint8List bytes) {
 }
 
 /// Encodes a manual Cindel document into GenericDocumentV1 bytes.
+///
+/// The document must be a string-keyed object containing Cindel's generic value
+/// shapes: `null`, `bool`, `int`, finite `double`, `String`, `List`, and nested
+/// `Map` values. Object keys are written in UTF-8 byte order so equivalent maps
+/// produce stable bytes regardless of insertion order.
 Uint8List cindelEncodeGenericDocument(Map<String, Object?> document) {
   final writer = CindelWireWriter();
   for (final byte in _genericDocumentMagic) {
@@ -32,6 +48,9 @@ Uint8List cindelEncodeGenericDocument(Map<String, Object?> document) {
 }
 
 /// Decodes GenericDocumentV1 bytes into a manual Cindel document.
+///
+/// The decoder validates the envelope, rejects unsupported versions, requires
+/// an object root, and fails if trailing bytes remain after the wire payload.
 Map<String, Object?> cindelDecodeGenericDocument(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   for (final expected in _genericDocumentMagic) {
@@ -54,6 +73,8 @@ Map<String, Object?> cindelDecodeGenericDocument(Uint8List bytes) {
   return _decodeObject(value);
 }
 
+// Generic documents intentionally normalize object key order. That keeps manual
+// document payloads deterministic across Dart map insertion orders.
 List<WireObjectEntry> _encodeObject(Map<Object?, Object?> document) {
   final keys = <String>[];
   for (final key in document.keys) {
@@ -72,6 +93,8 @@ List<WireObjectEntry> _encodeObject(Map<Object?, Object?> document) {
   ];
 }
 
+// Convert Dart-side manual document values into the shared wire representation.
+// Unsupported values fail here instead of reaching native storage.
 WireValue _encodeValue(Object? value) {
   return switch (value) {
     null => const WireValue.nullValue(),
@@ -94,6 +117,7 @@ WireValue _encodeValue(Object? value) {
   };
 }
 
+// Decode the wire object back into the public manual document shape.
 Map<String, Object?> _decodeObject(WireObjectValue object) {
   final result = <String, Object?>{};
   for (final field in object.fields) {
@@ -102,6 +126,7 @@ Map<String, Object?> _decodeObject(WireObjectValue object) {
   return result;
 }
 
+// Convert wire values into the Dart value shapes accepted by CindelDocument.
 Object? _decodeValue(WireValue value) {
   return switch (value) {
     WireNullValue() => null,
@@ -116,6 +141,8 @@ Object? _decodeValue(WireValue value) {
   };
 }
 
+// Sort by encoded UTF-8 bytes, matching the native GenericDocumentV1 reader and
+// avoiding locale- or code-unit-specific ordering differences.
 int _compareUtf8(String left, String right) {
   final leftBytes = utf8.encode(left);
   final rightBytes = utf8.encode(right);
