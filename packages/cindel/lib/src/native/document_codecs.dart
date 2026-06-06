@@ -1,5 +1,17 @@
 part of 'bindings.dart';
 
+// Native document value codecs.
+//
+// These helpers sit below the public `CindelNativeDocumentReader` /
+// `CindelNativeDocumentWriter` interfaces. They keep native document hydration
+// fast by avoiding extra allocations for ASCII strings while preserving UTF-8
+// fallback paths for every value that cannot use the compact representation.
+
+// Reusable scratch buffer for generated native document writers.
+//
+// The pointer is owned by this object and reused across field writes. Callers
+// must use the pointer only inside the callback because later writes may resize
+// or overwrite the buffer.
 final class _ReusableNativeBytes {
   _ReusableNativeBytes(int capacity)
     : pointer = calloc<Uint8>(capacity),
@@ -8,6 +20,8 @@ final class _ReusableNativeBytes {
   Pointer<Uint8> pointer;
   int capacity;
 
+  // Fast path for ASCII strings: write code units directly into the scratch
+  // buffer. Non-ASCII values fall back to normal UTF-8 encoding.
   void withUtf8String(String value, void Function(Pointer<Uint8>, int) action) {
     if (value.length > capacity) {
       calloc.free(pointer);
@@ -26,6 +40,7 @@ final class _ReusableNativeBytes {
     action(pointer, value.length);
   }
 
+  // Copies arbitrary bytes into the reusable native buffer.
   void withBytes(List<int> bytes, void Function(Pointer<Uint8>, int) action) {
     if (bytes.length > capacity) {
       calloc.free(pointer);
@@ -36,6 +51,8 @@ final class _ReusableNativeBytes {
     action(pointer, bytes.length);
   }
 
+  // Writes a compact string-list payload directly into the reusable buffer when
+  // all strings are ASCII. Non-ASCII lists fall back to `_encodeCompactStringList`.
   void withCompactStringList(
     List<String> values,
     void Function(Pointer<Uint8>, int) action,
@@ -80,9 +97,12 @@ final class _ReusableNativeBytes {
   }
 }
 
+// Sentinel values used by native readers when an id/int field is absent.
 const _nativeReaderNullId = 0xffffffffffffffff;
 const _nativeReaderNullInt = -0x8000000000000000;
 
+// Decodes a native string payload. Native readers already report whether the
+// bytes are ASCII, which lets Dart avoid UTF-8 validation for the common case.
 String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
   if (isAscii) {
     return String.fromCharCodes(bytes);
@@ -90,6 +110,12 @@ String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
   return utf8.decode(bytes);
 }
 
+// Decodes the string-list formats that Cindel has emitted over time.
+//
+// Supported inputs:
+// - legacy JSON lists used by generated fallback writers,
+// - native offset-table lists with a version marker,
+// - compact U24 offset-table lists used by current generated writers.
 List<String>? _decodeNativeStringList(Uint8List bytes) {
   if (bytes.isNotEmpty && bytes[0] == 0x5b) {
     final generatedJsonList = _decodeGeneratedJsonStringList(bytes);
@@ -141,6 +167,11 @@ List<String>? _decodeNativeStringList(Uint8List bytes) {
   );
 }
 
+// Fast parser for the generated JSON string-list shape.
+//
+// It intentionally accepts only simple strings and `null` values. Escapes,
+// control characters, and non-list payloads fall back to the slower JSON parser
+// or fail as unsupported.
 List<String>? _decodeGeneratedJsonStringList(Uint8List bytes) {
   if (bytes.length < 2 || bytes[0] != 0x5b) {
     return null;
@@ -202,6 +233,7 @@ List<String>? _decodeGeneratedJsonStringList(Uint8List bytes) {
   return null;
 }
 
+// Matches the literal JSON token `null`.
 bool _matchesJsonNull(Uint8List bytes, int offset) {
   return offset + 4 <= bytes.length &&
       bytes[offset] == 0x6e &&
@@ -210,6 +242,10 @@ bool _matchesJsonNull(Uint8List bytes, int offset) {
       bytes[offset + 3] == 0x6c;
 }
 
+// Decodes an offset-table string list.
+//
+// Each entry stores a 24-bit relative offset to a length-prefixed UTF-8 string.
+// Offset zero represents an empty string.
 List<String>? _decodeNativeStringListOffsets(
   Uint8List bytes, {
   required int offsetsStart,
@@ -241,6 +277,8 @@ List<String>? _decodeNativeStringListOffsets(
   return list;
 }
 
+// Decodes one string from a larger native payload, using a local ASCII scan to
+// avoid allocating a sublist for pure ASCII values.
 String _decodeNativeStringBytes(Uint8List bytes, int start, int end) {
   for (var i = start; i < end; i += 1) {
     if (bytes[i] > 0x7f) {
@@ -250,10 +288,12 @@ String _decodeNativeStringBytes(Uint8List bytes, int start, int end) {
   return String.fromCharCodes(bytes, start, end);
 }
 
+// Reads an unsigned 24-bit little-endian integer.
 int _readU24Le(Uint8List bytes, int offset) {
   return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
 }
 
+// Writes an unsigned 24-bit little-endian integer.
 void _writeU24Le(Uint8List bytes, int offset, int value) {
   if (value > 0x00ff_ffff) {
     throw StateError('Cindel string list value is too large.');
@@ -263,6 +303,7 @@ void _writeU24Le(Uint8List bytes, int offset, int value) {
   bytes[offset + 2] = (value >> 16) & 0xff;
 }
 
+// Reads an unsigned 32-bit little-endian integer.
 int _readU32Le(Uint8List bytes, int offset) {
   return bytes[offset] |
       (bytes[offset + 1] << 8) |
@@ -270,6 +311,12 @@ int _readU32Le(Uint8List bytes, int offset) {
       (bytes[offset + 3] << 24);
 }
 
+// Encodes a compact string list using U24 offsets and UTF-8 string bytes.
+//
+// Layout:
+// - 3 bytes: static offset-table size.
+// - N * 3 bytes: relative offsets from byte 3 to each string record.
+// - repeated string records: 3-byte length followed by UTF-8 bytes.
 Uint8List _encodeCompactStringList(List<String> values) {
   final encodedValues = [
     for (final value in values) Uint8List.fromList(utf8.encode(value)),

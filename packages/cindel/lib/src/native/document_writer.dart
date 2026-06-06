@@ -1,5 +1,11 @@
 part of 'bindings.dart';
 
+// Runtime implementation of the generated native document writer API.
+//
+// A writer wraps one native batch-writer handle. Generated schemas call this
+// through `CindelNativeDocumentWriter` to write scalar fields, compact
+// string-list payloads, embedded objects, and list/object child writers without
+// constructing full Dart-side binary documents first.
 final class _CindelNativeDocumentWriter
     implements
         CindelNativeStringListDocumentWriter,
@@ -10,6 +16,9 @@ final class _CindelNativeDocumentWriter
       _fieldNamesCache = LinkedHashMap<List<String>, Uint8List>(),
       _ownsBuffers = true;
 
+  // Child writers represent a nested list or embedded object. They share the
+  // parent's reusable buffers and caches, and are closed by `endList` /
+  // `endObject` on the parent writer.
   _CindelNativeDocumentWriter._child(
     this._functions,
     this._writer,
@@ -25,26 +34,36 @@ final class _CindelNativeDocumentWriter
   final LinkedHashMap<List<String>, Uint8List> _fieldNamesCache;
   final bool _ownsBuffers;
 
+  /// Writes a null field value.
   @override
   void writeNull(int fieldIndex) {
     _functions.nativeBatchWriterWriteNull(_writer, fieldIndex);
   }
 
+  /// Writes a boolean field value.
   @override
   void writeBool(int fieldIndex, bool value) {
     _functions.nativeBatchWriterWriteBool(_writer, fieldIndex, value);
   }
 
+  /// Writes an integer field value.
   @override
   void writeInt(int fieldIndex, int value) {
     _functions.nativeBatchWriterWriteInt(_writer, fieldIndex, value);
   }
 
+  /// Writes a double field value.
   @override
   void writeDouble(int fieldIndex, double value) {
     _functions.nativeBatchWriterWriteDouble(_writer, fieldIndex, value);
   }
 
+  /// Writes a string field value.
+  ///
+  /// Short ASCII strings are copied directly through the reusable scratch
+  /// buffer. Large strings are cached as UTF-8 bytes for the duration of this
+  /// writer because generated serializers often write repeated values in a
+  /// batch.
   @override
   void writeString(int fieldIndex, String value) {
     final cachedBytes = _cachedLargeStringBytes(value);
@@ -63,6 +82,8 @@ final class _CindelNativeDocumentWriter
     }
   }
 
+  /// Writes a string-list field value using Cindel's compact native list
+  /// payload.
   @override
   void writeStringList(int fieldIndex, List<String> value) {
     _stringBytes.withCompactStringList(value, (pointer, length) {
@@ -75,6 +96,7 @@ final class _CindelNativeDocumentWriter
     });
   }
 
+  /// Writes an embedded object field through the binary object fallback.
   @override
   void writeObject(int fieldIndex, Map<String, Object?> value) {
     final bytes = cindelEncodeBinaryObject(value);
@@ -88,6 +110,7 @@ final class _CindelNativeDocumentWriter
     });
   }
 
+  /// Writes a list of embedded objects through the binary list fallback.
   @override
   void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
     final bytes = cindelEncodeBinaryList(value);
@@ -101,6 +124,9 @@ final class _CindelNativeDocumentWriter
     });
   }
 
+  /// Starts a nested list writer for [fieldIndex].
+  ///
+  /// The returned writer must be passed back to [endList] on this parent writer.
   @override
   CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
     final writer = _functions.nativeBatchWriterBeginList(
@@ -120,6 +146,7 @@ final class _CindelNativeDocumentWriter
     );
   }
 
+  /// Finishes a nested list writer started by [beginList].
   @override
   void endList(CindelNativeDocumentWriter listWriter) {
     if (listWriter is! _CindelNativeDocumentWriter) {
@@ -133,6 +160,10 @@ final class _CindelNativeDocumentWriter
     listWriter.release();
   }
 
+  /// Starts an embedded object writer for [fieldIndex].
+  ///
+  /// [fieldNames] describes the object's generated field layout and is encoded
+  /// once, then cached for repeated embedded object writes.
   @override
   CindelNativeDocumentWriter beginObject(
     int fieldIndex,
@@ -159,6 +190,7 @@ final class _CindelNativeDocumentWriter
     );
   }
 
+  /// Finishes an embedded object writer started by [beginObject].
   @override
   void endObject(CindelNativeDocumentWriter objectWriter) {
     if (objectWriter is! _CindelNativeDocumentWriter) {
@@ -172,12 +204,16 @@ final class _CindelNativeDocumentWriter
     objectWriter.release();
   }
 
+  // Releases Dart-owned reusable buffers. The native batch writer itself is
+  // finished or aborted by `CindelNativeBindings`.
   void release() {
     if (_ownsBuffers) {
       _stringBytes.free();
     }
   }
 
+  // Cache UTF-8 bytes for large strings only. Small values are cheaper to encode
+  // through the reusable ASCII/UTF-8 scratch path than to store in the cache.
   Uint8List? _cachedLargeStringBytes(String value) {
     if (value.length < 128) {
       return null;
@@ -194,6 +230,8 @@ final class _CindelNativeDocumentWriter
     return bytes;
   }
 
+  // Cache encoded embedded-object field layouts for repeated generated object
+  // writes in the same batch.
   Uint8List _cachedFieldNamesBytes(List<String> fieldNames) {
     final existing = _fieldNamesCache[fieldNames];
     if (existing != null) {

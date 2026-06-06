@@ -1,6 +1,15 @@
 part of 'bindings.dart';
 
+// Contract shared by every way Cindel can call the native library.
+//
+// `CindelNativeBindings` depends on this interface instead of binding directly
+// to one loading strategy. Dynamic libraries and native assets expose the same
+// Dart function signatures here, so higher layers can use one facade regardless
+// of how the Rust library was loaded.
 abstract interface class _CindelNativeFunctions {
+  // Prefer an explicitly opened/bundled dynamic library when one is available.
+  // Otherwise use Dart native assets, which resolve the generated symbols at
+  // compile/build time.
   factory _CindelNativeFunctions.resolve() {
     final library = _openBundledLibrary();
     if (library != null) {
@@ -9,6 +18,7 @@ abstract interface class _CindelNativeFunctions {
     return const _NativeAssetCindelNativeFunctions();
   }
 
+  // ABI/version and database open symbols.
   int Function() get abiVersion;
 
   Pointer<Void> Function(Pointer<Uint8>, int) get open;
@@ -27,6 +37,7 @@ abstract interface class _CindelNativeFunctions {
     int schemasLength,
   );
 
+  // Database lifecycle and transaction symbols.
   void Function(Pointer<Void>) get close;
 
   int Function(Pointer<Void>) get beginReadTransaction;
@@ -37,6 +48,8 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>) get rollbackTransaction;
 
+  // Document write symbols. Indexed variants send both stored bytes and index
+  // payloads; stored variants send only persisted document bytes.
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
   get put;
 
@@ -63,6 +76,8 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get putManyStored;
 
+  // Native writer symbols used by generated collection code to serialize
+  // documents directly into Rust-owned batch builders.
   Pointer<Void> Function(Pointer<Uint8>, int, int, int)
   get nativeBatchWriterNew;
 
@@ -101,6 +116,8 @@ abstract interface class _CindelNativeFunctions {
 
   void Function(Pointer<Void>) get nativeBatchWriterAbort;
 
+  // Native reader symbols used by generated collection code to hydrate typed
+  // objects from native result buffers or streaming query-plan readers.
   Pointer<Void> Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -204,6 +221,8 @@ abstract interface class _CindelNativeFunctions {
 
   void Function(Pointer<Void>) get nativeDocumentReaderFree;
 
+  // Document read symbols. Methods returning pointer/length pairs transfer a
+  // native-owned result buffer that must later be released with `freeBuffer`.
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -255,6 +274,7 @@ abstract interface class _CindelNativeFunctions {
   )
   get documentIds;
 
+  // Delete, revision, change-tracking, and schema metadata symbols.
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete;
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
@@ -274,6 +294,7 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion;
 
+  // Legacy query symbols that execute one native operation at a time.
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -343,6 +364,8 @@ abstract interface class _CindelNativeFunctions {
   )
   get queryAggregate;
 
+  // Query-plan symbols. Dart builds a compact plan once, then native executes
+  // it for ids, documents, counts, projections, aggregates, deletes, or updates.
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -428,5 +451,6 @@ abstract interface class _CindelNativeFunctions {
   )
   get queryPlanUpdate;
 
+  // Releases native-owned buffers returned through pointer/length out params.
   void Function(Pointer<Uint8>, int) get freeBuffer;
 }

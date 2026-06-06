@@ -1,5 +1,12 @@
 part of 'bindings.dart';
 
+// Runtime implementation of the generated native document reader API.
+//
+// Native storage exposes either indexed result sets or streaming query cursors.
+// When `_useCurrentDocument` is true, the normal public `readX(documentIndex,
+// fieldIndex)` methods dispatch to native `readCurrentX` functions and ignore
+// `documentIndex`; this keeps generated hydrators unchanged while allowing
+// streaming readers to avoid current-row lookups by index.
 final class _CindelNativeDocumentReader
     implements CindelNativeDocumentReader, CindelNativeObjectDocumentReader {
   _CindelNativeDocumentReader(
@@ -18,6 +25,9 @@ final class _CindelNativeDocumentReader
        _fieldNamesCache = LinkedHashMap<List<String>, Uint8List>(),
        _ownsScratch = true;
 
+  // Child readers represent list or embedded-object fields. They own their
+  // native reader handle but share the parent's scratch pointers and field-name
+  // cache, so they must not outlive the parent reader.
   _CindelNativeDocumentReader._child(
     this._functions,
     this._reader,
@@ -49,14 +59,20 @@ final class _CindelNativeDocumentReader
   final bool _ownsScratch;
   bool _released = false;
 
+  /// Number of documents or list items exposed by this reader.
   @override
   int get length => _functions.nativeDocumentReaderLen(_reader);
 
+  /// Whether [documentIndex] contains a stored document.
   @override
   bool isPresent(int documentIndex) {
     return _functions.nativeDocumentReaderIsPresent(_reader, documentIndex);
   }
 
+  /// Reads the external document id.
+  ///
+  /// Native uses `_nativeReaderNullId` when an id is unavailable; generated
+  /// schemas expect ids to be present, so that state is surfaced as an error.
   @override
   int readId(int documentIndex) {
     final value = _useCurrentDocument
@@ -68,6 +84,7 @@ final class _CindelNativeDocumentReader
     return value;
   }
 
+  /// Reads a nullable boolean field.
   @override
   bool? readBool(int documentIndex, int fieldIndex) {
     final value = _useCurrentDocument
@@ -87,6 +104,7 @@ final class _CindelNativeDocumentReader
     };
   }
 
+  /// Reads a nullable integer field.
   @override
   int? readInt(int documentIndex, int fieldIndex) {
     final value = _useCurrentDocument
@@ -105,6 +123,9 @@ final class _CindelNativeDocumentReader
     return value;
   }
 
+  /// Reads a nullable double field.
+  ///
+  /// Native uses NaN as the nullable sentinel for doubles.
   @override
   double? readDouble(int documentIndex, int fieldIndex) {
     final value = _useCurrentDocument
@@ -123,6 +144,8 @@ final class _CindelNativeDocumentReader
     return value;
   }
 
+  /// Reads a nullable string field and decodes the borrowed native bytes
+  /// immediately into a Dart-owned [String].
   @override
   String? readString(int documentIndex, int fieldIndex) {
     final length = _useCurrentDocument
@@ -146,6 +169,10 @@ final class _CindelNativeDocumentReader
     return _decodeNativeString(bytes, isAscii: _stringIsAscii.value);
   }
 
+  /// Reads a nullable string-list field.
+  ///
+  /// The native payload may be compact offsets, a versioned native list, or a
+  /// legacy JSON fallback; decoding is centralized in `_decodeNativeStringList`.
   @override
   List<String>? readStringList(int documentIndex, int fieldIndex) {
     final ok = _useCurrentDocument
@@ -169,6 +196,7 @@ final class _CindelNativeDocumentReader
     return _decodeNativeStringList(bytes);
   }
 
+  /// Reads an embedded object stored as binary object bytes.
   @override
   Map<String, Object?>? readObject(int documentIndex, int fieldIndex) {
     if (!_readBytes(documentIndex, fieldIndex)) {
@@ -178,6 +206,7 @@ final class _CindelNativeDocumentReader
     return cindelDecodeBinaryObject(Uint8List.fromList(bytes));
   }
 
+  /// Reads a list of embedded objects stored as a binary list payload.
   @override
   List<Map<String, Object?>?>? readObjectList(
     int documentIndex,
@@ -196,6 +225,10 @@ final class _CindelNativeDocumentReader
         .toList(growable: false);
   }
 
+  /// Opens a child reader for a list field.
+  ///
+  /// The returned reader must be released by generated helper code when it is no
+  /// longer needed.
   @override
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) {
     final listReader = _useCurrentDocument
@@ -211,6 +244,8 @@ final class _CindelNativeDocumentReader
     return _CindelNativeDocumentReader._child(_functions, listReader, this);
   }
 
+  /// Opens a child reader for an embedded object using [fieldNames] as the
+  /// expected object field layout.
   @override
   CindelNativeDocumentReader? readObjectReader(
     int documentIndex,
@@ -240,6 +275,7 @@ final class _CindelNativeDocumentReader
     return _CindelNativeDocumentReader._child(_functions, objectReader, this);
   }
 
+  // Shared raw-byte read helper used by embedded object fallbacks.
   bool _readBytes(int documentIndex, int fieldIndex) {
     return _useCurrentDocument
         ? _functions.nativeDocumentReaderReadCurrentBytes(
@@ -257,6 +293,8 @@ final class _CindelNativeDocumentReader
           );
   }
 
+  // Temporarily copies encoded field names into native memory for object-reader
+  // calls. Native must not retain the pointer after [action] returns.
   T _stringBytesWith<T>(
     Uint8List bytes,
     T Function(Pointer<Uint8> pointer, int length) action,
@@ -270,6 +308,9 @@ final class _CindelNativeDocumentReader
     }
   }
 
+  // Caches encoded field-name layouts for generated embedded object readers.
+  // The cache is intentionally small because generated schemas usually reuse a
+  // handful of embedded layouts.
   Uint8List _cachedFieldNamesBytes(List<String> fieldNames) {
     final existing = _fieldNamesCache[fieldNames];
     if (existing != null) {
@@ -283,6 +324,9 @@ final class _CindelNativeDocumentReader
     return bytes;
   }
 
+  /// Releases the native reader and any scratch memory owned by this wrapper.
+  ///
+  /// The method is idempotent so generated cleanup paths can call it defensively.
   @override
   void release() {
     if (_released) {

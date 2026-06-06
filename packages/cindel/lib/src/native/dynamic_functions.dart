@@ -1,6 +1,15 @@
 part of 'bindings.dart';
 
+// Resolves Cindel's native symbols from an opened dynamic library.
+//
+// This implementation is selected when `_openBundledLibrary()` finds a
+// `DynamicLibrary`, for example through `CINDEL_NATIVE_LIBRARY`, a bundled
+// desktop binary, or `DynamicLibrary.process()`. The native asset implementation
+// covers the static/native-assets path; both implementations must stay aligned
+// with `_CindelNativeFunctions`.
 final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
+  // Stable ABI symbols are resolved eagerly so startup fails early when the
+  // loaded library does not match the Dart binding surface.
   _DynamicCindelNativeFunctions(DynamicLibrary library)
     : abiVersion = library.lookupFunction<Uint32 Function(), int Function()>(
         'cindel_abi_version',
@@ -980,8 +989,11 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final Pointer<Void> Function(Pointer<Uint8>, int) open;
 
+  // Kept only for symbols that are intentionally resolved lazily.
   final DynamicLibrary _library;
 
+  // Backend-aware open was added after the legacy `cindel_open` symbol. The
+  // lazy lookup lets `CindelNativeBindings.open` fall back for older libraries.
   late final Pointer<Void> Function(Pointer<Uint8>, int, int) _openWithBackend =
       _library.lookupFunction<
         Pointer<Void> Function(Pointer<Uint8>, Size, Uint32),
@@ -997,6 +1009,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     return _openWithBackend(directory, length, backend);
   }
 
+  // Schema-aware open follows the same compatibility rule as backend-aware
+  // open: resolve it only when the facade actually needs the newer symbol.
   late final Pointer<Void> Function(
     Pointer<Uint8>,
     int,
@@ -1033,6 +1047,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     );
   }
 
+  // Database lifecycle and transaction symbols.
   @override
   final void Function(Pointer<Void>) close;
 
@@ -1048,6 +1063,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final int Function(Pointer<Void>) rollbackTransaction;
 
+  // Document write symbols.
   @override
   final int Function(
     Pointer<Void>,
@@ -1087,6 +1103,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   putManyStored;
 
+  // Native generated-document writer symbols. These are used by generated
+  // collection code to avoid building intermediate Dart maps during batch puts.
   @override
   final Pointer<Void> Function(Pointer<Uint8>, int, int, int)
   nativeBatchWriterNew;
@@ -1141,6 +1159,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final void Function(Pointer<Void>) nativeBatchWriterAbort;
 
+  // Native generated-document reader symbols. They support both materialized
+  // result buffers and streaming/current-row query-plan readers.
   @override
   final Pointer<Void> Function(
     Pointer<Void>,
@@ -1304,6 +1324,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final void Function(Pointer<Void>) nativeDocumentReaderFree;
 
+  // Document read symbols.
   @override
   final int Function(
     Pointer<Void>,
@@ -1360,6 +1381,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   )
   documentIds;
 
+  // Id, delete, revision, and change-tracking symbols.
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, int) delete;
 
@@ -1386,6 +1408,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   schemaVersion;
 
+  // Index/filter query symbols that return native-owned buffers.
   @override
   final int Function(
     Pointer<Void>,
@@ -1460,6 +1483,9 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   )
   queryAggregate;
 
+  // Query-plan symbols. These execute the compact plan format emitted by Dart
+  // query planning code and can return ids, documents, counts, projections, or
+  // mutation results.
   @override
   final int Function(
     Pointer<Void>,
@@ -1552,6 +1578,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   )
   queryPlanUpdate;
 
+  // Releases native-owned result buffers returned through pointer/length pairs.
   @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
 }

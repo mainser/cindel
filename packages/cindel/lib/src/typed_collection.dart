@@ -6,11 +6,18 @@ import 'database.dart';
 import 'query.dart';
 import 'schema.dart';
 
+// Typed collection bridge between generated schemas and the untyped database
+// runtime. Public methods expose `T` objects, while the implementation chooses
+// between generic documents, schema-backed binary documents, and native document
+// readers/writers when the backend supports them.
 final _nativeFieldTypesCache = Expando<Uint8List>('cindelNativeFieldTypes');
 
 /// Adds typed collection access to [CindelDatabase].
 extension CindelTypedCollectionAccess on CindelDatabase {
-  /// Returns typed generated access for [schema].
+  /// Returns typed access for the generated [schema].
+  ///
+  /// Generated extension getters usually call this helper so application code
+  /// can use `database.todos` instead of manually wiring schemas.
   CindelTypedCollection<T> typedCollection<T>(
     CindelCollectionSchema<T> schema,
   ) {
@@ -22,6 +29,11 @@ extension CindelTypedCollectionAccess on CindelDatabase {
 ///
 /// Instances are usually created by generated extension getters, for example
 /// `database.todos`, instead of being constructed directly by app code.
+///
+/// This class keeps the public typed API small and delegates persistence details
+/// to [CindelDatabase]. When a generated schema provides binary or native
+/// readers/writers, writes and reads use those faster paths until the database
+/// observes generic manual documents in the same collection.
 final class CindelTypedCollection<T> {
   /// Creates typed collection access over [database] using [schema].
   const CindelTypedCollection(this.database, this.schema);
@@ -33,11 +45,17 @@ final class CindelTypedCollection<T> {
   final CindelCollectionSchema<T> schema;
 
   /// Starts a typed query over every object in this collection.
+  ///
+  /// Generated `where()` helpers build on this query and add indexed sources or
+  /// filters before execution.
   CindelQuery<T> all() {
     return CindelQuery.all(database: database, schema: schema);
   }
 
   /// Stores [object] using the id field declared by [schema].
+  ///
+  /// If the id is [autoIncrement], the next database id is allocated and written
+  /// back through the generated id setter before persistence.
   Future<void> put(T object) async {
     if (_usesSqliteNativeDocuments && schema.getId != null) {
       return _putAllBinaryObjects([object]);
@@ -63,6 +81,9 @@ final class CindelTypedCollection<T> {
   }
 
   /// Stores every object atomically.
+  ///
+  /// Duplicate ids are rejected before the batch reaches storage. Empty batches
+  /// are treated as a no-op.
   Future<void> putAll(Iterable<T> objects) async {
     final objectList = objects is List<T>
         ? objects
@@ -118,6 +139,9 @@ final class CindelTypedCollection<T> {
     return database.putAll(schema.name, values!);
   }
 
+  // Shared binary/native batch write path for schemas that expose generated id
+  // accessors. Native writers avoid building intermediate binary documents when
+  // the backend can accept generated objects directly.
   Future<void> _putAllBinaryObjects(List<T> objects) async {
     final nativeWriter = schema.writeNativeDocument;
     final nativeFieldTypes = _nativeFieldTypes();
@@ -186,6 +210,10 @@ final class CindelTypedCollection<T> {
   }
 
   /// Returns typed objects stored under [ids], preserving input order.
+  ///
+  /// Missing ids are returned as `null`. If a native or binary read fails
+  /// because the collection contains manual generic documents, the collection is
+  /// marked for generic hydration and the read is retried through document maps.
   Future<List<T?>> getAll(Iterable<int> ids) async {
     final idList = ids.toList(growable: false);
     if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
@@ -240,6 +268,9 @@ final class CindelTypedCollection<T> {
   }
 
   /// Watches the typed object stored under [id].
+  ///
+  /// The stream emits the current value when [fireImmediately] is true, then
+  /// emits again when the underlying document changes.
   Stream<T?> watchObject(
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
@@ -273,6 +304,8 @@ final class CindelTypedCollection<T> {
   }
 
   /// Watches the entire typed collection.
+  ///
+  /// Each event contains the full decoded collection snapshot.
   Stream<List<T>> watchCollection({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
@@ -298,10 +331,15 @@ final class CindelTypedCollection<T> {
     );
   }
 
+  // Converts untyped document snapshots emitted by database watchers into the
+  // generated object type.
   List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
     return documents.map(schema.fromDocument).toList(growable: false);
   }
 
+  // MDBX binary documents are used only while the collection is known to contain
+  // generated schema-backed payloads. Manual writes switch the handle back to
+  // generic document hydration.
   bool get _usesBinaryDocuments {
     return database.backend == CindelStorageBackend.mdbx &&
         !database.collectionHasGenericDocuments(schema.name) &&
@@ -309,6 +347,9 @@ final class CindelTypedCollection<T> {
         schema.fromBinaryDocument != null;
   }
 
+  // SQLite native documents use generated object readers/writers directly. This
+  // is separate from MDBX binary documents because SQLite can mix native rows
+  // with generic manual documents during compatibility scenarios.
   bool get _usesSqliteNativeDocuments {
     return database.usesSqliteNativeDocuments &&
         !database.collectionHasGenericDocuments(schema.name) &&
@@ -316,6 +357,9 @@ final class CindelTypedCollection<T> {
         schema.readNativeDocument != null;
   }
 
+  // Encodes the generated field type layout expected by native readers/writers.
+  // The result is cached per schema because the layout is stable for a database
+  // handle and sorting fields repeatedly is unnecessary.
   Uint8List? _nativeFieldTypes() {
     final cached = _nativeFieldTypesCache[schema];
     if (cached != null) {
@@ -347,12 +391,17 @@ final class CindelTypedCollection<T> {
     return bytes;
   }
 
+  // Decodes schema-backed binary document bytes and reattaches the external id
+  // when the payload stores ids outside the binary body.
   T _objectFromBinaryDocument(Uint8List bytes, int id) {
     final object = schema.fromBinaryDocument!(bytes);
     schema.setId?.call(object, id);
     return object;
   }
 
+  // Converts a generic document map into a generated object. Some storage paths
+  // keep ids outside the stored payload, so the id is patched into the document
+  // when the generated schema expects it.
   T _objectFromDocument(CindelDocument document, int id) {
     if (document[schema.idField] is int) {
       return schema.fromDocument(document);
@@ -363,6 +412,8 @@ final class CindelTypedCollection<T> {
     });
   }
 
+  // Reads the id through the generated accessor when available, otherwise from
+  // the generated document map.
   int _idFromObject(T object, CindelDocument? document) {
     final getId = schema.getId;
     if (getId != null) {
@@ -371,6 +422,7 @@ final class CindelTypedCollection<T> {
     return _idFromDocument(document ?? schema.toDocument(object));
   }
 
+  // Validates that generated document conversion produced an integer id.
   int _idFromDocument(CindelDocument document) {
     final value = document[schema.idField];
     if (value is int) {
@@ -382,6 +434,7 @@ final class CindelTypedCollection<T> {
     );
   }
 
+  // Returns the generated id setter required by auto-increment writes.
   CindelSetId<T> _idSetter() {
     final setId = schema.setId;
     if (setId == null) {

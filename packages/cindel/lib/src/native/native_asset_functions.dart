@@ -1,9 +1,17 @@
 part of 'bindings.dart';
 
+// `_CindelNativeFunctions` implementation backed by Dart native assets.
+//
+// Unlike `_DynamicCindelNativeFunctions`, this class does not perform manual
+// symbol lookup. Each getter returns the tear-off generated from an `@Native`
+// declaration below, using `_assetId` to bind to Cindel's bundled native asset.
+// Keep this adapter aligned with `_CindelNativeFunctions` and
+// `_DynamicCindelNativeFunctions` whenever the Rust ABI changes.
 final class _NativeAssetCindelNativeFunctions
     implements _CindelNativeFunctions {
   const _NativeAssetCindelNativeFunctions();
 
+  // ABI/version and database open symbols.
   @override
   int Function() get abiVersion => _cindelAbiVersion;
 
@@ -36,6 +44,7 @@ final class _NativeAssetCindelNativeFunctions
     );
   }
 
+  // Database lifecycle and transaction symbols.
   @override
   void Function(Pointer<Void>) get close => _cindelClose;
 
@@ -54,6 +63,7 @@ final class _NativeAssetCindelNativeFunctions
   int Function(Pointer<Void>) get rollbackTransaction =>
       _cindelRollbackTransaction;
 
+  // Document write symbols.
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint8>, int)
   get put => _cindelPut;
@@ -87,6 +97,7 @@ final class _NativeAssetCindelNativeFunctions
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get putManyStored => _cindelPutManyStored;
 
+  // Native generated-document writer symbols.
   @override
   Pointer<Void> Function(Pointer<Uint8>, int, int, int)
   get nativeBatchWriterNew => _cindelNativeBatchWriterNew;
@@ -152,6 +163,7 @@ final class _NativeAssetCindelNativeFunctions
   void Function(Pointer<Void>) get nativeBatchWriterAbort =>
       _cindelNativeBatchWriterAbort;
 
+  // Native generated-document reader symbols.
   @override
   Pointer<Void> Function(
     Pointer<Void>,
@@ -308,6 +320,7 @@ final class _NativeAssetCindelNativeFunctions
   void Function(Pointer<Void>) get nativeDocumentReaderFree =>
       _cindelNativeDocumentReaderFree;
 
+  // Document read symbols.
   @override
   int Function(
     Pointer<Void>,
@@ -368,6 +381,7 @@ final class _NativeAssetCindelNativeFunctions
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete =>
       _cindelDelete;
 
+  // Delete, revision, change-tracking, and schema metadata symbols.
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get deleteMany => _cindelDeleteMany;
@@ -391,6 +405,7 @@ final class _NativeAssetCindelNativeFunctions
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion => _cindelSchemaVersion;
 
+  // Legacy query symbols that execute one native operation at a time.
   @override
   int Function(
     Pointer<Void>,
@@ -465,6 +480,7 @@ final class _NativeAssetCindelNativeFunctions
   )
   get queryAggregate => _cindelQueryAggregate;
 
+  // Query-plan symbols.
   @override
   int Function(
     Pointer<Void>,
@@ -557,10 +573,16 @@ final class _NativeAssetCindelNativeFunctions
   )
   get queryPlanUpdate => _cindelQueryPlanUpdate;
 
+  // Buffer release symbol.
   @override
   void Function(Pointer<Uint8>, int) get freeBuffer => _cindelFreeBuffer;
 }
 
+// Attempts to open a dynamic library before falling back to native assets.
+//
+// The environment override is mainly for tests and local builds where the
+// package-level prebuilt DLL/so/dylib can be stale. On iOS the symbols are
+// expected to live in the current process.
 DynamicLibrary? _openBundledLibrary() {
   final overridePath = Platform.environment['CINDEL_NATIVE_LIBRARY'];
   if (overridePath != null && overridePath.trim().isNotEmpty) {
@@ -585,6 +607,8 @@ DynamicLibrary? _openBundledLibrary() {
   return null;
 }
 
+// Returns platform-specific dynamic library candidates used by local tests,
+// examples, and desktop/package layouts.
 List<String> _candidateLibraryNames() {
   final platformName = switch (Abi.current()) {
     Abi.androidArm ||
@@ -621,12 +645,19 @@ List<String> _candidateLibraryNames() {
   ];
 }
 
+// Minimal join helper to avoid adding a package dependency in this private FFI
+// layer.
 String _joinPath(String base, String relativePath) {
   final separator = Platform.pathSeparator;
   final normalizedRelativePath = relativePath.replaceAll('/', separator);
   return '$base$separator$normalizedRelativePath';
 }
 
+// Native asset declarations. The Dart signatures here must match both
+// `_CindelNativeFunctions` and the exported Rust ABI exactly.
+//
+// Use `isLeaf: true` only for calls that cannot re-enter Dart, allocate through
+// Dart callbacks, or block in a way that would violate FFI leaf-call rules.
 @Native<Uint32 Function()>(
   symbol: 'cindel_abi_version',
   assetId: _assetId,
@@ -661,6 +692,7 @@ external Pointer<Void> _cindelOpenWithBackendAndSchemas(
   int schemasLen,
 );
 
+// Lifecycle and transaction exports.
 @Native<Void Function(Pointer<Void>)>(
   symbol: 'cindel_close',
   assetId: _assetId,
@@ -692,6 +724,7 @@ external int _cindelCommitTransaction(Pointer<Void> handle);
 )
 external int _cindelRollbackTransaction(Pointer<Void> handle);
 
+// Document write exports.
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -777,6 +810,7 @@ external int _cindelPutManyStored(
   int documentsLen,
 );
 
+// Native generated-document writer exports.
 @Native<Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32)>(
   symbol: 'cindel_native_batch_writer_new',
   assetId: _assetId,
@@ -929,6 +963,7 @@ external int _cindelNativeBatchWriterFinishWithOptions(
 )
 external void _cindelNativeBatchWriterAbort(Pointer<Void> writer);
 
+// Native generated-document reader exports.
 @Native<
   Pointer<Void> Function(
     Pointer<Void>,
@@ -1310,6 +1345,8 @@ external Pointer<Void> _cindelNativeDocumentReaderReadCurrentObject(
 )
 external void _cindelNativeDocumentReaderFree(Pointer<Void> reader);
 
+// Document read exports. Pointer/length results are native-owned until released
+// through `_cindelFreeBuffer`.
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -1407,6 +1444,7 @@ external int _cindelDocumentIds(
   Pointer<Size> outLength,
 );
 
+// Delete, revision, change-tracking, and schema metadata exports.
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint64)>(
   symbol: 'cindel_delete',
   assetId: _assetId,
@@ -1478,6 +1516,7 @@ external int _cindelSchemaVersion(
   Pointer<Uint64> outVersion,
 );
 
+// Legacy query exports.
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -1503,6 +1542,7 @@ external int _cindelQueryIndexEqual(
   Pointer<Size> outLength,
 );
 
+// Query-plan exports.
 @Native<
   Int32 Function(
     Pointer<Void>,
@@ -1774,6 +1814,7 @@ external int _cindelQueryPlanUpdate(
   Pointer<Uint64> outCount,
 );
 
+// Buffer ownership export for all native-owned pointer/length result buffers.
 @Native<Void Function(Pointer<Uint8>, Size)>(
   symbol: 'cindel_free_buffer',
   assetId: _assetId,

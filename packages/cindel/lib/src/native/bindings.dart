@@ -10,6 +10,18 @@ import '../binary_document.dart';
 import '../schema.dart';
 import 'wire.dart';
 
+// Native FFI boundary for Cindel.
+//
+// This library is split into parts by concern:
+// - function lookup and native-asset resolution,
+// - document readers/writers,
+// - binary wire codecs,
+// - small allocation/status helpers.
+//
+// Public Dart runtime code should call `CindelNativeBindings` instead of using
+// raw `_CindelNativeFunctions` symbols directly. The facade owns argument
+// encoding, status checks, and conversion from native buffers into owned Dart
+// values.
 part 'document_reader.dart';
 part 'document_writer.dart';
 part 'document_codecs.dart';
@@ -18,16 +30,28 @@ part 'dynamic_functions.dart';
 part 'native_asset_functions.dart';
 part 'binding_utils.dart';
 
+// Asset id used by `@Native` bindings to locate the bundled Cindel library.
 const _assetId = 'package:cindel/src/native/bindings.dart';
 
+/// High-level Dart facade over the Cindel native library.
+///
+/// Methods in this class translate Dart values to temporary native buffers,
+/// invoke the resolved native function table, and copy native results back into
+/// owned Dart collections before freeing the native buffer.
 final class CindelNativeBindings {
   CindelNativeBindings() : _functions = _resolvedFunctions;
 
   static final _resolvedFunctions = _CindelNativeFunctions.resolve();
   final _CindelNativeFunctions _functions;
 
+  /// ABI version reported by the loaded native library.
   int get abiVersion => _functions.abiVersion();
 
+  /// Opens a database handle at [directory].
+  ///
+  /// [backend] is forwarded to native storage. If the loaded library does not
+  /// expose backend-aware open symbols, backend `0` falls back to the legacy
+  /// `open` function and other backend values fail with `nullptr`.
   Pointer<Void> open(String directory, {int backend = 1}) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
       try {
@@ -50,6 +74,10 @@ final class CindelNativeBindings {
     });
   }
 
+  /// Opens a database handle and registers encoded schema metadata upfront.
+  ///
+  /// Returns `nullptr` when the loaded native library cannot satisfy the
+  /// backend/schema-aware open call.
   Pointer<Void> openWithSchemas(
     String directory,
     Uint8List schemas, {
@@ -74,8 +102,11 @@ final class CindelNativeBindings {
     });
   }
 
+  /// Closes a database [handle] returned by [open] or [openWithSchemas].
   void close(Pointer<Void> handle) => _functions.close(handle);
 
+  // Transaction control. Native storage returns integer status codes; the Dart
+  // facade translates non-zero values into StateError with the operation name.
   void beginReadTransaction(Pointer<Void> handle) {
     final status = _functions.beginReadTransaction(handle);
     _checkStatus(status, 'begin read transaction');
@@ -96,6 +127,8 @@ final class CindelNativeBindings {
     _checkStatus(status, 'rollback transaction');
   }
 
+  // Manual document writes. Payloads are already encoded by higher layers as
+  // GenericDocumentV1 or schema-backed binary documents.
   void put(Pointer<Void> handle, String collection, int id, Uint8List bytes) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
@@ -116,6 +149,7 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put');
   }
 
+  /// Allocates the next id for [collection].
   int allocateId(Pointer<Void> handle, String collection) {
     final outId = calloc<Uint64>();
     try {
@@ -137,6 +171,7 @@ final class CindelNativeBindings {
     }
   }
 
+  /// Registers encoded collection schemas with the native handle.
   void registerSchemas(Pointer<Void> handle, Uint8List schemas) {
     final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
       return _functions.registerSchemas(handle, schemasPointer, schemasLength);
@@ -144,6 +179,8 @@ final class CindelNativeBindings {
     _checkStatus(status, 'register schemas');
   }
 
+  // Indexed write APIs update document storage and index entries in one native
+  // operation.
   void putIndexed(
     Pointer<Void> handle,
     String collection,
@@ -218,6 +255,9 @@ final class CindelNativeBindings {
     _checkStatus(status, 'put many stored');
   }
 
+  // Native generated-object batch writers. These paths let generated schemas
+  // write field values directly through `_CindelNativeDocumentWriter`, avoiding
+  // an intermediate Dart-side binary document when the backend supports it.
   void putManyNativeDocuments<T>(
     Pointer<Void> handle,
     String collection,
@@ -342,6 +382,8 @@ final class CindelNativeBindings {
     }
   }
 
+  // Single-document reads. A native status of 1 means "not found"; successful
+  // native buffers are copied into Dart before the buffer is freed.
   Uint8List? get(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
@@ -408,6 +450,8 @@ final class CindelNativeBindings {
     });
   }
 
+  // Batch reads return wire-encoded result lists. Decoding happens in the
+  // database layer so this facade can keep native buffer handling centralized.
   Uint8List getMany(Pointer<Void> handle, String collection, Uint8List ids) {
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
       return _withNativeBytes(ids, (idsPointer, idsLength) {
@@ -456,6 +500,8 @@ final class CindelNativeBindings {
     });
   }
 
+  // Reads generated objects through a native document reader, preserving the
+  // input id order and returning null for missing documents.
   List<T?> getManyNativeDocuments<T>(
     Pointer<Void> handle,
     String collection,
@@ -499,6 +545,9 @@ final class CindelNativeBindings {
     });
   }
 
+  // Executes a native query plan and hydrates each row with the generated reader.
+  // Streaming readers expose one current row at a time; non-streaming readers
+  // expose indexed rows.
   List<T> queryPlanNativeDocuments<T>(
     Pointer<Void> handle,
     String collection,
@@ -553,6 +602,7 @@ final class CindelNativeBindings {
     });
   }
 
+  /// Returns every document id in [collection].
   List<int> documentIds(Pointer<Void> handle, String collection) {
     return _queryIds(
       (outPointer, outLength) {
@@ -574,6 +624,8 @@ final class CindelNativeBindings {
     );
   }
 
+  // Delete APIs. Native-document deletes target generated/native rows when
+  // SQLite stores them separately from generic manual documents.
   void delete(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
@@ -625,6 +677,7 @@ final class CindelNativeBindings {
     _checkStatus(status, 'delete many native documents');
   }
 
+  /// Returns the monotonic revision for [collection].
   int collectionRevision(Pointer<Void> handle, String collection) {
     final outRevision = calloc<Uint64>();
     try {
@@ -646,6 +699,7 @@ final class CindelNativeBindings {
     }
   }
 
+  /// Takes and clears pending native change-set bytes from [handle].
   Uint8List takeChanges(Pointer<Void> handle) {
     return _queryBytes(
       (outPointer, outLength) {
@@ -656,10 +710,12 @@ final class CindelNativeBindings {
     );
   }
 
+  /// Discards pending native change tracking data.
   void discardChanges(Pointer<Void> handle) {
     _checkStatus(_functions.discardChanges(handle), 'discard changes');
   }
 
+  /// Returns the registered schema version for [collection], if any.
   int? schemaVersion(Pointer<Void> handle, String collection) {
     final outVersion = calloc<Uint64>();
     try {
@@ -684,6 +740,8 @@ final class CindelNativeBindings {
     }
   }
 
+  // Index and filter query APIs return id lists encoded with Cindel wire
+  // helpers. The query layer decides when these paths are safe to use.
   List<int> queryIndexEqual(
     Pointer<Void> handle,
     String collection,
@@ -794,6 +852,7 @@ final class CindelNativeBindings {
     );
   }
 
+  // Projection and aggregate APIs operate on an explicit candidate id list.
   Uint8List queryProject(
     Pointer<Void> handle,
     String collection,
@@ -870,6 +929,8 @@ final class CindelNativeBindings {
     });
   }
 
+  // Native query-plan APIs. Plans already encode source, filter, sort,
+  // distinct, offset, and limit.
   List<int> queryPlanIds(
     Pointer<Void> handle,
     String collection,

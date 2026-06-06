@@ -1,5 +1,13 @@
 part of 'bindings.dart';
 
+// FFI allocation and result helpers shared by the binding facade.
+//
+// The helpers in this file keep a strict rule: pointers created from Dart values
+// are temporary and valid only for the callback, while pointers returned by
+// native code are copied into Dart-owned memory before being freed.
+
+// Encodes [value] as UTF-8 and passes a temporary pointer/length pair to
+// [action].
 T _withNativeUtf8Bytes<T>(
   String value,
   T Function(Pointer<Uint8> pointer, int length) action,
@@ -7,6 +15,9 @@ T _withNativeUtf8Bytes<T>(
   return _withNativeBytes(Uint8List.fromList(utf8.encode(value)), action);
 }
 
+// Copies [bytes] into native memory for the duration of [action].
+//
+// Native code must not retain the pointer after [action] returns.
 T _withNativeBytes<T>(
   Uint8List bytes,
   T Function(Pointer<Uint8> pointer, int length) action,
@@ -20,6 +31,8 @@ T _withNativeBytes<T>(
   }
 }
 
+// Passes a null pointer and zero length when [bytes] is null, otherwise behaves
+// like `_withNativeBytes`.
 T _withNullableNativeBytes<T>(
   Uint8List? bytes,
   T Function(Pointer<Uint8> pointer, int length) action,
@@ -30,6 +43,10 @@ T _withNullableNativeBytes<T>(
   return _withNativeBytes(bytes, action);
 }
 
+// Encodes field names as:
+// - field count as uint32 little-endian,
+// - repeated name length as uint32 little-endian,
+// - raw UTF-8 bytes.
 Uint8List _encodeNativeFieldNames(List<String> fieldNames) {
   final encodedNames = [for (final name in fieldNames) utf8.encode(name)];
   final length =
@@ -47,6 +64,8 @@ Uint8List _encodeNativeFieldNames(List<String> fieldNames) {
   return bytes;
 }
 
+// Runs a native query that returns a wire-encoded id list and decodes it into
+// Dart ids.
 List<int> _queryIds(
   int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
   action,
@@ -63,6 +82,10 @@ List<int> _queryIds(
   }
 }
 
+// Runs a native operation that writes an owned result buffer through out params.
+//
+// The native buffer is copied into a Dart `Uint8List` before [freeBuffer] is
+// called.
 Uint8List _queryBytes(
   int Function(Pointer<Pointer<Uint8>> outPointer, Pointer<Size> outLength)
   action,
@@ -87,6 +110,7 @@ Uint8List _queryBytes(
   }
 }
 
+// Shared wrapper for native query-plan operations that return bytes.
 Uint8List _queryPlanBytes(
   Pointer<Void> handle,
   String collection,
@@ -121,6 +145,8 @@ Uint8List _queryPlanBytes(
   });
 }
 
+// Common argument bundle used to avoid repeating nested closure signatures for
+// query-plan FFI calls.
 final class _QueryPlanCallArgs {
   const _QueryPlanCallArgs({
     required this.handle,
@@ -141,12 +167,14 @@ final class _QueryPlanCallArgs {
   final Pointer<Size> outLength;
 }
 
+// Native ids are unsigned at the storage boundary.
 void _checkId(int id) {
   if (id < 0) {
     throw ArgumentError.value(id, 'id', 'Must be greater than or equal to 0.');
   }
 }
 
+// Converts C-style status codes into Dart exceptions.
 void _checkStatus(int status, String operation) {
   if (status != 0) {
     throw StateError('Native Cindel $operation failed.');

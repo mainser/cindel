@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// CindelWireV1 value tags shared by Dart and Rust.
+///
+/// These numeric values are part of the native ABI. Do not reorder or reuse a
+/// tag without updating the Rust codec and its byte-for-byte fixture tests.
 const int wireTagNull = 0;
 const int wireTagBool = 1;
 const int wireTagInt = 2;
@@ -9,11 +13,13 @@ const int wireTagString = 4;
 const int wireTagList = 5;
 const int wireTagObject = 6;
 
+/// Filter AST tags used by native query filtering.
 const int wireFilterTagField = 1;
 const int wireFilterTagAll = 2;
 const int wireFilterTagAny = 3;
 const int wireFilterTagNot = 4;
 
+/// Field filter operation tags used by native SQLite/MDBX query execution.
 const int wireFilterOpEqual = 1;
 const int wireFilterOpLessThan = 2;
 const int wireFilterOpLessThanOrEqual = 3;
@@ -24,10 +30,16 @@ const int wireFilterOpStartsWith = 7;
 const int wireFilterOpEndsWith = 8;
 const int wireFilterOpIsNull = 9;
 
+/// Query source tags for the compact native query-plan format.
 const int wireQuerySourceAll = 1;
 const int wireQuerySourceIndexEqual = 2;
 const int wireQuerySourceIndexRange = 3;
 
+/// Value stored inside a native index entry.
+///
+/// Index values are narrower than document values because indexes only support
+/// scalar values and nested composite-index lists. Object values belong to
+/// [WireValue], not to index entries.
 sealed class WireIndexValue {
   const WireIndexValue();
 
@@ -40,6 +52,7 @@ sealed class WireIndexValue {
       WireIndexList;
 }
 
+/// Explicit null index value.
 final class WireIndexNull extends WireIndexValue {
   const WireIndexNull();
 
@@ -50,6 +63,7 @@ final class WireIndexNull extends WireIndexValue {
   int get hashCode => 0;
 }
 
+/// Boolean index value.
 final class WireIndexBool extends WireIndexValue {
   const WireIndexBool(this.value);
 
@@ -63,6 +77,7 @@ final class WireIndexBool extends WireIndexValue {
   int get hashCode => Object.hash(WireIndexBool, value);
 }
 
+/// Signed 64-bit integer index value.
 final class WireIndexInt extends WireIndexValue {
   const WireIndexInt(this.value);
 
@@ -76,6 +91,7 @@ final class WireIndexInt extends WireIndexValue {
   int get hashCode => Object.hash(WireIndexInt, value);
 }
 
+/// 64-bit floating point index value.
 final class WireIndexDouble extends WireIndexValue {
   const WireIndexDouble(this.value);
 
@@ -89,6 +105,7 @@ final class WireIndexDouble extends WireIndexValue {
   int get hashCode => Object.hash(WireIndexDouble, value);
 }
 
+/// UTF-8 string index value.
 final class WireIndexString extends WireIndexValue {
   const WireIndexString(this.value);
 
@@ -102,6 +119,7 @@ final class WireIndexString extends WireIndexValue {
   int get hashCode => Object.hash(WireIndexString, value);
 }
 
+/// Composite index value made from ordered nested index values.
 final class WireIndexList extends WireIndexValue {
   const WireIndexList(this.values);
 
@@ -115,6 +133,10 @@ final class WireIndexList extends WireIndexValue {
   int get hashCode => Object.hashAll(values);
 }
 
+/// Scalar value returned by native aggregate and count operations.
+///
+/// Scalars intentionally exclude lists and objects so aggregate payloads stay
+/// simple and unambiguous.
 sealed class WireScalar {
   const WireScalar();
 
@@ -125,6 +147,7 @@ sealed class WireScalar {
   const factory WireScalar.string(String value) = WireScalarString;
 }
 
+/// Explicit null scalar result.
 final class WireScalarNull extends WireScalar {
   const WireScalarNull();
 
@@ -135,6 +158,7 @@ final class WireScalarNull extends WireScalar {
   int get hashCode => 0;
 }
 
+/// Boolean scalar result.
 final class WireScalarBool extends WireScalar {
   const WireScalarBool(this.value);
 
@@ -148,6 +172,7 @@ final class WireScalarBool extends WireScalar {
   int get hashCode => Object.hash(WireScalarBool, value);
 }
 
+/// Signed 64-bit integer scalar result.
 final class WireScalarInt extends WireScalar {
   const WireScalarInt(this.value);
 
@@ -161,6 +186,7 @@ final class WireScalarInt extends WireScalar {
   int get hashCode => Object.hash(WireScalarInt, value);
 }
 
+/// 64-bit floating point scalar result.
 final class WireScalarDouble extends WireScalar {
   const WireScalarDouble(this.value);
 
@@ -174,6 +200,7 @@ final class WireScalarDouble extends WireScalar {
   int get hashCode => Object.hash(WireScalarDouble, value);
 }
 
+/// UTF-8 string scalar result.
 final class WireScalarString extends WireScalar {
   const WireScalarString(this.value);
 
@@ -187,6 +214,11 @@ final class WireScalarString extends WireScalar {
   int get hashCode => Object.hash(WireScalarString, value);
 }
 
+/// Generic projected or update value exchanged with native query code.
+///
+/// This is the broadest CindelWireV1 value family and can represent nested
+/// lists and objects. Stored documents themselves still use the document binary
+/// format; [WireValue] is for query filters, projections, and update payloads.
 sealed class WireValue {
   const WireValue();
 
@@ -291,7 +323,10 @@ final class WireObjectValue extends WireValue {
 final class WireObjectEntry {
   const WireObjectEntry(this.name, this.value);
 
+  /// Field name as persisted in the native payload.
   final String name;
+
+  /// Field value encoded under [name].
   final WireValue value;
 
   @override
@@ -302,6 +337,10 @@ final class WireObjectEntry {
   int get hashCode => Object.hash(name, value);
 }
 
+/// Native filter AST sent from Dart query predicates to Rust storage engines.
+///
+/// Field names must be persisted/native names, because Rust evaluates filters
+/// against the stored schema and index metadata.
 sealed class WireFilter {
   const WireFilter();
 
@@ -315,6 +354,7 @@ sealed class WireFilter {
   const factory WireFilter.not(WireFilter predicate) = WireNotFilter;
 }
 
+/// Operation applied by [WireFieldFilter].
 enum WireFilterOperation {
   equal,
   lessThan,
@@ -388,6 +428,7 @@ final class WireNotFilter extends WireFilter {
   int get hashCode => Object.hash(WireNotFilter, predicate);
 }
 
+/// Stored document bytes queued for a native batch write.
 final class WireDocumentWrite {
   const WireDocumentWrite({required this.id, required this.bytes});
 
@@ -404,6 +445,7 @@ final class WireDocumentWrite {
   int get hashCode => Object.hash(id, Object.hashAll(bytes));
 }
 
+/// Stored document bytes plus the index entries generated for that document.
 final class WireIndexedDocumentWrite {
   const WireIndexedDocumentWrite({
     required this.id,
@@ -428,6 +470,11 @@ final class WireIndexedDocumentWrite {
       Object.hash(id, Object.hashAll(bytes), Object.hashAll(indexes));
 }
 
+/// Tabular projection result returned by native query projection APIs.
+///
+/// [cells] is row-major and must contain exactly `rowCount * columnCount`
+/// values. The encoder validates this because Rust and Dart both rely on the
+/// dimensions to slice the flat cell list.
 final class WireProjectionRows {
   const WireProjectionRows({
     required this.rowCount,
@@ -450,6 +497,10 @@ final class WireProjectionRows {
   int get hashCode => Object.hash(rowCount, columnCount, Object.hashAll(cells));
 }
 
+/// Schema manifest registered with the native database.
+///
+/// The manifest is part of migration compatibility. Collection and field names
+/// here are the persisted names understood by the native validators.
 final class WireSchemaManifest {
   const WireSchemaManifest({required this.version, required this.collections});
 
@@ -466,6 +517,7 @@ final class WireSchemaManifest {
   int get hashCode => Object.hash(version, Object.hashAll(collections));
 }
 
+/// Persisted schema for one collection.
 final class WireCollectionSchema {
   const WireCollectionSchema({
     required this.name,
@@ -475,8 +527,14 @@ final class WireCollectionSchema {
   });
 
   final String name;
+
+  /// Persisted id field name.
   final String idField;
+
+  /// Persisted fields known to native storage.
   final List<WireFieldSchema> fields;
+
+  /// Index definitions owned by this collection.
   final List<WireIndexSchema> indexes;
 
   @override
@@ -509,14 +567,31 @@ final class WireFieldSchema {
     required this.caseSensitive,
   });
 
+  /// Persisted field name used by native compatibility checks and queries.
   final String name;
+
+  /// Dart-level type name kept for diagnostics and schema comparison.
   final String typeName;
+
+  /// Binary document field type used by the compact document codec.
   final String binaryType;
+
+  /// Native index value family for this field.
   final String indexType;
+
+  /// Whether this field is the collection id.
   final bool isId;
+
+  /// Whether this field has a native index.
   final bool isIndexed;
+
+  /// Whether the index enforces uniqueness.
   final bool isUnique;
+
+  /// Whether null values are accepted.
   final bool isNullable;
+
+  /// Whether string comparison/indexing keeps case sensitivity.
   final bool caseSensitive;
 
   @override
@@ -546,6 +621,7 @@ final class WireFieldSchema {
   );
 }
 
+/// Persisted schema for a native index.
 final class WireIndexSchema {
   const WireIndexSchema({
     required this.name,
@@ -554,9 +630,16 @@ final class WireIndexSchema {
     required this.caseSensitive,
   });
 
+  /// Persisted index name.
   final String name;
+
+  /// Ordered persisted field names that make up the index.
   final List<String> fields;
+
+  /// Whether the index enforces uniqueness.
   final bool isUnique;
+
+  /// Whether string comparison/indexing keeps case sensitivity.
   final bool caseSensitive;
 
   @override
@@ -572,6 +655,7 @@ final class WireIndexSchema {
       Object.hash(name, Object.hashAll(fields), isUnique, caseSensitive);
 }
 
+/// One generated index value for a document.
 final class WireIndexEntry {
   const WireIndexEntry({
     required this.documentId,
@@ -579,8 +663,13 @@ final class WireIndexEntry {
     required this.value,
   });
 
+  /// Document id that owns this index entry.
   final int documentId;
+
+  /// Persisted index name.
   final String indexName;
+
+  /// Encoded index key value.
   final WireIndexValue value;
 
   @override
@@ -594,6 +683,10 @@ final class WireIndexEntry {
   int get hashCode => Object.hash(documentId, indexName, value);
 }
 
+/// Source stage for a native query plan.
+///
+/// Sources select the initial id stream before optional filter, sort, distinct,
+/// offset, and limit stages are applied.
 sealed class WireQuerySource {
   const WireQuerySource({required this.dedupe});
 
@@ -612,6 +705,7 @@ sealed class WireQuerySource {
     bool dedupe,
   }) = WireQueryIndexRangeSource;
 
+  /// Whether duplicate ids from this source should be removed by native code.
   final bool dedupe;
 }
 
@@ -633,7 +727,10 @@ final class WireQueryIndexEqualSource extends WireQuerySource {
     bool dedupe = false,
   }) : super(dedupe: dedupe);
 
+  /// Persisted index name used to seek the initial id stream.
   final String indexName;
+
+  /// Exact index key to match.
   final WireIndexValue value;
 
   @override
@@ -656,8 +753,13 @@ final class WireQueryIndexRangeSource extends WireQuerySource {
     bool dedupe = false,
   }) : super(dedupe: dedupe);
 
+  /// Persisted index name used to seek the initial id stream.
   final String indexName;
+
+  /// Optional inclusive lower bound.
   final WireIndexValue? lower;
+
+  /// Optional inclusive upper bound.
   final WireIndexValue? upper;
 
   @override
@@ -673,10 +775,14 @@ final class WireQueryIndexRangeSource extends WireQuerySource {
       Object.hash(WireQueryIndexRangeSource, indexName, lower, upper, dedupe);
 }
 
+/// One native sort stage in a query plan.
 final class WireQuerySort {
   const WireQuerySort({required this.field, required this.ascending});
 
+  /// Persisted field name used for comparison.
   final String field;
+
+  /// Sort direction. `false` means descending.
   final bool ascending;
 
   @override
@@ -689,6 +795,10 @@ final class WireQuerySort {
   int get hashCode => Object.hash(field, ascending);
 }
 
+/// Compact query plan executed by native storage engines.
+///
+/// Dart query builders encode the plan once, then Rust can use the same payload
+/// for ids, documents, counts, projections, aggregates, deletes, or updates.
 final class WireQueryPlan {
   const WireQueryPlan({
     required this.source,
@@ -699,11 +809,22 @@ final class WireQueryPlan {
     required this.limit,
   });
 
+  /// Initial id source.
   final WireQuerySource source;
+
+  /// Optional [WireFilter] payload encoded with [encodeFilter].
   final Uint8List? filter;
+
+  /// Sort stages applied after filtering.
   final List<WireQuerySort> sorts;
+
+  /// Persisted field names used for native distinct.
   final List<String> distinctFields;
+
+  /// Number of matching rows to skip.
   final int offset;
+
+  /// Optional maximum number of rows to return.
   final int? limit;
 
   @override
@@ -727,6 +848,7 @@ final class WireQueryPlan {
   );
 }
 
+/// Native watcher change-set payload for one collection revision.
 final class WireChangeSet {
   const WireChangeSet({
     required this.collection,
@@ -734,8 +856,13 @@ final class WireChangeSet {
     required this.documentIds,
   });
 
+  /// Collection name that changed.
   final String collection;
+
+  /// Native collection revision after the change.
   final int revision;
+
+  /// Changed document ids reported by native storage.
   final List<int> documentIds;
 
   @override
@@ -750,6 +877,9 @@ final class WireChangeSet {
       Object.hash(collection, revision, Object.hashAll(documentIds));
 }
 
+/// Encodes a native id-list payload.
+///
+/// The payload is a u32 count followed by that many little-endian u64 ids.
 Uint8List encodeIdList(List<int> ids) {
   final writer = CindelWireWriter();
   writer.writeLength(ids.length);
@@ -759,6 +889,9 @@ Uint8List encodeIdList(List<int> ids) {
   return writer.finish();
 }
 
+/// Decodes a native id-list payload.
+///
+/// The payload is a u32 count followed by that many little-endian u64 ids.
 List<int> decodeIdList(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final count = reader.readLength();
@@ -770,12 +903,14 @@ List<int> decodeIdList(Uint8List bytes) {
   return ids;
 }
 
+/// Encodes an index key value used by index writes and index query sources.
 Uint8List encodeIndexValue(WireIndexValue value) {
   final writer = CindelWireWriter();
   writer.writeIndexValue(value);
   return writer.finish();
 }
 
+/// Decodes an index key value.
 WireIndexValue decodeIndexValue(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final value = reader.readIndexValue();
@@ -783,12 +918,14 @@ WireIndexValue decodeIndexValue(Uint8List bytes) {
   return value;
 }
 
+/// Encodes a scalar native query result.
 Uint8List encodeScalar(WireScalar value) {
   final writer = CindelWireWriter();
   writer.writeScalar(value);
   return writer.finish();
 }
 
+/// Decodes a scalar native query result.
 WireScalar decodeScalar(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final value = reader.readScalar();
@@ -796,12 +933,14 @@ WireScalar decodeScalar(Uint8List bytes) {
   return value;
 }
 
+/// Encodes a native filter AST.
 Uint8List encodeFilter(WireFilter filter) {
   final writer = CindelWireWriter();
   writer.writeFilter(filter);
   return writer.finish();
 }
 
+/// Decodes a native filter AST.
 WireFilter decodeFilter(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final filter = reader.readFilter();
@@ -809,6 +948,7 @@ WireFilter decodeFilter(Uint8List bytes) {
   return filter;
 }
 
+/// Encodes stored document bytes for batch writes.
 Uint8List encodeDocumentWriteBatch(List<WireDocumentWrite> documents) {
   final writer = CindelWireWriter();
   writer.writeLength(documents.length);
@@ -819,6 +959,7 @@ Uint8List encodeDocumentWriteBatch(List<WireDocumentWrite> documents) {
   return writer.finish();
 }
 
+/// Decodes stored document bytes from a batch-write payload.
 List<WireDocumentWrite> decodeDocumentWriteBatch(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final count = reader.readLength();
@@ -832,6 +973,7 @@ List<WireDocumentWrite> decodeDocumentWriteBatch(Uint8List bytes) {
   return documents;
 }
 
+/// Encodes stored document bytes and generated index entries for batch writes.
 Uint8List encodeIndexedDocumentWriteBatch(
   List<WireIndexedDocumentWrite> documents,
 ) {
@@ -849,6 +991,7 @@ Uint8List encodeIndexedDocumentWriteBatch(
   return writer.finish();
 }
 
+/// Decodes stored document bytes and generated index entries.
 List<WireIndexedDocumentWrite> decodeIndexedDocumentWriteBatch(
   Uint8List bytes,
 ) {
@@ -877,6 +1020,7 @@ List<WireIndexedDocumentWrite> decodeIndexedDocumentWriteBatch(
   return documents;
 }
 
+/// Encodes native projection rows in row-major order.
 Uint8List encodeProjectionRows(WireProjectionRows rows) {
   final expectedCells = rows.rowCount * rows.columnCount;
   if (rows.cells.length != expectedCells) {
@@ -893,6 +1037,7 @@ Uint8List encodeProjectionRows(WireProjectionRows rows) {
   return writer.finish();
 }
 
+/// Decodes native projection rows.
 WireProjectionRows decodeProjectionRows(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final rowCount = reader.readUint32();
@@ -910,6 +1055,9 @@ WireProjectionRows decodeProjectionRows(Uint8List bytes) {
   );
 }
 
+/// Encodes field updates for native query-plan update operations.
+///
+/// Entries are sorted by field name to keep the payload deterministic.
 Uint8List encodeFieldUpdates(Map<String, WireValue> updates) {
   final entries = updates.entries.toList(growable: false)
     ..sort((left, right) => left.key.compareTo(right.key));
@@ -922,6 +1070,7 @@ Uint8List encodeFieldUpdates(Map<String, WireValue> updates) {
   return writer.finish();
 }
 
+/// Encodes the schema manifest registered with native storage.
 Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
   final writer = CindelWireWriter();
   writer.writeUint32(manifest.version);
@@ -955,6 +1104,7 @@ Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
   return writer.finish();
 }
 
+/// Decodes a schema manifest returned or validated by native storage.
 WireSchemaManifest decodeSchemaManifest(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final version = reader.readUint32();
@@ -1011,6 +1161,7 @@ WireSchemaManifest decodeSchemaManifest(Uint8List bytes) {
   return WireSchemaManifest(version: version, collections: collections);
 }
 
+/// Encodes generated index entries.
 Uint8List encodeIndexEntryList(List<WireIndexEntry> entries) {
   final writer = CindelWireWriter();
   writer.writeLength(entries.length);
@@ -1022,6 +1173,7 @@ Uint8List encodeIndexEntryList(List<WireIndexEntry> entries) {
   return writer.finish();
 }
 
+/// Decodes generated index entries.
 List<WireIndexEntry> decodeIndexEntryList(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final count = reader.readLength();
@@ -1039,6 +1191,7 @@ List<WireIndexEntry> decodeIndexEntryList(Uint8List bytes) {
   return entries;
 }
 
+/// Encodes a compact native query plan.
 Uint8List encodeQueryPlan(WireQueryPlan plan) {
   final writer = CindelWireWriter();
   writer.writeQuerySource(plan.source);
@@ -1063,6 +1216,7 @@ Uint8List encodeQueryPlan(WireQueryPlan plan) {
   return writer.finish();
 }
 
+/// Decodes a compact native query plan.
 WireQueryPlan decodeQueryPlan(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final source = reader.readQuerySource();
@@ -1092,6 +1246,7 @@ WireQueryPlan decodeQueryPlan(Uint8List bytes) {
   );
 }
 
+/// Encodes watcher change sets returned by native storage.
 Uint8List encodeChangeSetList(List<WireChangeSet> changes) {
   final writer = CindelWireWriter();
   writer.writeLength(changes.length);
@@ -1106,6 +1261,7 @@ Uint8List encodeChangeSetList(List<WireChangeSet> changes) {
   return writer.finish();
 }
 
+/// Decodes watcher change sets returned by native storage.
 List<WireChangeSet> decodeChangeSetList(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final count = reader.readLength();
@@ -1130,11 +1286,17 @@ List<WireChangeSet> decodeChangeSetList(Uint8List bytes) {
   return changes;
 }
 
+/// Low-level writer for CindelWireV1 payloads.
+///
+/// All multi-byte numeric values are little-endian. Strings are UTF-8 encoded
+/// as length-prefixed byte arrays. Callers should normally use the top-level
+/// encode functions unless they are adding a new wire payload family.
 final class CindelWireWriter {
   CindelWireWriter();
 
   final BytesBuilder _bytes = BytesBuilder(copy: false);
 
+  /// Returns the accumulated bytes and clears the internal builder.
   Uint8List finish() => _bytes.takeBytes();
 
   void writeUint8(int value) {
@@ -1181,6 +1343,7 @@ final class CindelWireWriter {
     _bytes.add(bytes);
   }
 
+  /// Writes a UTF-8 string as length-prefixed bytes.
   void writeString(String value) {
     writeBytes(Uint8List.fromList(utf8.encode(value)));
   }
@@ -1321,18 +1484,24 @@ final class CindelWireWriter {
   }
 }
 
+/// Low-level reader for CindelWireV1 payloads.
+///
+/// The reader fails fast on truncated input, invalid bool tags, invalid UTF-8,
+/// unknown tags, and trailing bytes once [finish] is called.
 final class CindelWireReader {
   CindelWireReader(this._bytes);
 
   final Uint8List _bytes;
   int _offset = 0;
 
+  /// Verifies that the entire payload was consumed.
   void finish() {
     if (_offset != _bytes.length) {
       throw const FormatException('wire payload has trailing bytes');
     }
   }
 
+  /// Reads exactly [length] bytes from the current offset.
   Uint8List readExact(int length) {
     final end = _offset + length;
     if (end > _bytes.length) {
@@ -1367,8 +1536,10 @@ final class CindelWireReader {
 
   int readLength() => readUint32();
 
+  /// Reads a length-prefixed byte slice.
   Uint8List readBytes() => readExact(readLength());
 
+  /// Reads a length-prefixed UTF-8 string.
   String readString() => utf8.decode(readBytes(), allowMalformed: false);
 
   WireIndexValue readIndexValue() {
