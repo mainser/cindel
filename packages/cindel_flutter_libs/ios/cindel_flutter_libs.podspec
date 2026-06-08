@@ -3,7 +3,7 @@ Pod::Spec.new do |s|
   s.version          = '0.5.13'
   s.summary          = 'Prebuilt native libraries for Cindel.'
   s.description      = 'Bundles Cindel native libraries for Flutter apps.'
-  s.homepage         = 'https://github.com/mainser/Cindel'
+  s.homepage         = 'https://github.com/mainser/cindel'
   s.license          = { :type => 'Apache-2.0' }
   s.author           = { 'Alain Ramirez' => 'nolbertrg@gmail.com' }
   s.source           = { :path => '.' }

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>Flutter-first local database with generated Dart APIs and a compact Rust native core.</strong>
+  <strong>Extremely fast, easy to use, and fully async NoSQL database, built as a Flutter-first local database with generated Dart APIs and a compact Rust native core.</strong>
 </p>
 
 <p align="center">
@@ -29,17 +29,6 @@
   <a href="#embedded-objects">Embedded Objects</a> &middot;
   <a href="#native-binaries">Native Binaries</a>
 </p>
-
-## At a Glance
-
-| Area | Cindel provides |
-| --- | --- |
-| Data model | Typed collections generated from Dart classes |
-| Storage | MDBX by default, SQLite only when requested |
-| Runtime | Rust native core behind Dart FFI |
-| Flutter support | Prebuilt native binaries through `cindel_flutter_libs` |
-| Queries | Indexes, filters, sorting, pagination, projections, and aggregates |
-| Reactivity | Document, collection, object, query, and lazy watchers |
 
 ## Status
 
