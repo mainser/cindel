@@ -563,6 +563,7 @@ final class WireFieldSchema {
     required this.isId,
     required this.isIndexed,
     required this.isUnique,
+    required this.isReplace,
     required this.isNullable,
     required this.caseSensitive,
   });
@@ -588,6 +589,9 @@ final class WireFieldSchema {
   /// Whether the index enforces uniqueness.
   final bool isUnique;
 
+  /// Whether the index replaces conflicting documents.
+  final bool isReplace;
+
   /// Whether null values are accepted.
   final bool isNullable;
 
@@ -604,6 +608,7 @@ final class WireFieldSchema {
       other.isId == isId &&
       other.isIndexed == isIndexed &&
       other.isUnique == isUnique &&
+      other.isReplace == isReplace &&
       other.isNullable == isNullable &&
       other.caseSensitive == caseSensitive;
 
@@ -616,6 +621,7 @@ final class WireFieldSchema {
     isId,
     isIndexed,
     isUnique,
+    isReplace,
     isNullable,
     caseSensitive,
   );
@@ -627,6 +633,7 @@ final class WireIndexSchema {
     required this.name,
     required this.fields,
     required this.isUnique,
+    required this.isReplace,
     required this.caseSensitive,
   });
 
@@ -639,6 +646,9 @@ final class WireIndexSchema {
   /// Whether the index enforces uniqueness.
   final bool isUnique;
 
+  /// Whether the index replaces conflicting documents.
+  final bool isReplace;
+
   /// Whether string comparison/indexing keeps case sensitivity.
   final bool caseSensitive;
 
@@ -648,11 +658,17 @@ final class WireIndexSchema {
       other.name == name &&
       listEquals(other.fields, fields) &&
       other.isUnique == isUnique &&
+      other.isReplace == isReplace &&
       other.caseSensitive == caseSensitive;
 
   @override
-  int get hashCode =>
-      Object.hash(name, Object.hashAll(fields), isUnique, caseSensitive);
+  int get hashCode => Object.hash(
+    name,
+    Object.hashAll(fields),
+    isUnique,
+    isReplace,
+    caseSensitive,
+  );
 }
 
 /// One generated index value for a document.
@@ -1087,6 +1103,7 @@ Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
       writer.writeBool(field.isId);
       writer.writeBool(field.isIndexed);
       writer.writeBool(field.isUnique);
+      writer.writeBool(field.isReplace);
       writer.writeBool(field.isNullable);
       writer.writeBool(field.caseSensitive);
     }
@@ -1098,6 +1115,7 @@ Uint8List encodeSchemaManifest(WireSchemaManifest manifest) {
         writer.writeString(field);
       }
       writer.writeBool(index.isUnique);
+      writer.writeBool(index.isReplace);
       writer.writeBool(index.caseSensitive);
     }
   }
@@ -1125,6 +1143,7 @@ WireSchemaManifest decodeSchemaManifest(Uint8List bytes) {
           isId: reader.readBool(),
           isIndexed: reader.readBool(),
           isUnique: reader.readBool(),
+          isReplace: reader.readBool(),
           isNullable: reader.readBool(),
           caseSensitive: reader.readBool(),
         ),
@@ -1144,6 +1163,7 @@ WireSchemaManifest decodeSchemaManifest(Uint8List bytes) {
           name: indexName,
           fields: indexFields,
           isUnique: reader.readBool(),
+          isReplace: reader.readBool(),
           caseSensitive: reader.readBool(),
         ),
       );

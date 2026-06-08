@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:analyzer/dart/constant/value.dart';
-import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/element.dart' hide Name;
 import 'package:analyzer/dart/element/type.dart';
 import 'package:build/build.dart';
 import 'package:cindel_annotations/cindel_annotations.dart';
@@ -24,6 +24,11 @@ const _enumeratedChecker = TypeChecker.typeNamed(
 
 const _embeddedChecker = TypeChecker.typeNamed(
   Embedded,
+  inPackage: 'cindel_annotations',
+);
+
+const _nameChecker = TypeChecker.typeNamed(
+  Name,
   inPackage: 'cindel_annotations',
 );
 
@@ -83,6 +88,7 @@ String _emitCollection(_CollectionInfo collection) {
       ..writeln('      isId: ${field.isId},')
       ..writeln('      isIndexed: ${field.isIndexed},')
       ..writeln('      isIndexUnique: ${field.isIndexUnique},')
+      ..writeln('      isIndexReplace: ${field.isIndexReplace},')
       ..writeln('      indexCaseSensitive: ${field.indexCaseSensitive},')
       ..writeln('      indexType: CindelIndexType.${field.indexType.name},')
       ..writeln('    ),');
@@ -102,6 +108,7 @@ String _emitCollection(_CollectionInfo collection) {
       )
       ..writeln('      ],')
       ..writeln('      isUnique: ${index.isUnique},')
+      ..writeln('      isReplace: ${index.isReplace},')
       ..writeln('      caseSensitive: ${index.caseSensitive},')
       ..writeln('    ),');
   }
@@ -164,7 +171,18 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln('      database: database,')
     ..writeln('      schema: ${collection.schemaName},')
     ..writeln('    ),')
-    ..writeln('  );')
+    ..writeln('  );');
+  for (final field in collection.indexedFields) {
+    if (field.isIndexUnique && field.isIndexReplace) {
+      _emitPutByFieldMethods(buffer, collection, field);
+    }
+  }
+  for (final index in collection.compositeIndexes) {
+    if (index.isUnique && index.isReplace) {
+      _emitPutByCompositeMethods(buffer, collection, index);
+    }
+  }
+  buffer
     ..writeln('}')
     ..writeln()
     ..writeln(
@@ -364,7 +382,7 @@ String _emitCollection(_CollectionInfo collection) {
       'int _\$${collection.dartName}GetCindelId('
       '${collection.dartName} object) {',
     )
-    ..writeln('  return object.${collection.idField.name};')
+    ..writeln('  return object.${collection.idField.dartName};')
     ..writeln('}');
   if (collection.canSetId) {
     buffer
@@ -373,7 +391,7 @@ String _emitCollection(_CollectionInfo collection) {
         'void _\$${collection.dartName}SetCindelId('
         '${collection.dartName} object, int id) {',
       )
-      ..writeln('  object.${collection.idField.name} = id;')
+      ..writeln('  object.${collection.idField.dartName} = id;')
       ..writeln('}');
   }
 
@@ -406,9 +424,71 @@ void _emitObjectHydration(
 
   buffer.writeln('  final object = ${collection.dartName}();');
   for (final field in collection.fields) {
-    buffer.writeln('  object.${field.name} = ${expressionFor(field)};');
+    buffer.writeln('  object.${field.dartName} = ${expressionFor(field)};');
   }
   buffer.writeln('  return object;');
+}
+
+void _emitPutByFieldMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _FieldInfo field,
+) {
+  final suffix = _upperFirst(field.dartName);
+  final storedValue = field.toStoredValueExpression('object.${field.dartName}');
+  buffer
+    ..writeln()
+    ..writeln('  Future<void> putBy$suffix(${collection.dartName} object) {')
+    ..writeln('    return putByUniqueIndex(')
+    ..writeln('      object,')
+    ..writeln('      indexName: ${_stringLiteral(field.name)},')
+    ..writeln('      values: <Object?>[$storedValue],')
+    ..writeln('      isComposite: false,')
+    ..writeln('    );')
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  Future<void> putAllBy$suffix(Iterable<${collection.dartName}> objects) {',
+    )
+    ..writeln('    return putAllByUniqueIndex(')
+    ..writeln('      objects,')
+    ..writeln('      indexName: ${_stringLiteral(field.name)},')
+    ..writeln('      values: (object) => <Object?>[$storedValue],')
+    ..writeln('      isComposite: false,')
+    ..writeln('    );')
+    ..writeln('  }');
+}
+
+void _emitPutByCompositeMethods(
+  StringBuffer buffer,
+  _CollectionInfo collection,
+  _CompositeIndexInfo index,
+) {
+  final values = index.fields
+      .map((field) => field.toStoredValueExpression('object.${field.dartName}'))
+      .join(', ');
+  final suffix = _upperFirst(index.methodPrefix);
+  buffer
+    ..writeln()
+    ..writeln('  Future<void> putBy$suffix(${collection.dartName} object) {')
+    ..writeln('    return putByUniqueIndex(')
+    ..writeln('      object,')
+    ..writeln('      indexName: ${_stringLiteral(index.name)},')
+    ..writeln('      values: <Object?>[$values],')
+    ..writeln('      isComposite: true,')
+    ..writeln('    );')
+    ..writeln('  }')
+    ..writeln()
+    ..writeln(
+      '  Future<void> putAllBy$suffix(Iterable<${collection.dartName}> objects) {',
+    )
+    ..writeln('    return putAllByUniqueIndex(')
+    ..writeln('      objects,')
+    ..writeln('      indexName: ${_stringLiteral(index.name)},')
+    ..writeln('      values: (object) => <Object?>[$values],')
+    ..writeln('      isComposite: true,')
+    ..writeln('    );')
+    ..writeln('  }');
 }
 
 void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
@@ -445,7 +525,7 @@ void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
 
   for (final field in embedded.fields) {
     buffer.writeln(
-      '  object.${field.name} = '
+      '  object.${field.dartName} = '
       '${field.fromDocumentExpression(_stringLiteral(field.name))};',
     );
   }
@@ -477,7 +557,7 @@ void _emitEmbeddedHelpers(StringBuffer buffer, _EmbeddedInfo embedded) {
   for (var index = 0; index < embedded.fields.length; index += 1) {
     final field = embedded.fields[index];
     buffer.writeln(
-      '  object.${field.name} = ${field.nativeReadExpression(index)};',
+      '  object.${field.dartName} = ${field.nativeReadExpression(index)};',
     );
   }
 
@@ -493,7 +573,7 @@ void _emitQueryModifierMethods(
 ) {
   final queryType = 'CindelQuery<${collection.dartName}>';
   final fieldLiteral = _stringLiteral(field.name);
-  final suffix = _upperFirst(field.name);
+  final suffix = _upperFirst(field.dartName);
 
   buffer
     ..writeln()
@@ -529,7 +609,7 @@ void _emitQueryModifierMethods(
     ..writeln()
     ..writeln(
       '  CindelPropertyQuery<${collection.dartName}, ${field.dartType}> '
-      '${field.name}Property() {',
+      '${field.dartName}Property() {',
     )
     ..writeln(
       '    return property<${field.dartType}>('
@@ -585,6 +665,15 @@ final class _CollectionInfo {
         element: element,
       );
     }
+    final persistedFieldNames = <String>{};
+    for (final field in fieldInfos) {
+      if (!persistedFieldNames.add(field.name)) {
+        throw InvalidGenerationSourceError(
+          'Persisted field name `${field.name}` is declared more than once.',
+          element: element,
+        );
+      }
+    }
 
     final hasDefaultConstructor = element.constructors.any(
       (constructor) =>
@@ -612,9 +701,12 @@ final class _CollectionInfo {
     }
 
     final configuredName = annotation.peek('name')?.stringValue;
-    final collectionName = configuredName == null || configuredName.isEmpty
-        ? _lowerFirst(dartName)
-        : configuredName;
+    final namedCollection = _persistedName(element, '');
+    final collectionName = configuredName != null && configuredName.isNotEmpty
+        ? configuredName
+        : namedCollection.isNotEmpty
+        ? namedCollection
+        : _lowerFirst(dartName);
     final compositeIndexes = _CompositeIndexInfo.fromAnnotation(
       annotation,
       fieldInfos,
@@ -695,7 +787,7 @@ void _emitFilterMethods(
 ) {
   final queryType = 'CindelQuery<${collection.dartName}>';
   final fieldLiteral = _stringLiteral(field.name);
-  final methodPrefix = field.name;
+  final methodPrefix = field.dartName;
 
   buffer
     ..writeln()
@@ -931,7 +1023,7 @@ void _emitEmbeddedFilterMethods(
   _EmbeddedFieldInfo field,
 ) {
   final fieldLiteral = _stringLiteral(field.name);
-  final methodPrefix = field.name;
+  final methodPrefix = field.dartName;
 
   buffer
     ..writeln()
@@ -1172,7 +1264,7 @@ final class _ConstructorInfo {
     ConstructorElement constructor,
     List<_FieldInfo> fields,
   ) {
-    final fieldsByName = {for (final field in fields) field.name: field};
+    final fieldsByName = {for (final field in fields) field.dartName: field};
     final parameters = <_ConstructorParameterInfo>[];
     final seenFields = <String>{};
     for (final parameter in constructor.formalParameters) {
@@ -1187,9 +1279,9 @@ final class _ConstructorInfo {
           element: parameter,
         );
       }
-      if (!seenFields.add(field.name)) {
+      if (!seenFields.add(field.dartName)) {
         throw InvalidGenerationSourceError(
-          'Constructor field `${field.name}` is declared more than once.',
+          'Constructor field `${field.dartName}` is declared more than once.',
           element: parameter,
         );
       }
@@ -1210,8 +1302,8 @@ final class _ConstructorInfo {
     }
 
     final missingFields = fields
-        .where((field) => !seenFields.contains(field.name))
-        .map((field) => field.name)
+        .where((field) => !seenFields.contains(field.dartName))
+        .map((field) => field.dartName)
         .toList(growable: false);
     if (missingFields.isNotEmpty) {
       throw InvalidGenerationSourceError(
@@ -1241,7 +1333,8 @@ final class _ConstructorParameterInfo {
 final class _PersistedFieldSource {
   const _PersistedFieldSource({
     required this.element,
-    required this.name,
+    required this.dartName,
+    required this.persistedName,
     required this.type,
     required this.dartType,
     required this.isAssignable,
@@ -1252,7 +1345,8 @@ final class _PersistedFieldSource {
   factory _PersistedFieldSource.fromField(FieldElement field) {
     return _PersistedFieldSource(
       element: field,
-      name: field.name ?? field.displayName,
+      dartName: field.name ?? field.displayName,
+      persistedName: _persistedName(field, field.name ?? field.displayName),
       type: field.type,
       dartType: field.type.getDisplayString(),
       isAssignable: !field.isFinal && !field.isConst,
@@ -1266,7 +1360,11 @@ final class _PersistedFieldSource {
   ) {
     return _PersistedFieldSource(
       element: parameter,
-      name: parameter.name ?? parameter.displayName,
+      dartName: parameter.name ?? parameter.displayName,
+      persistedName: _persistedName(
+        parameter,
+        parameter.name ?? parameter.displayName,
+      ),
       type: parameter.type,
       dartType: parameter.type.getDisplayString(),
       isAssignable: false,
@@ -1276,7 +1374,8 @@ final class _PersistedFieldSource {
   }
 
   final Element element;
-  final String name;
+  final String dartName;
+  final String persistedName;
   final DartType type;
   final String dartType;
   final bool isAssignable;
@@ -1287,12 +1386,14 @@ final class _PersistedFieldSource {
 final class _FieldInfo {
   _FieldInfo({
     required this.name,
+    required this.dartName,
     required this.dartType,
     required this.type,
     required this.isAssignable,
     required this.isId,
     required this.isIndexed,
     required this.isIndexUnique,
+    required this.isIndexReplace,
     required this.indexCaseSensitive,
     required this.indexType,
   });
@@ -1302,21 +1403,29 @@ final class _FieldInfo {
       return null;
     }
 
-    final name = source.name;
+    final name = source.persistedName;
+    final dartName = source.dartName;
     final dartType = source.dartType;
     final type = _PersistedType.from(
       source.element,
       source.type,
-      name,
+      dartName,
       dartType,
     );
 
     final index = _IndexInfo.from(source.element);
+    if (index != null && index.replace && !index.unique) {
+      throw InvalidGenerationSourceError(
+        'Field `$dartName` uses replace: true, but replace indexes must also '
+        'use unique: true.',
+        element: source.element,
+      );
+    }
     if (index != null &&
         type.isList &&
         index.type != CindelIndexType.multiEntry) {
       throw InvalidGenerationSourceError(
-        'Field `$name` uses @Index, but list fields require '
+        'Field `$dartName` uses @Index, but list fields require '
         'CindelIndexType.multiEntry.',
         element: source.element,
       );
@@ -1324,7 +1433,7 @@ final class _FieldInfo {
     if (index?.type == CindelIndexType.multiEntry &&
         !type.supportsMultiEntryIndex) {
       throw InvalidGenerationSourceError(
-        'Field `$name` uses a multi-entry index, but multi-entry indexes '
+        'Field `$dartName` uses a multi-entry index, but multi-entry indexes '
         'require primitive list fields.',
         element: source.element,
       );
@@ -1335,14 +1444,14 @@ final class _FieldInfo {
             type.supportsCaseInsensitiveMultiEntryIndex) &&
         !index.caseSensitive) {
       throw InvalidGenerationSourceError(
-        'Field `$name` uses caseSensitive: false, but only String indexes '
+        'Field `$dartName` uses caseSensitive: false, but only String indexes '
         'support case-insensitive lookup.',
         element: source.element,
       );
     }
     if (index?.type == CindelIndexType.words && !type.supportsWordIndex) {
       throw InvalidGenerationSourceError(
-        'Field `$name` uses a word index, but word indexes require String '
+        'Field `$dartName` uses a word index, but word indexes require String '
         'fields.',
         element: source.element,
       );
@@ -1350,24 +1459,28 @@ final class _FieldInfo {
 
     return _FieldInfo(
       name: name,
+      dartName: dartName,
       dartType: dartType,
       type: type,
       isAssignable: source.isAssignable,
-      isId: name == _cindelIdFieldName,
+      isId: dartName == _cindelIdFieldName,
       isIndexed: index != null,
       isIndexUnique: index?.unique ?? false,
+      isIndexReplace: index?.replace ?? false,
       indexCaseSensitive: index?.caseSensitive ?? true,
       indexType: index?.type ?? CindelIndexType.value,
     );
   }
 
   final String name;
+  final String dartName;
   final String dartType;
   final _PersistedType type;
   final bool isAssignable;
   final bool isId;
   final bool isIndexed;
   final bool isIndexUnique;
+  final bool isIndexReplace;
   final bool indexCaseSensitive;
   final CindelIndexType indexType;
 
@@ -1378,7 +1491,7 @@ final class _FieldInfo {
   }
 
   String get toDocumentExpression {
-    return type.toStoredExpression('object.$name');
+    return type.toStoredExpression('object.$dartName');
   }
 
   String get binaryType => type.binaryType;
@@ -1409,7 +1522,7 @@ final class _FieldInfo {
     }
     if (binaryType == 'object') {
       final typeName = type.embeddedInfo!.dartName;
-      final expression = 'object.$name';
+      final expression = 'object.$dartName';
       final write =
           '''
       cindelWriteNativeObject<${type.dartTypeWithoutNull}>(
@@ -1446,7 +1559,7 @@ $write    }
       final type => throw StateError('Unsupported native writer type `$type`.'),
     };
     final expression = type.toStoredExpression(
-      'object.$name',
+      'object.$dartName',
       nullableCast: binaryType == 'object',
     );
     if (!isNullable) {
@@ -1468,7 +1581,7 @@ $write    }
     final element = type.elementType!;
     if (element.binaryType == 'object') {
       final typeName = element.embeddedInfo!.dartName;
-      final expression = 'object.$name';
+      final expression = 'object.$dartName';
       final write =
           '''
       cindelWriteNativeObjectList<${element.dartTypeWithoutNull}>(
@@ -1500,7 +1613,7 @@ $write    }
     if (element.kind == _PersistedTypeKind.primitive &&
         _normalizeDartType(element.dartType) == 'String' &&
         !element.isNullable) {
-      final expression = 'object.$name';
+      final expression = 'object.$dartName';
       if (!isNullable) {
         return '''
   cindelWriteNativeStringList(writer, $index, $expression);
@@ -1537,7 +1650,7 @@ $write    }
         }
 '''
         : '        listWriter.$method(i, $value);\n';
-    final expression = 'object.$name';
+    final expression = 'object.$dartName';
     if (!isNullable) {
       return '''
   {
@@ -1770,6 +1883,7 @@ reader.readStringList(documentIndex, $index) ?? const <String>[]
 final class _IndexInfo {
   const _IndexInfo({
     required this.unique,
+    required this.replace,
     required this.caseSensitive,
     required this.type,
   });
@@ -1797,12 +1911,14 @@ final class _IndexInfo {
     final caseSensitive = reader.peek('caseSensitive')?.boolValue ?? true;
     return _IndexInfo(
       unique: reader.peek('unique')?.boolValue ?? false,
+      replace: reader.peek('replace')?.boolValue ?? false,
       caseSensitive: caseSensitive,
       type: type,
     );
   }
 
   final bool unique;
+  final bool replace;
   final bool caseSensitive;
   final CindelIndexType type;
 }
@@ -1812,6 +1928,7 @@ final class _CompositeIndexInfo {
     required this.name,
     required this.fields,
     required this.isUnique,
+    required this.isReplace,
     required this.caseSensitive,
   });
 
@@ -1822,7 +1939,7 @@ final class _CompositeIndexInfo {
   ) {
     final values =
         annotation.peek('indexes')?.listValue ?? const <DartObject>[];
-    final byName = {for (final field in fields) field.name: field};
+    final byName = {for (final field in fields) field.dartName: field};
     final indexes = <_CompositeIndexInfo>[];
     final names = <String>{};
     for (final value in values) {
@@ -1856,7 +1973,16 @@ final class _CompositeIndexInfo {
         }
         indexFields.add(field);
       }
-      final name = fieldNames.join('_');
+      final name = indexFields.map((field) => field.name).join('_');
+      final isUnique = reader.peek('unique')?.boolValue ?? false;
+      final isReplace = reader.peek('replace')?.boolValue ?? false;
+      if (isReplace && !isUnique) {
+        throw InvalidGenerationSourceError(
+          'Composite index `$name` uses replace: true, but replace indexes '
+          'must also use unique: true.',
+          element: element,
+        );
+      }
       if (!names.add(name)) {
         throw InvalidGenerationSourceError(
           'Composite index `$name` is duplicated.',
@@ -1867,7 +1993,8 @@ final class _CompositeIndexInfo {
         _CompositeIndexInfo(
           name: name,
           fields: indexFields,
-          isUnique: reader.peek('unique')?.boolValue ?? false,
+          isUnique: isUnique,
+          isReplace: isReplace,
           caseSensitive: reader.peek('caseSensitive')?.boolValue ?? true,
         ),
       );
@@ -1878,11 +2005,12 @@ final class _CompositeIndexInfo {
   final String name;
   final List<_FieldInfo> fields;
   final bool isUnique;
+  final bool isReplace;
   final bool caseSensitive;
 
   String get methodPrefix {
     return fields
-        .map((field) => _upperFirst(field.name))
+        .map((field) => _upperFirst(field.dartName))
         .join()
         .replaceFirstMapped(
           RegExp(r'^[A-Z]'),
@@ -1933,7 +2061,11 @@ final class _EmbeddedInfo {
 }
 
 final class _EmbeddedFieldInfo {
-  const _EmbeddedFieldInfo({required this.name, required this.type});
+  const _EmbeddedFieldInfo({
+    required this.name,
+    required this.dartName,
+    required this.type,
+  });
 
   static _EmbeddedFieldInfo? from(FieldElement element) {
     if (_ignoreChecker.hasAnnotationOf(element)) {
@@ -1947,19 +2079,22 @@ final class _EmbeddedFieldInfo {
       );
     }
 
-    final name = element.name ?? element.displayName;
+    final dartName = element.name ?? element.displayName;
+    final name = _persistedName(element, dartName);
     return _EmbeddedFieldInfo(
       name: name,
+      dartName: dartName,
       type: _PersistedType.from(
         element,
         element.type,
-        name,
+        dartName,
         element.type.getDisplayString(),
       ),
     );
   }
 
   final String name;
+  final String dartName;
   final _PersistedType type;
 
   String get dartType => type.dartType;
@@ -1975,7 +2110,7 @@ final class _EmbeddedFieldInfo {
   bool get supportsComparableFilters => type.supportsComparableFilters;
 
   String get toDocumentExpression {
-    return type.toStoredExpression('object.$name');
+    return type.toStoredExpression('object.$dartName');
   }
 
   String toStoredValueExpression(
@@ -2004,12 +2139,14 @@ final class _EmbeddedFieldInfo {
   _FieldInfo get _asFieldInfo {
     return _FieldInfo(
       name: name,
+      dartName: dartName,
       dartType: dartType,
       type: type,
       isAssignable: true,
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     );
@@ -2674,9 +2811,10 @@ void _emitIndexedWhereMethods(
 
   if (field.indexType == CindelIndexType.multiEntry) {
     final elementType = field.type.listElementDartType;
+    final methodPrefix = field.dartName;
     buffer
       ..writeln()
-      ..writeln('  $queryType ${field.name}Contains($elementType value) {')
+      ..writeln('  $queryType ${methodPrefix}Contains($elementType value) {')
       ..writeln('    return CindelQuery.equal(')
       ..writeln('      database: _collection.database,')
       ..writeln('      schema: ${collection.schemaName},')
@@ -2690,17 +2828,18 @@ void _emitIndexedWhereMethods(
   }
 
   if (field.indexType == CindelIndexType.words) {
+    final methodPrefix = field.dartName;
     buffer
       ..writeln()
-      ..writeln('  $queryType ${field.name}EqualTo(String word) {')
-      ..writeln('    return ${field.name}WordEqualTo(word);')
+      ..writeln('  $queryType ${methodPrefix}EqualTo(String word) {')
+      ..writeln('    return ${methodPrefix}WordEqualTo(word);')
       ..writeln('  }')
       ..writeln()
-      ..writeln('  $queryType ${field.name}StartsWith(String prefix) {')
-      ..writeln('    return ${field.name}WordStartsWith(prefix);')
+      ..writeln('  $queryType ${methodPrefix}StartsWith(String prefix) {')
+      ..writeln('    return ${methodPrefix}WordStartsWith(prefix);')
       ..writeln('  }')
       ..writeln()
-      ..writeln('  $queryType ${field.name}WordEqualTo(String word) {')
+      ..writeln('  $queryType ${methodPrefix}WordEqualTo(String word) {')
       ..writeln('    return CindelQuery.wordsContain(')
       ..writeln('      database: _collection.database,')
       ..writeln('      schema: ${collection.schemaName},')
@@ -2709,7 +2848,7 @@ void _emitIndexedWhereMethods(
       ..writeln('    );')
       ..writeln('  }')
       ..writeln()
-      ..writeln('  $queryType ${field.name}WordStartsWith(String prefix) {')
+      ..writeln('  $queryType ${methodPrefix}WordStartsWith(String prefix) {')
       ..writeln('    return CindelQuery.wordsStartWith(')
       ..writeln('      database: _collection.database,')
       ..writeln('      schema: ${collection.schemaName},')
@@ -2718,19 +2857,19 @@ void _emitIndexedWhereMethods(
       ..writeln('    );')
       ..writeln('  }')
       ..writeln()
-      ..writeln('  $queryType ${field.name}WordsContain(String word) {')
-      ..writeln('    return ${field.name}WordEqualTo(word);')
+      ..writeln('  $queryType ${methodPrefix}WordsContain(String word) {')
+      ..writeln('    return ${methodPrefix}WordEqualTo(word);')
       ..writeln('  }')
       ..writeln()
-      ..writeln('  $queryType ${field.name}WordsStartWith(String prefix) {')
-      ..writeln('    return ${field.name}WordStartsWith(prefix);')
+      ..writeln('  $queryType ${methodPrefix}WordsStartWith(String prefix) {')
+      ..writeln('    return ${methodPrefix}WordStartsWith(prefix);')
       ..writeln('  }');
     return;
   }
 
   buffer
     ..writeln()
-    ..writeln('  $queryType ${field.name}EqualTo($valueType value) {')
+    ..writeln('  $queryType ${field.dartName}EqualTo($valueType value) {')
     ..writeln('    return CindelQuery.equal(')
     ..writeln('      database: _collection.database,')
     ..writeln('      schema: ${collection.schemaName},')
@@ -2743,7 +2882,7 @@ void _emitIndexedWhereMethods(
       field.indexType == CindelIndexType.value) {
     buffer
       ..writeln()
-      ..writeln('  $queryType ${field.name}StartsWith(String prefix) {')
+      ..writeln('  $queryType ${field.dartName}StartsWith(String prefix) {')
       ..writeln('    return CindelQuery.stringStartsWith(')
       ..writeln('      database: _collection.database,')
       ..writeln('      schema: ${collection.schemaName},')
@@ -2757,7 +2896,7 @@ void _emitIndexedWhereMethods(
     buffer
       ..writeln()
       ..writeln(
-        '  $queryType ${field.name}Between('
+        '  $queryType ${field.dartName}Between('
         '$valueType? lower, $valueType? upper) {',
       )
       ..writeln('    return CindelQuery.range(')
@@ -2782,10 +2921,10 @@ void _emitCompositeWhereMethod(
 ) {
   final queryType = 'CindelQuery<${collection.dartName}>';
   final parameters = index.fields
-      .map((field) => '${field.nonNullableDartType} ${field.name}')
+      .map((field) => '${field.nonNullableDartType} ${field.dartName}')
       .join(', ');
   final values = index.fields
-      .map((field) => field.toStoredValueExpression(field.name))
+      .map((field) => field.toStoredValueExpression(field.dartName))
       .join(', ');
   buffer
     ..writeln()
@@ -2817,6 +2956,21 @@ String _accessorName(String collectionName, String dartName) {
   return _isDartIdentifier(collectionName)
       ? collectionName
       : _lowerFirst(dartName);
+}
+
+String _persistedName(Element element, String fallback) {
+  final annotation = _nameChecker.firstAnnotationOf(
+    element,
+    throwOnUnresolved: false,
+  );
+  if (annotation == null) {
+    return fallback;
+  }
+  final value = ConstantReader(annotation).peek('value')?.stringValue;
+  if (value == null || value.isEmpty) {
+    return fallback;
+  }
+  return value;
 }
 
 bool _isDartIdentifier(String value) {

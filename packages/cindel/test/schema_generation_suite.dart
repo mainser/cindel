@@ -93,6 +93,43 @@ void main({bool includeMdbxOnlyTests = false}) {
       expect(fields.any((field) => field.name == 'transientNote'), isFalse);
     });
 
+    // Scenario: @Name customizes persisted collection and field names.
+    // Covers:
+    // - Class-level persisted collection names.
+    // - Field-level persisted names that differ from Dart property names.
+    // - Replace-index metadata on a generated field schema.
+    // Expected: Generated schema and document codecs use persisted names while
+    //   keeping Dart accessors based on Dart property names.
+    test('generates persisted names for collections and fields.', () {
+      // Arrange.
+      final account = Account()
+        ..dbId = 9
+        ..username = 'ana'
+        ..displayLabel = 'Ana';
+
+      // Act.
+      final fields = AccountSchema.fields;
+      final username = fields.singleWhere((field) => field.name == 'user_name');
+      final document = AccountSchema.toDocument(account);
+      final restored = AccountSchema.fromDocument({...document, 'dbId': 9});
+
+      // Assert.
+      expect(AccountSchema.name, 'accounts');
+      expect(AccountSchema.dartName, 'Account');
+      expect(fields.map((field) => field.name), [
+        'dbId',
+        'user_name',
+        'display_label',
+      ]);
+      expect(username.isIndexed, isTrue);
+      expect(username.isIndexUnique, isTrue);
+      expect(username.isIndexReplace, isTrue);
+      expect(document, {'user_name': 'ana', 'display_label': 'Ana'});
+      expect(restored.dbId, 9);
+      expect(restored.username, 'ana');
+      expect(restored.displayLabel, 'Ana');
+    });
+
     // Scenario: A generated serializer is used with a typed object.
     // Covers:
     // - Generated toDocument function.

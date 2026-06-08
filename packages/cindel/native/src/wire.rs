@@ -129,6 +129,7 @@ pub(crate) struct WireFieldSchema {
     pub(crate) is_id: bool,
     pub(crate) is_indexed: bool,
     pub(crate) is_unique: bool,
+    pub(crate) is_replace: bool,
     pub(crate) is_nullable: bool,
     pub(crate) case_sensitive: bool,
 }
@@ -138,6 +139,7 @@ pub(crate) struct WireIndexSchema {
     pub(crate) name: String,
     pub(crate) fields: Vec<String>,
     pub(crate) is_unique: bool,
+    pub(crate) is_replace: bool,
     pub(crate) case_sensitive: bool,
 }
 
@@ -396,6 +398,7 @@ pub(crate) fn encode_schema_manifest(manifest: &WireSchemaManifest) -> Result<Ve
             writer.write_bool(field.is_id);
             writer.write_bool(field.is_indexed);
             writer.write_bool(field.is_unique);
+            writer.write_bool(field.is_replace);
             writer.write_bool(field.is_nullable);
             writer.write_bool(field.case_sensitive);
         }
@@ -407,6 +410,7 @@ pub(crate) fn encode_schema_manifest(manifest: &WireSchemaManifest) -> Result<Ve
                 writer.write_string(field)?;
             }
             writer.write_bool(index.is_unique);
+            writer.write_bool(index.is_replace);
             writer.write_bool(index.case_sensitive);
         }
     }
@@ -423,7 +427,7 @@ pub(crate) fn decode_schema_manifest(bytes: &[u8]) -> Result<WireSchemaManifest,
         let name = reader.read_string()?;
         let id_field = reader.read_string()?;
         let field_count = reader.read_len()?;
-        reader.ensure_item_count(field_count, 17)?;
+        reader.ensure_item_count(field_count, 18)?;
         let mut fields = Vec::with_capacity(field_count);
         for _ in 0..field_count {
             fields.push(WireFieldSchema {
@@ -434,12 +438,13 @@ pub(crate) fn decode_schema_manifest(bytes: &[u8]) -> Result<WireSchemaManifest,
                 is_id: reader.read_bool()?,
                 is_indexed: reader.read_bool()?,
                 is_unique: reader.read_bool()?,
+                is_replace: reader.read_bool()?,
                 is_nullable: reader.read_bool()?,
                 case_sensitive: reader.read_bool()?,
             });
         }
         let index_count = reader.read_len()?;
-        reader.ensure_item_count(index_count, 10)?;
+        reader.ensure_item_count(index_count, 11)?;
         let mut indexes = Vec::with_capacity(index_count);
         for _ in 0..index_count {
             let name = reader.read_string()?;
@@ -453,6 +458,7 @@ pub(crate) fn decode_schema_manifest(bytes: &[u8]) -> Result<WireSchemaManifest,
                 name,
                 fields,
                 is_unique: reader.read_bool()?,
+                is_replace: reader.read_bool()?,
                 case_sensitive: reader.read_bool()?,
             });
         }
@@ -1053,8 +1059,8 @@ mod tests {
     const SCHEMA_MANIFEST_FIXTURE: &[u8] = &[
         1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 117, 2, 0, 0, 0, 105, 100, 1, 0, 0, 0, 2, 0, 0, 0, 105,
         100, 3, 0, 0, 0, 105, 110, 116, 3, 0, 0, 0, 105, 110, 116, 5, 0, 0, 0, 118, 97, 108, 117,
-        101, 1, 0, 0, 0, 1, 1, 0, 0, 0, 5, 0, 0, 0, 98, 121, 95, 105, 100, 1, 0, 0, 0, 2, 0, 0, 0,
-        105, 100, 1, 1,
+        101, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 5, 0, 0, 0, 98, 121, 95, 105, 100, 1, 0, 0, 0, 2, 0, 0,
+        0, 105, 100, 1, 0, 1,
     ];
     const INDEX_ENTRY_LIST_FIXTURE: &[u8] = &[
         1, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 101, 109, 97, 105, 108, 4, 1, 0, 0, 0, 97,
@@ -1300,6 +1306,7 @@ mod tests {
                     is_id: true,
                     is_indexed: false,
                     is_unique: false,
+                    is_replace: false,
                     is_nullable: false,
                     case_sensitive: true,
                 }],
@@ -1307,6 +1314,7 @@ mod tests {
                     name: "by_id".to_string(),
                     fields: vec!["id".to_string()],
                     is_unique: true,
+                    is_replace: false,
                     case_sensitive: true,
                 }],
             }],

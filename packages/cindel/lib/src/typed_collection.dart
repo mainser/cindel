@@ -196,6 +196,62 @@ final class CindelTypedCollection<T> {
     return putAll(objects);
   }
 
+  /// Stores [object] by a unique replace index, reusing an existing id.
+  Future<void> putByUniqueIndex(
+    T object, {
+    required String indexName,
+    required List<Object?> values,
+    required bool isComposite,
+  }) async {
+    Future<void> writeObject() async {
+      await _reuseUniqueIndexId(
+        object,
+        indexName: indexName,
+        values: values,
+        isComposite: isComposite,
+      );
+      await put(object);
+    }
+
+    if (database.isInWriteTransaction) {
+      await writeObject();
+    } else {
+      await database.writeTxn(writeObject);
+    }
+  }
+
+  /// Stores every object by a unique replace index.
+  Future<void> putAllByUniqueIndex(
+    Iterable<T> objects, {
+    required String indexName,
+    required List<Object?> Function(T object) values,
+    required bool isComposite,
+  }) async {
+    final objectList = objects is List<T>
+        ? objects
+        : objects.toList(growable: false);
+    if (objectList.isEmpty) {
+      return;
+    }
+    Future<void> writeObjects() async {
+      for (final object in objectList) {
+        await _reuseUniqueIndexId(
+          object,
+          indexName: indexName,
+          values: values(object),
+          isComposite: isComposite,
+        );
+      }
+      await putAll(objectList);
+    }
+
+    if (database.isInWriteTransaction) {
+      await writeObjects();
+    } else {
+      await database.writeTxn(writeObjects);
+    }
+  }
+
   /// Returns the typed object stored under [id], or `null`.
   Future<T?> get(int id) async {
     if (_usesSqliteNativeDocuments) {
@@ -420,6 +476,59 @@ final class CindelTypedCollection<T> {
       return getId(object);
     }
     return _idFromDocument(document ?? schema.toDocument(object));
+  }
+
+  Future<void> _reuseUniqueIndexId(
+    T object, {
+    required String indexName,
+    required List<Object?> values,
+    required bool isComposite,
+  }) async {
+    if (values.any((value) => value == null)) {
+      return;
+    }
+    final existingIds = isComposite
+        ? database.queryCompositeEqualIds(
+            schema.name,
+            indexName,
+            values.cast<Object>(),
+          )
+        : await _queryUniqueFieldIds(indexName, values.single as Object);
+    if (existingIds.isEmpty) {
+      return;
+    }
+    final existingId = existingIds.first;
+    if (existingIds.any((id) => id != existingId)) {
+      throw StateError(
+        'Unique index `$indexName` returned more than one existing id.',
+      );
+    }
+    final currentId = _idFromObject(object, null);
+    if (currentId != existingId) {
+      final setId = _idSetter();
+      setId(object, existingId);
+    }
+  }
+
+  Future<List<int>> _queryUniqueFieldIds(String fieldName, Object value) async {
+    final field = schema.fields.firstWhere(
+      (field) => field.name == fieldName,
+      orElse: () => throw StateError(
+        'Unique index `$fieldName` is not declared in `${schema.name}`.',
+      ),
+    );
+    if (field.indexType == CindelIndexType.hash) {
+      final documents = await database.queryEqual(
+        schema.name,
+        fieldName,
+        value,
+      );
+      return [
+        for (final document in documents)
+          if (document[schema.idField] is int) document[schema.idField] as int,
+      ];
+    }
+    return database.queryEqualIds(schema.name, fieldName, value);
   }
 
   // Validates that generated document conversion produced an integer id.

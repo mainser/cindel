@@ -1980,6 +1980,9 @@ fn put_native_documents(
         return Ok(None);
     }
     let fields = native_fields(schema);
+    for document in documents {
+        enforce_native_unique_indexes(connection, schema, &fields, document)?;
+    }
     let values_per_document = fields.len() + 1;
     let batch_limit = SQLITE_MAX_PARAM_COUNT / values_per_document;
     let batch_limit = batch_limit.max(1);
@@ -2013,6 +2016,170 @@ fn put_native_documents(
         statement.raw_execute().map_err(|error| error.to_string())?;
     }
     Ok(max_seen_id)
+}
+
+enum NativeSqlValueRef<'a> {
+    Id(i64),
+    Field(&'a FieldSchemaManifest, &'a NativeDocumentValue),
+}
+
+fn enforce_native_unique_indexes(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    fields: &[&FieldSchemaManifest],
+    document: &NativeDocumentWrite,
+) -> Result<(), String> {
+    if document.values.len() != fields.len() {
+        return Err(format!(
+            "native document field count mismatch for collection `{}`",
+            schema.name
+        ));
+    }
+    let id = sqlite_id(document.id)?;
+    for field in schema
+        .fields
+        .iter()
+        .filter(|field| field.is_indexed && field.is_index_unique)
+    {
+        let value = native_document_field_value(schema, fields, document, id, &field.name)?;
+        if native_sql_value_is_null(&value) {
+            continue;
+        }
+        enforce_native_unique_index(
+            connection,
+            schema,
+            id,
+            &field.name,
+            field.is_index_replace,
+            &[(field.name.as_str(), value)],
+        )?;
+    }
+    for index in schema
+        .composite_indexes
+        .iter()
+        .filter(|index| index.is_unique)
+    {
+        let mut values = Vec::with_capacity(index.fields.len());
+        let mut has_null = false;
+        for field_name in &index.fields {
+            let value = native_document_field_value(schema, fields, document, id, field_name)?;
+            has_null |= native_sql_value_is_null(&value);
+            values.push((field_name.as_str(), value));
+        }
+        if has_null {
+            continue;
+        }
+        enforce_native_unique_index(
+            connection,
+            schema,
+            id,
+            &index.name,
+            index.is_replace,
+            &values,
+        )?;
+    }
+    Ok(())
+}
+
+fn native_document_field_value<'a>(
+    schema: &CollectionSchemaManifest,
+    fields: &[&'a FieldSchemaManifest],
+    document: &'a NativeDocumentWrite,
+    id: i64,
+    field_name: &str,
+) -> Result<NativeSqlValueRef<'a>, String> {
+    if field_name == schema.id_field
+        || schema
+            .fields
+            .iter()
+            .any(|field| field.name == field_name && field.is_id)
+    {
+        return Ok(NativeSqlValueRef::Id(id));
+    }
+    let Some(index) = fields.iter().position(|field| field.name == field_name) else {
+        return Err(format!(
+            "schema composite index references missing native field `{field_name}`"
+        ));
+    };
+    Ok(NativeSqlValueRef::Field(
+        fields[index],
+        &document.values[index],
+    ))
+}
+
+fn native_sql_value_is_null(value: &NativeSqlValueRef<'_>) -> bool {
+    matches!(
+        value,
+        NativeSqlValueRef::Field(_, NativeDocumentValue::Null)
+    )
+}
+
+fn enforce_native_unique_index(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    id: i64,
+    index_name: &str,
+    is_replace: bool,
+    values: &[(&str, NativeSqlValueRef<'_>)],
+) -> Result<(), String> {
+    let mut sql = format!("SELECT {SQLITE_ROW_ID_COLUMN} FROM {} WHERE ", schema.name);
+    for (index, (field_name, _)) in values.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(" AND ");
+        }
+        if sqlite_schema_field_is_id(schema, field_name) {
+            sql.push_str(SQLITE_ROW_ID_COLUMN);
+        } else {
+            sql.push_str(field_name);
+        }
+        sql.push_str(" = ?");
+        sql.push_str(&(index + 1).to_string());
+    }
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| error.to_string())?;
+    for (index, (_, value)) in values.iter().enumerate() {
+        bind_native_unique_value(&mut statement, index + 1, value)?;
+    }
+    let mut rows = statement.raw_query();
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let existing_id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+        if existing_id == id {
+            continue;
+        }
+        if is_replace {
+            delete_document_with_layout(connection, &schema.name, existing_id, true)?;
+            continue;
+        }
+        return Err(format!(
+            "Unique index `{}` already contains this value.",
+            index_name
+        ));
+    }
+    Ok(())
+}
+
+fn bind_native_unique_value(
+    statement: &mut rusqlite::Statement<'_>,
+    parameter_index: usize,
+    value: &NativeSqlValueRef<'_>,
+) -> Result<(), String> {
+    match value {
+        NativeSqlValueRef::Id(id) => statement
+            .raw_bind_parameter(parameter_index, id)
+            .map_err(|error| error.to_string()),
+        NativeSqlValueRef::Field(field, value) => {
+            bind_native_sql_value(statement, parameter_index, field, value)
+        }
+    }
+}
+
+fn sqlite_schema_field_is_id(schema: &CollectionSchemaManifest, field: &str) -> bool {
+    field == schema.id_field
+        || schema
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == field && schema_field.is_id)
 }
 
 fn native_insert_sql(collection: &str, fields: &[&FieldSchemaManifest], count: usize) -> String {
@@ -2406,15 +2573,15 @@ fn enforce_unique_indexes(
     id: i64,
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
-    let unique_indexes = unique_index_names(connection, collection)?;
+    let unique_indexes = unique_index_options(connection, collection)?;
     if unique_indexes.is_empty() {
         return Ok(());
     }
 
     for index in indexes {
-        if !unique_indexes.contains(index.name.as_str()) {
+        let Some(is_replace) = unique_indexes.get(index.name.as_str()).copied() else {
             continue;
-        }
+        };
         let existing_ids = query_index(
             connection,
             collection,
@@ -2425,6 +2592,16 @@ fn enforce_unique_indexes(
         for existing_id in existing_ids {
             let existing_id = sqlite_id(existing_id)?;
             if existing_id != id {
+                if is_replace {
+                    let has_collection_table = collection_schema(connection, collection)?.is_some();
+                    delete_document_with_layout(
+                        connection,
+                        collection,
+                        existing_id,
+                        has_collection_table,
+                    )?;
+                    continue;
+                }
                 return Err(format!(
                     "Unique index `{}` already contains this value.",
                     index.name
@@ -2435,12 +2612,12 @@ fn enforce_unique_indexes(
     Ok(())
 }
 
-fn unique_index_names(
+fn unique_index_options(
     connection: &Connection,
     collection: &str,
-) -> Result<std::collections::HashSet<String>, String> {
+) -> Result<std::collections::HashMap<String, bool>, String> {
     if !table_exists(connection, "schema_collections")? {
-        return Ok(std::collections::HashSet::new());
+        return Ok(std::collections::HashMap::new());
     }
     let schema_bytes = connection
         .query_row(
@@ -2451,25 +2628,25 @@ fn unique_index_names(
         .optional()
         .map_err(|error| error.to_string())?;
     let Some(schema_bytes) = schema_bytes else {
-        return Ok(std::collections::HashSet::new());
+        return Ok(std::collections::HashMap::new());
     };
     let (_, schema) = decode_schema_record(&schema_bytes)?;
-    let mut names = std::collections::HashSet::new();
-    names.extend(
-        schema
-            .fields
-            .into_iter()
-            .filter(|field| field.is_indexed && field.is_index_unique)
-            .map(|field| field.name),
-    );
-    names.extend(
-        schema
-            .composite_indexes
-            .into_iter()
-            .filter(|index| index.is_unique)
-            .map(|index| index.name),
-    );
-    Ok(names)
+    let mut indexes = std::collections::HashMap::new();
+    for field in schema
+        .fields
+        .into_iter()
+        .filter(|field| field.is_indexed && field.is_index_unique)
+    {
+        indexes.insert(field.name, field.is_index_replace);
+    }
+    for index in schema
+        .composite_indexes
+        .into_iter()
+        .filter(|index| index.is_unique)
+    {
+        indexes.insert(index.name, index.is_replace);
+    }
+    Ok(indexes)
 }
 
 fn insert_index_entries(
@@ -2962,10 +3139,19 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             ));
         }
         if !field.is_indexed
-            && (field.is_index_unique || !field.index_case_sensitive || field.index_type != "value")
+            && (field.is_index_unique
+                || field.is_index_replace
+                || !field.index_case_sensitive
+                || field.index_type != "value")
         {
             return Err(format!(
                 "schema field `{}.{}` declares index options without an index",
+                collection.name, field.name
+            ));
+        }
+        if field.is_index_replace && !field.is_index_unique {
+            return Err(format!(
+                "schema field `{}.{}` declares replace without a unique index",
                 collection.name, field.name
             ));
         }
@@ -3039,6 +3225,12 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         if index.fields.len() < 2 {
             return Err(format!(
                 "schema composite index `{}.{}` must contain at least two fields",
+                collection.name, index.name
+            ));
+        }
+        if index.is_replace && !index.is_unique {
+            return Err(format!(
+                "schema composite index `{}.{}` declares replace without a unique index",
                 collection.name, index.name
             ));
         }
@@ -3179,6 +3371,7 @@ fn validate_compatible_field(
         ));
     }
     if existing.is_index_unique != next.is_index_unique
+        || existing.is_index_replace != next.is_index_replace
         || existing.index_case_sensitive != next.index_case_sensitive
         || existing.index_type != next.index_type
     {
@@ -4930,6 +5123,7 @@ mod tests {
             is_id,
             is_indexed,
             is_index_unique: false,
+            is_index_replace: false,
             index_case_sensitive: true,
             index_type: "value".to_string(),
         }
@@ -4948,6 +5142,7 @@ mod tests {
             is_id,
             is_indexed: false,
             is_index_unique: false,
+            is_index_replace: false,
             index_case_sensitive: true,
             index_type: "value".to_string(),
         }

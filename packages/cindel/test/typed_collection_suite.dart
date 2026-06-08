@@ -124,6 +124,120 @@ void main() {
       expect(deletedUsers, [null, null]);
     });
 
+    // Scenario: A generated replace index helper upserts by natural key.
+    // Covers:
+    // - Generated [putByUsername] method for a unique replace index.
+    // - Reusing the existing document id before persistence.
+    // - Persisted field name lookup through the generated index metadata.
+    // Expected: The replacement object receives the existing id and overwrites
+    //   that document without a query in user code.
+    test('reuses ids when putting by a unique replace index.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [AccountSchema]);
+      addTearDown(database.close);
+      final existing = Account()
+        ..username = 'ana'
+        ..displayLabel = 'Old';
+      final replacement = Account()
+        ..username = 'ana'
+        ..displayLabel = 'New';
+
+      // Act.
+      await database.accounts.put(existing);
+      await database.accounts.putByUsername(replacement);
+      final stored = await database.accounts.get(existing.dbId);
+      final matches = await database.accounts
+          .where()
+          .usernameEqualTo('ana')
+          .findAll();
+
+      // Assert.
+      expect(existing.dbId, 1);
+      expect(replacement.dbId, 1);
+      expect(stored!.displayLabel, 'New');
+      expect(matches.map((account) => account.displayLabel), ['New']);
+    });
+
+    // Scenario: Generated replace index helpers can upsert batches.
+    // Covers:
+    // - Generated [putAllByUsername] method.
+    // - Per-object id reuse across a batch.
+    // - Multiple replace-index values in one write transaction.
+    // Expected: Each replacement reuses its matching stored id.
+    test(
+      'reuses ids when putting batches by a unique replace index.',
+      () async {
+        // Arrange.
+        final database = await openTestDatabaseInMemory(
+          schemas: [AccountSchema],
+        );
+        addTearDown(database.close);
+        final ana = Account()
+          ..username = 'ana'
+          ..displayLabel = 'Ana old';
+        final ben = Account()
+          ..username = 'ben'
+          ..displayLabel = 'Ben old';
+        final replacementAna = Account()
+          ..username = 'ana'
+          ..displayLabel = 'Ana new';
+        final replacementBen = Account()
+          ..username = 'ben'
+          ..displayLabel = 'Ben new';
+
+        // Act.
+        await database.accounts.putAll([ana, ben]);
+        await database.accounts.putAllByUsername([
+          replacementAna,
+          replacementBen,
+        ]);
+        final stored = await database.accounts.all().sortByUsername().findAll();
+
+        // Assert.
+        expect([ana.dbId, ben.dbId], [1, 2]);
+        expect([replacementAna.dbId, replacementBen.dbId], [1, 2]);
+        expect(stored.map((account) => account.displayLabel), [
+          'Ana new',
+          'Ben new',
+        ]);
+      },
+    );
+
+    // Scenario: Normal put respects replace-index semantics at the storage
+    // boundary.
+    // Covers:
+    // - [@Index(unique: true, replace: true)] on generated schema metadata.
+    // - Native conflict deletion when a different id owns the same index value.
+    // Expected: The conflicting old document is removed and the new id remains.
+    test('replaces conflicting documents for normal puts.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [AccountSchema]);
+      addTearDown(database.close);
+      final oldAccount = Account()
+        ..dbId = 7
+        ..username = 'ana'
+        ..displayLabel = 'Old';
+      final newAccount = Account()
+        ..dbId = 8
+        ..username = 'ana'
+        ..displayLabel = 'New';
+
+      // Act.
+      await database.accounts.put(oldAccount);
+      await database.accounts.put(newAccount);
+      final oldStored = await database.accounts.get(7);
+      final newStored = await database.accounts.get(8);
+      final matches = await database.accounts
+          .where()
+          .usernameEqualTo('ana')
+          .findAll();
+
+      // Assert.
+      expect(oldStored, isNull);
+      expect(newStored!.displayLabel, 'New');
+      expect(matches.map((account) => account.dbId), [8]);
+    });
+
     // Scenario: A typed bulk write receives duplicate explicit ids.
     // Covers:
     // - [CindelTypedCollection.putAll] preflight duplicate id validation.

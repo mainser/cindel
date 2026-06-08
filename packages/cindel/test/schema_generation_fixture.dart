@@ -85,6 +85,19 @@ class ApiProduct {
   late String name;
 }
 
+@Name('accounts')
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Name('user_name')
+  @Index(unique: true, replace: true)
+  late String username;
+
+  @Name('display_label')
+  String? displayLabel;
+}
+
 @freezed
 @Collection(name: 'freezedPrimaryUsers')
 abstract class FreezedPrimaryUser with _$FreezedPrimaryUser {

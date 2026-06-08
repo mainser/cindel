@@ -16,6 +16,15 @@ class Collection {
 /// Marks a Dart class as a Cindel collection.
 const collection = Collection();
 
+/// Overrides the persisted name for a collection, field, or embedded field.
+class Name {
+  /// Creates a persisted-name annotation.
+  const Name(this.value);
+
+  /// The storage name used in documents, schemas, indexes, and native queries.
+  final String value;
+}
+
 /// Marks a Dart class as an embedded value object.
 ///
 /// Embedded objects are stored inside a parent collection document instead of
@@ -34,6 +43,7 @@ class CompositeIndex {
   const CompositeIndex(
     this.fields, {
     this.unique = false,
+    this.replace = false,
     this.caseSensitive = true,
   });
 
@@ -42,6 +52,9 @@ class CompositeIndex {
 
   /// Whether the full composite value must be unique.
   final bool unique;
+
+  /// Whether writes replace documents that conflict with this unique index.
+  final bool replace;
 
   /// Whether string values keep case-sensitive lookup semantics.
   final bool caseSensitive;
@@ -52,12 +65,16 @@ class Index {
   /// Creates an index annotation.
   const Index({
     this.unique = false,
+    this.replace = false,
     this.caseSensitive = true,
     this.type = CindelIndexType.value,
   });
 
   /// Whether the index requires unique values.
   final bool unique;
+
+  /// Whether writes replace documents that conflict with this unique index.
+  final bool replace;
 
   /// Whether string values keep case-sensitive lookup semantics.
   ///

@@ -46,12 +46,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.0
+  cindel: ^0.6.2
   cindel_flutter_libs: ^0.6.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.0
+  cindel_generator: ^0.6.1
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -116,6 +116,8 @@ Generated collections must follow the rules enforced by the generator:
 - Collections with final persisted fields need constructor parameters for every
   persisted field.
 - Fields annotated with `@ignore` are excluded from persistence.
+- `@Name` can override the persisted collection or field name while generated
+  Dart APIs continue to use the Dart identifier.
 
 Supported persisted field shapes are:
 
@@ -127,6 +129,20 @@ Supported persisted field shapes are:
 - Lists of supported non-list shapes.
 
 Nested lists are not supported.
+
+Example persisted-name override:
+
+```dart
+@Name('accounts')
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Name('user_name')
+  @Index(unique: true)
+  late String username;
+}
+```
 
 ## Freezed Models
 
@@ -208,6 +224,7 @@ It also emits conversion functions used by the runtime:
 - Compact binary document to Dart object.
 - Native typed writer and reader hooks when supported by the field layout.
 - Id getter, and an id setter when the model can assign generated ids.
+- `putBy...` and `putAllBy...` helpers for unique replace indexes.
 
 Generated query access starts from `where()` for indexed fields and
 collection-level composite indexes:
@@ -280,6 +297,22 @@ late String email;
 Unique indexes generate the same lookup helpers and tell the runtime to enforce
 unique values.
 
+`replace` defaults to `false`. Use `@Index(unique: true)` for a normal unique
+index. Add `replace: true` only when the unique index should generate
+natural-key upsert helpers and replace conflicting documents during writes:
+
+```dart
+@Index(unique: true, replace: true)
+late String email;
+```
+
+The generated typed collection exposes helpers such as:
+
+```dart
+await db.users.putByEmail(user);
+await db.users.putAllByEmail(users);
+```
+
 ### Hash Indexes
 
 ```dart
@@ -326,6 +359,8 @@ class TeamMember {
 ```
 
 Composite indexes generate equality helpers for the configured field set.
+When a composite index is both unique and `replace: true`, the generator also
+emits `putBy...` and `putAllBy...` helpers for the composite key.
 
 ## Embedded Objects
 

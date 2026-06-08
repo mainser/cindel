@@ -369,6 +369,7 @@ final class CindelFieldSchema {
     required this.isIndexed,
     this.binaryType,
     this.isIndexUnique = false,
+    this.isIndexReplace = false,
     this.indexCaseSensitive = true,
     this.indexType = CindelIndexType.value,
   });
@@ -391,6 +392,9 @@ final class CindelFieldSchema {
   /// Whether this indexed field requires unique values.
   final bool isIndexUnique;
 
+  /// Whether this unique index replaces conflicting documents.
+  final bool isIndexReplace;
+
   /// Whether string index lookups are case-sensitive.
   final bool indexCaseSensitive;
 
@@ -405,6 +409,7 @@ final class CindelCompositeIndexSchema {
     required this.name,
     required Iterable<String> fields,
     this.isUnique = false,
+    this.isReplace = false,
     this.caseSensitive = true,
   }) : fields = List.unmodifiable(fields);
 
@@ -416,6 +421,9 @@ final class CindelCompositeIndexSchema {
 
   /// Whether the full composite value must be unique.
   final bool isUnique;
+
+  /// Whether this unique composite index replaces conflicting documents.
+  final bool isReplace;
 
   /// Whether string values keep case-sensitive lookup semantics.
   final bool caseSensitive;

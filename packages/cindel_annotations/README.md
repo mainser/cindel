@@ -75,6 +75,24 @@ class Project {
 
 `@collection` is the shorthand constant for `@Collection()`.
 
+### `@Name`
+
+Overrides the persisted name for a collection or field while keeping the Dart
+identifier available for generated method names and property access.
+
+```dart
+@Name('accounts')
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Name('user_name')
+  late String username;
+}
+```
+
+This is useful when a Dart rename should not change the stored schema name.
+
 ### `@Embedded`
 
 Marks a Dart class as a value object stored inside a parent document.
@@ -151,6 +169,20 @@ class User {
 }
 ```
 
+`replace` defaults to `false`. Use `@Index(unique: true)` for a normal unique
+index. Add `replace: true` only when a write with the same indexed value should
+replace the existing document instead of throwing a duplicate value error.
+
+```dart
+@collection
+class User {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true, replace: true)
+  late String email;
+}
+```
+
 ### Case-Insensitive String Indexes
 
 Use `caseSensitive: false` for case-insensitive string lookup.
@@ -209,6 +241,22 @@ class TeamMember {
 ```
 
 The field order matters because it defines the composite key order.
+
+Composite indexes also support `replace: true` when they are unique. This is
+optional; normal unique composite indexes should omit it:
+
+```dart
+@Collection(
+  indexes: [
+    CompositeIndex(['teamId', 'email'], unique: true, replace: true),
+  ],
+)
+class TeamMember {
+  Id dbId = autoIncrement;
+  late int teamId;
+  late String email;
+}
+```
 
 ## Ids
 

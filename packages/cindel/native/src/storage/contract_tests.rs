@@ -939,6 +939,7 @@ fn field(name: &str, dart_type: &str, is_id: bool, is_indexed: bool) -> FieldSch
         is_id,
         is_indexed,
         is_index_unique: false,
+        is_index_replace: false,
         index_case_sensitive: true,
         index_type: "value".to_string(),
     }

@@ -3111,23 +3111,25 @@ where
     schema_record(transaction, tables, collection).map(|record| record.map(|record| record.1))
 }
 
-fn unique_index_names_from_schema(schema: Option<&CollectionSchemaManifest>) -> HashSet<String> {
-    let mut names = HashSet::new();
+fn unique_index_options_from_schema(
+    schema: Option<&CollectionSchemaManifest>,
+) -> HashMap<String, bool> {
+    let mut names = HashMap::new();
     if let Some(schema) = schema {
-        names.extend(
-            schema
-                .fields
-                .iter()
-                .filter(|field| field.is_indexed && field.is_index_unique)
-                .map(|field| field.name.clone()),
-        );
-        names.extend(
-            schema
-                .composite_indexes
-                .iter()
-                .filter(|index| index.is_unique)
-                .map(|index| index.name.clone()),
-        );
+        for field in schema
+            .fields
+            .iter()
+            .filter(|field| field.is_indexed && field.is_index_unique)
+        {
+            names.insert(field.name.clone(), field.is_index_replace);
+        }
+        for index in schema
+            .composite_indexes
+            .iter()
+            .filter(|index| index.is_unique)
+        {
+            names.insert(index.name.clone(), index.is_replace);
+        }
     }
     names
 }
@@ -4257,10 +4259,19 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
             ));
         }
         if !field.is_indexed
-            && (field.is_index_unique || !field.index_case_sensitive || field.index_type != "value")
+            && (field.is_index_unique
+                || field.is_index_replace
+                || !field.index_case_sensitive
+                || field.index_type != "value")
         {
             return Err(format!(
                 "schema field `{}.{}` declares index options without an index",
+                collection.name, field.name
+            ));
+        }
+        if field.is_index_replace && !field.is_index_unique {
+            return Err(format!(
+                "schema field `{}.{}` declares replace without a unique index",
                 collection.name, field.name
             ));
         }
@@ -4334,6 +4345,12 @@ fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(
         if index.fields.len() < 2 {
             return Err(format!(
                 "schema composite index `{}.{}` must contain at least two fields",
+                collection.name, index.name
+            ));
+        }
+        if index.is_replace && !index.is_unique {
+            return Err(format!(
+                "schema composite index `{}.{}` declares replace without a unique index",
                 collection.name, index.name
             ));
         }
@@ -4413,6 +4430,7 @@ fn validate_compatible_field(
         ));
     }
     if existing.is_index_unique != next.is_index_unique
+        || existing.is_index_replace != next.is_index_replace
         || existing.index_case_sensitive != next.index_case_sensitive
         || existing.index_type != next.index_type
     {
@@ -4433,7 +4451,7 @@ fn put_document_with_indexes(
     indexes: &[IndexEntry],
 ) -> Result<(), String> {
     let schema = collection_schema(transaction, tables, collection)?;
-    let unique_indexes = unique_index_names_from_schema(schema.as_ref());
+    let unique_indexes = unique_index_options_from_schema(schema.as_ref());
     let (stored_bytes, effective_indexes, can_derive_new_indexes) =
         encode_document_for_storage(schema.as_ref(), bytes, indexes)?;
     let documents_table = create_documents_table(transaction, collection)?;
@@ -4482,7 +4500,7 @@ fn put_document_with_indexes(
                 collection,
                 id,
                 index,
-                unique_indexes.contains(index.name.as_str()),
+                unique_indexes.contains_key(index.name.as_str()),
             )?;
         }
         MdbxIndex::write_reverse_metadata(
@@ -4561,7 +4579,7 @@ fn put_many_documents_with_indexes(
     }
 
     let schema = schema.expect("schema checked above");
-    let unique_indexes = unique_index_names_from_schema(Some(schema));
+    let unique_indexes = unique_index_options_from_schema(Some(schema));
     let documents_table = create_documents_table(transaction, collection)?;
     let mut documents_cursor = transaction
         .cursor(&documents_table)
@@ -4739,7 +4757,7 @@ fn put_many_documents_with_indexes(
                 index_cursors[cursor_index]
                     .put(&key, &document_id_bytes, WriteFlags::UPSERT)
                     .map_err(|error| error.to_string())?;
-                if unique_indexes.contains(index.name.as_str()) {
+                if unique_indexes.contains_key(index.name.as_str()) {
                     let unique_key = MdbxIndex::unique_key(collection, &index.name, &index.value)?;
                     let unique_table = create_unique_table(transaction, collection, &index.name)?;
                     transaction
@@ -4910,7 +4928,7 @@ fn delete_many_documents(
         );
     }
 
-    let unique_indexes = unique_index_names_from_schema(Some(&schema));
+    let unique_indexes = unique_index_options_from_schema(Some(&schema));
     let index_tables = open_index_tables_for_names(transaction, collection, &index_names)?;
     let mut index_cursors = index_tables
         .tables
@@ -5083,7 +5101,7 @@ fn rebuild_indexes_in_transaction(
 ) -> Result<(), String> {
     MdbxIndex::clear_collection(transaction, tables, collection)?;
     let schema = collection_schema(transaction, tables, collection)?;
-    let unique_indexes = unique_index_names_from_schema(schema.as_ref());
+    let unique_indexes = unique_index_options_from_schema(schema.as_ref());
     for document in documents {
         ensure_document_exists(transaction, tables, collection, document.id)?;
         let (_, indexes, _) =
@@ -5278,20 +5296,20 @@ impl MdbxIndex {
 
     fn validate_unique(
         transaction: &Transaction<'_, RW, NoWriteMap>,
-        _tables: &MdbxTables<'_>,
+        tables: &MdbxTables<'_>,
         collection: &str,
         document_id: u64,
         indexes: &[IndexEntry],
-        unique_indexes: &HashSet<String>,
+        unique_indexes: &HashMap<String, bool>,
     ) -> Result<(), String> {
         if unique_indexes.is_empty() {
             return Ok(());
         }
 
         for index in indexes {
-            if !unique_indexes.contains(index.name.as_str()) {
+            let Some(is_replace) = unique_indexes.get(index.name.as_str()).copied() else {
                 continue;
-            }
+            };
             let key = Self::unique_key(collection, &index.name, &index.value)?;
             let unique_table = create_unique_table(transaction, collection, &index.name)?;
             if let Some(existing_id) =
@@ -5299,6 +5317,10 @@ impl MdbxIndex {
             {
                 let existing_id = decode_u64(&existing_id)?;
                 if existing_id != document_id {
+                    if is_replace {
+                        delete_document(transaction, tables, collection, existing_id)?;
+                        continue;
+                    }
                     return Err(format!(
                         "Unique index `{}` already contains this value.",
                         index.name
@@ -5316,7 +5338,7 @@ impl MdbxIndex {
         document_id: u64,
         old_indexes: Option<&[IndexEntry]>,
         new_indexes: &[IndexEntry],
-        unique_indexes: &HashSet<String>,
+        unique_indexes: &HashMap<String, bool>,
         persist_reverse_metadata: bool,
     ) -> Result<(), String> {
         Self::delete_document(transaction, tables, collection, document_id, old_indexes)?;
@@ -5327,7 +5349,7 @@ impl MdbxIndex {
                 collection,
                 document_id,
                 index,
-                unique_indexes.contains(index.name.as_str()),
+                unique_indexes.contains_key(index.name.as_str()),
             )?;
         }
         let document_indexes = &tables.document_indexes;
@@ -5452,7 +5474,7 @@ impl MdbxIndex {
         collection: &str,
         document_id: u64,
         indexes: &[IndexEntry],
-        unique_indexes: &HashSet<String>,
+        unique_indexes: &HashMap<String, bool>,
         index_tables: &PreparedIndexTables<'_>,
         index_cursors: &mut [libmdbx::Cursor<'_, RW>],
     ) -> Result<(), String> {
@@ -5471,7 +5493,7 @@ impl MdbxIndex {
                     .del(WriteFlags::empty())
                     .map_err(|error| error.to_string())?;
             }
-            if unique_indexes.contains(index.name.as_str()) {
+            if unique_indexes.contains_key(index.name.as_str()) {
                 let unique_key = Self::unique_key(collection, &index.name, &index.value)?;
                 if let Ok(unique_table) = open_unique_table(transaction, collection, &index.name) {
                     ignore_not_found(transaction.del(&unique_table, unique_key, None))?;
@@ -7219,7 +7241,7 @@ mod tests {
         //   giving later stages one place to change index maintenance.
         let directory = TemporaryDirectory::new("index_boundary");
         let storage = MdbxStorage::open(directory.path()).unwrap();
-        let unique_indexes = HashSet::from(["email".to_string()]);
+        let unique_indexes = HashMap::from([("email".to_string(), false)]);
 
         storage
             .with_write_transaction(|transaction, _tables| {
@@ -7461,6 +7483,7 @@ mod tests {
             is_id,
             is_indexed,
             is_index_unique: false,
+            is_index_replace: false,
             index_case_sensitive: true,
             index_type: "value".to_string(),
         }
@@ -7474,6 +7497,7 @@ mod tests {
             is_id: false,
             is_indexed,
             is_index_unique: false,
+            is_index_replace: false,
             index_case_sensitive: true,
             index_type: "value".to_string(),
         }

@@ -252,6 +252,9 @@ class CindelDatabase {
     return _runTransaction(_TransactionMode.write, action);
   }
 
+  /// Whether this handle is currently inside a write transaction.
+  bool get isInWriteTransaction => _activeTransaction == _TransactionMode.write;
+
   // Manual document writes.
 
   /// Stores [value] in [collection] under [id].
@@ -1419,6 +1422,7 @@ class CindelDatabase {
               isId: field.isId,
               isIndexed: field.isIndexed,
               isIndexUnique: field.isIndexUnique,
+              isIndexReplace: field.isIndexReplace,
               indexCaseSensitive: index.caseSensitive,
               indexType: field.indexType,
             ),
@@ -1443,7 +1447,8 @@ class CindelDatabase {
     for (final document in documents) {
       for (final index in document.indexes) {
         final schemaField = _fieldSchema(collection, index.name);
-        if (schemaField?.isIndexUnique ?? false) {
+        if ((schemaField?.isIndexUnique ?? false) &&
+            !(schemaField?.isIndexReplace ?? false)) {
           uniqueEntries.add(
             _UniqueIndexEntry(
               id: document.id,
@@ -1486,7 +1491,8 @@ class CindelDatabase {
     for (final documentEntry in documents.entries) {
       for (final index in indexEntries) {
         final schemaField = _fieldSchema(collection, index.name);
-        if (!(schemaField?.isIndexUnique ?? false)) {
+        if (!(schemaField?.isIndexUnique ?? false) ||
+            (schemaField?.isIndexReplace ?? false)) {
           continue;
         }
         final fieldValue = documentEntry.value[schemaField!.name];
@@ -1612,6 +1618,7 @@ class CindelDatabase {
             isId: field.isId,
             isIndexed: field.isIndexed,
             isIndexUnique: field.isIndexUnique,
+            isIndexReplace: field.isIndexReplace,
             indexCaseSensitive: composite.caseSensitive,
             indexType: field.indexType,
           ),
@@ -1767,6 +1774,7 @@ class CindelDatabase {
       isId: schemaField.isId,
       isIndexed: schemaField.isIndexed,
       isIndexUnique: schemaField.isIndexUnique,
+      isIndexReplace: schemaField.isIndexReplace,
       indexCaseSensitive: caseSensitive,
       indexType: schemaField.indexType,
     );

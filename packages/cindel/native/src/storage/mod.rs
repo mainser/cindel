@@ -172,6 +172,8 @@ pub struct CompositeIndexSchemaManifest {
     pub fields: Vec<String>,
     #[serde(default)]
     pub is_unique: bool,
+    #[serde(default)]
+    pub is_replace: bool,
     #[serde(default = "default_index_case_sensitive")]
     pub case_sensitive: bool,
 }
@@ -185,6 +187,8 @@ pub struct FieldSchemaManifest {
     pub is_indexed: bool,
     #[serde(default)]
     pub is_index_unique: bool,
+    #[serde(default)]
+    pub is_index_replace: bool,
     #[serde(default = "default_index_case_sensitive")]
     pub index_case_sensitive: bool,
     #[serde(default = "default_index_type")]

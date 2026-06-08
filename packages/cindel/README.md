@@ -54,8 +54,8 @@ disposable while the optimized native format settles.
 
 ### Querying
 
-- Equality, range, prefix, unique, hash, case-insensitive, word-token,
-  composite, and primitive-list indexes.
+- Equality, range, prefix, unique, unique replace, hash, case-insensitive,
+  word-token, composite, and primitive-list indexes.
 - Filter builders, sorting, pagination, distinct, property projections, and
   property aggregates.
 
@@ -72,12 +72,12 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.0
+  cindel: ^0.6.2
   cindel_flutter_libs: ^0.6.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.0
+  cindel_generator: ^0.6.1
 ```
 
 Pure Dart projects can depend on `cindel` directly and provide a native library
@@ -103,6 +103,35 @@ class User {
   bool active = true;
 
   DateTime createdAt = DateTime.now().toUtc();
+}
+```
+
+Use `@Name` when the persisted collection or field name should differ from
+the Dart identifier:
+
+```dart
+@Name('accounts')
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Name('user_name')
+  @Index(unique: true)
+  late String username;
+}
+```
+
+`replace: true` is optional and defaults to `false`. Use it only when a unique
+index should behave as a natural-key upsert and replace an existing conflicting
+document:
+
+```dart
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true, replace: true)
+  late String username;
 }
 ```
 
@@ -228,6 +257,18 @@ await db.users.putMany([jhon, maria, taylor]);
 final users = await db.users.getAll([jhon.dbId, maria.dbId, 404]);
 
 await db.users.deleteAll([jhon.dbId, maria.dbId]);
+```
+
+Only unique indexes with `replace: true` generate natural-key upsert helpers.
+The generated `putBy...` method reuses an existing id for the indexed value
+instead of requiring a manual query first:
+
+```dart
+final updated = User()
+  ..email = 'jhon@example.com'
+  ..name = 'Jhon Updated';
+
+await db.users.putByEmail(updated);
 ```
 
 Use transactions when multiple operations must commit together:

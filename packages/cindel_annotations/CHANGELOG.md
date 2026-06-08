@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4
+
+- Added the `@Name` annotation for persisted collection and field names.
+- Added `replace` metadata to `@Index` and `CompositeIndex` for unique
+  replace-index upserts.
+
 ## 0.5.3
 
 - Updated annotation documentation and examples to use `dbId` as the Cindel

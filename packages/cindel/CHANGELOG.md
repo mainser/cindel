@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.2
+
+- Added `@Name` support for persisted collection and field names so Dart model
+  identifiers can differ from the stored schema names.
+- Added unique replace indexes with `@Index(unique: true, replace: true)` and
+  `CompositeIndex(..., unique: true, replace: true)`.
+- Generated Isar-style `putBy...` and `putAllBy...` helpers for unique replace
+  indexes so typed objects can upsert by natural keys without a manual query.
+- Updated SQLite, MDBX, schema metadata, and wire schema encoding to preserve
+  replace-index metadata and delete conflicting documents during replace
+  writes.
+- Updated the annotations dependency constraint to `^0.5.4` and the
+  development generator dependency constraint to `^0.6.1`.
+
 ## 0.6.1
 
 - Added documented Cindel-specific runtime errors exported from the public API,

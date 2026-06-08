@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1
+
+- Generated persisted collection and field names from `@Name` while keeping
+  generated Dart API method names based on Dart identifiers.
+- Generated `putBy...` and `putAllBy...` typed collection helpers for
+  `@Index(unique: true, replace: true)` and unique replace composite indexes.
+- Added generator validation that `replace: true` is only used together with
+  `unique: true`.
+- Updated the annotations dependency constraint to `^0.5.4`.
+
 ## 0.6.0
 
 - Generated query filter wrappers now expose `optional`, `anyOf`, and `allOf`

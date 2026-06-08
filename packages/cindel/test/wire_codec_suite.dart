@@ -391,6 +391,7 @@ void main() {
                 isId: true,
                 isIndexed: false,
                 isUnique: false,
+                isReplace: false,
                 isNullable: false,
                 caseSensitive: true,
               ),
@@ -400,6 +401,7 @@ void main() {
                 name: 'by_id',
                 fields: ['id'],
                 isUnique: true,
+                isReplace: false,
                 caseSensitive: true,
               ),
             ],
@@ -866,6 +868,7 @@ const schemaManifestFixture = [
   0,
   0,
   0,
+  0,
   1,
   1,
   0,
@@ -891,6 +894,7 @@ const schemaManifestFixture = [
   105,
   100,
   1,
+  0,
   1,
 ];
 

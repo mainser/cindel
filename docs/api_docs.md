@@ -266,6 +266,27 @@ the lowercase `@collection` constant when defaults are enough. When `name` is
 omitted, the generator derives a lower-camel-case collection name from the
 class name.
 
+### `@Name`
+
+Overrides the persisted name for a collection or field while keeping generated
+Dart APIs based on Dart identifiers.
+
+```dart
+@Name('accounts')
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Name('user_name')
+  @Index(unique: true)
+  late String username;
+}
+```
+
+In this example generated Dart APIs use names such as `AccountSchema`,
+`db.accounts`, `usernameEqualTo`, and `putByUsername`, while the stored schema
+uses the `accounts` collection and `user_name` field.
+
 ### `@Embedded` and `@embedded`
 
 Marks a class as an embedded value object stored inside a parent document.
@@ -302,6 +323,19 @@ late String titleWords;
 late List<String> tags;
 ```
 
+`replace` is optional and defaults to `false`. Use
+`@Index(unique: true)` for a normal unique index. Add `replace: true` only when
+a write with the same indexed value should replace the existing conflicting
+document instead of throwing a duplicate-index error:
+
+```dart
+@Index(unique: true, replace: true)
+late String username;
+```
+
+Generated typed collections expose `putBy...` and `putAllBy...` helpers only
+for unique replace indexes.
+
 ### `@Collection(indexes: [...])` and `CompositeIndex`
 
 Declares collection-level composite indexes.
@@ -311,10 +345,13 @@ Declares collection-level composite indexes.
   name: 'todos',
   indexes: [
     CompositeIndex(['completed', 'createdAt']),
+    CompositeIndex(['tenantId', 'slug'], unique: true),
   ],
 )
 class TodoModel {
   Id dbId = autoIncrement;
+  late int tenantId;
+  late String slug;
   late bool completed;
   late DateTime createdAt;
 }
@@ -324,6 +361,13 @@ The fields listed in a `CompositeIndex` do not need their own `@Index`
 annotation. The composite index is generated from the collection-level
 declaration above. Add `@Index` to `completed` or `createdAt` only if you also
 want to query either field independently.
+
+Composite `replace` also defaults to `false`. Add `replace: true` only for a
+unique composite index that should replace conflicting documents:
+
+```dart
+CompositeIndex(['tenantId', 'slug'], unique: true, replace: true)
+```
 
 ### `@Enumerated`
 
@@ -416,6 +460,7 @@ Generated code creates:
 - native typed document readers/writers when the field layout supports it,
 - embedded conversion and nested filter helpers when collection fields or list
   elements use `@Embedded` value objects.
+- `putBy...` and `putAllBy...` helpers for unique replace indexes.
 
 Example:
 
@@ -483,6 +528,30 @@ await db.todos.putAll(todos);
 ```
 
 `putMany` is an alias for `putAll`.
+
+### Generated `putBy...` / `putAllBy...`
+
+Generated only for unique indexes where `replace: true` is explicitly set.
+These helpers reuse an existing id for the indexed value before writing, which
+gives natural-key upsert behavior without a manual query.
+
+```dart
+@collection
+class Account {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true, replace: true)
+  late String username;
+}
+
+await db.accounts.putByUsername(account);
+await db.accounts.putAllByUsername(accounts);
+```
+
+If the indexed value is already stored under a different id, the object being
+written receives that existing id and replaces that stored document. Normal
+`put` also respects `replace: true`: a conflicting document with a different id
+is deleted and the new id remains.
 
 ### `get`
 
@@ -1036,6 +1105,7 @@ Important fields:
 - `isId`
 - `isIndexed`
 - `isIndexUnique`
+- `isIndexReplace`
 - `indexCaseSensitive`
 - `indexType`
 
@@ -1048,6 +1118,7 @@ Important fields:
 - `name`
 - `fields`
 - `isUnique`
+- `isReplace`
 - `caseSensitive`
 
 ### `schemaVersion`

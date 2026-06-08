@@ -20,6 +20,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -30,6 +31,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -40,6 +42,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -50,6 +53,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: true,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -60,6 +64,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: false,
       indexType: CindelIndexType.value,
     ),
@@ -70,6 +75,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.hash,
     ),
@@ -80,6 +86,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: false,
       indexType: CindelIndexType.words,
     ),
@@ -90,6 +97,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -100,6 +108,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -110,6 +119,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -120,6 +130,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: false,
       indexType: CindelIndexType.multiEntry,
     ),
@@ -130,6 +141,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -140,6 +152,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -150,6 +163,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -160,6 +174,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -170,6 +185,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -180,6 +196,7 @@ final UserSchema = CindelCollectionSchema<User>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -189,6 +206,7 @@ final UserSchema = CindelCollectionSchema<User>(
       name: "email_active",
       fields: <String>["email", "active"],
       isUnique: false,
+      isReplace: false,
       caseSensitive: true,
     ),
   ],
@@ -1960,6 +1978,7 @@ final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -1970,6 +1989,7 @@ final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -1980,6 +2000,7 @@ final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2294,6 +2315,7 @@ final ApiProductSchema = CindelCollectionSchema<ApiProduct>(
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2304,6 +2326,7 @@ final ApiProductSchema = CindelCollectionSchema<ApiProduct>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2314,6 +2337,7 @@ final ApiProductSchema = CindelCollectionSchema<ApiProduct>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2637,6 +2661,392 @@ void _$ApiProductSetCindelId(ApiProduct object, int id) {
 
 // ignore_for_file: non_constant_identifier_names
 
+final AccountSchema = CindelCollectionSchema<Account>(
+  name: "accounts",
+  dartName: "Account",
+  idField: "dbId",
+  fields: <CindelFieldSchema>[
+    CindelFieldSchema(
+      name: "dbId",
+      dartType: "int",
+      binaryType: "int",
+      isId: true,
+      isIndexed: false,
+      isIndexUnique: false,
+      isIndexReplace: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "user_name",
+      dartType: "String",
+      binaryType: "string",
+      isId: false,
+      isIndexed: true,
+      isIndexUnique: true,
+      isIndexReplace: true,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+    CindelFieldSchema(
+      name: "display_label",
+      dartType: "String?",
+      binaryType: "string",
+      isId: false,
+      isIndexed: false,
+      isIndexUnique: false,
+      isIndexReplace: false,
+      indexCaseSensitive: true,
+      indexType: CindelIndexType.value,
+    ),
+  ],
+  compositeIndexes: <CindelCompositeIndexSchema>[],
+  toDocument: _$AccountToCindelDocument,
+  fromDocument: _$AccountFromCindelDocument,
+  toBinaryDocument: _$AccountToCindelBinaryDocument,
+  fromBinaryDocument: _$AccountFromCindelBinaryDocument,
+  writeNativeDocument: _$AccountWriteCindelNativeDocument,
+  readNativeDocument: _$AccountReadCindelNativeDocument,
+  getId: _$AccountGetCindelId,
+  setId: _$AccountSetCindelId,
+);
+
+extension AccountCindelCollectionAccess on CindelDatabase {
+  CindelTypedCollection<Account> get accounts => typedCollection(AccountSchema);
+}
+
+extension AccountCindelQueryAccess on CindelTypedCollection<Account> {
+  AccountQueryWhere where() => AccountQueryWhere(this);
+
+  AccountQueryFilter filter() => AccountQueryFilter(
+    CindelQuery.all(database: database, schema: AccountSchema),
+  );
+
+  Future<void> putByUsername(Account object) {
+    return putByUniqueIndex(
+      object,
+      indexName: "user_name",
+      values: <Object?>[object.username],
+      isComposite: false,
+    );
+  }
+
+  Future<void> putAllByUsername(Iterable<Account> objects) {
+    return putAllByUniqueIndex(
+      objects,
+      indexName: "user_name",
+      values: (object) => <Object?>[object.username],
+      isComposite: false,
+    );
+  }
+}
+
+extension AccountCindelQueryFilterAccess on CindelQuery<Account> {
+  AccountQueryFilter filter() => AccountQueryFilter(this);
+}
+
+extension AccountCindelQueryModifierAccess on CindelQuery<Account> {
+  CindelQuery<Account> sortByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("dbId", order: order);
+  }
+
+  CindelQuery<Account> sortByDbIdDesc() {
+    return sortBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> thenByDbId({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("dbId", order: order);
+  }
+
+  CindelQuery<Account> thenByDbIdDesc() {
+    return thenBy("dbId", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> distinctByDbId() {
+    return distinctBy("dbId");
+  }
+
+  CindelPropertyQuery<Account, int> dbIdProperty() {
+    return property<int>("dbId");
+  }
+
+  CindelQuery<Account> sortByUsername({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("user_name", order: order);
+  }
+
+  CindelQuery<Account> sortByUsernameDesc() {
+    return sortBy("user_name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> thenByUsername({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("user_name", order: order);
+  }
+
+  CindelQuery<Account> thenByUsernameDesc() {
+    return thenBy("user_name", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> distinctByUsername() {
+    return distinctBy("user_name");
+  }
+
+  CindelPropertyQuery<Account, String> usernameProperty() {
+    return property<String>("user_name");
+  }
+
+  CindelQuery<Account> sortByDisplayLabel({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return sortBy("display_label", order: order);
+  }
+
+  CindelQuery<Account> sortByDisplayLabelDesc() {
+    return sortBy("display_label", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> thenByDisplayLabel({
+    CindelSortOrder order = CindelSortOrder.ascending,
+  }) {
+    return thenBy("display_label", order: order);
+  }
+
+  CindelQuery<Account> thenByDisplayLabelDesc() {
+    return thenBy("display_label", order: CindelSortOrder.descending);
+  }
+
+  CindelQuery<Account> distinctByDisplayLabel() {
+    return distinctBy("display_label");
+  }
+
+  CindelPropertyQuery<Account, String?> displayLabelProperty() {
+    return property<String?>("display_label");
+  }
+}
+
+final class AccountQueryWhere {
+  const AccountQueryWhere(this._collection);
+
+  final CindelTypedCollection<Account> _collection;
+
+  CindelQuery<Account> usernameEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: AccountSchema,
+      field: "user_name",
+      value: value,
+    );
+  }
+
+  CindelQuery<Account> usernameStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: AccountSchema,
+      field: "user_name",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<Account> usernameBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: AccountSchema,
+      field: "user_name",
+      lower: lower,
+      upper: upper,
+    );
+  }
+}
+
+final class AccountQueryFilter {
+  const AccountQueryFilter(this._query);
+
+  final CindelQuery<Account> _query;
+
+  CindelQuery<Account> dbIdEqualTo(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").equalTo(value));
+  }
+
+  CindelQuery<Account> dbIdGreaterThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").greaterThan(value));
+  }
+
+  CindelQuery<Account> dbIdGreaterThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").greaterThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<Account> dbIdLessThan(int value) {
+    return _query.whereMatches(CindelFilter.field("dbId").lessThan(value));
+  }
+
+  CindelQuery<Account> dbIdLessThanOrEqualTo(int value) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").lessThanOrEqualTo(value),
+    );
+  }
+
+  CindelQuery<Account> dbIdBetween(int? lower, int? upper) {
+    return _query.whereMatches(
+      CindelFilter.field("dbId").between(lower, upper),
+    );
+  }
+
+  CindelQuery<Account> usernameEqualTo(String value) {
+    return _query.whereMatches(CindelFilter.field("user_name").equalTo(value));
+  }
+
+  CindelQuery<Account> usernameContains(String value) {
+    return _query.whereMatches(CindelFilter.field("user_name").contains(value));
+  }
+
+  CindelQuery<Account> usernameStartsWith(String value) {
+    return _query.whereMatches(
+      CindelFilter.field("user_name").startsWith(value),
+    );
+  }
+
+  CindelQuery<Account> usernameEndsWith(String value) {
+    return _query.whereMatches(CindelFilter.field("user_name").endsWith(value));
+  }
+
+  CindelQuery<Account> displayLabelEqualTo(String? value) {
+    return _query.whereMatches(
+      CindelFilter.field("display_label").equalTo(value),
+    );
+  }
+
+  CindelQuery<Account> displayLabelContains(String value) {
+    return _query.whereMatches(
+      CindelFilter.field("display_label").contains(value),
+    );
+  }
+
+  CindelQuery<Account> displayLabelStartsWith(String value) {
+    return _query.whereMatches(
+      CindelFilter.field("display_label").startsWith(value),
+    );
+  }
+
+  CindelQuery<Account> displayLabelEndsWith(String value) {
+    return _query.whereMatches(
+      CindelFilter.field("display_label").endsWith(value),
+    );
+  }
+
+  CindelQuery<Account> optional(
+    bool enabled,
+    CindelQuery<Account> Function(AccountQueryFilter q) option,
+  ) {
+    return _query.optional(
+      enabled,
+      (query) => option(AccountQueryFilter(query)),
+    );
+  }
+
+  CindelQuery<Account> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<Account> Function(AccountQueryFilter q, E item) option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(AccountQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<Account> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<Account> Function(AccountQueryFilter q, E item) option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(AccountQueryFilter(query), item),
+    );
+  }
+}
+
+Map<String, Object?> _$AccountToCindelDocument(Account object) {
+  return <String, Object?>{
+    "user_name": object.username,
+    "display_label": object.displayLabel,
+  };
+}
+
+Account _$AccountFromCindelDocument(Map<String, Object?> document) {
+  final object = Account();
+  object.dbId = document["dbId"] as int;
+  object.username = document["user_name"] as String;
+  object.displayLabel = document["display_label"] == null
+      ? null
+      : document["display_label"] as String?;
+  return object;
+}
+
+CindelBinaryDocumentBytes _$AccountToCindelBinaryDocument(Account object) {
+  return cindelEncodeSchemaBinaryDocument(
+    <Object?>[object.displayLabel, object.username],
+    const <CindelBinaryFieldType>[
+      CindelBinaryFieldType.stringValue,
+      CindelBinaryFieldType.stringValue,
+    ],
+  );
+}
+
+Account _$AccountFromCindelBinaryDocument(CindelBinaryDocumentBytes bytes) {
+  final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 6);
+  final Object? field0 = reader.readString(0, 0);
+  final Object? field1 = reader.readString(1, 3);
+  final object = Account();
+  object.dbId = autoIncrement;
+  object.username = field1 as String;
+  object.displayLabel = field0 == null ? null : field0 as String?;
+  return object;
+}
+
+void _$AccountWriteCindelNativeDocument(
+  CindelNativeDocumentWriter writer,
+  Account object,
+) {
+  {
+    final value = object.displayLabel;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeString(0, value);
+    }
+  }
+  writer.writeString(1, object.username);
+}
+
+Account _$AccountReadCindelNativeDocument(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final object = Account();
+  object.dbId = reader.readId(documentIndex);
+  object.username = reader.readString(documentIndex, 1) as String;
+  object.displayLabel = reader.readString(documentIndex, 0);
+  return object;
+}
+
+int _$AccountGetCindelId(Account object) {
+  return object.dbId;
+}
+
+void _$AccountSetCindelId(Account object, int id) {
+  object.dbId = id;
+}
+
+// ignore_for_file: non_constant_identifier_names
+
 final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
   name: "freezedPrimaryUsers",
   dartName: "FreezedPrimaryUser",
@@ -2649,6 +3059,7 @@ final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2659,6 +3070,7 @@ final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2669,6 +3081,7 @@ final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
       isId: false,
       isIndexed: true,
       isIndexUnique: true,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2679,6 +3092,7 @@ final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -2689,6 +3103,7 @@ final FreezedPrimaryUserSchema = CindelCollectionSchema<FreezedPrimaryUser>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),

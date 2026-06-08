@@ -290,6 +290,7 @@ fn collection_to_wire(collection: &CollectionSchemaManifest) -> WireCollectionSc
                 is_id: field.is_id,
                 is_indexed: field.is_indexed,
                 is_unique: field.is_index_unique,
+                is_replace: field.is_index_replace,
                 is_nullable: field.dart_type.ends_with('?'),
                 case_sensitive: field.index_case_sensitive,
             })
@@ -301,6 +302,7 @@ fn collection_to_wire(collection: &CollectionSchemaManifest) -> WireCollectionSc
                 name: index.name.clone(),
                 fields: index.fields.clone(),
                 is_unique: index.is_unique,
+                is_replace: index.is_replace,
                 case_sensitive: index.case_sensitive,
             })
             .collect(),
@@ -321,6 +323,7 @@ fn collection_from_wire(collection: WireCollectionSchema) -> CollectionSchemaMan
                 is_id: field.is_id,
                 is_indexed: field.is_indexed,
                 is_index_unique: field.is_unique,
+                is_index_replace: field.is_replace,
                 index_case_sensitive: field.case_sensitive,
                 index_type: field.index_type,
             })
@@ -332,6 +335,7 @@ fn collection_from_wire(collection: WireCollectionSchema) -> CollectionSchemaMan
                 name: index.name,
                 fields: index.fields,
                 is_unique: index.is_unique,
+                is_replace: index.is_replace,
                 case_sensitive: index.case_sensitive,
             })
             .collect(),
@@ -418,6 +422,7 @@ mod tests {
                     is_id: true,
                     is_indexed: false,
                     is_index_unique: false,
+                    is_index_replace: false,
                     index_case_sensitive: true,
                     index_type: "value".to_string(),
                 },
@@ -428,6 +433,7 @@ mod tests {
                     is_id: false,
                     is_indexed: true,
                     is_index_unique: true,
+                    is_index_replace: false,
                     index_case_sensitive: false,
                     index_type: "hash".to_string(),
                 },
@@ -436,6 +442,7 @@ mod tests {
                 name: "by_email_id".to_string(),
                 fields: vec!["email".to_string(), "id".to_string()],
                 is_unique: true,
+                is_replace: false,
                 case_sensitive: false,
             }],
         }
