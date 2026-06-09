@@ -5,4 +5,10 @@
 /// Cindel Web worker runtime.
 library cindel_web;
 
+export 'package:cindel_annotations/cindel_annotations.dart'
+    show CindelIndexType;
+
+export 'src/schema.dart'
+    show CindelCollectionSchema, CindelCompositeIndexSchema, CindelFieldSchema;
+export 'src/web/schema_manifest.dart';
 export 'src/web/worker_bridge.dart';

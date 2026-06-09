@@ -13,4 +13,4 @@ mod wire;
 
 pub use engine::CindelEngine;
 #[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
-pub use web::install_web_opfs_sahpool;
+pub use web::{install_web_opfs_sahpool, CindelWebEngine};

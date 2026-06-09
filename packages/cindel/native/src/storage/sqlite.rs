@@ -485,6 +485,18 @@ impl SqliteStorage {
         Ok(storage)
     }
 
+    pub fn open_with_persisted_schemas(
+        directory: &str,
+        manifest: &SchemaManifest,
+    ) -> Result<Self, String> {
+        validate_schema_manifest(manifest)?;
+        let mut storage = Self::open_uninitialized(directory, true)?;
+        storage.initialize(None)?;
+        storage.register_schemas(manifest)?;
+
+        Ok(storage)
+    }
+
     pub(crate) fn native_document_cursor(
         &self,
         collection: &str,
@@ -3989,6 +4001,66 @@ mod tests {
         // Assert.
         assert_eq!(version, Some(1));
         assert_eq!(storage_metadata_table, None);
+    }
+
+    #[test]
+    fn opens_with_persisted_schema_manifest_and_metadata() {
+        // Scenario: Web opens SQLite with generated schemas inside a persistent
+        // database.
+        // Covers:
+        // - [SqliteStorage::open_with_persisted_schemas] registering schema
+        //   metadata during open.
+        // - Storage metadata persistence across close and reopen.
+        // - Controlled rejection of incompatible schema changes.
+        // Expected: Web SQLite can reopen the same database, report schema
+        // version 1, keep storage metadata, and leave the old schema intact
+        // after an incompatible open attempt.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("schema_open_persisted");
+        let original = schema_manifest(vec![user_schema(vec![field(
+            "email", "String", false, true,
+        )])]);
+        let incompatible =
+            schema_manifest(vec![user_schema(vec![field("email", "int", false, true)])]);
+
+        // Act.
+        let storage =
+            SqliteStorage::open_with_persisted_schemas(directory.path(), &original).unwrap();
+        let first_version = storage.schema_version("users").unwrap();
+        let first_metadata = storage.storage_metadata().unwrap();
+        drop(storage);
+
+        let storage =
+            SqliteStorage::open_with_persisted_schemas(directory.path(), &original).unwrap();
+        let reopened_version = storage.schema_version("users").unwrap();
+        let reopened_metadata = storage.storage_metadata().unwrap();
+        drop(storage);
+
+        let incompatible_error =
+            match SqliteStorage::open_with_persisted_schemas(directory.path(), &incompatible) {
+                Ok(_) => panic!("incompatible schema should be rejected"),
+                Err(error) => error,
+            };
+        let storage =
+            SqliteStorage::open_with_persisted_schemas(directory.path(), &original).unwrap();
+        let final_version = storage.schema_version("users").unwrap();
+
+        // Assert.
+        assert_eq!(first_version, Some(1));
+        assert_eq!(reopened_version, Some(1));
+        assert_eq!(final_version, Some(1));
+        assert_eq!(first_metadata.layout, StorageLayoutVersion::SqliteV1);
+        assert_eq!(
+            first_metadata.document_format,
+            DocumentFormatVersion::BinaryV2
+        );
+        assert_eq!(
+            first_metadata.schema_metadata_format,
+            SchemaMetadataVersion::BinaryV1
+        );
+        assert_eq!(reopened_metadata, first_metadata);
+        assert!(incompatible_error.contains("cannot change type"));
     }
 
     #[test]

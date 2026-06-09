@@ -1,7 +1,8 @@
 # Cindel Public API
 
 This document describes the public Dart API exported by
-`package:cindel/cindel.dart`.
+`package:cindel/cindel.dart`, plus the experimental Web entrypoint exported by
+`package:cindel/cindel_web.dart`.
 
 Cindel is still pre-1.0. The API is usable, but some names and advanced
 storage behavior can still change before the stable line.
@@ -21,6 +22,15 @@ This single import exposes:
 - watcher helpers,
 - transaction helpers,
 - generated binary and native typed document helpers used by the generator.
+
+Web worker code can import the experimental Web entrypoint separately:
+
+```dart
+import 'package:cindel/cindel_web.dart';
+```
+
+It exposes the Web worker bridge and schema manifest encoder without changing
+the native `package:cindel/cindel.dart` API.
 
 ## Opening Databases
 
@@ -83,6 +93,25 @@ The default backend is exposed as:
 ```dart
 const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
 ```
+
+## Experimental Web Runtime
+
+The Web runtime uses SQLite in a Worker with OPFS persistence. MDBX remains the
+default for native and Flutter apps; Web forces SQLite because MDBX is not the
+browser storage backend.
+
+### `cindelEncodeWebSchemaManifest`
+
+Encodes generated schemas for the Web worker/Wasm opener.
+
+```dart
+final manifestBytes = cindelEncodeWebSchemaManifest([TodoModelSchema]);
+```
+
+The bytes match the native schema manifest wire format used by `Cindel.open`.
+The Web Wasm opener registers schema metadata and storage metadata
+persistently, then rejects incompatible schema changes with the same schema
+compatibility checks used by native storage.
 
 ## Closing Databases
 
@@ -1237,6 +1266,6 @@ The current public API does not yet include:
 - `exists()` query result helper,
 - embedded-field indexes,
 - public migration/export tooling,
-- web backend support.
+- the complete high-level Dart Web database API.
 
 SQLite remains selectable, but MDBX is the default optimized backend.

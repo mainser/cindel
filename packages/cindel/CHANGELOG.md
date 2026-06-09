@@ -8,6 +8,8 @@
   opening for persistent Web storage.
 - Added the minimal Web worker transport bridge for request ids, structured
   errors, close cleanup, and transferable payloads.
+- Added Web schema manifest encoding and a Wasm Web engine opener that registers
+  SQLite schema metadata persistently.
 
 ## 0.6.2
 

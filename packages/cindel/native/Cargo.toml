@@ -9,7 +9,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [features]
 default = ["mdbx"]
 mdbx = ["dep:libmdbx"]
-web = ["dep:sqlite-wasm-vfs"]
+web = ["dep:sqlite-wasm-vfs", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
 
 [dependencies]
 libmdbx = { version = "0.6.6", optional = true, default-features = false }
@@ -18,6 +18,8 @@ serde = { version = "1.0", features = ["derive"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 sqlite-wasm-vfs = { version = "0.2", optional = true }
+wasm-bindgen = { version = "0.2.104", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [patch.crates-io]
 mdbx-sys = { path = "vendor/mdbx-sys" }

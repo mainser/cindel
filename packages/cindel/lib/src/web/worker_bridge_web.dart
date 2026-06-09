@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:web/web.dart' as web;
 
@@ -41,10 +42,10 @@ final class CindelWebWorkerBridge {
   /// By default the worker is created as a JavaScript module worker. Pass
   /// `module: false` only for classic workers.
   CindelWebWorkerBridge(String workerUrl, {bool module = true})
-      : _worker = web.Worker(
-          workerUrl.toJS,
-          web.WorkerOptions(type: module ? 'module' : 'classic'),
-        ) {
+    : _worker = web.Worker(
+        workerUrl.toJS,
+        web.WorkerOptions(type: module ? 'module' : 'classic'),
+      ) {
     _worker.onmessage = ((web.Event event) {
       final data = (event as web.MessageEvent).data;
       if (data == null) return;
@@ -107,11 +108,8 @@ final class CindelWebWorkerBridge {
     }
 
     final request = _queue.then(
-      (_) => _sendNow(
-        operation: operation,
-        payload: payload,
-        transfer: transfer,
-      ),
+      (_) =>
+          _sendNow(operation: operation, payload: payload, transfer: transfer),
     );
     _queue = request.then<void>((_) {}, onError: (_) {});
     return request;
@@ -158,7 +156,7 @@ final class CindelWebWorkerBridge {
     if (transfer == null) {
       _worker.postMessage(message);
     } else {
-      _worker.postMessage(message, transferList!);
+      _worker.callMethod<JSAny?>('postMessage'.toJS, message, transferList!);
     }
     return completer.future;
   }
@@ -246,7 +244,7 @@ List<Object> cindelWebTransferList(List<Object> objects) => objects;
 
 JSArray<JSObject>? _toJsTransferList(List<Object>? transfer) {
   if (transfer == null) return null;
-  return transfer.cast<JSObject>().toJS;
+  return <JSObject>[for (final object in transfer) object as JSObject].toJS;
 }
 
 extension type _CindelWebWorkerMessage._(JSObject _) implements JSObject {

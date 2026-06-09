@@ -59,6 +59,15 @@ impl StorageBackend {
         }
     }
 
+    pub fn open_sqlite_with_persisted_schemas(
+        directory: &str,
+        manifest: &SchemaManifest,
+    ) -> Result<Self, String> {
+        Ok(Self::Sqlite(SqliteStorage::open_with_persisted_schemas(
+            directory, manifest,
+        )?))
+    }
+
     #[cfg(feature = "mdbx")]
     pub(crate) fn mdbx_cursor_document_reader(
         &self,

@@ -27,6 +27,7 @@
   <a href="#queries">Queries</a> &middot;
   <a href="#watchers">Watchers</a> &middot;
   <a href="#embedded-objects">Embedded Objects</a> &middot;
+  <a href="#web-runtime">Web Runtime</a> &middot;
   <a href="#native-binaries">Native Binaries</a>
 </p>
 
@@ -48,6 +49,7 @@ disposable while the optimized native format settles.
 
 - Rust native core behind Dart FFI.
 - MDBX default backend with SQLite as an explicit secondary backend.
+- Experimental Web runtime work uses SQLite in a Worker with OPFS persistence.
 - Native auto-increment ids and in-memory databases for tests.
 - Bulk writes, reads, updates, and deletes.
 - Explicit read and write transactions.
@@ -217,6 +219,18 @@ final db = await Cindel.open(
   backend: CindelStorageBackend.sqlite,
 );
 ```
+
+## Web Runtime
+
+Web support is experimental and lives behind the separate
+`package:cindel/cindel_web.dart` entrypoint. The native Web runtime uses SQLite
+with OPFS persistence, while native and Flutter apps continue to use MDBX by
+default unless SQLite is requested explicitly.
+
+Generated schemas can be encoded for the Web worker/Wasm runtime with
+`cindelEncodeWebSchemaManifest(schemas)`. These bytes use the same schema
+manifest wire format as native `Cindel.open`, and the Web Wasm opener registers
+schema and storage metadata persistently.
 
 For tests and short-lived work:
 

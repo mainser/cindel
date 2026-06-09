@@ -86,6 +86,8 @@ dependencies = [
  "rusqlite",
  "serde",
  "sqlite-wasm-vfs",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

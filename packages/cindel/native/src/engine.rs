@@ -1,7 +1,7 @@
 use crate::storage::{
     DocumentWrite, IndexEntry, IndexValue, NativeDocumentWrite, SchemaManifest,
     SqliteNativeDocumentCursor, SqliteNativeQueryCursor, StorageBackend, StorageBackendKind,
-    StorageChangeSet, StorageEngine,
+    StorageChangeSet, StorageEngine, StorageMetadata,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -36,6 +36,15 @@ impl CindelEngine {
     ) -> Result<Self, String> {
         Ok(Self {
             storage: StorageBackend::open_with_schemas(backend, directory, manifest)?,
+        })
+    }
+
+    pub fn open_web_sqlite_with_schemas(
+        directory: &str,
+        manifest: &SchemaManifest,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            storage: StorageBackend::open_sqlite_with_persisted_schemas(directory, manifest)?,
         })
     }
 
@@ -321,6 +330,10 @@ impl CindelEngine {
 
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.storage.schema_version(collection)
+    }
+
+    pub fn storage_metadata(&self) -> Result<StorageMetadata, String> {
+        self.storage.storage_metadata()
     }
 }
 
