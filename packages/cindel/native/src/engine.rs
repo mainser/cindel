@@ -327,7 +327,6 @@ impl CindelEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "mdbx")]
     use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest};
 
     #[test]
@@ -353,6 +352,82 @@ mod tests {
         assert_eq!(stored, br#"{"name":"Ana"}"#);
 
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn sqlite_web_baseline_handles_schema_crud_and_transactions_in_memory() {
+        // Scenario: The Web target uses the same SQLite storage semantics as
+        // native Cindel before OPFS/Worker integration.
+        // Covers:
+        // - [CindelEngine::open_with_backend_and_schemas] with SQLite.
+        // - Schema registration, CRUD, auto-increment allocation, and
+        //   transaction rollback through the shared engine boundary.
+        // Expected: The portable SQLite core supports the MVP Web baseline
+        //   without a separate storage implementation.
+        let manifest = SchemaManifest {
+            collections: vec![CollectionSchemaManifest {
+                name: "users".into(),
+                id_field: "id".into(),
+                fields: vec![
+                    FieldSchemaManifest {
+                        name: "id".into(),
+                        dart_type: "int".into(),
+                        binary_type: "int".into(),
+                        is_id: true,
+                        is_indexed: false,
+                        is_index_unique: false,
+                        is_index_replace: false,
+                        index_case_sensitive: true,
+                        index_type: "value".into(),
+                    },
+                    FieldSchemaManifest {
+                        name: "name".into(),
+                        dart_type: "String".into(),
+                        binary_type: "String".into(),
+                        is_id: false,
+                        is_indexed: false,
+                        is_index_unique: false,
+                        is_index_replace: false,
+                        index_case_sensitive: true,
+                        index_type: "value".into(),
+                    },
+                ],
+                composite_indexes: Vec::new(),
+            }],
+        };
+        let mut engine = CindelEngine::open_with_backend_and_schemas(
+            ":memory:",
+            StorageBackendKind::Sqlite,
+            &manifest,
+        )
+        .unwrap();
+
+        assert_eq!(engine.schema_version("users").unwrap(), Some(1));
+
+        let first_id = engine.allocate_id("users").unwrap();
+        assert_eq!(first_id, 1);
+        engine
+            .put("users", first_id, &generic_document("Ana"))
+            .unwrap();
+        assert_eq!(engine.document_ids("users").unwrap(), vec![1]);
+        assert_eq!(
+            engine.get("users", first_id).unwrap(),
+            Some(generic_document("Ana"))
+        );
+
+        engine.begin_write_transaction().unwrap();
+        let rolled_back_id = engine.allocate_id("users").unwrap();
+        assert_eq!(rolled_back_id, 2);
+        engine
+            .put("users", rolled_back_id, &generic_document("Ben"))
+            .unwrap();
+        engine.rollback_transaction().unwrap();
+
+        assert_eq!(engine.document_ids("users").unwrap(), vec![1]);
+        assert_eq!(engine.get("users", rolled_back_id).unwrap(), None);
+
+        engine.delete("users", first_id).unwrap();
+        assert_eq!(engine.document_ids("users").unwrap(), Vec::<u64>::new());
     }
 
     #[cfg(feature = "mdbx")]
@@ -421,5 +496,21 @@ mod tests {
         .unwrap();
 
         assert_eq!(engine.schema_version("users").unwrap(), Some(1));
+    }
+
+    fn generic_document(name: &str) -> Vec<u8> {
+        let key = b"name";
+        let value = name.as_bytes();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"CGD1");
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.push(6);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(key);
+        bytes.push(5);
+        bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(value);
+        bytes
     }
 }
