@@ -6,6 +6,8 @@
   as the default native backend.
 - Added OPFS SAHPool setup for Web workers and explicit SQLite `opfs-sahpool`
   opening for persistent Web storage.
+- Added the minimal Web worker transport bridge for request ids, structured
+  errors, close cleanup, and transferable payloads.
 
 ## 0.6.2
 
