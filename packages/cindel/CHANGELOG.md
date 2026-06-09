@@ -11,6 +11,8 @@
 - Updated SQLite, MDBX, schema metadata, and wire schema encoding to preserve
   replace-index metadata and delete conflicting documents during replace
   writes.
+- Persisted MDBX auto-increment high-water counters so deleted high ids and
+  allocate-only ids are not reused after reopening the database.
 - Updated the annotations dependency constraint to `^0.5.4` and the
   development generator dependency constraint to `^0.6.1`.
 

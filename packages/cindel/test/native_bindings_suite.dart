@@ -311,11 +311,9 @@ void main({bool includeMdbxOnlyTests = false}) {
     // Scenario: Native ids are allocated and the database is reopened.
     // Covers:
     // - [CindelDatabase.allocateId] FFI path.
-    // - SQLite persisted per-collection id counters.
-    // - MDBX primary-key-derived counters for collections without documents.
-    // Expected: SQLite persists allocate-only counters; MDBX restarts empty
-    //   collections from id 1 because PERF-11 keeps allocate-only state in
-    //   memory and derives reopened counters from stored document ids.
+    // - Persisted per-collection id counters.
+    // - MDBX retaining allocate-only counters for collections without documents.
+    // Expected: Reopened databases continue after allocated ids.
     test('allocates persistent native ids by collection.', () async {
       // Arrange.
       final directory = await _createDatabaseDirectory();
@@ -336,10 +334,7 @@ void main({bool includeMdbxOnlyTests = false}) {
       expect(firstUserId, 1);
       expect(secondUserId, 2);
       expect(firstSettingsId, 1);
-      expect(
-        reopenedUserId,
-        testStorageBackend == CindelStorageBackend.mdbx ? 1 : 3,
-      );
+      expect(reopenedUserId, 3);
     });
 
     // Scenario: A manual id is stored before native allocation.
