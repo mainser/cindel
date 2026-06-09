@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fmt::Write as _;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use std::fs;
+#[cfg(any(not(all(target_family = "wasm", target_os = "unknown")), test))]
 use std::path::Path;
 use std::ptr;
 use std::slice;
 
 use rusqlite::types::{Null, Value, ValueRef};
+#[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
+use rusqlite::OpenFlags;
 use rusqlite::{ffi, params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::document_format::{decode_list, BinaryValue};
@@ -516,13 +520,7 @@ impl SqliteStorage {
     }
 
     fn open_uninitialized(directory: &str, persist_schema_metadata: bool) -> Result<Self, String> {
-        let connection = if directory == IN_MEMORY_DIRECTORY {
-            Connection::open_in_memory().map_err(|error| error.to_string())?
-        } else {
-            fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-            let database_path = Path::new(directory).join("cindel.sqlite");
-            Connection::open(database_path).map_err(|error| error.to_string())?
-        };
+        let connection = open_sqlite_connection(directory)?;
         let storage = Self {
             connection,
             schemas: HashMap::new(),
@@ -1406,6 +1404,43 @@ impl SqliteStorage {
             Some(TransactionMode::Read) => Err("write attempted inside read transaction".into()),
             Some(TransactionMode::Write) | None => Ok(()),
         }
+    }
+}
+
+#[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
+fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    if directory == IN_MEMORY_DIRECTORY {
+        Connection::open_in_memory_with_flags(flags).map_err(|error| error.to_string())
+    } else {
+        Connection::open_with_flags_and_vfs(directory, flags, "opfs-sahpool")
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(all(not(feature = "web"), target_family = "wasm", target_os = "unknown"))]
+fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
+    if directory == IN_MEMORY_DIRECTORY {
+        Connection::open_in_memory().map_err(|error| error.to_string())
+    } else {
+        Err(
+            "persistent SQLite storage on Web requires the `web` feature and OPFS SAHPool setup"
+                .into(),
+        )
+    }
+}
+
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
+    if directory == IN_MEMORY_DIRECTORY {
+        Connection::open_in_memory().map_err(|error| error.to_string())
+    } else {
+        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        let database_path = Path::new(directory).join("cindel.sqlite");
+        Connection::open(database_path).map_err(|error| error.to_string())
     }
 }
 

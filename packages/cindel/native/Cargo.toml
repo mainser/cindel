@@ -9,12 +9,15 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [features]
 default = ["mdbx"]
 mdbx = ["dep:libmdbx"]
-web = []
+web = ["dep:sqlite-wasm-vfs"]
 
 [dependencies]
 libmdbx = { version = "0.6.6", optional = true, default-features = false }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-vfs = { version = "0.2", optional = true }
 
 [patch.crates-io]
 mdbx-sys = { path = "vendor/mdbx-sys" }

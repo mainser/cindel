@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+- Added the native Web SQLite baseline behind the `web` feature, keeping MDBX
+  as the default native backend.
+- Added OPFS SAHPool setup for Web workers and explicit SQLite `opfs-sahpool`
+  opening for persistent Web storage.
+
 ## 0.6.2
 
 - Added `@Name` support for persisted collection and field names so Dart model
