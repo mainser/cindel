@@ -8,6 +8,8 @@
 - Added Web worker query operations for index equality/range, native query-plan
   ids, documents, count, projection, and aggregate payloads over the SQLite/OPFS
   runtime.
+- Added Web worker query-plan update/delete operations, collection revision
+  reads, and change-set draining for the SQLite/OPFS runtime.
 - Kept MDBX unchanged as the default native backend while aligning SQLite and
   Web SQLite query-plan behavior for the generated typed app path.
 

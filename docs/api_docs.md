@@ -131,19 +131,21 @@ routes typed CRUD operations to `CindelWebEngine`:
   SQLite-native schema table is available.
 - `delete`, `deleteAll`, and `deleteNativeAll`: delete generic or native rows.
 - `documentIds`: returns an encoded id-list payload.
+- `collectionRevision`: returns the encoded revision scalar for a collection.
+- `takeChanges`: returns encoded change sets recorded by native mutations.
 - `queryIndexEqual` and `queryIndexRange`: return encoded id-list payloads for
   generated index lookups.
 - `queryPlanIds`, `queryPlanDocuments`, `queryPlanCount`, `queryPlanProject`,
-  and `queryPlanAggregate`: execute encoded native query plans over the
-  SQLite/OPFS runtime.
+  `queryPlanAggregate`, `queryPlanUpdate`, and `queryPlanDelete`: execute
+  encoded native query plans over the SQLite/OPFS runtime.
 
 The exported Web wire helpers include `encodeIdList`, `decodeIdList`,
 `encodeIndexedDocumentWriteBatch`, `decodeOptionalDocumentBatch`,
 `encodeNativeDocumentWriteBatch`, `decodeNativeDocumentWriteBatch`,
-`encodeIndexValue`, `encodeQueryPlan`, `decodeProjectionRows`, and
-`decodeScalar`. These helpers keep Worker payloads binary; structured objects
-are only used as the small request envelope around operation names, collection
-names, and buffers.
+`encodeIndexValue`, `encodeQueryPlan`, `encodeFieldUpdates`,
+`decodeProjectionRows`, `decodeScalar`, and `decodeChangeSetList`. These
+helpers keep Worker payloads binary; structured objects are only used as the
+small request envelope around operation names, collection names, and buffers.
 
 ## Closing Databases
 

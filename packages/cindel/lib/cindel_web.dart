@@ -12,6 +12,7 @@ export 'src/schema.dart'
     show CindelCollectionSchema, CindelCompositeIndexSchema, CindelFieldSchema;
 export 'src/native/wire.dart'
     show
+        WireChangeSet,
         WireDocumentWrite,
         WireIndexedDocumentWrite,
         WireIndexEntry,
@@ -35,12 +36,14 @@ export 'src/native/wire.dart'
         WireScalar,
         WireValue,
         decodeIdList,
+        decodeChangeSetList,
         decodeIndexedDocumentWriteBatch,
         decodeNativeDocumentWriteBatch,
         decodeOptionalDocumentBatch,
         decodeProjectionRows,
         decodeScalar,
         encodeDocumentWriteBatch,
+        encodeFieldUpdates,
         encodeFilter,
         encodeIdList,
         encodeIndexValue,

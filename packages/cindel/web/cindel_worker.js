@@ -141,6 +141,15 @@ async function execute(message) {
       case 'documentIds':
         response(message.requestId, requireEngine().documentIds(payload.collection));
         return;
+      case 'collectionRevision':
+        response(
+          message.requestId,
+          requireEngine().collectionRevision(payload.collection),
+        );
+        return;
+      case 'takeChanges':
+        response(message.requestId, requireEngine().takeChanges());
+        return;
       case 'queryIndexEqual':
         response(
           message.requestId,
@@ -200,6 +209,23 @@ async function execute(message) {
             bytes(payload.plan),
             payload.field,
             payload.operation,
+          ),
+        );
+        return;
+      case 'queryPlanDelete':
+        response(
+          message.requestId,
+          requireEngine().queryPlanDelete(payload.collection, bytes(payload.plan)),
+        );
+        return;
+      case 'queryPlanUpdate':
+        response(
+          message.requestId,
+          requireEngine().queryPlanUpdate(
+            payload.collection,
+            bytes(payload.plan),
+            bytes(payload.updates),
+            payload.collectChanges !== false,
           ),
         );
         return;

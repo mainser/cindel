@@ -1,12 +1,12 @@
 use crate::engine::CindelEngine;
 use crate::storage::{
     schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
-    NativeDocumentWrite, StorageMetadata,
+    NativeDocumentWrite, StorageChangeSet, StorageMetadata,
 };
 use crate::wire::{
-    decode_id_list, decode_index_value, decode_indexed_document_write_batch,
-    decode_native_document_write_batch, decode_query_plan, encode_id_list,
-    encode_optional_document_batch, encode_scalar, WireIndexEntry, WireIndexValue,
+    decode_field_updates, decode_id_list, decode_index_value, decode_indexed_document_write_batch,
+    decode_native_document_write_batch, decode_query_plan, encode_change_set_list, encode_id_list,
+    encode_optional_document_batch, encode_scalar, WireChangeSet, WireIndexEntry, WireIndexValue,
     WireIndexedDocumentWrite, WireNativeDocumentValue, WireNativeDocumentWrite, WireScalar,
 };
 use wasm_bindgen::prelude::*;
@@ -188,6 +188,27 @@ impl CindelWebEngine {
         encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
     }
 
+    #[wasm_bindgen(js_name = collectionRevision)]
+    pub fn collection_revision(&self, collection: String) -> Result<Vec<u8>, JsValue> {
+        let revision = self
+            .inner
+            .collection_revision(&collection)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let revision =
+            i64::try_from(revision).map_err(|error| JsValue::from_str(&error.to_string()))?;
+        encode_scalar(&WireScalar::Int(revision)).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = takeChanges)]
+    pub fn take_changes(&mut self) -> Result<Vec<u8>, JsValue> {
+        let changes = self
+            .inner
+            .take_change_sets()
+            .map_err(|error| JsValue::from_str(&error))?;
+        let changes = changes.into_iter().map(change_set).collect::<Vec<_>>();
+        encode_change_set_list(&changes).map_err(|error| JsValue::from_str(&error))
+    }
+
     #[wasm_bindgen(js_name = queryIndexEqual)]
     pub fn query_index_equal(
         &self,
@@ -286,6 +307,38 @@ impl CindelWebEngine {
             .query_plan_aggregate(&collection, &plan, &field, &operation)
             .map_err(|error| JsValue::from_str(&error))
     }
+
+    #[wasm_bindgen(js_name = queryPlanDelete)]
+    pub fn query_plan_delete(
+        &mut self,
+        collection: String,
+        plan: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        let ids = self
+            .inner
+            .query_plan_delete(&collection, &plan)
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanUpdate)]
+    pub fn query_plan_update(
+        &mut self,
+        collection: String,
+        plan: Vec<u8>,
+        updates: Vec<u8>,
+        collect_changes: bool,
+    ) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        let updates = decode_field_updates(&updates).map_err(|error| JsValue::from_str(&error))?;
+        let count = self
+            .inner
+            .query_plan_update(&collection, &plan, &updates, collect_changes)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let count = i64::try_from(count).map_err(|error| JsValue::from_str(&error.to_string()))?;
+        encode_scalar(&WireScalar::Int(count)).map_err(|error| JsValue::from_str(&error))
+    }
 }
 
 fn decode_optional_index_value(present: bool, bytes: &[u8]) -> Result<Option<IndexValue>, JsValue> {
@@ -306,6 +359,14 @@ fn decode_single_id_list(bytes: &[u8]) -> Result<Vec<u64>, JsValue> {
         Err(JsValue::from_str(
             "single-document Web operation requires exactly one id",
         ))
+    }
+}
+
+fn change_set(change: StorageChangeSet) -> WireChangeSet {
+    WireChangeSet {
+        collection: change.collection,
+        revision: change.revision,
+        document_ids: change.document_ids,
     }
 }
 

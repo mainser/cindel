@@ -240,9 +240,11 @@ routes binary typed CRUD operations: id allocation, typed `put`/`putAll`,
 `get`/`getAll`, `getStored`/`getAllStored`, `delete`/`deleteAll`, document id
 listing, SQLite-native generated document write/delete batches, index
 equality/range queries, and native query-plan ids, documents, count,
-projection, and aggregate operations. Use the Web wire helpers exported from
-`package:cindel/cindel_web.dart` to encode id lists, index values, query plans,
-indexed document batches, optional get results, and native document batches.
+projection, aggregate, update, and delete operations. It also exposes collection
+revision reads and change-set draining for worker-side invalidation plumbing.
+Use the Web wire helpers exported from `package:cindel/cindel_web.dart` to
+encode id lists, index values, query plans, field updates, indexed document
+batches, optional get results, and native document batches.
 
 For tests and short-lived work:
 

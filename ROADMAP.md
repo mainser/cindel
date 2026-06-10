@@ -116,7 +116,8 @@ Current native backend policy:
 - Experimental Web typed CRUD worker/Wasm surface over the shared SQLite
   engine, including typed batch writes, ordered reads, deletes, id allocation,
   stored-document reads, native-document write/delete batches, index queries,
-  and native query-plan ids/documents/count/projection/aggregate operations.
+  native query-plan ids/documents/count/projection/aggregate/update/delete
+  operations, collection revisions, and change-set draining.
 - Compact generated binary document format.
 - Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
