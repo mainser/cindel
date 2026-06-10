@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $nativeDir = Join-Path $repoRoot 'packages\cindel\native'
+$workerSource = Join-Path $repoRoot 'packages\cindel\web\cindel_worker.js'
 $webDir = Join-Path $repoRoot 'packages\cindel_flutter_libs\web'
 $outDir = Join-Path $webDir 'pkg'
 $target = 'wasm32-unknown-unknown'
@@ -18,6 +19,9 @@ $targetDir = if ($env:CARGO_TARGET_DIR) {
 
 if (-not (Test-Path $ClangPath)) {
   throw "clang was not found at $ClangPath. Install LLVM or pass -ClangPath."
+}
+if (-not (Test-Path $workerSource)) {
+  throw "Cindel Web worker source was not found at $workerSource."
 }
 
 $wasmBindgenCommand = Get-Command $WasmBindgen -ErrorAction SilentlyContinue
@@ -62,9 +66,15 @@ try {
   if ($LASTEXITCODE -ne 0) {
     throw "wasm-bindgen failed with exit code $LASTEXITCODE"
   }
+
+  Copy-Item `
+    -LiteralPath $workerSource `
+    -Destination (Join-Path $webDir 'cindel_worker.js') `
+    -Force
 }
 finally {
   $env:CC = $previousCc
 }
 
 Write-Host "Wrote Web Wasm assets under packages\cindel_flutter_libs\web\pkg"
+Write-Host "Wrote Web worker under packages\cindel_flutter_libs\web\cindel_worker.js"

@@ -26,7 +26,8 @@ Current package roles:
 - `cindel`: runtime API, typed collections, queries, watchers, and FFI loading.
 - `cindel_annotations`: public annotations and shared schema metadata.
 - `cindel_generator`: build-time source generator for annotated models.
-- `cindel_flutter_libs`: prebuilt native libraries for Flutter apps.
+- `cindel_flutter_libs`: prebuilt native libraries and Web runtime assets for
+  Flutter apps.
 
 Current native backend policy:
 
@@ -153,6 +154,9 @@ Current native backend policy:
 - Windows prebuilt library.
 - Linux prebuilt library.
 - Experimental Web SQLite Wasm runtime assets for browser Worker execution.
+- Web Worker, JS glue, and Wasm runtime assets declared through
+  `cindel_flutter_libs` so Flutter Web apps can receive them from the companion
+  package instead of app-local copies.
 - Tag-based GitHub release workflow that builds Android, Apple, Linux, and
   Windows prebuilts before publishing coordinated package releases.
 - Android release build validation.
@@ -187,8 +191,8 @@ Current native backend policy:
 
 ### Web Runtime
 
-- Package the Web Worker, Wasm glue, and `.wasm` assets so Flutter Web apps can
-  consume Cindel without copying files by hand.
+- Wire the packaged `cindel_flutter_libs` Web runtime assets into the higher
+  level `Cindel.open(...)` Web path.
 - Keep Web validation focused on SQLite/OPFS persistence, binary Worker
   payloads, query parity, transaction atomicity, and browser behavior.
 - Establish Web benchmark CSVs for the same typed app workloads used by native
@@ -204,15 +208,15 @@ Current native backend policy:
 - Run `dart pub publish --dry-run` for publishable packages.
 - Validate Flutter Android, iOS, Linux, macOS, and Windows consumers with
   prebuilts.
-- Validate Flutter Web consumers with packaged Worker/Wasm assets once Web
-  packaging is in place.
+- Validate Flutter Web consumers with packaged Worker/Wasm assets through the
+  companion package.
 - Confirm package archives include the expected native files.
 - Keep example and package snippets on the correct version line.
 
 ### Web Platform Preview
 
-- Make Web asset packaging reproducible for local development and release
-  workflows.
+- Keep Web asset packaging reproducible through `tool/prebuilt/build_web.ps1`
+  and release workflows.
 - Prove `flutter run -d chrome`, `flutter build web`, and served release builds
   load the Worker, JS glue, and `.wasm` assets without 404s.
 - Document secure-context, OPFS availability, storage quota, and current

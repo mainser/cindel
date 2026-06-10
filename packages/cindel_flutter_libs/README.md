@@ -15,20 +15,24 @@ Flutter plugin package that bundles prebuilt Cindel native runtime libraries.
 
 ## Overview
 
-`cindel_flutter_libs` is the native-binary companion package for Flutter apps
-that use Cindel.
+`cindel_flutter_libs` is the native-binary and Web-runtime companion package for
+Flutter apps that use Cindel.
 
-Cindel's Dart API talks to a Rust native core through FFI. Flutter apps need
-that native library to be present in the final app bundle. This package provides
-the prebuilt libraries for the platforms currently supported by the package, so
-app developers do not need Rust, Cargo, or the Cindel native build scripts just
-to run their Flutter app.
+Cindel's Dart API talks to a Rust native core through FFI on native platforms
+and through Worker/Wasm runtime assets on Web. Flutter apps need those runtime
+files to be present in the final app bundle. This package provides the prebuilt
+libraries and Web assets for the platforms currently supported by the package,
+so app developers do not need Rust, Cargo, or the Cindel native build scripts
+just to run their Flutter app.
 
 The bundled native libraries include both storage backends compiled into the
-runtime:
+native runtime:
 
 - MDBX, Cindel's default backend.
 - SQLite, available only when selected explicitly from the `cindel` API.
+
+The bundled Web runtime is SQLite-only. MDBX remains the default native backend
+and is not a browser backend.
 
 ## When To Use It
 
@@ -88,7 +92,8 @@ Current binary locations:
 - iOS: `ios/cindel.xcframework`
 - Linux: `linux/libcindel_native.so`
 - macOS: `macos/libcindel_native.dylib`
-- Web: `web/pkg/cindel_native.js` and `web/pkg/cindel_native_bg.wasm`
+- Web: `web/cindel_worker.js`, `web/pkg/cindel_native.js`, and
+  `web/pkg/cindel_native_bg.wasm`
 - Windows: `windows/cindel_native.dll`
 
 Android ABIs currently included:
@@ -103,7 +108,7 @@ This package contains:
 
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
-- Experimental Web SQLite Wasm runtime assets, including the worker transaction
+- Experimental Web SQLite Wasm runtime assets, including the Worker transaction
   surface used by Cindel Web.
 - Minimal Dart library metadata.
 

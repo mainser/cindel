@@ -5,6 +5,8 @@
 - Updated the bundled Web SQLite Wasm runtime assets with query-plan reads,
   query-plan mutations, collection revision/change-set operations, and
   transaction worker operations.
+- Declared Web plugin support and packaged the Web Worker, JavaScript glue, and
+  Wasm runtime assets as Flutter package assets.
 
 ## 0.6.1
 

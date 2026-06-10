@@ -234,9 +234,10 @@ schema and storage metadata persistently. Reopened Web SQLite storage also keeps
 runtime collection schemas available so native document cursors can serve the
 typed CRUD fast path after OPFS persistence is restored.
 
-The package includes an experimental worker template at
-`packages/cindel/web/cindel_worker.js`. It opens the Web SQLite engine and
-routes binary typed CRUD operations: id allocation, typed `put`/`putAll`,
+The Web worker source lives in `packages/cindel/web/cindel_worker.js` and is
+packaged for Flutter consumers by `cindel_flutter_libs` together with the
+Wasm/glue runtime assets. It opens the Web SQLite engine and routes binary typed
+CRUD operations: id allocation, typed `put`/`putAll`,
 `get`/`getAll`, `getStored`/`getAllStored`, `delete`/`deleteAll`, document id
 listing, SQLite-native generated document write/delete batches, index
 equality/range queries, and native query-plan ids, documents, count,

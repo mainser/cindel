@@ -10,5 +10,5 @@ dependencies:
 ```
 
 No Dart import is required from this package. It is a Flutter plugin that
-currently provides the native runtime for Android, iOS, Linux, macOS, and
-Windows.
+provides the native runtime for Android, iOS, Linux, macOS, and Windows, plus
+the SQLite Worker/Wasm runtime assets for Web.

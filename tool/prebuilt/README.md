@@ -47,6 +47,7 @@ binary that can be produced before publishing. On Windows that means
 Apple binaries should be generated and validated on Apple platforms before they
 are advertised in pub.dev metadata.
 
-The Web script writes `packages/cindel_flutter_libs/web/pkg/cindel_native.js`
-and `packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm`. These are the
-SQLite-only Wasm assets for Web; MDBX remains native-only.
+The Web script writes `packages/cindel_flutter_libs/web/pkg/cindel_native.js`,
+`packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm`, and the companion
+`packages/cindel_flutter_libs/web/cindel_worker.js`. These are the SQLite-only
+runtime assets for Web; MDBX remains native-only.

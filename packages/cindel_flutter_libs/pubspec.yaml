@@ -21,8 +21,17 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
 
 flutter:
+  assets:
+    - web/cindel_worker.js
+    - web/pkg/cindel_native.js
+    - web/pkg/cindel_native_bg.wasm
+    - web/pkg/cindel_native.d.ts
+    - web/pkg/cindel_native_bg.wasm.d.ts
+
   plugin:
     platforms:
       android:
@@ -34,5 +43,8 @@ flutter:
         pluginClass: CindelFlutterLibsPlugin
       macos:
         pluginClass: CindelFlutterLibsPlugin
+      web:
+        pluginClass: CindelFlutterLibsWeb
+        fileName: cindel_flutter_libs_web.dart
       windows:
         pluginClass: CindelFlutterLibsPlugin

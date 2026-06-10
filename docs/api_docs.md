@@ -119,11 +119,12 @@ for the typed CRUD fast path after closing and reopening OPFS-backed storage.
 
 ### Web Worker Surface
 
-The experimental package worker at `packages/cindel/web/cindel_worker.js`
-opens `CindelWebEngine` and routes requests to the shared SQLite storage engine.
-It is a low-level transport surface for the Web runtime. Application code should
-normally keep using generated schemas and the exported Web wire helpers instead
-of constructing storage bytes by hand.
+The Web worker source at `packages/cindel/web/cindel_worker.js` is packaged for
+Flutter consumers by `cindel_flutter_libs` together with the Wasm/glue runtime
+assets. It opens `CindelWebEngine` and routes requests to the shared SQLite
+storage engine. It is a low-level transport surface for the Web runtime.
+Application code should normally keep using generated schemas and the exported
+Web wire helpers instead of constructing storage bytes by hand.
 
 The Worker accepts request envelopes with an operation name and a small
 structured payload. Large values, such as documents, ids, query plans, schema
