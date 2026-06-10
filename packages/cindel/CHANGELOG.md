@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.4
+
+- Added SQLite native query-plan projection and aggregate execution for
+  schema-backed generated documents, including count, min, max, sum, and
+  average over scalar native columns.
+- Added Web worker query operations for index equality/range, native query-plan
+  ids, documents, count, projection, and aggregate payloads over the SQLite/OPFS
+  runtime.
+- Kept MDBX unchanged as the default native backend while aligning SQLite and
+  Web SQLite query-plan behavior for the generated typed app path.
+
 ## 0.6.3
 
 - Added the native Web SQLite baseline behind the `web` feature, keeping MDBX

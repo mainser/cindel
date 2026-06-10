@@ -74,8 +74,8 @@ For Flutter apps, add Cindel plus the native library package:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.3
-  cindel_flutter_libs: ^0.6.1
+  cindel: ^0.6.4
+  cindel_flutter_libs: ^0.6.2
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -238,8 +238,10 @@ The package includes an experimental worker template at
 `packages/cindel/web/cindel_worker.js`. It opens the Web SQLite engine and
 routes binary typed CRUD operations: id allocation, typed `put`/`putAll`,
 `get`/`getAll`, `getStored`/`getAllStored`, `delete`/`deleteAll`, document id
-listing, and SQLite-native generated document write/delete batches. Use the Web
-wire helpers exported from `package:cindel/cindel_web.dart` to encode id lists,
+listing, SQLite-native generated document write/delete batches, index
+equality/range queries, and native query-plan ids, documents, count,
+projection, and aggregate operations. Use the Web wire helpers exported from
+`package:cindel/cindel_web.dart` to encode id lists, index values, query plans,
 indexed document batches, optional get results, and native document batches.
 
 For tests and short-lived work:

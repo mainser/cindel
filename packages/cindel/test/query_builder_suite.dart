@@ -720,9 +720,8 @@ void main({bool includeMdbxOnlyTests = false}) {
     // Scenario: A query aggregates projected primitive values.
     // Covers:
     // - [CindelPropertyQuery.count], min, max, sum, and average.
-    // - Native MDBX aggregate path for filter-only binary-document queries.
-    // - Dart fallback path for SQLite and query shapes that cannot use native
-    //   planning.
+    // - Native aggregate path for filter-only binary-document queries.
+    // - Dart fallback path for query shapes that cannot use native planning.
     // Expected: Aggregates ignore null values and avoid object hydration when
     // native planning is available.
     test('aggregates projected primitive fields.', () async {
@@ -758,7 +757,7 @@ void main({bool includeMdbxOnlyTests = false}) {
     });
 
     // Scenario: A binary-document query can execute the whole common plan
-    // natively on MDBX while SQLite keeps the Dart fallback.
+    // natively.
     // Covers:
     // - Native plan filter, sort, distinct, offset, limit, and projection.
     // - Native plan count and aggregate result payloads.

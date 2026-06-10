@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2
+
+- Updated Web SQLite Wasm runtime assets for the Cindel `0.6.4` query-plan
+  worker surface.
+- Regenerated the Windows native runtime library for the Cindel `0.6.4`
+  SQLite query-plan projection and aggregate backend.
+
 ## 0.6.1
 
 - Added experimental Web SQLite Wasm runtime assets under `web/pkg`.

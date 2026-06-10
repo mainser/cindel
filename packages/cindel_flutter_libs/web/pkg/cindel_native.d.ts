@@ -19,6 +19,13 @@ export class CindelWebEngine {
     put(collection: string, document_batch: Uint8Array): void;
     putAll(collection: string, document_batch: Uint8Array): void;
     putNativeAll(collection: string, document_batch: Uint8Array): boolean;
+    queryIndexEqual(collection: string, index: string, value: Uint8Array): Uint8Array;
+    queryIndexRange(collection: string, index: string, lower_present: boolean, lower: Uint8Array, upper_present: boolean, upper: Uint8Array): Uint8Array;
+    queryPlanAggregate(collection: string, plan: Uint8Array, field: string, operation: string): Uint8Array;
+    queryPlanCount(collection: string, plan: Uint8Array): Uint8Array;
+    queryPlanDocuments(collection: string, plan: Uint8Array): Uint8Array;
+    queryPlanIds(collection: string, plan: Uint8Array): Uint8Array;
+    queryPlanProject(collection: string, plan: Uint8Array, field: string): Uint8Array;
     schemaVersion(collection: string): number;
     storageMetadataJson(): string;
 }
@@ -127,6 +134,13 @@ export interface InitOutput {
     readonly cindelwebengine_deleteAll: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly cindelwebengine_deleteNativeAll: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly cindelwebengine_documentIds: (a: number, b: number, c: number, d: number) => void;
+    readonly cindelwebengine_queryIndexEqual: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+    readonly cindelwebengine_queryIndexRange: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
+    readonly cindelwebengine_queryPlanIds: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly cindelwebengine_queryPlanDocuments: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly cindelwebengine_queryPlanCount: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly cindelwebengine_queryPlanProject: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+    readonly cindelwebengine_queryPlanAggregate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly cindel_native_document_reader_read_current_list_bytes: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_get_stored: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
     readonly cindel_native_document_reader_read_list_bytes: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -140,8 +154,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2693: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2718: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2724: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2749: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

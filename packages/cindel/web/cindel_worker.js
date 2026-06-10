@@ -141,6 +141,68 @@ async function execute(message) {
       case 'documentIds':
         response(message.requestId, requireEngine().documentIds(payload.collection));
         return;
+      case 'queryIndexEqual':
+        response(
+          message.requestId,
+          requireEngine().queryIndexEqual(
+            payload.collection,
+            payload.index,
+            bytes(payload.value),
+          ),
+        );
+        return;
+      case 'queryIndexRange':
+        response(
+          message.requestId,
+          requireEngine().queryIndexRange(
+            payload.collection,
+            payload.index,
+            payload.lower != null,
+            payload.lower == null ? new Uint8Array() : bytes(payload.lower),
+            payload.upper != null,
+            payload.upper == null ? new Uint8Array() : bytes(payload.upper),
+          ),
+        );
+        return;
+      case 'queryPlanIds':
+        response(
+          message.requestId,
+          requireEngine().queryPlanIds(payload.collection, bytes(payload.plan)),
+        );
+        return;
+      case 'queryPlanDocuments':
+        response(
+          message.requestId,
+          requireEngine().queryPlanDocuments(payload.collection, bytes(payload.plan)),
+        );
+        return;
+      case 'queryPlanCount':
+        response(
+          message.requestId,
+          requireEngine().queryPlanCount(payload.collection, bytes(payload.plan)),
+        );
+        return;
+      case 'queryPlanProject':
+        response(
+          message.requestId,
+          requireEngine().queryPlanProject(
+            payload.collection,
+            bytes(payload.plan),
+            payload.field,
+          ),
+        );
+        return;
+      case 'queryPlanAggregate':
+        response(
+          message.requestId,
+          requireEngine().queryPlanAggregate(
+            payload.collection,
+            bytes(payload.plan),
+            payload.field,
+            payload.operation,
+          ),
+        );
+        return;
       default:
         failure(
           message.requestId,

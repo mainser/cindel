@@ -15,8 +15,9 @@ use rusqlite::{ffi, params, params_from_iter, Connection, OptionalExtension, Row
 
 use crate::document_format::{decode_list, BinaryValue};
 use crate::wire::{
-    decode_filter, encode_index_value, WireFilter, WireFilterOperation, WireIndexValue,
-    WireQueryPlan, WireQuerySource, WireValue,
+    decode_filter, encode_index_value, encode_projection_rows, encode_scalar, WireFilter,
+    WireFilterOperation, WireIndexValue, WireProjectionRows, WireQueryPlan, WireQuerySource,
+    WireScalar, WireValue,
 };
 
 use super::{
@@ -1329,6 +1330,52 @@ impl StorageEngine for SqliteStorage {
         Ok(self.query_plan_ids(collection, plan)?.len() as u64)
     }
 
+    fn query_project(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        self.query_native_projection(&schema, candidate_ids, field)
+    }
+
+    fn query_aggregate(
+        &self,
+        collection: &str,
+        candidate_ids: &[u64],
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let values = self.query_native_values(&schema, candidate_ids, field)?;
+        encode_scalar(&aggregate_wire_values(&values, operation)?)
+    }
+
+    fn query_plan_project(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let ids = self.query_plan_ids(collection, plan)?;
+        self.query_native_projection(&schema, &ids, field)
+    }
+
+    fn query_plan_aggregate(
+        &self,
+        collection: &str,
+        plan: &WireQueryPlan,
+        field: &str,
+        operation: &str,
+    ) -> Result<Vec<u8>, String> {
+        let schema = self.required_collection_schema(collection)?;
+        let ids = self.query_plan_ids(collection, plan)?;
+        let values = self.query_native_values(&schema, &ids, field)?;
+        encode_scalar(&aggregate_wire_values(&values, operation)?)
+    }
+
     fn query_plan_delete(
         &mut self,
         collection: &str,
@@ -1401,6 +1448,66 @@ impl SqliteStorage {
             ));
         }
         Ok(documents)
+    }
+
+    fn query_native_projection(
+        &self,
+        schema: &CollectionSchemaManifest,
+        ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<u8>, String> {
+        let cells = self.query_native_values(schema, ids, field)?;
+        let row_count =
+            u32::try_from(cells.len()).map_err(|_| "projection row count overflow".to_string())?;
+        encode_projection_rows(&WireProjectionRows {
+            row_count,
+            column_count: 1,
+            cells,
+        })
+    }
+
+    fn query_native_values(
+        &self,
+        schema: &CollectionSchemaManifest,
+        ids: &[u64],
+        field: &str,
+    ) -> Result<Vec<WireValue>, String> {
+        let schema_field = sqlite_schema_field(schema, field)?;
+        if schema_field.is_id {
+            let mut values = Vec::new();
+            for id in ids {
+                if native_document_exists(&self.connection, schema, *id)? {
+                    values.push(WireValue::Int(
+                        i64::try_from(*id).map_err(|error| error.to_string())?,
+                    ));
+                }
+            }
+            return Ok(values);
+        }
+
+        let column = sqlite_column_for_schema_field(schema_field);
+        let sql = format!(
+            "SELECT {column} FROM {} WHERE {SQLITE_ROW_ID_COLUMN} = ?1",
+            schema.name
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let mut values = Vec::new();
+        for id in ids {
+            let id = sqlite_id(*id)?;
+            let value = statement
+                .query_row(params![id], |row| {
+                    sqlite_row_wire_value(row, 0, schema_field)
+                })
+                .optional()
+                .map_err(|error| error.to_string())?;
+            if let Some(value) = value {
+                values.push(value);
+            }
+        }
+        Ok(values)
     }
 
     fn begin_transaction(&mut self, mode: TransactionMode, sql: &str) -> Result<(), String> {
@@ -1911,6 +2018,182 @@ fn sqlite_wire_value(value: &WireValue) -> Result<Value, String> {
         WireValue::String(value) => Ok(Value::Text(value.clone())),
         WireValue::List(_) | WireValue::Object(_) => {
             Err("SQLite native SQL filters do not support list or object values yet".into())
+        }
+    }
+}
+
+fn native_document_exists(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    id: u64,
+) -> Result<bool, String> {
+    let id = sqlite_id(id)?;
+    let sql = format!(
+        "SELECT 1 FROM {} WHERE {SQLITE_ROW_ID_COLUMN} = ?1",
+        schema.name
+    );
+    connection
+        .query_row(&sql, params![id], |_| Ok(()))
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|error| error.to_string())
+}
+
+fn sqlite_row_wire_value(
+    row: &Row<'_>,
+    index: usize,
+    field: &FieldSchemaManifest,
+) -> Result<WireValue, rusqlite::Error> {
+    let value = row.get_ref(index)?;
+    match (sqlite_binary_type(&field.binary_type), value) {
+        (_, ValueRef::Null) => Ok(WireValue::Null),
+        ("bool", ValueRef::Integer(value)) => Ok(WireValue::Bool(value != 0)),
+        ("int", ValueRef::Integer(value)) => Ok(WireValue::Int(value)),
+        ("double", ValueRef::Real(value)) => Ok(WireValue::Double(value)),
+        ("double", ValueRef::Integer(value)) => Ok(WireValue::Double(value as f64)),
+        ("string", ValueRef::Text(value)) => Ok(WireValue::String(
+            std::str::from_utf8(value)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        index,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?
+                .to_string(),
+        )),
+        _ => Err(rusqlite::Error::InvalidColumnType(
+            index,
+            field.name.clone(),
+            value.data_type(),
+        )),
+    }
+}
+
+fn aggregate_wire_values(values: &[WireValue], operation: &str) -> Result<WireScalar, String> {
+    match operation {
+        "count" => Ok(WireScalar::Int(
+            values
+                .iter()
+                .filter(|value| !matches!(value, WireValue::Null))
+                .count() as i64,
+        )),
+        "min" => aggregate_wire_min_max(values, AggregateOrder::Min),
+        "max" => aggregate_wire_min_max(values, AggregateOrder::Max),
+        "sum" => aggregate_wire_sum(values),
+        "average" => aggregate_wire_average(values),
+        _ => Err(format!("unknown aggregate operation `{operation}`")),
+    }
+}
+
+fn aggregate_wire_min_max(
+    values: &[WireValue],
+    order: AggregateOrder,
+) -> Result<WireScalar, String> {
+    let mut best: Option<&WireValue> = None;
+    for value in values {
+        if matches!(value, WireValue::Null) {
+            continue;
+        }
+        if !matches!(
+            value,
+            WireValue::Int(_) | WireValue::Double(_) | WireValue::String(_)
+        ) {
+            return Err("min/max aggregates require number, string, or null values".into());
+        }
+        let replace = match best {
+            Some(current) => match order {
+                AggregateOrder::Min => compare_wire_values(value, current)?.is_lt(),
+                AggregateOrder::Max => compare_wire_values(value, current)?.is_gt(),
+            },
+            None => true,
+        };
+        if replace {
+            best = Some(value);
+        }
+    }
+    best.map(wire_value_to_scalar)
+        .transpose()?
+        .map_or(Ok(WireScalar::Null), Ok)
+}
+
+fn aggregate_wire_sum(values: &[WireValue]) -> Result<WireScalar, String> {
+    let mut sum = 0.0;
+    let mut count = 0_u64;
+    for value in values {
+        if matches!(value, WireValue::Null) {
+            continue;
+        }
+        sum += wire_number(value)
+            .ok_or_else(|| "sum aggregate requires number or null values".to_string())?;
+        count += 1;
+    }
+    if count == 0 {
+        Ok(WireScalar::Null)
+    } else {
+        Ok(WireScalar::Double(sum))
+    }
+}
+
+fn aggregate_wire_average(values: &[WireValue]) -> Result<WireScalar, String> {
+    let mut sum = 0.0;
+    let mut count = 0_u64;
+    for value in values {
+        if matches!(value, WireValue::Null) {
+            continue;
+        }
+        sum += wire_number(value)
+            .ok_or_else(|| "average aggregate requires number or null values".to_string())?;
+        count += 1;
+    }
+    if count == 0 {
+        Ok(WireScalar::Null)
+    } else {
+        Ok(WireScalar::Double(sum / count as f64))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AggregateOrder {
+    Min,
+    Max,
+}
+
+fn compare_wire_values(left: &WireValue, right: &WireValue) -> Result<std::cmp::Ordering, String> {
+    match (left, right) {
+        (WireValue::Int(left), WireValue::Int(right)) => Ok(left.cmp(right)),
+        (WireValue::Double(left), WireValue::Double(right)) => left
+            .partial_cmp(right)
+            .ok_or_else(|| "cannot compare NaN aggregate values".to_string()),
+        (WireValue::Int(left), WireValue::Double(right)) => (*left as f64)
+            .partial_cmp(right)
+            .ok_or_else(|| "cannot compare NaN aggregate values".to_string()),
+        (WireValue::Double(left), WireValue::Int(right)) => left
+            .partial_cmp(&(*right as f64))
+            .ok_or_else(|| "cannot compare NaN aggregate values".to_string()),
+        (WireValue::String(left), WireValue::String(right)) => Ok(left.cmp(right)),
+        _ => Err("min/max aggregates require comparable value types".into()),
+    }
+}
+
+fn wire_number(value: &WireValue) -> Option<f64> {
+    match value {
+        WireValue::Int(value) => Some(*value as f64),
+        WireValue::Double(value) if value.is_finite() => Some(*value),
+        _ => None,
+    }
+}
+
+fn wire_value_to_scalar(value: &WireValue) -> Result<WireScalar, String> {
+    match value {
+        WireValue::Null => Ok(WireScalar::Null),
+        WireValue::Bool(value) => Ok(WireScalar::Bool(*value)),
+        WireValue::Int(value) => Ok(WireScalar::Int(*value)),
+        WireValue::Double(value) if value.is_finite() => Ok(WireScalar::Double(*value)),
+        WireValue::Double(_) => Err("aggregate double values must be finite".into()),
+        WireValue::String(value) => Ok(WireScalar::String(value.clone())),
+        WireValue::List(_) | WireValue::Object(_) => {
+            Err("aggregates do not support list or object values".into())
         }
     }
 }
@@ -4396,6 +4679,187 @@ mod tests {
 
         // Assert.
         assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn projects_and_aggregates_native_documents_with_sql_query_plan() {
+        // Scenario: SQLite executes native projections and aggregates over
+        // schema-aware query plans.
+        // Covers:
+        // - Candidate-id projection and aggregate APIs.
+        // - Query-plan projection with range source, sort, offset, and limit.
+        // - Count, min, max, sum, and average aggregate scalars.
+        // - Distinct query plans keeping the same visible rows for projection
+        //   and aggregate work.
+        // Expected: Projection rows and scalar aggregate wire payloads match
+        // MDBX-visible semantics for scalar SQLite-native columns.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_query_projection_aggregate");
+        let mut schema = native_user_schema();
+        schema
+            .fields
+            .push(native_field("price", "double", "double", false));
+        schema
+            .fields
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        let manifest = schema_manifest(vec![schema]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = vec![
+            NativeDocumentWrite {
+                id: 1,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(10),
+                    NativeDocumentValue::Double(1.5),
+                    NativeDocumentValue::Bytes(b"Ana".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 2,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(20),
+                    NativeDocumentValue::Double(2.5),
+                    NativeDocumentValue::Bytes(b"Ben".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 3,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(30),
+                    NativeDocumentValue::Double(3.5),
+                    NativeDocumentValue::Bytes(b"Cid".to_vec()),
+                ],
+            },
+            NativeDocumentWrite {
+                id: 4,
+                values: vec![
+                    NativeDocumentValue::Bool(false),
+                    NativeDocumentValue::Int(40),
+                    NativeDocumentValue::Null,
+                    NativeDocumentValue::Bytes(b"Ben".to_vec()),
+                ],
+            },
+        ];
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let range_plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "createdAtMicros".to_string(),
+                lower: Some(WireIndexValue::Int(0)),
+                upper: Some(WireIndexValue::Int(100)),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "createdAtMicros".to_string(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: Some(2),
+        };
+        let distinct_plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: vec!["title".to_string()],
+            offset: 0,
+            limit: None,
+        };
+
+        // Act and assert.
+        assert_eq!(
+            storage
+                .query_project("users", &[1, 3, 999], "title")
+                .unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![
+                    WireValue::String("Ana".to_string()),
+                    WireValue::String("Cid".to_string()),
+                ],
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3, 999], "price", "count")
+                .unwrap(),
+            encode_scalar(&WireScalar::Int(3)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "price", "sum")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(7.5)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "price", "average")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(2.5)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "title", "min")
+                .unwrap(),
+            encode_scalar(&WireScalar::String("Ana".to_string())).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_aggregate("users", &[1, 2, 3], "title", "max")
+                .unwrap(),
+            encode_scalar(&WireScalar::String("Cid".to_string())).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_project("users", &range_plan, "title")
+                .unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 2,
+                column_count: 1,
+                cells: vec![
+                    WireValue::String("Ben".to_string()),
+                    WireValue::String("Cid".to_string()),
+                ],
+            })
+            .unwrap()
+        );
+        assert_eq!(storage.query_plan_count("users", &range_plan).unwrap(), 2);
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &range_plan, "price", "sum")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(6.0)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &range_plan, "price", "average")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(3.0)).unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_project("users", &distinct_plan, "createdAtMicros")
+                .unwrap(),
+            encode_projection_rows(&WireProjectionRows {
+                row_count: 3,
+                column_count: 1,
+                cells: vec![WireValue::Int(10), WireValue::Int(20), WireValue::Int(30)],
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            storage
+                .query_plan_aggregate("users", &distinct_plan, "price", "sum")
+                .unwrap(),
+            encode_scalar(&WireScalar::Double(7.5)).unwrap()
+        );
     }
 
     #[test]

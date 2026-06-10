@@ -4,9 +4,10 @@ use crate::storage::{
     NativeDocumentWrite, StorageMetadata,
 };
 use crate::wire::{
-    decode_id_list, decode_indexed_document_write_batch, decode_native_document_write_batch,
-    encode_id_list, encode_optional_document_batch, WireIndexEntry, WireIndexValue,
-    WireIndexedDocumentWrite, WireNativeDocumentValue, WireNativeDocumentWrite,
+    decode_id_list, decode_index_value, decode_indexed_document_write_batch,
+    decode_native_document_write_batch, decode_query_plan, encode_id_list,
+    encode_optional_document_batch, encode_scalar, WireIndexEntry, WireIndexValue,
+    WireIndexedDocumentWrite, WireNativeDocumentValue, WireNativeDocumentWrite, WireScalar,
 };
 use wasm_bindgen::prelude::*;
 
@@ -186,6 +187,115 @@ impl CindelWebEngine {
             .map_err(|error| JsValue::from_str(&error))?;
         encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
     }
+
+    #[wasm_bindgen(js_name = queryIndexEqual)]
+    pub fn query_index_equal(
+        &self,
+        collection: String,
+        index: String,
+        value: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let value = decode_index_value(&value)
+            .and_then(index_value)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let ids = self
+            .inner
+            .query_index_equal(&collection, &index, &value)
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryIndexRange)]
+    pub fn query_index_range(
+        &self,
+        collection: String,
+        index: String,
+        lower_present: bool,
+        lower: Vec<u8>,
+        upper_present: bool,
+        upper: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let lower = decode_optional_index_value(lower_present, &lower)?;
+        let upper = decode_optional_index_value(upper_present, &upper)?;
+        let ids = self
+            .inner
+            .query_index_range(&collection, &index, lower.as_ref(), upper.as_ref())
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanIds)]
+    pub fn query_plan_ids(&self, collection: String, plan: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        let ids = self
+            .inner
+            .query_plan_ids(&collection, &plan)
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanDocuments)]
+    pub fn query_plan_documents(
+        &self,
+        collection: String,
+        plan: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        let documents = self
+            .inner
+            .query_plan_documents(&collection, &plan)
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_optional_document_batch(&documents.into_iter().map(Some).collect::<Vec<_>>())
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanCount)]
+    pub fn query_plan_count(&self, collection: String, plan: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        let count = self
+            .inner
+            .query_plan_count(&collection, &plan)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let count = i64::try_from(count).map_err(|error| JsValue::from_str(&error.to_string()))?;
+        encode_scalar(&WireScalar::Int(count)).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanProject)]
+    pub fn query_plan_project(
+        &self,
+        collection: String,
+        plan: Vec<u8>,
+        field: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        self.inner
+            .query_plan_project(&collection, &plan, &field)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = queryPlanAggregate)]
+    pub fn query_plan_aggregate(
+        &self,
+        collection: String,
+        plan: Vec<u8>,
+        field: String,
+        operation: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        let plan = decode_query_plan(&plan).map_err(|error| JsValue::from_str(&error))?;
+        self.inner
+            .query_plan_aggregate(&collection, &plan, &field, &operation)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+}
+
+fn decode_optional_index_value(present: bool, bytes: &[u8]) -> Result<Option<IndexValue>, JsValue> {
+    if !present {
+        return Ok(None);
+    }
+    decode_index_value(bytes)
+        .and_then(index_value)
+        .map(Some)
+        .map_err(|error| JsValue::from_str(&error))
 }
 
 fn decode_single_id_list(bytes: &[u8]) -> Result<Vec<u64>, JsValue> {
