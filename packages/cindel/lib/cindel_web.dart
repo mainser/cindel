@@ -10,5 +10,27 @@ export 'package:cindel_annotations/cindel_annotations.dart'
 
 export 'src/schema.dart'
     show CindelCollectionSchema, CindelCompositeIndexSchema, CindelFieldSchema;
+export 'src/native/wire.dart'
+    show
+        WireDocumentWrite,
+        WireIndexedDocumentWrite,
+        WireIndexEntry,
+        WireIndexValue,
+        WireNativeDocumentBool,
+        WireNativeDocumentBytes,
+        WireNativeDocumentDouble,
+        WireNativeDocumentInt,
+        WireNativeDocumentNull,
+        WireNativeDocumentValue,
+        WireNativeDocumentWrite,
+        decodeIdList,
+        decodeIndexedDocumentWriteBatch,
+        decodeNativeDocumentWriteBatch,
+        decodeOptionalDocumentBatch,
+        encodeDocumentWriteBatch,
+        encodeIdList,
+        encodeIndexedDocumentWriteBatch,
+        encodeNativeDocumentWriteBatch,
+        encodeOptionalDocumentBatch;
 export 'src/web/schema_manifest.dart';
 export 'src/web/worker_bridge.dart';

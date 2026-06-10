@@ -113,6 +113,31 @@ The Web Wasm opener registers schema metadata and storage metadata
 persistently, then rejects incompatible schema changes with the same schema
 compatibility checks used by native storage.
 
+Persisted Web SQLite opens also keep the runtime collection schemas registered
+after metadata validation. This keeps SQLite native document cursors available
+for the typed CRUD fast path after closing and reopening OPFS-backed storage.
+
+### Web CRUD Worker Surface
+
+The experimental package worker at `packages/cindel/web/cindel_worker.js`
+routes typed CRUD operations to `CindelWebEngine`:
+
+- `open`: opens SQLite/OPFS with encoded schemas.
+- `allocateId` and `allocateIds`: return encoded id-list payloads.
+- `put` and `putAll`: accept encoded indexed document batches.
+- `putNativeAll`: accepts encoded SQLite-native generated document batches.
+- `get` and `getAll`: return encoded optional document batches.
+- `getStored` and `getAllStored`: read stored generated documents when a
+  SQLite-native schema table is available.
+- `delete`, `deleteAll`, and `deleteNativeAll`: delete generic or native rows.
+- `documentIds`: returns an encoded id-list payload.
+
+The exported Web wire helpers include `encodeIdList`, `decodeIdList`,
+`encodeIndexedDocumentWriteBatch`, `decodeOptionalDocumentBatch`,
+`encodeNativeDocumentWriteBatch`, and `decodeNativeDocumentWriteBatch`. These
+helpers keep Worker payloads binary; structured objects are only used as the
+small request envelope around operation names, collection names, and buffers.
+
 ## Closing Databases
 
 ### `CindelDatabase.close`

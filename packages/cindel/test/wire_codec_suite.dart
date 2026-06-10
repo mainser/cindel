@@ -309,6 +309,56 @@ void main() {
       );
     });
 
+    // Scenario: Web get/getAll returns documents in requested id order.
+    // Covers:
+    // - Optional document presence bits.
+    // - Preserving missing ids as null entries.
+    // - Empty document bytes.
+    // Expected: The optional batch round-trips without JSON.
+    test('encodes and decodes optional document batch', () {
+      // Arrange.
+      final documents = <Uint8List?>[
+        bytes([97, 98, 99]),
+        null,
+        bytes([]),
+      ];
+
+      // Act / Assert.
+      expect(
+        decodeOptionalDocumentBatch(encodeOptionalDocumentBatch(documents)),
+        documents,
+      );
+    });
+
+    // Scenario: Web writes SQLite-native generated document rows.
+    // Covers:
+    // - Field values used by the SQLite native-document fast path.
+    // - Null, scalar, and byte payload field values.
+    // Expected: Native document rows round-trip through the shared wire codec.
+    test('encodes and decodes native document batch', () {
+      // Arrange.
+      final documents = [
+        WireNativeDocumentWrite(
+          id: 7,
+          values: [
+            const WireNativeDocumentValue.nullValue(),
+            const WireNativeDocumentValue.bool(true),
+            const WireNativeDocumentValue.int(42),
+            const WireNativeDocumentValue.double(3.5),
+            WireNativeDocumentValue.bytes(bytes([110, 97, 109, 101])),
+          ],
+        ),
+      ];
+
+      // Act / Assert.
+      expect(
+        decodeNativeDocumentWriteBatch(
+          encodeNativeDocumentWriteBatch(documents),
+        ),
+        documents,
+      );
+    });
+
     // Scenario: Rust returns projected cells without hydrating full documents.
     // Covers:
     // - ProjectionRows row/column counts.

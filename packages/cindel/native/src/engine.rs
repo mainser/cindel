@@ -340,7 +340,10 @@ impl CindelEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{CollectionSchemaManifest, FieldSchemaManifest};
+    use crate::storage::{
+        CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
+        NativeDocumentValue, NativeDocumentWrite,
+    };
 
     #[test]
     fn opens_sqlite_through_backend_selection_boundary() {
@@ -443,6 +446,53 @@ mod tests {
         assert_eq!(engine.document_ids("users").unwrap(), Vec::<u64>::new());
     }
 
+    #[test]
+    fn sqlite_web_typed_crud_matches_native_sqlite_reference() {
+        // Scenario: The Web SQLite opener exposes the typed CRUD
+        // surface through the shared engine instead of a separate Web backend.
+        // Covers:
+        // - Auto-increment ids, put/putAll, get/getAll, delete/deleteAll.
+        // - Ordered getAll missing-id behavior.
+        // - Compact/generated document bytes through the generic batch path.
+        // - SQLite-native generated document writes and stored reads.
+        // - Close/reopen persistence for the Web SQLite path.
+        // - Parity against native SQLite on the same dataset.
+        // Expected: Web SQLite and native SQLite produce the same CRUD result,
+        // and reopened Web SQLite keeps stored rows available.
+        let manifest = web_typed_crud_manifest();
+        let directory =
+            std::env::temp_dir().join(format!("cindel_web_typed_crud_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        let mut web =
+            CindelEngine::open_web_sqlite_with_schemas(directory.to_str().unwrap(), &manifest)
+                .unwrap();
+        let web_result = run_web_typed_crud(&mut web).unwrap();
+        drop(web);
+
+        let reopened =
+            CindelEngine::open_web_sqlite_with_schemas(directory.to_str().unwrap(), &manifest)
+                .unwrap();
+        assert_eq!(reopened.document_ids("native_users").unwrap(), vec![2]);
+        assert!(reopened
+            .get_many_stored("native_users", &[2])
+            .unwrap()
+            .into_iter()
+            .all(|document| document.is_some()));
+
+        let mut reference = CindelEngine::open_with_backend_and_schemas(
+            ":memory:",
+            StorageBackendKind::Sqlite,
+            &manifest,
+        )
+        .unwrap();
+        let reference_result = run_web_typed_crud(&mut reference).unwrap();
+
+        assert_eq!(web_result, reference_result);
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     #[cfg(feature = "mdbx")]
     #[test]
     fn opens_mdbx_through_backend_selection_boundary() {
@@ -525,5 +575,150 @@ mod tests {
         bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
         bytes.extend_from_slice(value);
         bytes
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct WebTypedCrudResult {
+        ids: Vec<u64>,
+        ordered_get_all: Vec<Option<Vec<u8>>>,
+        native_document_path: bool,
+        native_after_delete: Vec<u64>,
+        compact_count: usize,
+    }
+
+    fn run_web_typed_crud(engine: &mut CindelEngine) -> Result<WebTypedCrudResult, String> {
+        let ana_id = engine.allocate_id("users")?;
+        let ben_id = engine.allocate_id("users")?;
+        let cid_id = engine.allocate_id("users")?;
+        let ana = generic_document("Ana");
+        let ben = generic_document("Ben");
+        let cid = generic_document("Cid");
+
+        engine.put_indexed("users", ana_id, &ana, &[])?;
+        engine.put_many_indexed(
+            "users",
+            &[
+                DocumentWrite {
+                    id: ben_id,
+                    bytes: ben.clone(),
+                    indexes: Vec::new(),
+                },
+                DocumentWrite {
+                    id: cid_id,
+                    bytes: cid.clone(),
+                    indexes: Vec::new(),
+                },
+            ],
+        )?;
+        let ordered_get_all = engine.get_many("users", &[cid_id, ana_id, 404, ben_id])?;
+        engine.delete("users", ana_id)?;
+        engine.delete_many("users", &[ben_id, cid_id])?;
+
+        engine.put_many_indexed(
+            "compact_users",
+            &[
+                DocumentWrite {
+                    id: 1,
+                    bytes: generic_document("Compact Ana"),
+                    indexes: vec![IndexEntry {
+                        name: "name".into(),
+                        value: IndexValue::String("Compact Ana".into()),
+                    }],
+                },
+                DocumentWrite {
+                    id: 2,
+                    bytes: generic_document("Compact Ben"),
+                    indexes: vec![IndexEntry {
+                        name: "name".into(),
+                        value: IndexValue::String("Compact Ben".into()),
+                    }],
+                },
+            ],
+        )?;
+        let compact_count = engine.document_ids("compact_users")?.len();
+
+        let native_document_path = engine.put_many_native_documents(
+            "native_users",
+            &[
+                NativeDocumentWrite {
+                    id: 1,
+                    values: vec![
+                        NativeDocumentValue::Bool(true),
+                        NativeDocumentValue::Bytes(b"Native Ana".to_vec()),
+                        NativeDocumentValue::Int(42),
+                    ],
+                },
+                NativeDocumentWrite {
+                    id: 2,
+                    values: vec![
+                        NativeDocumentValue::Bool(false),
+                        NativeDocumentValue::Bytes(b"Native Ben".to_vec()),
+                        NativeDocumentValue::Int(84),
+                    ],
+                },
+            ],
+            true,
+        )?;
+        assert!(engine
+            .get_many_stored("native_users", &[1, 2])?
+            .iter()
+            .all(Option::is_some));
+        engine.delete_many_native_documents("native_users", &[1])?;
+        let native_after_delete = engine.document_ids("native_users")?;
+
+        Ok(WebTypedCrudResult {
+            ids: vec![ana_id, ben_id, cid_id],
+            ordered_get_all,
+            native_document_path,
+            native_after_delete,
+            compact_count,
+        })
+    }
+
+    fn web_typed_crud_manifest() -> SchemaManifest {
+        SchemaManifest {
+            collections: vec![
+                CollectionSchemaManifest {
+                    name: "users".into(),
+                    id_field: "id".into(),
+                    fields: vec![field("id", "int", true, false)],
+                    composite_indexes: Vec::new(),
+                },
+                CollectionSchemaManifest {
+                    name: "compact_users".into(),
+                    id_field: "id".into(),
+                    fields: vec![
+                        field("id", "int", true, false),
+                        field("name", "string", false, true),
+                    ],
+                    composite_indexes: Vec::new(),
+                },
+                CollectionSchemaManifest {
+                    name: "native_users".into(),
+                    id_field: "id".into(),
+                    fields: vec![
+                        field("id", "int", true, false),
+                        field("active", "bool", false, false),
+                        field("score", "int", false, false),
+                        field("name", "string", false, false),
+                    ],
+                    composite_indexes: Vec::new(),
+                },
+            ],
+        }
+    }
+
+    fn field(name: &str, binary_type: &str, is_id: bool, is_indexed: bool) -> FieldSchemaManifest {
+        FieldSchemaManifest {
+            name: name.into(),
+            dart_type: binary_type.into(),
+            binary_type: binary_type.into(),
+            is_id,
+            is_indexed,
+            is_index_unique: false,
+            is_index_replace: false,
+            index_case_sensitive: true,
+            index_type: "value".into(),
+        }
     }
 }

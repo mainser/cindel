@@ -10,6 +10,14 @@
   errors, close cleanup, and transferable payloads.
 - Added Web schema manifest encoding and a Wasm Web engine opener that registers
   SQLite schema metadata persistently.
+- Kept runtime collection schemas loaded after persisted Web SQLite opens so
+  native document cursors remain available after OPFS reopen.
+- Added the experimental Web typed CRUD surface on `CindelWebEngine` and the
+  package worker template: id allocation, put/putAll, get/getAll,
+  getStored/getAllStored, delete/deleteAll, documentIds, and SQLite-native
+  document write/delete batches.
+- Added Web CRUD wire helpers for id lists, indexed document batches, optional
+  get results, and SQLite-native generated document batches.
 
 ## 0.6.2
 

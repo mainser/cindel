@@ -493,6 +493,9 @@ impl SqliteStorage {
         let mut storage = Self::open_uninitialized(directory, true)?;
         storage.initialize(None)?;
         storage.register_schemas(manifest)?;
+        for collection in &manifest.collections {
+            storage.register_collection_schema(collection)?;
+        }
 
         Ok(storage)
     }
@@ -4010,11 +4013,12 @@ mod tests {
         // Covers:
         // - [SqliteStorage::open_with_persisted_schemas] registering schema
         //   metadata during open.
+        // - Runtime schema availability after persisted Web-style open.
         // - Storage metadata persistence across close and reopen.
         // - Controlled rejection of incompatible schema changes.
         // Expected: Web SQLite can reopen the same database, report schema
-        // version 1, keep storage metadata, and leave the old schema intact
-        // after an incompatible open attempt.
+        // version 1, keep storage metadata, expose native document cursors,
+        // and leave the old schema intact after an incompatible open attempt.
 
         // Arrange.
         let directory = TemporaryDirectory::new("schema_open_persisted");
@@ -4029,6 +4033,10 @@ mod tests {
             SqliteStorage::open_with_persisted_schemas(directory.path(), &original).unwrap();
         let first_version = storage.schema_version("users").unwrap();
         let first_metadata = storage.storage_metadata().unwrap();
+        let first_cursor = storage
+            .native_document_cursor("users", &[1])
+            .unwrap()
+            .is_some();
         drop(storage);
 
         let storage =
@@ -4050,6 +4058,7 @@ mod tests {
         assert_eq!(first_version, Some(1));
         assert_eq!(reopened_version, Some(1));
         assert_eq!(final_version, Some(1));
+        assert!(first_cursor);
         assert_eq!(first_metadata.layout, StorageLayoutVersion::SqliteV1);
         assert_eq!(
             first_metadata.document_format,

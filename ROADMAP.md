@@ -31,7 +31,8 @@ Current native backend policy:
 
 - MDBX is the default backend.
 - SQLite remains selectable explicitly.
-- Web is out of scope until the native desktop/mobile path is stable.
+- Web uses the experimental SQLite/OPFS runtime path; MDBX is not a browser
+  backend and remains the native default.
 
 ## Delivered
 
@@ -109,6 +110,11 @@ Current native backend policy:
   collection tables, open-time schema registration, `putAll`, `getAll`,
   query-based update/delete, filter queries, sorted queries, and direct native
   typed reads.
+- Experimental Web SQLite/OPFS baseline with persisted schema metadata and
+  runtime schema registration for native document cursors after reopen.
+- Experimental Web typed CRUD worker/Wasm surface over the shared SQLite
+  engine, including typed batch writes, ordered reads, deletes, id allocation,
+  stored-document reads, and native-document write/delete batches.
 - Compact generated binary document format.
 - Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,

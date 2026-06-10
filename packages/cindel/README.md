@@ -230,7 +230,17 @@ default unless SQLite is requested explicitly.
 Generated schemas can be encoded for the Web worker/Wasm runtime with
 `cindelEncodeWebSchemaManifest(schemas)`. These bytes use the same schema
 manifest wire format as native `Cindel.open`, and the Web Wasm opener registers
-schema and storage metadata persistently.
+schema and storage metadata persistently. Reopened Web SQLite storage also keeps
+runtime collection schemas available so native document cursors can serve the
+typed CRUD fast path after OPFS persistence is restored.
+
+The package includes an experimental worker template at
+`packages/cindel/web/cindel_worker.js`. It opens the Web SQLite engine and
+routes binary typed CRUD operations: id allocation, typed `put`/`putAll`,
+`get`/`getAll`, `getStored`/`getAllStored`, `delete`/`deleteAll`, document id
+listing, and SQLite-native generated document write/delete batches. Use the Web
+wire helpers exported from `package:cindel/cindel_web.dart` to encode id lists,
+indexed document batches, optional get results, and native document batches.
 
 For tests and short-lived work:
 

@@ -100,6 +100,21 @@ pub(crate) struct WireIndexedDocumentWrite {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) enum WireNativeDocumentValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WireNativeDocumentWrite {
+    pub(crate) id: u64,
+    pub(crate) values: Vec<WireNativeDocumentValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct WireProjectionRows {
     pub(crate) row_count: u32,
     pub(crate) column_count: u32,
@@ -328,6 +343,75 @@ pub(crate) fn decode_indexed_document_write_batch(
             });
         }
         documents.push(WireIndexedDocumentWrite { id, bytes, indexes });
+    }
+    reader.finish()?;
+    Ok(documents)
+}
+
+pub(crate) fn encode_optional_document_batch(
+    documents: &[Option<Vec<u8>>],
+) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_len(documents.len())?;
+    for document in documents {
+        match document {
+            Some(bytes) => {
+                writer.write_bool(true);
+                writer.write_bytes(bytes)?;
+            }
+            None => writer.write_bool(false),
+        }
+    }
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_optional_document_batch(bytes: &[u8]) -> Result<Vec<Option<Vec<u8>>>, String> {
+    let mut reader = Reader::new(bytes);
+    let count = reader.read_len()?;
+    reader.ensure_item_count(count, 1)?;
+    let mut documents = Vec::with_capacity(count);
+    for _ in 0..count {
+        if reader.read_bool()? {
+            documents.push(Some(reader.read_bytes()?.to_vec()));
+        } else {
+            documents.push(None);
+        }
+    }
+    reader.finish()?;
+    Ok(documents)
+}
+
+pub(crate) fn encode_native_document_write_batch(
+    documents: &[WireNativeDocumentWrite],
+) -> Result<Vec<u8>, String> {
+    let mut writer = Writer::new();
+    writer.write_len(documents.len())?;
+    for document in documents {
+        writer.write_u64(document.id);
+        writer.write_len(document.values.len())?;
+        for value in &document.values {
+            writer.write_native_document_value(value)?;
+        }
+    }
+    Ok(writer.finish())
+}
+
+pub(crate) fn decode_native_document_write_batch(
+    bytes: &[u8],
+) -> Result<Vec<WireNativeDocumentWrite>, String> {
+    let mut reader = Reader::new(bytes);
+    let count = reader.read_len()?;
+    reader.ensure_item_count(count, 12)?;
+    let mut documents = Vec::with_capacity(count);
+    for _ in 0..count {
+        let id = reader.read_u64()?;
+        let value_count = reader.read_len()?;
+        reader.ensure_item_count(value_count, 1)?;
+        let mut values = Vec::with_capacity(value_count);
+        for _ in 0..value_count {
+            values.push(reader.read_native_document_value()?);
+        }
+        documents.push(WireNativeDocumentWrite { id, values });
     }
     reader.finish()?;
     Ok(documents)
@@ -731,6 +815,35 @@ impl Writer {
         Ok(())
     }
 
+    fn write_native_document_value(
+        &mut self,
+        value: &WireNativeDocumentValue,
+    ) -> Result<(), String> {
+        match value {
+            WireNativeDocumentValue::Null => self.write_u8(TAG_NULL),
+            WireNativeDocumentValue::Bool(value) => {
+                self.write_u8(TAG_BOOL);
+                self.write_bool(*value);
+            }
+            WireNativeDocumentValue::Int(value) => {
+                self.write_u8(TAG_INT);
+                self.write_i64(*value);
+            }
+            WireNativeDocumentValue::Double(value) if value.is_finite() => {
+                self.write_u8(TAG_DOUBLE);
+                self.write_f64(*value);
+            }
+            WireNativeDocumentValue::Double(_) => {
+                return Err("native document double values must be finite".into());
+            }
+            WireNativeDocumentValue::Bytes(value) => {
+                self.write_u8(TAG_STRING);
+                self.write_bytes(value)?;
+            }
+        }
+        Ok(())
+    }
+
     fn write_filter(&mut self, filter: &WireFilter) -> Result<(), String> {
         match filter {
             WireFilter::Field {
@@ -922,6 +1035,24 @@ impl<'a> Reader<'a> {
                 Ok(WireValue::Object(fields))
             }
             tag => Err(format!("unknown wire value tag {tag}")),
+        }
+    }
+
+    fn read_native_document_value(&mut self) -> Result<WireNativeDocumentValue, String> {
+        match self.read_u8()? {
+            TAG_NULL => Ok(WireNativeDocumentValue::Null),
+            TAG_BOOL => Ok(WireNativeDocumentValue::Bool(self.read_bool()?)),
+            TAG_INT => Ok(WireNativeDocumentValue::Int(self.read_i64()?)),
+            TAG_DOUBLE => {
+                let value = self.read_f64()?;
+                if value.is_finite() {
+                    Ok(WireNativeDocumentValue::Double(value))
+                } else {
+                    Err("native document double values must be finite".into())
+                }
+            }
+            TAG_STRING => Ok(WireNativeDocumentValue::Bytes(self.read_bytes()?.to_vec())),
+            other => Err(format!("unknown native document value tag `{other}`")),
         }
     }
 
@@ -1252,6 +1383,54 @@ mod tests {
         );
         assert_eq!(
             decode_indexed_document_write_batch(INDEXED_DOCUMENT_BATCH_FIXTURE).unwrap(),
+            documents
+        );
+    }
+
+    // Scenario: Rust returns Web get/getAll documents in requested id order.
+    // Covers:
+    // - Optional document presence bits.
+    // - Preserving missing ids as None entries.
+    // - Empty document bytes.
+    // Expected: The optional batch round-trips without JSON.
+    #[test]
+    fn encodes_and_decodes_optional_document_batch() {
+        // Arrange.
+        let documents = vec![Some(b"abc".to_vec()), None, Some(Vec::new())];
+
+        // Act / Assert.
+        assert_eq!(
+            decode_optional_document_batch(&encode_optional_document_batch(&documents).unwrap())
+                .unwrap(),
+            documents
+        );
+    }
+
+    // Scenario: Rust receives Web SQLite-native generated document rows.
+    // Covers:
+    // - Field values used by the SQLite native-document fast path.
+    // - Null, scalar, and byte payload field values.
+    // Expected: Native document rows round-trip through the shared wire codec.
+    #[test]
+    fn encodes_and_decodes_native_document_batch() {
+        // Arrange.
+        let documents = vec![WireNativeDocumentWrite {
+            id: 7,
+            values: vec![
+                WireNativeDocumentValue::Null,
+                WireNativeDocumentValue::Bool(true),
+                WireNativeDocumentValue::Int(42),
+                WireNativeDocumentValue::Double(3.5),
+                WireNativeDocumentValue::Bytes(b"name".to_vec()),
+            ],
+        }];
+
+        // Act / Assert.
+        assert_eq!(
+            decode_native_document_write_batch(
+                &encode_native_document_write_batch(&documents).unwrap()
+            )
+            .unwrap(),
             documents
         );
     }

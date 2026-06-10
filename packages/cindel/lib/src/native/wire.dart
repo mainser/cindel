@@ -470,6 +470,109 @@ final class WireIndexedDocumentWrite {
       Object.hash(id, Object.hashAll(bytes), Object.hashAll(indexes));
 }
 
+/// Value written into the SQLite-native generated document table on Web.
+///
+/// Strings, enum names, list payloads, and embedded object payloads are carried
+/// as bytes because generated document writers already know the compact field
+/// encoding for each persisted field.
+sealed class WireNativeDocumentValue {
+  const WireNativeDocumentValue();
+
+  const factory WireNativeDocumentValue.nullValue() = WireNativeDocumentNull;
+  const factory WireNativeDocumentValue.bool(bool value) =
+      WireNativeDocumentBool;
+  const factory WireNativeDocumentValue.int(int value) = WireNativeDocumentInt;
+  const factory WireNativeDocumentValue.double(double value) =
+      WireNativeDocumentDouble;
+  const factory WireNativeDocumentValue.bytes(Uint8List value) =
+      WireNativeDocumentBytes;
+}
+
+/// Null native document field value.
+final class WireNativeDocumentNull extends WireNativeDocumentValue {
+  const WireNativeDocumentNull();
+
+  @override
+  bool operator ==(Object other) => other is WireNativeDocumentNull;
+
+  @override
+  int get hashCode => 0;
+}
+
+/// Boolean native document field value.
+final class WireNativeDocumentBool extends WireNativeDocumentValue {
+  const WireNativeDocumentBool(this.value);
+
+  final bool value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNativeDocumentBool && other.value == value;
+
+  @override
+  int get hashCode => Object.hash(WireNativeDocumentBool, value);
+}
+
+/// Signed 64-bit integer native document field value.
+final class WireNativeDocumentInt extends WireNativeDocumentValue {
+  const WireNativeDocumentInt(this.value);
+
+  final int value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNativeDocumentInt && other.value == value;
+
+  @override
+  int get hashCode => Object.hash(WireNativeDocumentInt, value);
+}
+
+/// 64-bit floating point native document field value.
+final class WireNativeDocumentDouble extends WireNativeDocumentValue {
+  const WireNativeDocumentDouble(this.value);
+
+  final double value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNativeDocumentDouble && other.value == value;
+
+  @override
+  int get hashCode => Object.hash(WireNativeDocumentDouble, value);
+}
+
+/// Byte payload native document field value.
+final class WireNativeDocumentBytes extends WireNativeDocumentValue {
+  const WireNativeDocumentBytes(this.value);
+
+  final Uint8List value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNativeDocumentBytes && listEquals(other.value, value);
+
+  @override
+  int get hashCode =>
+      Object.hash(WireNativeDocumentBytes, Object.hashAll(value));
+}
+
+/// SQLite-native generated document row queued for a Web batch write.
+final class WireNativeDocumentWrite {
+  const WireNativeDocumentWrite({required this.id, required this.values});
+
+  final int id;
+  final List<WireNativeDocumentValue> values;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireNativeDocumentWrite &&
+      other.id == id &&
+      listEquals(other.values, values);
+
+  @override
+  int get hashCode => Object.hash(id, Object.hashAll(values));
+}
+
 /// Tabular projection result returned by native query projection APIs.
 ///
 /// [cells] is row-major and must contain exactly `rowCount * columnCount`
@@ -1036,6 +1139,65 @@ List<WireIndexedDocumentWrite> decodeIndexedDocumentWriteBatch(
   return documents;
 }
 
+/// Encodes ordered optional document bytes returned by Web get/getAll calls.
+Uint8List encodeOptionalDocumentBatch(List<Uint8List?> documents) {
+  final writer = CindelWireWriter();
+  writer.writeLength(documents.length);
+  for (final document in documents) {
+    writer.writeBool(document != null);
+    if (document != null) {
+      writer.writeBytes(document);
+    }
+  }
+  return writer.finish();
+}
+
+/// Decodes ordered optional document bytes returned by Web get/getAll calls.
+List<Uint8List?> decodeOptionalDocumentBatch(Uint8List bytes) {
+  final reader = CindelWireReader(bytes);
+  final count = reader.readLength();
+  final documents = <Uint8List?>[];
+  for (var i = 0; i < count; i++) {
+    documents.add(reader.readBool() ? reader.readBytes() : null);
+  }
+  reader.finish();
+  return documents;
+}
+
+/// Encodes SQLite-native generated document rows for Web batch writes.
+Uint8List encodeNativeDocumentWriteBatch(
+  List<WireNativeDocumentWrite> documents,
+) {
+  final writer = CindelWireWriter();
+  writer.writeLength(documents.length);
+  for (final document in documents) {
+    writer.writeUint64(document.id);
+    writer.writeLength(document.values.length);
+    for (final value in document.values) {
+      writer.writeNativeDocumentValue(value);
+    }
+  }
+  return writer.finish();
+}
+
+/// Decodes SQLite-native generated document rows from a Web batch payload.
+List<WireNativeDocumentWrite> decodeNativeDocumentWriteBatch(Uint8List bytes) {
+  final reader = CindelWireReader(bytes);
+  final count = reader.readLength();
+  final documents = <WireNativeDocumentWrite>[];
+  for (var i = 0; i < count; i++) {
+    final id = reader.readUint64();
+    final valueCount = reader.readLength();
+    final values = <WireNativeDocumentValue>[];
+    for (var value = 0; value < valueCount; value++) {
+      values.add(reader.readNativeDocumentValue());
+    }
+    documents.add(WireNativeDocumentWrite(id: id, values: values));
+  }
+  reader.finish();
+  return documents;
+}
+
 /// Encodes native projection rows in row-major order.
 Uint8List encodeProjectionRows(WireProjectionRows rows) {
   final expectedCells = rows.rowCount * rows.columnCount;
@@ -1444,6 +1606,30 @@ final class CindelWireWriter {
     }
   }
 
+  void writeNativeDocumentValue(WireNativeDocumentValue value) {
+    switch (value) {
+      case WireNativeDocumentNull():
+        writeUint8(wireTagNull);
+      case WireNativeDocumentBool(:final value):
+        writeUint8(wireTagBool);
+        writeBool(value);
+      case WireNativeDocumentInt(:final value):
+        writeUint8(wireTagInt);
+        writeInt64(value);
+      case WireNativeDocumentDouble(:final value):
+        if (!value.isFinite) {
+          throw const FormatException(
+            'native document double values must be finite',
+          );
+        }
+        writeUint8(wireTagDouble);
+        writeFloat64(value);
+      case WireNativeDocumentBytes(:final value):
+        writeUint8(wireTagString);
+        writeBytes(value);
+    }
+  }
+
   void writeFilter(WireFilter filter) {
     switch (filter) {
       case WireFieldFilter(:final field, :final operation, :final value):
@@ -1602,6 +1788,19 @@ final class CindelWireReader {
           WireObjectEntry(readString(), readValue()),
       ]),
       final tag => throw FormatException('unknown wire value tag $tag'),
+    };
+  }
+
+  WireNativeDocumentValue readNativeDocumentValue() {
+    return switch (readUint8()) {
+      wireTagNull => const WireNativeDocumentValue.nullValue(),
+      wireTagBool => WireNativeDocumentValue.bool(readBool()),
+      wireTagInt => WireNativeDocumentValue.int(readInt64()),
+      wireTagDouble => WireNativeDocumentValue.double(readFloat64()),
+      wireTagString => WireNativeDocumentValue.bytes(readBytes()),
+      final tag => throw FormatException(
+        'unknown native document value tag $tag',
+      ),
     };
   }
 
