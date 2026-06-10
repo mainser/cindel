@@ -2,6 +2,7 @@ import init, { CindelWebEngine } from './pkg/cindel_native.js';
 
 let initPromise;
 let engine;
+let activeTransaction = null;
 let closed = false;
 let queue = Promise.resolve();
 
@@ -54,6 +55,39 @@ function requireEngine() {
   return engine;
 }
 
+function beginTransaction(kind) {
+  if (activeTransaction != null) {
+    throw new Error('a transaction is already active');
+  }
+  if (kind === 'read') {
+    requireEngine().beginReadTransaction();
+  } else {
+    requireEngine().beginWriteTransaction();
+  }
+  activeTransaction = kind;
+}
+
+function commitTransaction() {
+  requireEngine().commitTransaction();
+  activeTransaction = null;
+}
+
+function rollbackTransaction() {
+  requireEngine().rollbackTransaction();
+  activeTransaction = null;
+}
+
+function rollbackActiveTransaction() {
+  if (!engine || activeTransaction == null) {
+    return;
+  }
+  try {
+    engine.rollbackTransaction();
+  } finally {
+    activeTransaction = null;
+  }
+}
+
 async function execute(message) {
   if (closed) {
     failure(message.requestId, 'closed', 'Worker is closed.');
@@ -69,6 +103,7 @@ async function execute(message) {
           payload.dbName,
           bytes(payload.manifest),
         );
+        activeTransaction = null;
         response(message.requestId, null);
         return;
       case 'schemaVersion':
@@ -79,6 +114,22 @@ async function execute(message) {
         return;
       case 'storageMetadata':
         response(message.requestId, requireEngine().storageMetadataJson());
+        return;
+      case 'beginReadTransaction':
+        beginTransaction('read');
+        response(message.requestId, null);
+        return;
+      case 'beginWriteTransaction':
+        beginTransaction('write');
+        response(message.requestId, null);
+        return;
+      case 'commitTransaction':
+        commitTransaction();
+        response(message.requestId, null);
+        return;
+      case 'rollbackTransaction':
+        rollbackTransaction();
+        response(message.requestId, null);
         return;
       case 'allocateId':
         response(message.requestId, requireEngine().allocateId(payload.collection));
@@ -241,6 +292,25 @@ async function execute(message) {
   }
 }
 
+async function closeWorker() {
+  if (closed) {
+    self.postMessage({ type: 'closed' });
+    self.close();
+    return;
+  }
+  closed = true;
+  try {
+    await queue.catch(() => {});
+    rollbackActiveTransaction();
+  } catch (error) {
+    failure(0, 'close_failed', errorMessage(error));
+  } finally {
+    engine = undefined;
+    self.postMessage({ type: 'closed' });
+    self.close();
+  }
+}
+
 self.onmessage = async (event) => {
   const message = event.data;
   try {
@@ -251,10 +321,7 @@ self.onmessage = async (event) => {
     }
 
     if (message.type === 'close') {
-      closed = true;
-      engine = undefined;
-      self.postMessage({ type: 'closed' });
-      self.close();
+      await closeWorker();
       return;
     }
 

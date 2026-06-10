@@ -117,35 +117,124 @@ Persisted Web SQLite opens also keep the runtime collection schemas registered
 after metadata validation. This keeps SQLite native document cursors available
 for the typed CRUD fast path after closing and reopening OPFS-backed storage.
 
-### Web CRUD Worker Surface
+### Web Worker Surface
 
 The experimental package worker at `packages/cindel/web/cindel_worker.js`
-routes typed CRUD operations to `CindelWebEngine`:
+opens `CindelWebEngine` and routes requests to the shared SQLite storage engine.
+It is a low-level transport surface for the Web runtime. Application code should
+normally keep using generated schemas and the exported Web wire helpers instead
+of constructing storage bytes by hand.
 
-- `open`: opens SQLite/OPFS with encoded schemas.
-- `allocateId` and `allocateIds`: return encoded id-list payloads.
-- `put` and `putAll`: accept encoded indexed document batches.
-- `putNativeAll`: accepts encoded SQLite-native generated document batches.
+The Worker accepts request envelopes with an operation name and a small
+structured payload. Large values, such as documents, ids, query plans, schema
+manifests, and update batches, stay encoded as binary buffers.
+
+#### Opening
+
+`open` creates or reopens the OPFS-backed SQLite database and registers the
+encoded schemas. The example uses an app helper named `openPayload` to build
+the small JS payload object sent to the Worker:
+
+```dart
+final bridge = CindelWebWorkerBridge('./cindel_worker.js');
+await bridge.init();
+
+final manifest = cindelEncodeWebSchemaManifest([TodoModelSchema]);
+await bridge.send(
+  operation: 'open',
+  payload: openPayload(dbName, manifest),
+);
+```
+
+The exact payload object is Worker-specific, but it must contain:
+
+- `dbName`: logical SQLite database name for OPFS.
+- `manifest`: bytes returned by `cindelEncodeWebSchemaManifest`.
+
+#### Documents And Ids
+
+These operations cover the typed document path:
+
+- `allocateId` and `allocateIds`: allocate native ids and return an encoded
+  id-list payload.
+- `put` and `putAll`: write encoded indexed document batches.
+- `putNativeAll`: writes generated SQLite-native document batches directly into
+  schema collection tables.
 - `get` and `getAll`: return encoded optional document batches.
 - `getStored` and `getAllStored`: read stored generated documents when a
   SQLite-native schema table is available.
 - `delete`, `deleteAll`, and `deleteNativeAll`: delete generic or native rows.
-- `documentIds`: returns an encoded id-list payload.
-- `collectionRevision`: returns the encoded revision scalar for a collection.
-- `takeChanges`: returns encoded change sets recorded by native mutations.
-- `queryIndexEqual` and `queryIndexRange`: return encoded id-list payloads for
-  generated index lookups.
-- `queryPlanIds`, `queryPlanDocuments`, `queryPlanCount`, `queryPlanProject`,
-  `queryPlanAggregate`, `queryPlanUpdate`, and `queryPlanDelete`: execute
-  encoded native query plans over the SQLite/OPFS runtime.
+- `documentIds`: returns all ids in a collection as an encoded id-list payload.
 
-The exported Web wire helpers include `encodeIdList`, `decodeIdList`,
-`encodeIndexedDocumentWriteBatch`, `decodeOptionalDocumentBatch`,
-`encodeNativeDocumentWriteBatch`, `decodeNativeDocumentWriteBatch`,
-`encodeIndexValue`, `encodeQueryPlan`, `encodeFieldUpdates`,
-`decodeProjectionRows`, `decodeScalar`, and `decodeChangeSetList`. These
-helpers keep Worker payloads binary; structured objects are only used as the
-small request envelope around operation names, collection names, and buffers.
+For id payloads, use `encodeIdList` and `decodeIdList`. For indexed document
+batches, use `encodeIndexedDocumentWriteBatch` and
+`decodeOptionalDocumentBatch`. For generated SQLite-native batches, use
+`encodeNativeDocumentWriteBatch` and `decodeNativeDocumentWriteBatch`.
+
+#### Queries
+
+Index lookups and query plans use the same binary query-plan format as the
+native runtime:
+
+- `queryIndexEqual`: returns ids matching one indexed value.
+- `queryIndexRange`: returns ids inside an indexed range.
+- `queryPlanIds`: returns ids for an encoded query plan.
+- `queryPlanDocuments`: returns documents for an encoded query plan.
+- `queryPlanCount`: returns an encoded scalar count.
+- `queryPlanProject`: returns encoded projection rows for one field.
+- `queryPlanAggregate`: returns an encoded scalar aggregate.
+
+Use `encodeIndexValue`, `encodeQueryPlan`, `decodeIdList`,
+`decodeOptionalDocumentBatch`, `decodeProjectionRows`, and `decodeScalar` for
+these payloads.
+
+#### Query Mutations And Changes
+
+Query mutations run inside the SQLite/OPFS engine and keep indexes consistent:
+
+- `queryPlanUpdate`: applies encoded field updates to documents matched by an
+  encoded query plan and returns an encoded scalar count.
+- `queryPlanDelete`: deletes documents matched by an encoded query plan and
+  returns the deleted ids.
+- `collectionRevision`: returns the encoded revision scalar for a collection.
+- `takeChanges`: drains encoded change sets recorded by native mutations.
+
+Use `encodeFieldUpdates` for update payloads and `decodeChangeSetList` for
+change-set payloads. Query updates may advance the collection revision without
+returning document ids when id collection is not required by the caller.
+
+#### Transactions
+
+The Web Worker serializes requests before they enter `CindelWebEngine`, so
+concurrent Dart futures cannot call the SQLite engine at the same time. This is
+part of the transaction model: transaction behavior must not depend on browser
+`postMessage` timing.
+
+Explicit transaction operations are:
+
+- `beginReadTransaction`: starts a read transaction.
+- `beginWriteTransaction`: starts a write transaction.
+- `commitTransaction`: commits the active transaction.
+- `rollbackTransaction`: rolls back the active transaction.
+
+Nested explicit transactions are rejected. Writes inside a read transaction are
+also rejected by the shared SQLite engine.
+
+```dart
+await bridge.send(operation: 'beginWriteTransaction');
+try {
+  await bridge.send(operation: 'putNativeAll', payload: batchPayload);
+  await bridge.send(operation: 'commitTransaction');
+} catch (_) {
+  await bridge.send(operation: 'rollbackTransaction');
+  rethrow;
+}
+```
+
+Closing the Web bridge sends `close` to the Worker. During a controlled close,
+the Worker rolls back an active transaction before terminating. If the Worker or
+browser process dies abruptly, only a completed commit is treated as visible;
+uncommitted SQLite transaction work is discarded.
 
 ## Closing Databases
 

@@ -61,6 +61,34 @@ impl CindelWebEngine {
             .map_err(|error| JsValue::from_str(&error))
     }
 
+    #[wasm_bindgen(js_name = beginReadTransaction)]
+    pub fn begin_read_transaction(&mut self) -> Result<(), JsValue> {
+        self.inner
+            .begin_read_transaction()
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = beginWriteTransaction)]
+    pub fn begin_write_transaction(&mut self) -> Result<(), JsValue> {
+        self.inner
+            .begin_write_transaction()
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = commitTransaction)]
+    pub fn commit_transaction(&mut self) -> Result<(), JsValue> {
+        self.inner
+            .commit_transaction()
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = rollbackTransaction)]
+    pub fn rollback_transaction(&mut self) -> Result<(), JsValue> {
+        self.inner
+            .rollback_transaction()
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
     #[wasm_bindgen(js_name = allocateId)]
     pub fn allocate_id(&mut self, collection: String) -> Result<Vec<u8>, JsValue> {
         let id = self

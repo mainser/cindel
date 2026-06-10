@@ -127,9 +127,15 @@ final class CindelWebWorkerBridge {
     _failOpenRequests(
       const CindelWebWorkerException('closed', 'Worker bridge is closed.'),
     );
-    _worker.terminate();
-    closed.complete();
-    return closed.future;
+    return closed.future.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        _worker.terminate();
+        if (!closed.isCompleted) {
+          closed.complete();
+        }
+      },
+    );
   }
 
   Future<CindelWebWorkerResponse> _sendNow({
@@ -184,6 +190,7 @@ final class CindelWebWorkerBridge {
   void _completeClosed() {
     final closed = _closedCompleter;
     if (closed != null && !closed.isCompleted) {
+      _worker.terminate();
       closed.complete();
     }
   }

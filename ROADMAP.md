@@ -17,8 +17,9 @@ secondary backend.
 ## Status
 
 The current development line is focused on hardening the optimized MDBX runtime,
-keeping the generated typed API stable, and keeping SQLite aligned as the
-complete explicit secondary backend for the current typed app surface.
+keeping the generated typed API stable, keeping SQLite aligned as the complete
+explicit secondary backend for the current typed app surface, and bringing the
+experimental Web SQLite/OPFS runtime toward a reproducible preview.
 
 Current package roles:
 
@@ -117,7 +118,9 @@ Current native backend policy:
   engine, including typed batch writes, ordered reads, deletes, id allocation,
   stored-document reads, native-document write/delete batches, index queries,
   native query-plan ids/documents/count/projection/aggregate/update/delete
-  operations, collection revisions, and change-set draining.
+  operations, collection revisions, change-set draining, explicit
+  read/write transactions, nested-transaction rejection, and controlled-close
+  rollback of active Web transactions.
 - Compact generated binary document format.
 - Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
@@ -149,11 +152,14 @@ Current native backend policy:
 - macOS universal prebuilt library.
 - Windows prebuilt library.
 - Linux prebuilt library.
+- Experimental Web SQLite Wasm runtime assets for browser Worker execution.
 - Tag-based GitHub release workflow that builds Android, Apple, Linux, and
   Windows prebuilts before publishing coordinated package releases.
 - Android release build validation.
 - Windows desktop validation.
 - Linux native prebuilt generation through WSL.
+- Web SQLite/OPFS validation through browser probes for the Worker/Wasm
+  runtime.
 
 ## Current Focus
 
@@ -173,8 +179,22 @@ Current native backend policy:
   writes.
 - Keep SQLite behavior aligned with the typed app benchmark while MDBX remains
   the default backend.
+- Continue Web SQLite/OPFS work on the shared SQLite engine, keeping the Web
+  Worker as transport, scheduling, and Wasm initialization code rather than a
+  separate storage backend.
 - Preserve lazy local watcher change-set creation when no watcher is
   registered.
+
+### Web Runtime
+
+- Package the Web Worker, Wasm glue, and `.wasm` assets so Flutter Web apps can
+  consume Cindel without copying files by hand.
+- Keep Web validation focused on SQLite/OPFS persistence, binary Worker
+  payloads, query parity, transaction atomicity, and browser behavior.
+- Establish Web benchmark CSVs for the same typed app workloads used by native
+  backend comparisons before starting optimization work.
+- Add single-tab Web watcher support after the Worker emits committed change
+  sets through the existing watcher model.
 
 ## Next
 
@@ -184,8 +204,21 @@ Current native backend policy:
 - Run `dart pub publish --dry-run` for publishable packages.
 - Validate Flutter Android, iOS, Linux, macOS, and Windows consumers with
   prebuilts.
+- Validate Flutter Web consumers with packaged Worker/Wasm assets once Web
+  packaging is in place.
 - Confirm package archives include the expected native files.
 - Keep example and package snippets on the correct version line.
+
+### Web Platform Preview
+
+- Make Web asset packaging reproducible for local development and release
+  workflows.
+- Prove `flutter run -d chrome`, `flutter build web`, and served release builds
+  load the Worker, JS glue, and `.wasm` assets without 404s.
+- Document secure-context, OPFS availability, storage quota, and current
+  single-tab limitations before calling Web preview-ready.
+- Keep multi-tab behavior out of the stable Web preview until the single-tab
+  watcher path and persistence story are validated.
 
 ### Flutter App Performance
 
@@ -221,7 +254,10 @@ Current native backend policy:
 
 ### Platforms
 
-- Revisit web after the native path is stable.
+- Add broader Web browser validation after the Chrome/Edge Worker/OPFS path is
+  stable.
+- Evaluate multi-tab Web coordination with Web Locks or a single-writer
+  coordinator after single-tab watchers are working.
 
 ### Maintenance APIs
 

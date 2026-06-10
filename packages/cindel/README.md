@@ -75,7 +75,7 @@ For Flutter apps, add Cindel plus the native library package:
 ```yaml
 dependencies:
   cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.2
+  cindel_flutter_libs: ^0.6.4
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -241,7 +241,12 @@ routes binary typed CRUD operations: id allocation, typed `put`/`putAll`,
 listing, SQLite-native generated document write/delete batches, index
 equality/range queries, and native query-plan ids, documents, count,
 projection, aggregate, update, and delete operations. It also exposes collection
-revision reads and change-set draining for worker-side invalidation plumbing.
+revision reads, change-set draining, and explicit read/write transaction
+operations. Web worker requests are serialized through the bridge and Worker
+queue so transaction visibility does not depend on accidental `postMessage`
+timing. Closing the bridge asks the Worker to roll back an active transaction
+before termination; if the Worker dies abruptly, only a completed commit is
+treated as visible.
 Use the Web wire helpers exported from `package:cindel/cindel_web.dart` to
 encode id lists, index values, query plans, field updates, indexed document
 batches, optional get results, and native document batches.

@@ -1,11 +1,10 @@
 # Changelog
 
-## 0.6.2
+## 0.6.4
 
-- Updated Web SQLite Wasm runtime assets for the Cindel `0.6.4` query-plan
-  worker surface, including query-plan update/delete support.
-- Regenerated the Windows native runtime library for the Cindel `0.6.4`
-  SQLite query-plan projection, aggregate, update, and delete backend.
+- Updated the bundled Web SQLite Wasm runtime assets with query-plan reads,
+  query-plan mutations, collection revision/change-set operations, and
+  transaction worker operations.
 
 ## 0.6.1
 

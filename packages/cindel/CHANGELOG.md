@@ -10,6 +10,10 @@
   runtime.
 - Added Web worker query-plan update/delete operations, collection revision
   reads, and change-set draining for the SQLite/OPFS runtime.
+- Added Web worker read/write transaction operations over the shared
+  SQLite/OPFS engine, including nested-transaction rejection, serialized
+  request execution, failed-batch rollback coverage, and controlled-close
+  rollback for active transactions.
 - Kept MDBX unchanged as the default native backend while aligning SQLite and
   Web SQLite query-plan behavior for the generated typed app path.
 

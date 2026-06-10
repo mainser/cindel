@@ -38,7 +38,7 @@ prebuilt native runtime:
 ```yaml
 dependencies:
   cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.2
+  cindel_flutter_libs: ^0.6.4
 ```
 
 No Dart import is required from this package.
@@ -103,7 +103,8 @@ This package contains:
 
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
-- Experimental Web SQLite Wasm runtime assets.
+- Experimental Web SQLite Wasm runtime assets, including the worker transaction
+  surface used by Cindel Web.
 - Minimal Dart library metadata.
 
 It does not contain:
