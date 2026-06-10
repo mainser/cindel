@@ -37,8 +37,8 @@ prebuilt native runtime:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.0
-  cindel_flutter_libs: ^0.6.0
+  cindel: ^0.6.3
+  cindel_flutter_libs: ^0.6.1
 ```
 
 No Dart import is required from this package.
@@ -79,6 +79,7 @@ The current package declares Flutter plugin support for:
 - iOS
 - Linux
 - macOS
+- Web runtime assets
 - Windows
 
 Current binary locations:
@@ -87,6 +88,7 @@ Current binary locations:
 - iOS: `ios/cindel.xcframework`
 - Linux: `linux/libcindel_native.so`
 - macOS: `macos/libcindel_native.dylib`
+- Web: `web/pkg/cindel_native.js` and `web/pkg/cindel_native_bg.wasm`
 - Windows: `windows/cindel_native.dll`
 
 Android ABIs currently included:
@@ -101,6 +103,7 @@ This package contains:
 
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
+- Experimental Web SQLite Wasm runtime assets.
 - Minimal Dart library metadata.
 
 It does not contain:
@@ -115,26 +118,6 @@ Those live in the other Cindel packages:
 - `cindel`: runtime API, typed collections, queries, watchers, and FFI loading.
 - `cindel_annotations`: public annotations and schema metadata types.
 - `cindel_generator`: build-time source generator for annotated models.
-
-## Maintainers
-
-Regenerate native binaries whenever the Rust native core changes and the
-Flutter package needs to ship that new ABI.
-
-From the repository root, use the scripts in `tool/prebuilt/` for the supported
-platforms. The package should not be released with stale native binaries,
-because Flutter consumers would load an older native core than the Dart API
-expects.
-
-For local benchmark and development work, the repository often uses the
-source-current Windows library from:
-
-```text
-packages/cindel/native/target/release/cindel_native.dll
-```
-
-That development DLL is not a replacement for regenerating and publishing the
-prebuilt Flutter package binaries.
 
 ## Status
 

@@ -18,6 +18,8 @@
   document write/delete batches.
 - Added Web CRUD wire helpers for id lists, indexed document batches, optional
   get results, and SQLite-native generated document batches.
+- Added the Web prebuilt build script for the SQLite-only Wasm runtime assets
+  emitted under `packages/cindel_flutter_libs/web/pkg`.
 
 ## 0.6.2
 

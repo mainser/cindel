@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- Added experimental Web SQLite Wasm runtime assets under `web/pkg`.
+
 ## 0.6.0
 
 - Prepared regenerated Flutter native runtime libraries for the Cindel `0.6.0`
