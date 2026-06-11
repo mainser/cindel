@@ -2,6 +2,12 @@
 
 ## 0.6.4
 
+- Added `encodeNativeDocumentWriteBatchDirect` for Web SQLite-native batch
+  writes so generated Web paths can emit CindelWireV1 rows without building
+  per-document `WireNativeDocumentWrite` objects.
+- Optimized SQLite native document batch inserts by reusing the prepared
+  statement for full chunks, improving the Web SQLite/Wasm typed insert path
+  while keeping MDBX untouched.
 - Added SQLite native query-plan projection and aggregate execution for
   schema-backed generated documents, including count, min, max, sum, and
   average over scalar native columns.

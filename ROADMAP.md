@@ -122,6 +122,9 @@ Current native backend policy:
   operations, collection revisions, change-set draining, explicit
   read/write transactions, nested-transaction rejection, and controlled-close
   rollback of active Web transactions.
+- Web SQLite native batch writes now have a direct wire encoder for generated
+  rows and reuse prepared SQLite insert statements across full chunks in the
+  Wasm runtime.
 - Compact generated binary document format.
 - Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
@@ -186,6 +189,8 @@ Current native backend policy:
 - Continue Web SQLite/OPFS work on the shared SQLite engine, keeping the Web
   Worker as transport, scheduling, and Wasm initialization code rather than a
   separate storage backend.
+- Keep Web benchmarks separated into UI, Worker, Wasm, SQLite, serialization,
+  and OPFS/startup costs before moving into watcher work.
 - Preserve lazy local watcher change-set creation when no watcher is
   registered.
 

@@ -51,4 +51,30 @@ void main() {
     ]);
     expect(manifest.collections.single.fields.first.binaryType, 'string');
   });
+
+  // Scenario: Dart Web generated code imports the separate Web entrypoint.
+  // Covers:
+  // - Public export of the direct SQLite-native document batch encoder.
+  // - Decode compatibility with the existing CindelWireV1 native batch shape.
+  // Expected: The Web entrypoint exposes an encoder that emits readable native
+  // document rows without requiring the internal wire library at call sites.
+  test('web entrypoint exports direct native document batch encoder', () {
+    // Arrange / Act.
+    final bytes = encodeNativeDocumentWriteBatchDirect<String>(
+      ids: const [1],
+      objects: const ['web'],
+      fieldCount: 1,
+      writeDocument: (writer, object) {
+        writer.writeString(0, object);
+      },
+    );
+    final documents = decodeNativeDocumentWriteBatch(bytes);
+
+    // Assert.
+    expect(documents, hasLength(1));
+    expect(documents.single.id, 1);
+    final value = documents.single.values.single;
+    expect(value, isA<WireNativeDocumentBytes>());
+    expect((value as WireNativeDocumentBytes).value, [119, 101, 98]);
+  });
 }

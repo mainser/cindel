@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cindel/src/native/wire.dart';
@@ -359,6 +360,89 @@ void main() {
       );
     });
 
+    // Scenario: Web writes SQLite-native rows without per-row wire objects.
+    // Covers:
+    // - Direct ordered native document writer.
+    // - UTF-8 strings and JSON string-list escaping.
+    // - Byte-for-byte compatibility with the existing object-based encoder.
+    // Expected: The direct encoder emits the exact same CindelWireV1 payload.
+    test('direct native document encoder matches object encoder', () {
+      // Arrange.
+      final objects = [
+        _NativeWireFixture(
+          active: true,
+          count: 42,
+          score: 3.5,
+          title: 'Ana "Ñ"',
+          words: ['alpha', 'b\\eta', 'línea\nnueva'],
+        ),
+      ];
+      final expected = encodeNativeDocumentWriteBatch([
+        WireNativeDocumentWrite(
+          id: 7,
+          values: [
+            const WireNativeDocumentValue.bool(true),
+            const WireNativeDocumentValue.int(42),
+            const WireNativeDocumentValue.double(3.5),
+            WireNativeDocumentValue.bytes(bytes(utf8.encode('Ana "Ñ"'))),
+            WireNativeDocumentValue.bytes(
+              bytes(utf8.encode(jsonEncode(objects.first.words))),
+            ),
+          ],
+        ),
+      ]);
+
+      // Act.
+      final encoded = encodeNativeDocumentWriteBatchDirect<_NativeWireFixture>(
+        ids: const [7],
+        objects: objects,
+        fieldCount: 5,
+        writeDocument: (writer, object) {
+          writer.writeBool(0, object.active);
+          writer.writeInt(1, object.count);
+          writer.writeDouble(2, object.score);
+          writer.writeString(3, object.title);
+          writer.writeStringListJson(4, object.words);
+        },
+      );
+
+      // Assert.
+      expect(encoded, expected);
+      expect(decodeNativeDocumentWriteBatch(encoded), [
+        WireNativeDocumentWrite(
+          id: 7,
+          values: [
+            const WireNativeDocumentValue.bool(true),
+            const WireNativeDocumentValue.int(42),
+            const WireNativeDocumentValue.double(3.5),
+            WireNativeDocumentValue.bytes(bytes(utf8.encode('Ana "Ñ"'))),
+            WireNativeDocumentValue.bytes(
+              bytes(utf8.encode(jsonEncode(objects.first.words))),
+            ),
+          ],
+        ),
+      ]);
+    });
+
+    // Scenario: A generated Web writer drifts from schema field order.
+    // Covers:
+    // - Direct writer order guard.
+    // Expected: Out-of-order writes fail before malformed bytes are emitted.
+    test('direct native document encoder rejects out-of-order fields', () {
+      // Act / Assert.
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 2,
+          writeDocument: (writer, _) {
+            writer.writeInt(1, 1);
+          },
+        ),
+        throwsStateError,
+      );
+    });
+
     // Scenario: Rust returns projected cells without hydrating full documents.
     // Covers:
     // - ProjectionRows row/column counts.
@@ -549,6 +633,22 @@ void main() {
 }
 
 Uint8List bytes(Iterable<int> values) => Uint8List.fromList(values.toList());
+
+final class _NativeWireFixture {
+  const _NativeWireFixture({
+    required this.active,
+    required this.count,
+    required this.score,
+    required this.title,
+    required this.words,
+  });
+
+  final bool active;
+  final int count;
+  final double score;
+  final String title;
+  final List<String> words;
+}
 
 const idsFixture = [
   3,

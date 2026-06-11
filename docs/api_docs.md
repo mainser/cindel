@@ -172,6 +172,27 @@ batches, use `encodeIndexedDocumentWriteBatch` and
 `decodeOptionalDocumentBatch`. For generated SQLite-native batches, use
 `encodeNativeDocumentWriteBatch` and `decodeNativeDocumentWriteBatch`.
 
+Performance-sensitive Web code can use `encodeNativeDocumentWriteBatchDirect`
+instead of building `WireNativeDocumentWrite` objects first:
+
+```dart
+final bytes = encodeNativeDocumentWriteBatchDirect<Product>(
+  ids: products.map((product) => product.id).toList(growable: false),
+  objects: products,
+  fieldCount: 3,
+  writeDocument: (writer, product) {
+    writer.writeString(0, product.name);
+    writer.writeInt(1, product.stock);
+    writer.writeStringListJson(2, product.tags);
+  },
+);
+```
+
+The direct writer emits the same CindelWireV1 payload as
+`encodeNativeDocumentWriteBatch`, but avoids per-row wire object allocation.
+Fields must be written in registered schema order. SQLite-native list columns
+are stored as JSON text for Web query support.
+
 #### Queries
 
 Index lookups and query plans use the same binary query-plan format as the

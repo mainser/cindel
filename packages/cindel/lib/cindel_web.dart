@@ -35,6 +35,8 @@ export 'src/native/wire.dart'
         WireQuerySource,
         WireScalar,
         WireValue,
+        CindelNativeDocumentWireWriter,
+        CindelWriteNativeWireDocument,
         decodeIdList,
         decodeChangeSetList,
         decodeIndexedDocumentWriteBatch,
@@ -49,6 +51,7 @@ export 'src/native/wire.dart'
         encodeIndexValue,
         encodeIndexedDocumentWriteBatch,
         encodeNativeDocumentWriteBatch,
+        encodeNativeDocumentWriteBatchDirect,
         encodeOptionalDocumentBatch,
         encodeQueryPlan;
 export 'src/web/schema_manifest.dart';

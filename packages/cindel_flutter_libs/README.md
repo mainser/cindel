@@ -109,7 +109,7 @@ This package contains:
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
 - Experimental Web SQLite Wasm runtime assets, including the Worker transaction
-  surface used by Cindel Web.
+  surface and cached SQLite native batch insert path used by Cindel Web.
 - Minimal Dart library metadata.
 
 It does not contain:

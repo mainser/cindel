@@ -250,7 +250,10 @@ before termination; if the Worker dies abruptly, only a completed commit is
 treated as visible.
 Use the Web wire helpers exported from `package:cindel/cindel_web.dart` to
 encode id lists, index values, query plans, field updates, indexed document
-batches, optional get results, and native document batches.
+batches, optional get results, and native document batches. For generated
+SQLite-native Web batch writes, `encodeNativeDocumentWriteBatchDirect` writes
+the same CindelWireV1 payload without allocating one `WireNativeDocumentWrite`
+object per row; generated callers must write fields in registered schema order.
 
 For tests and short-lived work:
 

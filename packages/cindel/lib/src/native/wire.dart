@@ -577,6 +577,106 @@ final class WireNativeDocumentWrite {
   int get hashCode => Object.hash(id, Object.hashAll(values));
 }
 
+/// Writes one ordered SQLite-native Web document into a wire batch.
+///
+/// Generated Web serializers can use this writer to avoid constructing
+/// [WireNativeDocumentWrite] and [WireNativeDocumentValue] objects for every
+/// row. Fields must be written in the same order as the registered native
+/// schema. This preserves the existing CindelWireV1 payload shape used by
+/// [encodeNativeDocumentWriteBatch].
+final class CindelNativeDocumentWireWriter {
+  CindelNativeDocumentWireWriter._(this._writer, this._fieldCount);
+
+  final _CindelGrowableWireWriter _writer;
+  final int _fieldCount;
+  int _nextFieldIndex = 0;
+
+  void _beginDocument(int id) {
+    _nextFieldIndex = 0;
+    _writer.writeUint64(id);
+    _writer.writeLength(_fieldCount);
+  }
+
+  void _finishDocument() {
+    if (_nextFieldIndex != _fieldCount) {
+      throw StateError(
+        'native document wrote $_nextFieldIndex fields, expected $_fieldCount',
+      );
+    }
+  }
+
+  void _checkFieldIndex(int fieldIndex) {
+    if (fieldIndex != _nextFieldIndex) {
+      throw StateError(
+        'native wire fields must be written in order; expected '
+        '$_nextFieldIndex, got $fieldIndex',
+      );
+    }
+    _nextFieldIndex += 1;
+  }
+
+  /// Writes a null value to [fieldIndex].
+  void writeNull(int fieldIndex) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagNull);
+  }
+
+  /// Writes a boolean value to [fieldIndex].
+  void writeBool(int fieldIndex, bool value) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagBool);
+    _writer.writeBool(value);
+  }
+
+  /// Writes an integer value to [fieldIndex].
+  void writeInt(int fieldIndex, int value) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagInt);
+    _writer.writeInt64(value);
+  }
+
+  /// Writes a finite double value to [fieldIndex].
+  void writeDouble(int fieldIndex, double value) {
+    if (!value.isFinite) {
+      throw const FormatException(
+        'native document double values must be finite',
+      );
+    }
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagDouble);
+    _writer.writeFloat64(value);
+  }
+
+  /// Writes raw native bytes to [fieldIndex].
+  void writeBytes(int fieldIndex, Uint8List value) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagString);
+    _writer.writeBytes(value);
+  }
+
+  /// Writes [value] as UTF-8 bytes to [fieldIndex].
+  void writeString(int fieldIndex, String value) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagString);
+    _writer.writeUtf8StringBytes(value);
+  }
+
+  /// Writes a JSON string-list payload to [fieldIndex].
+  ///
+  /// SQLite stores native list columns as JSON text for query support. This
+  /// method writes the JSON payload directly into the wire buffer, escaping
+  /// UTF-8 strings without allocating an intermediate JSON string.
+  void writeStringListJson(int fieldIndex, List<String> values) {
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagString);
+    _writer.writeJsonStringListBytes(values);
+  }
+}
+
+/// Callback used by [encodeNativeDocumentWriteBatchDirect].
+typedef CindelWriteNativeWireDocument<T> =
+    void Function(CindelNativeDocumentWireWriter writer, T object);
+
 /// Tabular projection result returned by native query projection APIs.
 ///
 /// [cells] is row-major and must contain exactly `rowCount * columnCount`
@@ -1184,6 +1284,42 @@ Uint8List encodeNativeDocumentWriteBatch(
   return writer.finish();
 }
 
+/// Encodes SQLite-native generated document rows without per-row wire objects.
+///
+/// [writeDocument] is called once per object with a
+/// [CindelNativeDocumentWireWriter]. The callback must write exactly
+/// [fieldCount] fields in schema order. The resulting bytes are the same
+/// CindelWireV1 payload produced by [encodeNativeDocumentWriteBatch].
+Uint8List encodeNativeDocumentWriteBatchDirect<T>({
+  required List<int> ids,
+  required List<T> objects,
+  required int fieldCount,
+  required CindelWriteNativeWireDocument<T> writeDocument,
+}) {
+  if (ids.length != objects.length) {
+    throw ArgumentError.value(
+      ids.length,
+      'ids',
+      'Must match the object count.',
+    );
+  }
+  if (fieldCount < 0) {
+    throw RangeError.range(fieldCount, 0, null, 'fieldCount');
+  }
+
+  final writer = _CindelGrowableWireWriter(
+    4 + objects.length * (12 + fieldCount),
+  );
+  final documentWriter = CindelNativeDocumentWireWriter._(writer, fieldCount);
+  writer.writeLength(objects.length);
+  for (var i = 0; i < objects.length; i += 1) {
+    documentWriter._beginDocument(ids[i]);
+    writeDocument(documentWriter, objects[i]);
+    documentWriter._finishDocument();
+  }
+  return writer.finish();
+}
+
 /// Decodes SQLite-native generated document rows from a Web batch payload.
 List<WireNativeDocumentWrite> decodeNativeDocumentWriteBatch(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
@@ -1694,6 +1830,186 @@ final class CindelWireWriter {
         if (upper != null) {
           writeIndexValue(upper);
         }
+    }
+  }
+}
+
+final class _CindelGrowableWireWriter {
+  _CindelGrowableWireWriter(int capacity)
+    : _bytes = Uint8List(capacity < 32 ? 32 : capacity) {
+    _data = ByteData.view(_bytes.buffer);
+  }
+
+  late Uint8List _bytes;
+  late ByteData _data;
+  int _offset = 0;
+
+  Uint8List finish() => Uint8List.sublistView(_bytes, 0, _offset);
+
+  void _ensure(int length) {
+    final required = _offset + length;
+    if (required <= _bytes.length) {
+      return;
+    }
+    var capacity = _bytes.length;
+    while (capacity < required) {
+      capacity *= 2;
+    }
+    final next = Uint8List(capacity)..setAll(0, _bytes);
+    _bytes = next;
+    _data = ByteData.view(next.buffer);
+  }
+
+  void writeUint8(int value) {
+    _ensure(1);
+    _bytes[_offset] = value & 0xff;
+    _offset += 1;
+  }
+
+  void writeUint32(int value) {
+    if (value < 0 || value > 0xffffffff) {
+      throw RangeError.range(value, 0, 0xffffffff, 'value');
+    }
+    _ensure(4);
+    _data.setUint32(_offset, value, Endian.little);
+    _offset += 4;
+  }
+
+  void writeUint32At(int offset, int value) {
+    if (value < 0 || value > 0xffffffff) {
+      throw RangeError.range(value, 0, 0xffffffff, 'value');
+    }
+    _data.setUint32(offset, value, Endian.little);
+  }
+
+  void writeUint64(int value) {
+    if (value < 0) {
+      throw RangeError.range(value, 0, null, 'value');
+    }
+    final low = value % _uint32Range;
+    final high = value ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high);
+  }
+
+  void writeInt64(int value) {
+    final low = value % _uint32Range;
+    final high = (value - low) ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high % _uint32Range);
+  }
+
+  void writeFloat64(double value) {
+    _ensure(8);
+    _data.setFloat64(_offset, value == 0.0 ? 0.0 : value, Endian.little);
+    _offset += 8;
+  }
+
+  void writeBool(bool value) {
+    writeUint8(value ? 1 : 0);
+  }
+
+  void writeLength(int length) {
+    writeUint32(length);
+  }
+
+  void writeBytes(Uint8List bytes) {
+    writeLength(bytes.length);
+    _ensure(bytes.length);
+    _bytes.setRange(_offset, _offset + bytes.length, bytes);
+    _offset += bytes.length;
+  }
+
+  void writeUtf8StringBytes(String value) {
+    final lengthOffset = _offset;
+    writeLength(0);
+    final start = _offset;
+    _writeUtf8(value);
+    writeUint32At(lengthOffset, _offset - start);
+  }
+
+  void writeJsonStringListBytes(List<String> values) {
+    final lengthOffset = _offset;
+    writeLength(0);
+    final start = _offset;
+    writeUint8(0x5b);
+    for (var i = 0; i < values.length; i += 1) {
+      if (i > 0) {
+        writeUint8(0x2c);
+      }
+      writeUint8(0x22);
+      _writeJsonStringContent(values[i]);
+      writeUint8(0x22);
+    }
+    writeUint8(0x5d);
+    writeUint32At(lengthOffset, _offset - start);
+  }
+
+  void _writeJsonStringContent(String value) {
+    for (final rune in value.runes) {
+      switch (rune) {
+        case 0x22:
+          writeUint8(0x5c);
+          writeUint8(0x22);
+        case 0x5c:
+          writeUint8(0x5c);
+          writeUint8(0x5c);
+        case 0x08:
+          writeUint8(0x5c);
+          writeUint8(0x62);
+        case 0x0c:
+          writeUint8(0x5c);
+          writeUint8(0x66);
+        case 0x0a:
+          writeUint8(0x5c);
+          writeUint8(0x6e);
+        case 0x0d:
+          writeUint8(0x5c);
+          writeUint8(0x72);
+        case 0x09:
+          writeUint8(0x5c);
+          writeUint8(0x74);
+        default:
+          if (rune < 0x20) {
+            writeUint8(0x5c);
+            writeUint8(0x75);
+            writeUint8(0x30);
+            writeUint8(0x30);
+            _writeHexNibble(rune >> 4);
+            _writeHexNibble(rune);
+          } else {
+            _writeUtf8Rune(rune);
+          }
+      }
+    }
+  }
+
+  void _writeHexNibble(int value) {
+    final nibble = value & 0x0f;
+    writeUint8(nibble < 10 ? 0x30 + nibble : 0x61 + nibble - 10);
+  }
+
+  void _writeUtf8(String value) {
+    for (final rune in value.runes) {
+      _writeUtf8Rune(rune);
+    }
+  }
+
+  void _writeUtf8Rune(int rune) {
+    if (rune <= 0x7f) {
+      writeUint8(rune);
+    } else if (rune <= 0x7ff) {
+      writeUint8(0xc0 | (rune >> 6));
+      writeUint8(0x80 | (rune & 0x3f));
+    } else if (rune <= 0xffff) {
+      writeUint8(0xe0 | (rune >> 12));
+      writeUint8(0x80 | ((rune >> 6) & 0x3f));
+      writeUint8(0x80 | (rune & 0x3f));
+    } else {
+      writeUint8(0xf0 | (rune >> 18));
+      writeUint8(0x80 | ((rune >> 12) & 0x3f));
+      writeUint8(0x80 | ((rune >> 6) & 0x3f));
+      writeUint8(0x80 | (rune & 0x3f));
     }
   }
 }

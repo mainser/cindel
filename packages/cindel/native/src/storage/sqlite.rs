@@ -2319,36 +2319,75 @@ fn put_native_documents(
     let values_per_document = fields.len() + 1;
     let batch_limit = SQLITE_MAX_PARAM_COUNT / values_per_document;
     let batch_limit = batch_limit.max(1);
+    put_native_documents_cached_chunk_statement(connection, schema, &fields, documents, batch_limit)
+}
+
+fn put_native_documents_cached_chunk_statement(
+    connection: &Connection,
+    schema: &CollectionSchemaManifest,
+    fields: &[&FieldSchemaManifest],
+    documents: &[NativeDocumentWrite],
+    batch_limit: usize,
+) -> Result<Option<i64>, String> {
     let mut max_seen_id = None;
-    for chunk in documents.chunks(batch_limit) {
-        let sql = native_insert_sql(&schema.name, &fields, chunk.len());
+    let mut chunks = documents.chunks_exact(batch_limit);
+    if documents.len() >= batch_limit {
+        let full_chunk_sql = native_insert_sql(&schema.name, fields, batch_limit);
+        let mut full_statement = connection
+            .prepare(&full_chunk_sql)
+            .map_err(|error| error.to_string())?;
+        for chunk in &mut chunks {
+            execute_native_insert_chunk(
+                &mut full_statement,
+                schema,
+                fields,
+                chunk,
+                &mut max_seen_id,
+            )?;
+        }
+        drop(full_statement);
+    }
+
+    let remainder = chunks.remainder();
+    if !remainder.is_empty() {
+        let sql = native_insert_sql(&schema.name, fields, remainder.len());
         let mut statement = connection
             .prepare(&sql)
             .map_err(|error| error.to_string())?;
-        let mut parameter_index = 1;
-        let mut max_id = 0i64;
-        for document in chunk {
-            if document.values.len() != fields.len() {
-                return Err(format!(
-                    "native document field count mismatch for collection `{}`",
-                    schema.name
-                ));
-            }
-            let id = sqlite_id(document.id)?;
-            max_id = max_id.max(id);
-            max_seen_id = Some(max_seen_id.map_or(id, |current: i64| current.max(id)));
-            statement
-                .raw_bind_parameter(parameter_index, id)
-                .map_err(|error| error.to_string())?;
-            parameter_index += 1;
-            for (field, value) in fields.iter().zip(document.values.iter()) {
-                bind_native_sql_value(&mut statement, parameter_index, field, value)?;
-                parameter_index += 1;
-            }
-        }
-        statement.raw_execute().map_err(|error| error.to_string())?;
+        execute_native_insert_chunk(&mut statement, schema, fields, remainder, &mut max_seen_id)?;
     }
+
     Ok(max_seen_id)
+}
+
+fn execute_native_insert_chunk(
+    statement: &mut rusqlite::Statement<'_>,
+    schema: &CollectionSchemaManifest,
+    fields: &[&FieldSchemaManifest],
+    chunk: &[NativeDocumentWrite],
+    max_seen_id: &mut Option<i64>,
+) -> Result<(), String> {
+    let mut parameter_index = 1;
+    for document in chunk {
+        if document.values.len() != fields.len() {
+            return Err(format!(
+                "native document field count mismatch for collection `{}`",
+                schema.name
+            ));
+        }
+        let id = sqlite_id(document.id)?;
+        *max_seen_id = Some((*max_seen_id).map_or(id, |current: i64| current.max(id)));
+        statement
+            .raw_bind_parameter(parameter_index, id)
+            .map_err(|error| error.to_string())?;
+        parameter_index += 1;
+        for (field, value) in fields.iter().zip(document.values.iter()) {
+            bind_native_sql_value(statement, parameter_index, field, value)?;
+            parameter_index += 1;
+        }
+    }
+    statement.raw_execute().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 enum NativeSqlValueRef<'a> {
@@ -4439,6 +4478,56 @@ mod tests {
     }
 
     #[test]
+    fn inserts_native_documents_across_cached_statement_chunks() {
+        // Scenario: A generated typed collection writes enough SQLite-native
+        // rows to cross the SQLite parameter limit and require multiple
+        // insert chunks.
+        // Covers:
+        // - Reusing the prepared statement for full native insert chunks.
+        // - Preparing a separate remainder statement.
+        // - Preserving ids, field values, and one collection revision bump.
+        // Expected: All rows are inserted exactly once and remain queryable.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_insert_chunks");
+        let schema = wide_native_user_schema(200);
+        let values_per_document = native_fields(&schema).len() + 1;
+        let batch_limit = (SQLITE_MAX_PARAM_COUNT / values_per_document).max(1);
+        let count = batch_limit * 2 + 3;
+        let manifest = schema_manifest(vec![schema]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents = (0..count)
+            .map(|index| NativeDocumentWrite {
+                id: (index + 1) as u64,
+                values: (0..200)
+                    .map(|field| NativeDocumentValue::Int((index * 1000 + field) as i64))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        // Act.
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let ids = storage.document_ids("users").unwrap();
+        let stored = storage
+            .connection
+            .query_row(
+                "SELECT field_199 FROM users WHERE _rowid_ = ?1",
+                params![count as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+
+        // Assert.
+        assert_eq!(ids.len(), count);
+        assert_eq!(ids.first(), Some(&1));
+        assert_eq!(ids.last(), Some(&(count as u64)));
+        assert_eq!(stored, ((count - 1) * 1000 + 199) as i64);
+        assert_eq!(storage.collection_revision("users").unwrap(), 1);
+    }
+
+    #[test]
     fn queries_native_documents_with_sql_filter_and_sort() {
         // Scenario: SQLite executes a schema-aware native query plan.
         // Covers:
@@ -5686,6 +5775,20 @@ mod tests {
             native_field("id", "int", "int", true),
             native_field("title", "String", "string", false),
         ];
+        fields.sort_by(|left, right| left.name.cmp(&right.name));
+        CollectionSchemaManifest {
+            name: "users".to_string(),
+            id_field: "id".to_string(),
+            fields,
+            composite_indexes: Vec::new(),
+        }
+    }
+
+    fn wide_native_user_schema(field_count: usize) -> CollectionSchemaManifest {
+        let mut fields = (0..field_count)
+            .map(|index| native_field(&format!("field_{index:03}"), "int", "int", false))
+            .collect::<Vec<_>>();
+        fields.push(native_field("id", "int", "int", true));
         fields.sort_by(|left, right| left.name.cmp(&right.name));
         CollectionSchemaManifest {
             name: "users".to_string(),

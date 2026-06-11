@@ -2,6 +2,8 @@
 
 ## 0.6.4
 
+- Updated the bundled Web SQLite Wasm runtime assets with cached native
+  document insert chunks for the typed Web batch-write path.
 - Updated the bundled Web SQLite Wasm runtime assets with query-plan reads,
   query-plan mutations, collection revision/change-set operations, and
   transaction worker operations.
