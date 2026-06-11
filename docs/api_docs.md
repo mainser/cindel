@@ -1,8 +1,7 @@
 # Cindel Public API
 
 This document describes the public Dart API exported by
-`package:cindel/cindel.dart`, plus the experimental Web entrypoint exported by
-`package:cindel/cindel_web.dart`.
+`package:cindel/cindel.dart`.
 
 Cindel is still pre-1.0. The API is usable, but some names and advanced
 storage behavior can still change before the stable line.
@@ -23,20 +22,16 @@ This single import exposes:
 - transaction helpers,
 - generated binary and native typed document helpers used by the generator.
 
-Web worker code can import the experimental Web entrypoint separately:
-
-```dart
-import 'package:cindel/cindel_web.dart';
-```
-
-It exposes the Web worker bridge and schema manifest encoder without changing
-the native `package:cindel/cindel.dart` API.
+Application code uses this same import on native platforms and Web.
 
 ## Opening Databases
 
 ### `Cindel.open`
 
-Opens a persistent database in a directory.
+Opens a persistent database in a directory. On Web the same call opens the
+packaged SQLite Worker/Wasm runtime from `cindel_flutter_libs`; on native
+platforms MDBX remains the default backend unless SQLite is selected
+explicitly.
 
 ```dart
 final db = await Cindel.open(
@@ -47,9 +42,12 @@ final db = await Cindel.open(
 
 Parameters:
 
-- `directory`: filesystem directory for the database.
+- `directory`: filesystem directory for the native database, or the logical
+  OPFS SQLite database name on Web.
 - `schemas`: generated collection schemas to register.
-- `backend`: storage backend. Defaults to `CindelStorageBackend.mdbx`.
+- `backend`: storage backend. Defaults to `CindelStorageBackend.mdbx` on
+  native platforms. Web transparently uses SQLite because MDBX is not a
+  browser backend.
 
 Throws:
 
@@ -96,167 +94,26 @@ const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
 
 ## Experimental Web Runtime
 
-The Web runtime uses SQLite in a Worker with OPFS persistence. MDBX remains the
-default for native and Flutter apps; Web forces SQLite because MDBX is not the
-browser storage backend.
+The Web runtime uses SQLite in a Worker with OPFS persistence. Application code
+opens it through the same `package:cindel/cindel.dart` import and
+`Cindel.open(...)` call used by iOS, Android, desktop, and server code. MDBX
+remains the default for native Flutter apps; Web transparently uses SQLite
+because MDBX is not the browser storage backend.
 
-### `cindelEncodeWebSchemaManifest`
+The default Web worker URL is the Flutter package asset path exposed by
+`cindel_flutter_libs`:
 
-Encodes generated schemas for the Web worker/Wasm opener.
-
-```dart
-final manifestBytes = cindelEncodeWebSchemaManifest([TodoModelSchema]);
+```text
+assets/packages/cindel_flutter_libs/web/cindel_worker.js
 ```
 
-The bytes match the native schema manifest wire format used by `Cindel.open`.
-The Web Wasm opener registers schema metadata and storage metadata
-persistently, then rejects incompatible schema changes with the same schema
-compatibility checks used by native storage.
+That worker loads the matching JS glue and Wasm runtime from the same companion
+package asset tree.
 
-Persisted Web SQLite opens also keep the runtime collection schemas registered
-after metadata validation. This keeps SQLite native document cursors available
-for the typed CRUD fast path after closing and reopening OPFS-backed storage.
-
-### Web Worker Surface
-
-The Web worker source at `packages/cindel/web/cindel_worker.js` is packaged for
-Flutter consumers by `cindel_flutter_libs` together with the Wasm/glue runtime
-assets. It opens `CindelWebEngine` and routes requests to the shared SQLite
-storage engine. It is a low-level transport surface for the Web runtime.
-Application code should normally keep using generated schemas and the exported
-Web wire helpers instead of constructing storage bytes by hand.
-
-The Worker accepts request envelopes with an operation name and a small
-structured payload. Large values, such as documents, ids, query plans, schema
-manifests, and update batches, stay encoded as binary buffers.
-
-#### Opening
-
-`open` creates or reopens the OPFS-backed SQLite database and registers the
-encoded schemas. The example uses an app helper named `openPayload` to build
-the small JS payload object sent to the Worker:
-
-```dart
-final bridge = CindelWebWorkerBridge('./cindel_worker.js');
-await bridge.init();
-
-final manifest = cindelEncodeWebSchemaManifest([TodoModelSchema]);
-await bridge.send(
-  operation: 'open',
-  payload: openPayload(dbName, manifest),
-);
-```
-
-The exact payload object is Worker-specific, but it must contain:
-
-- `dbName`: logical SQLite database name for OPFS.
-- `manifest`: bytes returned by `cindelEncodeWebSchemaManifest`.
-
-#### Documents And Ids
-
-These operations cover the typed document path:
-
-- `allocateId` and `allocateIds`: allocate native ids and return an encoded
-  id-list payload.
-- `put` and `putAll`: write encoded indexed document batches.
-- `putNativeAll`: writes generated SQLite-native document batches directly into
-  schema collection tables.
-- `get` and `getAll`: return encoded optional document batches.
-- `getStored` and `getAllStored`: read stored generated documents when a
-  SQLite-native schema table is available.
-- `delete`, `deleteAll`, and `deleteNativeAll`: delete generic or native rows.
-- `documentIds`: returns all ids in a collection as an encoded id-list payload.
-
-For id payloads, use `encodeIdList` and `decodeIdList`. For indexed document
-batches, use `encodeIndexedDocumentWriteBatch` and
-`decodeOptionalDocumentBatch`. For generated SQLite-native batches, use
-`encodeNativeDocumentWriteBatch` and `decodeNativeDocumentWriteBatch`.
-
-Performance-sensitive Web code can use `encodeNativeDocumentWriteBatchDirect`
-instead of building `WireNativeDocumentWrite` objects first:
-
-```dart
-final bytes = encodeNativeDocumentWriteBatchDirect<Product>(
-  ids: products.map((product) => product.id).toList(growable: false),
-  objects: products,
-  fieldCount: 3,
-  writeDocument: (writer, product) {
-    writer.writeString(0, product.name);
-    writer.writeInt(1, product.stock);
-    writer.writeStringListJson(2, product.tags);
-  },
-);
-```
-
-The direct writer emits the same CindelWireV1 payload as
-`encodeNativeDocumentWriteBatch`, but avoids per-row wire object allocation.
-Fields must be written in registered schema order. SQLite-native list columns
-are stored as JSON text for Web query support.
-
-#### Queries
-
-Index lookups and query plans use the same binary query-plan format as the
-native runtime:
-
-- `queryIndexEqual`: returns ids matching one indexed value.
-- `queryIndexRange`: returns ids inside an indexed range.
-- `queryPlanIds`: returns ids for an encoded query plan.
-- `queryPlanDocuments`: returns documents for an encoded query plan.
-- `queryPlanCount`: returns an encoded scalar count.
-- `queryPlanProject`: returns encoded projection rows for one field.
-- `queryPlanAggregate`: returns an encoded scalar aggregate.
-
-Use `encodeIndexValue`, `encodeQueryPlan`, `decodeIdList`,
-`decodeOptionalDocumentBatch`, `decodeProjectionRows`, and `decodeScalar` for
-these payloads.
-
-#### Query Mutations And Changes
-
-Query mutations run inside the SQLite/OPFS engine and keep indexes consistent:
-
-- `queryPlanUpdate`: applies encoded field updates to documents matched by an
-  encoded query plan and returns an encoded scalar count.
-- `queryPlanDelete`: deletes documents matched by an encoded query plan and
-  returns the deleted ids.
-- `collectionRevision`: returns the encoded revision scalar for a collection.
-- `takeChanges`: drains encoded change sets recorded by native mutations.
-
-Use `encodeFieldUpdates` for update payloads and `decodeChangeSetList` for
-change-set payloads. Query updates may advance the collection revision without
-returning document ids when id collection is not required by the caller.
-
-#### Transactions
-
-The Web Worker serializes requests before they enter `CindelWebEngine`, so
-concurrent Dart futures cannot call the SQLite engine at the same time. This is
-part of the transaction model: transaction behavior must not depend on browser
-`postMessage` timing.
-
-Explicit transaction operations are:
-
-- `beginReadTransaction`: starts a read transaction.
-- `beginWriteTransaction`: starts a write transaction.
-- `commitTransaction`: commits the active transaction.
-- `rollbackTransaction`: rolls back the active transaction.
-
-Nested explicit transactions are rejected. Writes inside a read transaction are
-also rejected by the shared SQLite engine.
-
-```dart
-await bridge.send(operation: 'beginWriteTransaction');
-try {
-  await bridge.send(operation: 'putNativeAll', payload: batchPayload);
-  await bridge.send(operation: 'commitTransaction');
-} catch (_) {
-  await bridge.send(operation: 'rollbackTransaction');
-  rethrow;
-}
-```
-
-Closing the Web bridge sends `close` to the Worker. During a controlled close,
-the Worker rolls back an active transaction before terminating. If the Worker or
-browser process dies abruptly, only a completed commit is treated as visible;
-uncommitted SQLite transaction work is discarded.
+Closing a Web `CindelDatabase` sends `close` to the Worker. During a
+controlled close, the Worker rolls back an active transaction before
+terminating. If the Worker or browser process dies abruptly, only a completed
+commit is treated as visible; uncommitted SQLite transaction work is discarded.
 
 ## Closing Databases
 
@@ -1411,6 +1268,8 @@ The current public API does not yet include:
 - `exists()` query result helper,
 - embedded-field indexes,
 - public migration/export tooling,
-- the complete high-level Dart Web database API.
+- Web watchers.
+- multi-tab Web coordination.
+- Web embedded native object/list writers.
 
 SQLite remains selectable, but MDBX is the default optimized backend.

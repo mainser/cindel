@@ -2,6 +2,10 @@
 
 ## 0.6.4
 
+- Added Web support to the normal `Cindel.open(...)` entrypoint, loading the
+  packaged Worker/Wasm runtime automatically.
+- Removed the separate public Web entrypoint so Web applications use the same
+  opening path as every other platform.
 - Added `encodeNativeDocumentWriteBatchDirect` for Web SQLite-native batch
   writes so generated Web paths can emit CindelWireV1 rows without building
   per-document `WireNativeDocumentWrite` objects.
@@ -41,8 +45,8 @@
   document write/delete batches.
 - Added Web CRUD wire helpers for id lists, indexed document batches, optional
   get results, and SQLite-native generated document batches.
-- Added the Web prebuilt build script for the SQLite-only Wasm runtime assets
-  emitted under `packages/cindel_flutter_libs/web/pkg`.
+- Added internal release packaging support for the SQLite-only Wasm runtime
+  assets emitted under `packages/cindel_flutter_libs/web/pkg`.
 
 ## 0.6.2
 

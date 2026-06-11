@@ -160,6 +160,9 @@ Current native backend policy:
 - Web Worker, JS glue, and Wasm runtime assets declared through
   `cindel_flutter_libs` so Flutter Web apps can receive them from the companion
   package instead of app-local copies.
+- `Cindel.open(...)` routes Web callers through the packaged
+  `cindel_flutter_libs` Worker/Wasm runtime while native callers keep MDBX as
+  the default backend.
 - Tag-based GitHub release workflow that builds Android, Apple, Linux, and
   Windows prebuilts before publishing coordinated package releases.
 - Android release build validation.
@@ -196,8 +199,6 @@ Current native backend policy:
 
 ### Web Runtime
 
-- Wire the packaged `cindel_flutter_libs` Web runtime assets into the higher
-  level `Cindel.open(...)` Web path.
 - Keep Web validation focused on SQLite/OPFS persistence, binary Worker
   payloads, query parity, transaction atomicity, and browser behavior.
 - Establish Web benchmark CSVs for the same typed app workloads used by native
@@ -220,8 +221,7 @@ Current native backend policy:
 
 ### Web Platform Preview
 
-- Keep Web asset packaging reproducible through `tool/prebuilt/build_web.ps1`
-  and release workflows.
+- Keep Web asset packaging reproducible through the internal release workflow.
 - Prove `flutter run -d chrome`, `flutter build web`, and served release builds
   load the Worker, JS glue, and `.wasm` assets without 404s.
 - Document secure-context, OPFS availability, storage quota, and current

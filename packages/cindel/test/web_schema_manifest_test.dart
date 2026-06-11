@@ -1,11 +1,12 @@
-import 'package:cindel/cindel_web.dart';
 import 'package:cindel/src/native/wire.dart';
+import 'package:cindel/src/schema.dart';
+import 'package:cindel/src/web/schema_manifest.dart';
 import 'package:test/test.dart';
 
 void main() {
   // Scenario: Dart Web prepares generated schemas for the Worker/Wasm opener.
   // Covers:
-  // - Public `package:cindel/cindel_web.dart` schema exports.
+  // - Internal Web schema manifest encoding.
   // - Web schema manifest encoding using the native wire format.
   // - Stable field ordering before the manifest crosses the Worker boundary.
   // Expected: The encoded manifest decodes through the native wire decoder with
@@ -52,13 +53,12 @@ void main() {
     expect(manifest.collections.single.fields.first.binaryType, 'string');
   });
 
-  // Scenario: Dart Web generated code imports the separate Web entrypoint.
+  // Scenario: Dart Web generated code uses the direct native row encoder.
   // Covers:
-  // - Public export of the direct SQLite-native document batch encoder.
+  // - Direct SQLite-native document batch encoder.
   // - Decode compatibility with the existing CindelWireV1 native batch shape.
-  // Expected: The Web entrypoint exposes an encoder that emits readable native
-  // document rows without requiring the internal wire library at call sites.
-  test('web entrypoint exports direct native document batch encoder', () {
+  // Expected: The encoder emits readable native document rows.
+  test('direct native document batch encoder uses the CindelWire shape', () {
     // Arrange / Act.
     final bytes = encodeNativeDocumentWriteBatchDirect<String>(
       ids: const [1],

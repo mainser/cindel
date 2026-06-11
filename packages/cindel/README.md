@@ -222,44 +222,39 @@ final db = await Cindel.open(
 
 ## Web Runtime
 
-Web support is experimental and lives behind the separate
-`package:cindel/cindel_web.dart` entrypoint. The native Web runtime uses SQLite
-with OPFS persistence, while native and Flutter apps continue to use MDBX by
-default unless SQLite is requested explicitly.
-
-Generated schemas can be encoded for the Web worker/Wasm runtime with
-`cindelEncodeWebSchemaManifest(schemas)`. These bytes use the same schema
-manifest wire format as native `Cindel.open`, and the Web Wasm opener registers
-schema and storage metadata persistently. Reopened Web SQLite storage also keeps
-runtime collection schemas available so native document cursors can serve the
-typed CRUD fast path after OPFS persistence is restored.
-
-The Web worker source lives in `packages/cindel/web/cindel_worker.js` and is
-packaged for Flutter consumers by `cindel_flutter_libs` together with the
-Wasm/glue runtime assets. It opens the Web SQLite engine and routes binary typed
-CRUD operations: id allocation, typed `put`/`putAll`,
-`get`/`getAll`, `getStored`/`getAllStored`, `delete`/`deleteAll`, document id
-listing, SQLite-native generated document write/delete batches, index
-equality/range queries, and native query-plan ids, documents, count,
-projection, aggregate, update, and delete operations. It also exposes collection
-revision reads, change-set draining, and explicit read/write transaction
-operations. Web worker requests are serialized through the bridge and Worker
-queue so transaction visibility does not depend on accidental `postMessage`
-timing. Closing the bridge asks the Worker to roll back an active transaction
-before termination; if the Worker dies abruptly, only a completed commit is
-treated as visible.
-Use the Web wire helpers exported from `package:cindel/cindel_web.dart` to
-encode id lists, index values, query plans, field updates, indexed document
-batches, optional get results, and native document batches. For generated
-SQLite-native Web batch writes, `encodeNativeDocumentWriteBatchDirect` writes
-the same CindelWireV1 payload without allocating one `WireNativeDocumentWrite`
-object per row; generated callers must write fields in registered schema order.
-
-For tests and short-lived work:
+Web support is experimental. The app code is the same as native:
 
 ```dart
-final db = await Cindel.openInMemory(schemas: [UserSchema]);
+final db = await Cindel.open(
+  directory: 'app.db',
+  schemas: [UserSchema],
+);
 ```
+
+For Flutter Web, keep both runtime packages in `pubspec.yaml`:
+
+```yaml
+dependencies:
+  cindel: ^0.6.4
+  cindel_flutter_libs: ^0.6.4
+```
+
+What changes on Web:
+
+- `Cindel.open(...)` loads the packaged Worker/Wasm runtime automatically.
+- Web uses SQLite with OPFS persistence.
+- Native Flutter platforms keep MDBX as the default backend.
+- MDBX is not used in the browser.
+- Schema metadata is registered on open and validated again on reopen.
+- Database requests are serialized through the Worker, so transactions do not
+  depend on `postMessage` timing.
+
+Current Web preview limits:
+
+- Requires browser support for Web Workers, Wasm, and OPFS.
+- Best validated with normal Flutter Web builds served from a browser context.
+- Web watchers and multi-tab coordination are not part of the preview yet.
+- Application code should not open the Worker directly; use `Cindel.open(...)`.
 
 ## CRUD
 

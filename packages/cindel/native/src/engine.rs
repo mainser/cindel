@@ -501,14 +501,17 @@ mod tests {
         // Covers:
         // - The Rust-side backend option can be selected internally.
         // - Basic read/write behavior through the [StorageBackend] enum.
-        // Expected: Selecting MDBX succeeds through the default native build.
+        // - MDBX storage keeps the current document-format validation boundary.
+        // Expected: Selecting MDBX succeeds through the default native build and
+        // stores validated Cindel document bytes.
         let mut engine =
             CindelEngine::open_with_backend(":memory:", StorageBackendKind::Mdbx).unwrap();
 
-        engine.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+        let document = generic_document("Ana");
+        engine.put("users", 1, &document).unwrap();
         let stored = engine.get("users", 1).unwrap().unwrap();
 
-        assert_eq!(stored, br#"{"name":"Ana"}"#);
+        assert_eq!(stored, document);
     }
 
     #[cfg(feature = "mdbx")]

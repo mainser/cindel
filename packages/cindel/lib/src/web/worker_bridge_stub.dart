@@ -1,7 +1,7 @@
 /// Response returned by a Cindel Web worker request.
 ///
-/// This stub exists so `package:cindel/cindel_web.dart` can be analyzed and
-/// imported outside Web targets. Constructing the bridge itself is unsupported.
+/// This stub exists so the internal Web database facade can be analyzed outside
+/// Web targets. Constructing the bridge itself is unsupported.
 final class CindelWebWorkerResponse {
   /// Creates a worker response with the raw transported [payload].
   const CindelWebWorkerResponse({required this.payload});
