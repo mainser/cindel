@@ -265,6 +265,7 @@ class CindelDatabase {
   Future<void> put(String collection, int id, CindelDocument value) async {
     final handle = _checkOpen();
     _checkCanWrite();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkId(id);
     _checkDocument(value);
@@ -306,6 +307,7 @@ class CindelDatabase {
   ) async {
     final handle = _checkOpen();
     _checkCanWrite();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     if (values.isEmpty) {
       return;
@@ -507,6 +509,7 @@ class CindelDatabase {
   /// [CindelNativeError] when the native read returns invalid data.
   Future<CindelDocument?> get(String collection, int id) async {
     final handle = _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkId(id);
 
@@ -533,6 +536,7 @@ class CindelDatabase {
     Iterable<int> ids,
   ) async {
     final handle = _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
     for (final id in idList) {
@@ -623,6 +627,7 @@ class CindelDatabase {
   /// Returns every document in [collection], ordered by id.
   Future<List<CindelDocument>> queryAll(String collection) async {
     final handle = _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
 
     final ids = _bindings.documentIds(handle, collection);
@@ -635,6 +640,7 @@ class CindelDatabase {
     Iterable<int> ids,
   ) async {
     _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
     for (final id in idList) {
@@ -734,6 +740,7 @@ class CindelDatabase {
     bool fireImmediately = true,
   }) {
     _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkId(id);
     _checkPollInterval(pollInterval);
@@ -776,6 +783,7 @@ class CindelDatabase {
     bool fireImmediately = true,
   }) {
     _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkPollInterval(pollInterval);
 
@@ -802,6 +810,7 @@ class CindelDatabase {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
+    _checkManualDocumentsSupported();
     return watchCollectionChanges(
       collection,
       pollInterval: pollInterval,
@@ -819,6 +828,7 @@ class CindelDatabase {
     String field,
     Object value,
   ) async {
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
@@ -878,6 +888,7 @@ class CindelDatabase {
     Object? upper,
   }) async {
     final handle = _checkOpen();
+    _checkManualDocumentsSupported();
     _checkCollection(collection);
     _checkIndexName(field);
     final schemaField = _checkIndexedField(collection, field);
@@ -1541,6 +1552,15 @@ class CindelDatabase {
     }
   }
 
+  void _checkManualDocumentsSupported() {
+    if (backend == CindelStorageBackend.mdbx) {
+      throw UnsupportedError(
+        'MDBX manual document APIs are disabled. Use generated typed '
+        'collections.',
+      );
+    }
+  }
+
   void _checkNativeQueryBackend() {
     if (backend == CindelStorageBackend.mdbx || usesSqliteNativeDocuments) {
       return;
@@ -1571,6 +1591,7 @@ class CindelDatabase {
     String indexName,
     List<Object> values,
   ) async {
+    _checkManualDocumentsSupported();
     final ids = queryCompositeEqualIds(collection, indexName, values);
     return _documentsByIds(collection, ids);
   }

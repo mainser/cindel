@@ -1911,6 +1911,13 @@ fn sqlite_field_filter_sql(
         WireFilterOperation::Contains => sqlite_string_like_sql(&column, value, "%", "%")?,
         WireFilterOperation::StartsWith => sqlite_string_like_sql(&column, value, "", "%")?,
         WireFilterOperation::EndsWith => sqlite_string_like_sql(&column, value, "%", "")?,
+        WireFilterOperation::LengthEqual
+        | WireFilterOperation::LengthLessThan
+        | WireFilterOperation::LengthLessThanOrEqual
+        | WireFilterOperation::LengthGreaterThan
+        | WireFilterOperation::LengthGreaterThanOrEqual => {
+            return Err("SQLite native length filters are not implemented".into());
+        }
     };
     Ok(sql)
 }

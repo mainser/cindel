@@ -6,10 +6,9 @@ import 'database.dart';
 import 'query.dart';
 import 'schema.dart';
 
-// Typed collection bridge between generated schemas and the untyped database
-// runtime. Public methods expose `T` objects, while the implementation chooses
-// between generic documents, schema-backed binary documents, and native document
-// readers/writers when the backend supports them.
+// Typed collection bridge between generated schemas and the database runtime.
+// Public methods expose `T` objects and must not fall back to manual document
+// storage.
 final _nativeFieldTypesCache = Expando<Uint8List>('cindelNativeFieldTypes');
 
 /// Adds typed collection access to [CindelDatabase].
@@ -31,9 +30,8 @@ extension CindelTypedCollectionAccess on CindelDatabase {
 /// `database.todos`, instead of being constructed directly by app code.
 ///
 /// This class keeps the public typed API small and delegates persistence details
-/// to [CindelDatabase]. When a generated schema provides binary or native
-/// readers/writers, writes and reads use those faster paths until the database
-/// observes generic manual documents in the same collection.
+/// to [CindelDatabase]. Generated schemas must provide binary or native
+/// readers/writers for the selected backend.
 final class CindelTypedCollection<T> {
   /// Creates typed collection access over [database] using [schema].
   const CindelTypedCollection(this.database, this.schema);
@@ -60,24 +58,23 @@ final class CindelTypedCollection<T> {
     if (_usesSqliteNativeDocuments && schema.getId != null) {
       return _putAllBinaryObjects([object]);
     }
-    var document = schema.getId == null ? schema.toDocument(object) : null;
-    var id = _idFromObject(object, document);
+    if (schema.getId == null) {
+      _throwMissingGeneratedId();
+    }
+    var id = _idFromObject(object);
     if (id == autoIncrement) {
       final setId = _idSetter();
       id = await database.allocateId(schema.name);
       setId(object, id);
-      document = null;
     }
-    document ??= schema.toDocument(object);
     if (_usesBinaryDocuments) {
       return database.putBinaryDocument(
         schema.name,
         id,
         schema.toBinaryDocument!(object),
-        document: document,
       );
     }
-    return database.put(schema.name, id, document);
+    _throwMissingTypedStorage();
   }
 
   /// Stores every object atomically.
@@ -97,23 +94,20 @@ final class CindelTypedCollection<T> {
       return _putAllBinaryObjects(objectList);
     }
 
+    if (schema.getId == null) {
+      _throwMissingGeneratedId();
+    }
+
     final binaryValues = _usesBinaryDocuments ? <int, Uint8List>{} : null;
-    final values = binaryValues == null ? <int, CindelDocument>{} : null;
-    final changedDocuments = binaryValues == null
-        ? null
-        : <int, CindelDocument>{};
     final seenIds = <int>{};
     CindelSetId<T>? setId;
     for (final object in objectList) {
-      var document = schema.getId == null ? schema.toDocument(object) : null;
-      var id = _idFromObject(object, document);
+      var id = _idFromObject(object);
       if (id == autoIncrement) {
         setId ??= _idSetter();
         id = await database.allocateId(schema.name);
         setId(object, id);
-        document = null;
       }
-      document ??= schema.toDocument(object);
       if (!seenIds.add(id)) {
         throw ArgumentError.value(
           id,
@@ -121,22 +115,15 @@ final class CindelTypedCollection<T> {
           'Bulk writes cannot contain duplicate ids.',
         );
       }
-      if (binaryValues == null) {
-        values![id] = document;
-      } else {
+      if (binaryValues != null) {
         binaryValues[id] = schema.toBinaryDocument!(object);
-        changedDocuments![id] = document;
       }
     }
 
     if (binaryValues != null) {
-      return database.putAllBinaryDocuments(
-        schema.name,
-        binaryValues,
-        documents: changedDocuments,
-      );
+      return database.putAllBinaryDocuments(schema.name, binaryValues);
     }
-    return database.putAll(schema.name, values!);
+    _throwMissingTypedStorage();
   }
 
   // Shared binary/native batch write path for schemas that expose generated id
@@ -180,10 +167,6 @@ final class CindelTypedCollection<T> {
         objects,
         nativeFieldTypes,
         nativeWriter,
-        documents: () => {
-          for (var i = 0; i < objects.length; i += 1)
-            ids[i]: schema.toDocument(objects[i]),
-        },
       );
     }
     return database.putAllBinaryDocuments(schema.name, binaryValues!);
@@ -267,44 +250,32 @@ final class CindelTypedCollection<T> {
 
   /// Returns typed objects stored under [ids], preserving input order.
   ///
-  /// Missing ids are returned as `null`. If a native or binary read fails
-  /// because the collection contains manual generic documents, the collection is
-  /// marked for generic hydration and the read is retried through document maps.
+  /// Missing ids are returned as `null`.
   Future<List<T?>> getAll(Iterable<int> ids) async {
     final idList = ids.toList(growable: false);
     if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
       final nativeReader = schema.readNativeDocument;
       final nativeFieldTypes = _nativeFieldTypes();
-      try {
-        if (nativeReader != null && nativeFieldTypes != null) {
-          return await database.getAllNativeBinaryDocuments(
-            schema.name,
-            idList,
-            nativeFieldTypes,
-            nativeReader,
-          );
-        }
-        final documents = await database.getAllBinaryDocuments(
+      if (nativeReader != null && nativeFieldTypes != null) {
+        return database.getAllNativeBinaryDocuments(
           schema.name,
           idList,
+          nativeFieldTypes,
+          nativeReader,
         );
-        return [
-          for (var i = 0; i < documents.length; i += 1)
-            documents[i] == null
-                ? null
-                : _objectFromBinaryDocument(documents[i]!, idList[i]),
-        ];
-      } on Object {
-        database.markCollectionHasGenericDocuments(schema.name);
       }
+      final documents = await database.getAllBinaryDocuments(
+        schema.name,
+        idList,
+      );
+      return [
+        for (var i = 0; i < documents.length; i += 1)
+          documents[i] == null
+              ? null
+              : _objectFromBinaryDocument(documents[i]!, idList[i]),
+      ];
     }
-    final documents = await database.getAll(schema.name, idList);
-    return [
-      for (var i = 0; i < documents.length; i += 1)
-        documents[i] == null
-            ? null
-            : _objectFromDocument(documents[i]!, idList[i]),
-    ];
+    _throwMissingTypedStorage();
   }
 
   /// Deletes the object stored under [id], if it exists.
@@ -332,6 +303,16 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
+    if (database.backend == CindelStorageBackend.mdbx) {
+      return database
+          .watchCollectionChanges(
+            schema.name,
+            pollInterval: pollInterval,
+            fireImmediately: fireImmediately,
+          )
+          .where((change) => change.mayAffectDocument(id))
+          .asyncMap((_) => get(id));
+    }
     return database
         .watchDocument(
           schema.name,
@@ -351,6 +332,16 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
+    if (database.backend == CindelStorageBackend.mdbx) {
+      return database
+          .watchCollectionChanges(
+            schema.name,
+            pollInterval: pollInterval,
+            fireImmediately: fireImmediately,
+          )
+          .where((change) => change.mayAffectDocument(id))
+          .map((_) {});
+    }
     return database.watchDocumentLazy(
       schema.name,
       id,
@@ -366,6 +357,15 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
+    if (database.backend == CindelStorageBackend.mdbx) {
+      return database
+          .watchCollectionChanges(
+            schema.name,
+            pollInterval: pollInterval,
+            fireImmediately: fireImmediately,
+          )
+          .asyncMap((_) => all().findAll());
+    }
     return database
         .watchCollection(
           schema.name,
@@ -380,6 +380,15 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
+    if (database.backend == CindelStorageBackend.mdbx) {
+      return database
+          .watchCollectionChanges(
+            schema.name,
+            pollInterval: pollInterval,
+            fireImmediately: fireImmediately,
+          )
+          .map((_) {});
+    }
     return database.watchCollectionLazy(
       schema.name,
       pollInterval: pollInterval,
@@ -387,28 +396,22 @@ final class CindelTypedCollection<T> {
     );
   }
 
-  // Converts untyped document snapshots emitted by database watchers into the
-  // generated object type.
+  // Converts typed snapshots emitted by the current watcher bridge into the
+  // generated object type. This remains a temporary typed-internal bridge until
+  // watchers hydrate through generated readers directly.
   List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
     return documents.map(schema.fromDocument).toList(growable: false);
   }
 
-  // MDBX binary documents are used only while the collection is known to contain
-  // generated schema-backed payloads. Manual writes switch the handle back to
-  // generic document hydration.
   bool get _usesBinaryDocuments {
     return database.backend == CindelStorageBackend.mdbx &&
-        !database.collectionHasGenericDocuments(schema.name) &&
         schema.toBinaryDocument != null &&
         schema.fromBinaryDocument != null;
   }
 
-  // SQLite native documents use generated object readers/writers directly. This
-  // is separate from MDBX binary documents because SQLite can mix native rows
-  // with generic manual documents during compatibility scenarios.
+  // SQLite native documents use generated object readers/writers directly.
   bool get _usesSqliteNativeDocuments {
     return database.usesSqliteNativeDocuments &&
-        !database.collectionHasGenericDocuments(schema.name) &&
         schema.writeNativeDocument != null &&
         schema.readNativeDocument != null;
   }
@@ -470,12 +473,12 @@ final class CindelTypedCollection<T> {
 
   // Reads the id through the generated accessor when available, otherwise from
   // the generated document map.
-  int _idFromObject(T object, CindelDocument? document) {
+  int _idFromObject(T object) {
     final getId = schema.getId;
     if (getId != null) {
       return getId(object);
     }
-    return _idFromDocument(document ?? schema.toDocument(object));
+    _throwMissingGeneratedId();
   }
 
   Future<void> _reuseUniqueIndexId(
@@ -503,7 +506,7 @@ final class CindelTypedCollection<T> {
         'Unique index `$indexName` returned more than one existing id.',
       );
     }
-    final currentId = _idFromObject(object, null);
+    final currentId = _idFromObject(object);
     if (currentId != existingId) {
       final setId = _idSetter();
       setId(object, existingId);
@@ -531,15 +534,16 @@ final class CindelTypedCollection<T> {
     return database.queryEqualIds(schema.name, fieldName, value);
   }
 
-  // Validates that generated document conversion produced an integer id.
-  int _idFromDocument(CindelDocument document) {
-    final value = document[schema.idField];
-    if (value is int) {
-      return value;
-    }
+  Never _throwMissingGeneratedId() {
     throw StateError(
-      'Generated schema `${schema.dartName}` returned a non-int id field '
-      '`${schema.idField}`.',
+      'Generated schema `${schema.dartName}` must provide typed id accessors.',
+    );
+  }
+
+  Never _throwMissingTypedStorage() {
+    throw StateError(
+      'Generated schema `${schema.dartName}` does not expose a typed storage '
+      'path for backend `${database.backend.name}`.',
     );
   }
 

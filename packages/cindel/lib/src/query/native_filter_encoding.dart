@@ -19,17 +19,21 @@ Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
   return encodeFilter(filter);
 }
 
-// Converts supported predicate nodes into their wire model. Nested-path filters,
-// length filters, and unsupported value shapes stay Dart-only.
+// Converts supported predicate nodes into their wire model. Nested-path filters
+// and unsupported value shapes stay Dart-only.
 WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   if (predicate is _FieldFilterPredicate) {
     if (!predicate.isTopLevel) {
       return null;
     }
-    if (!_isNativeFilterValue(predicate.expected)) {
+    final expected = switch (predicate.operation) {
+      _FilterOperation.isEmpty || _FilterOperation.isNotEmpty => 0,
+      _ => predicate.expected,
+    };
+    if (!_isNativeFilterValue(expected)) {
       return null;
     }
-    final value = _nativeFilterValue(predicate.expected);
+    final value = _nativeFilterValue(expected);
     final operation = _nativeFilterOperation(predicate.operation, value);
     if (operation == null) {
       return null;
@@ -67,8 +71,7 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   return null;
 }
 
-// Maps Dart filter operations to native operations. Length-based operations are
-// omitted because native filters operate on field values, not list metadata.
+// Maps Dart filter operations to native operations.
 WireFilterOperation? _nativeFilterOperation(
   _FilterOperation operation,
   WireValue value,
@@ -86,13 +89,15 @@ WireFilterOperation? _nativeFilterOperation(
     _FilterOperation.contains => WireFilterOperation.contains,
     _FilterOperation.startsWith => WireFilterOperation.startsWith,
     _FilterOperation.endsWith => WireFilterOperation.endsWith,
-    _FilterOperation.isEmpty ||
-    _FilterOperation.isNotEmpty ||
-    _FilterOperation.lengthEqualTo ||
-    _FilterOperation.lengthGreaterThan ||
-    _FilterOperation.lengthGreaterThanOrEqualTo ||
-    _FilterOperation.lengthLessThan ||
-    _FilterOperation.lengthLessThanOrEqualTo => null,
+    _FilterOperation.isEmpty => WireFilterOperation.lengthEqual,
+    _FilterOperation.isNotEmpty => WireFilterOperation.lengthGreaterThan,
+    _FilterOperation.lengthEqualTo => WireFilterOperation.lengthEqual,
+    _FilterOperation.lengthGreaterThan => WireFilterOperation.lengthGreaterThan,
+    _FilterOperation.lengthGreaterThanOrEqualTo =>
+      WireFilterOperation.lengthGreaterThanOrEqual,
+    _FilterOperation.lengthLessThan => WireFilterOperation.lengthLessThan,
+    _FilterOperation.lengthLessThanOrEqualTo =>
+      WireFilterOperation.lengthLessThanOrEqual,
   };
 }
 

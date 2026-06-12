@@ -40,6 +40,11 @@ pub(crate) enum FieldFilterOperation {
     StartsWith,
     EndsWith,
     IsNull,
+    LengthEqual,
+    LengthLessThan,
+    LengthLessThanOrEqual,
+    LengthGreaterThan,
+    LengthGreaterThanOrEqual,
 }
 
 impl NativeFilter {
@@ -150,6 +155,14 @@ impl NativeFilter {
                     (FieldFilterOperation::Contains, "string" | "String") => 0,
                     (FieldFilterOperation::Contains, "list") => 20,
                     (FieldFilterOperation::Contains, _) => 40,
+                    (
+                        FieldFilterOperation::LengthEqual
+                        | FieldFilterOperation::LengthLessThan
+                        | FieldFilterOperation::LengthLessThanOrEqual
+                        | FieldFilterOperation::LengthGreaterThan
+                        | FieldFilterOperation::LengthGreaterThanOrEqual,
+                        "list",
+                    ) => 10,
                     (_, "bool" | "int" | "double") => 5,
                     (_, "string" | "String") => 10,
                     (_, "list" | "object") => 30,
@@ -437,6 +450,11 @@ impl FieldFilterOperation {
             WireFilterOperation::StartsWith => Self::StartsWith,
             WireFilterOperation::EndsWith => Self::EndsWith,
             WireFilterOperation::IsNull => Self::IsNull,
+            WireFilterOperation::LengthEqual => Self::LengthEqual,
+            WireFilterOperation::LengthLessThan => Self::LengthLessThan,
+            WireFilterOperation::LengthLessThanOrEqual => Self::LengthLessThanOrEqual,
+            WireFilterOperation::LengthGreaterThan => Self::LengthGreaterThan,
+            WireFilterOperation::LengthGreaterThanOrEqual => Self::LengthGreaterThanOrEqual,
         }
     }
 }
@@ -475,7 +493,39 @@ fn field_matches(
             (Some(actual), Some(expected)) => actual.ends_with(expected),
             _ => false,
         },
+        FieldFilterOperation::LengthEqual => compare_list_length(actual, expected)
+            .map(|ordering| ordering == 0)
+            .unwrap_or(false),
+        FieldFilterOperation::LengthLessThan => compare_list_length(actual, expected)
+            .map(|ordering| ordering < 0)
+            .unwrap_or(false),
+        FieldFilterOperation::LengthLessThanOrEqual => compare_list_length(actual, expected)
+            .map(|ordering| ordering <= 0)
+            .unwrap_or(false),
+        FieldFilterOperation::LengthGreaterThan => compare_list_length(actual, expected)
+            .map(|ordering| ordering > 0)
+            .unwrap_or(false),
+        FieldFilterOperation::LengthGreaterThanOrEqual => compare_list_length(actual, expected)
+            .map(|ordering| ordering >= 0)
+            .unwrap_or(false),
     })
+}
+
+fn compare_list_length(actual: &BinaryValue, expected: &WireValue) -> Option<i8> {
+    let BinaryValue::List(values) = actual else {
+        return None;
+    };
+    let WireValue::Int(expected) = expected else {
+        return None;
+    };
+    let actual = i64::try_from(values.len()).ok()?;
+    if actual < *expected {
+        Some(-1)
+    } else if actual > *expected {
+        Some(1)
+    } else {
+        Some(0)
+    }
 }
 
 fn compare_numbers(actual: &BinaryValue, expected: &WireValue) -> Option<i8> {

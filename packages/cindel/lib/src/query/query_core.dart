@@ -559,6 +559,11 @@ final class CindelQuery<T> {
   // Main document execution path. It tries native planning first, then applies
   // Dart-side sort, distinct, offset, and limit when storage cannot do it.
   Future<List<CindelDocument>> _matchingDocuments() async {
+    final mdbxNativeDocuments =
+        await _matchingMdbxNativeDocumentsWithDartPlan();
+    if (mdbxNativeDocuments != null) {
+      return mdbxNativeDocuments;
+    }
     final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments();
     if (sqliteNativeDocuments != null) {
       return sqliteNativeDocuments;
@@ -566,6 +571,9 @@ final class CindelQuery<T> {
     final nativePlan = _nativePlan();
     if (nativePlan != null) {
       return _database.queryNativePlanDocuments(_schema.name, nativePlan);
+    }
+    if (_database.backend == CindelStorageBackend.mdbx) {
+      _throwMdbxNativePlanRequired('find documents');
     }
 
     var matchingDocuments = await _readFilteredDocuments();
@@ -610,7 +618,7 @@ final class CindelQuery<T> {
     }
 
     final nativePlan = _nativePlan();
-    if (nativePlan != null && _nativeFilter == null) {
+    if (nativePlan != null) {
       return _database.queryNativePlanIds(_schema.name, nativePlan);
     }
 
@@ -630,17 +638,49 @@ final class CindelQuery<T> {
         (_database.usesSqliteNativeDocuments && !_canUseSqliteNativePlanner)) {
       return null;
     }
-    try {
-      return await _database.queryNativePlanObjects(
+    return _database.queryNativePlanObjects(
+      _schema.name,
+      nativePlan,
+      fieldTypes,
+      readNativeDocument,
+    );
+  }
+
+  Future<List<CindelDocument>>? _matchingMdbxNativeDocumentsWithDartPlan() {
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (_database.backend != CindelStorageBackend.mdbx ||
+        _nativePlan() != null ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+
+    return () async {
+      final objects = await _database.queryNativePlanObjects(
         _schema.name,
-        nativePlan,
+        const CindelNativeQueryPlan(source: CindelNativeAllQuerySource()),
         fieldTypes,
         readNativeDocument,
       );
-    } on Object {
-      _database.markCollectionHasGenericDocuments(_schema.name);
-      return null;
-    }
+      var documents = <CindelDocument>[
+        for (final object in objects)
+          if (_matchesNativeDartPlan(_documentFromObject(object)))
+            _documentFromObject(object),
+      ];
+      if (_sortKeys.isNotEmpty) {
+        documents = _sortDocuments(documents, _sortKeys);
+      } else {
+        documents = _sortDocumentsByNativeSource(documents);
+      }
+      if (_distinctFields.isNotEmpty) {
+        documents = _distinctDocuments(documents, _distinctFields);
+      }
+      if (_offset > 0 || _limit != null) {
+        documents = _windowDocuments(documents, _offset, _limit);
+      }
+      return documents;
+    }();
   }
 
   // SQLite can store generated native documents next to generic manual rows.
@@ -711,7 +751,7 @@ final class CindelQuery<T> {
       if (_sortKeys.isNotEmpty) {
         documents = _sortDocuments(documents, _sortKeys);
       } else {
-        documents = _sortDocumentsBySqliteNativeSource(documents);
+        documents = _sortDocumentsByNativeSource(documents);
       }
       if (_distinctFields.isNotEmpty) {
         documents = _distinctDocuments(documents, _distinctFields);
@@ -750,7 +790,7 @@ final class CindelQuery<T> {
     };
   }
 
-  List<CindelDocument> _sortDocumentsBySqliteNativeSource(
+  List<CindelDocument> _sortDocumentsByNativeSource(
     List<CindelDocument> documents,
   ) {
     final source = _nativeSource;
@@ -772,6 +812,10 @@ final class CindelQuery<T> {
   }
 
   bool _matchesSqliteNativeDartPlan(CindelDocument document) {
+    return _matchesNativeDartPlan(document);
+  }
+
+  bool _matchesNativeDartPlan(CindelDocument document) {
     if (!_matchesSqliteNativeSource(document)) {
       return false;
     }
@@ -1021,14 +1065,13 @@ final class CindelQuery<T> {
 
   bool get _canUseNativeFilter {
     return _database.backend == CindelStorageBackend.mdbx &&
-        !_database.collectionHasGenericDocuments(_schema.name) &&
         _schema.toBinaryDocument != null &&
         _schema.fromBinaryDocument != null;
   }
 
   bool get _canUseNativePlanner {
-    if (_sourceFilter != null ||
-        _database.collectionHasGenericDocuments(_schema.name)) {
+    if (_sourceFilter != null &&
+        _database.backend != CindelStorageBackend.mdbx) {
       return false;
     }
     if (_database.backend == CindelStorageBackend.mdbx) {
@@ -1042,6 +1085,13 @@ final class CindelQuery<T> {
 
   bool get _canUseNativeProjection =>
       _canUseNativePlanner && _database.backend == CindelStorageBackend.mdbx;
+
+  Never _throwMdbxNativePlanRequired(String operation) {
+    throw UnsupportedError(
+      'MDBX `$operation` requires a generated typed native query plan. '
+      'Dart document fallback is disabled.',
+    );
+  }
 
   // Shared watcher body for `watch()`. Local change sets are skipped only when
   // they cannot affect the previous visible result.

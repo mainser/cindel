@@ -31,6 +31,11 @@ const int wireFilterOpContains = 6;
 const int wireFilterOpStartsWith = 7;
 const int wireFilterOpEndsWith = 8;
 const int wireFilterOpIsNull = 9;
+const int wireFilterOpLengthEqual = 10;
+const int wireFilterOpLengthLessThan = 11;
+const int wireFilterOpLengthLessThanOrEqual = 12;
+const int wireFilterOpLengthGreaterThan = 13;
+const int wireFilterOpLengthGreaterThanOrEqual = 14;
 
 /// Query source tags for the compact native query-plan format.
 const int wireQuerySourceAll = 1;
@@ -371,6 +376,11 @@ enum WireFilterOperation {
   startsWith,
   endsWith,
   isNull,
+  lengthEqual,
+  lengthLessThan,
+  lengthLessThanOrEqual,
+  lengthGreaterThan,
+  lengthGreaterThanOrEqual,
 }
 
 final class WireFieldFilter extends WireFilter {
@@ -2215,6 +2225,13 @@ final class CindelWireReader {
       wireFilterOpStartsWith => WireFilterOperation.startsWith,
       wireFilterOpEndsWith => WireFilterOperation.endsWith,
       wireFilterOpIsNull => WireFilterOperation.isNull,
+      wireFilterOpLengthEqual => WireFilterOperation.lengthEqual,
+      wireFilterOpLengthLessThan => WireFilterOperation.lengthLessThan,
+      wireFilterOpLengthLessThanOrEqual =>
+        WireFilterOperation.lengthLessThanOrEqual,
+      wireFilterOpLengthGreaterThan => WireFilterOperation.lengthGreaterThan,
+      wireFilterOpLengthGreaterThanOrEqual =>
+        WireFilterOperation.lengthGreaterThanOrEqual,
       final tag => throw FormatException('unknown wire filter operation $tag'),
     };
   }
@@ -2241,6 +2258,13 @@ int _filterOperationTag(WireFilterOperation operation) {
     WireFilterOperation.startsWith => wireFilterOpStartsWith,
     WireFilterOperation.endsWith => wireFilterOpEndsWith,
     WireFilterOperation.isNull => wireFilterOpIsNull,
+    WireFilterOperation.lengthEqual => wireFilterOpLengthEqual,
+    WireFilterOperation.lengthLessThan => wireFilterOpLengthLessThan,
+    WireFilterOperation.lengthLessThanOrEqual =>
+      wireFilterOpLengthLessThanOrEqual,
+    WireFilterOperation.lengthGreaterThan => wireFilterOpLengthGreaterThan,
+    WireFilterOperation.lengthGreaterThanOrEqual =>
+      wireFilterOpLengthGreaterThanOrEqual,
   };
 }
 

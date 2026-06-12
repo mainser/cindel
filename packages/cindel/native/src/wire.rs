@@ -20,6 +20,11 @@ const FILTER_OP_CONTAINS: u8 = 6;
 const FILTER_OP_STARTS_WITH: u8 = 7;
 const FILTER_OP_ENDS_WITH: u8 = 8;
 const FILTER_OP_IS_NULL: u8 = 9;
+const FILTER_OP_LENGTH_EQUAL: u8 = 10;
+const FILTER_OP_LENGTH_LESS_THAN: u8 = 11;
+const FILTER_OP_LENGTH_LESS_THAN_OR_EQUAL: u8 = 12;
+const FILTER_OP_LENGTH_GREATER_THAN: u8 = 13;
+const FILTER_OP_LENGTH_GREATER_THAN_OR_EQUAL: u8 = 14;
 const QUERY_SOURCE_ALL: u8 = 1;
 const QUERY_SOURCE_INDEX_EQUAL: u8 = 2;
 const QUERY_SOURCE_INDEX_RANGE: u8 = 3;
@@ -66,6 +71,11 @@ pub(crate) enum WireFilterOperation {
     StartsWith,
     EndsWith,
     IsNull,
+    LengthEqual,
+    LengthLessThan,
+    LengthLessThanOrEqual,
+    LengthGreaterThan,
+    LengthGreaterThanOrEqual,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1132,6 +1142,13 @@ impl<'a> Reader<'a> {
             FILTER_OP_STARTS_WITH => Ok(WireFilterOperation::StartsWith),
             FILTER_OP_ENDS_WITH => Ok(WireFilterOperation::EndsWith),
             FILTER_OP_IS_NULL => Ok(WireFilterOperation::IsNull),
+            FILTER_OP_LENGTH_EQUAL => Ok(WireFilterOperation::LengthEqual),
+            FILTER_OP_LENGTH_LESS_THAN => Ok(WireFilterOperation::LengthLessThan),
+            FILTER_OP_LENGTH_LESS_THAN_OR_EQUAL => Ok(WireFilterOperation::LengthLessThanOrEqual),
+            FILTER_OP_LENGTH_GREATER_THAN => Ok(WireFilterOperation::LengthGreaterThan),
+            FILTER_OP_LENGTH_GREATER_THAN_OR_EQUAL => {
+                Ok(WireFilterOperation::LengthGreaterThanOrEqual)
+            }
             tag => Err(format!("unknown wire filter operation {tag}")),
         }
     }
@@ -1148,6 +1165,11 @@ fn filter_operation_tag(operation: WireFilterOperation) -> u8 {
         WireFilterOperation::StartsWith => FILTER_OP_STARTS_WITH,
         WireFilterOperation::EndsWith => FILTER_OP_ENDS_WITH,
         WireFilterOperation::IsNull => FILTER_OP_IS_NULL,
+        WireFilterOperation::LengthEqual => FILTER_OP_LENGTH_EQUAL,
+        WireFilterOperation::LengthLessThan => FILTER_OP_LENGTH_LESS_THAN,
+        WireFilterOperation::LengthLessThanOrEqual => FILTER_OP_LENGTH_LESS_THAN_OR_EQUAL,
+        WireFilterOperation::LengthGreaterThan => FILTER_OP_LENGTH_GREATER_THAN,
+        WireFilterOperation::LengthGreaterThanOrEqual => FILTER_OP_LENGTH_GREATER_THAN_OR_EQUAL,
     }
 }
 
