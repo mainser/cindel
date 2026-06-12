@@ -1,13 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
+
+import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
 import '../generic_document.dart';
 import '../native/wire.dart';
 import '../schema.dart';
+import '../text.dart';
 import 'schema_manifest.dart';
 import 'worker_bridge.dart';
 
@@ -64,11 +66,22 @@ class CindelDatabase {
 
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final CindelWebWorkerBridge _bridge;
+  final Set<String> _genericDocumentCollections = <String>{};
   bool _closed = false;
   _TransactionMode? _activeTransaction;
 
   /// Whether SQLite can use generated native document readers for this handle.
   bool get usesSqliteNativeDocuments => true;
+
+  /// Returns whether this collection has accepted generic document writes.
+  bool collectionHasGenericDocuments(String collection) {
+    return _genericDocumentCollections.contains(collection);
+  }
+
+  /// Marks a collection as containing generic document rows.
+  void markCollectionHasGenericDocuments(String collection) {
+    _genericDocumentCollections.add(collection);
+  }
 
   /// Opens a Web SQLite database.
   ///
@@ -157,6 +170,7 @@ class CindelDatabase {
     if (values.isEmpty) {
       return;
     }
+    markCollectionHasGenericDocuments(collection);
     final schema = _schemas[collection];
     final writes = <WireIndexedDocumentWrite>[];
     for (final entry in values.entries) {
@@ -194,16 +208,18 @@ class CindelDatabase {
         'Must match the object count.',
       );
     }
-    final writes = <WireNativeDocumentWrite>[];
-    for (var i = 0; i < objects.length; i += 1) {
-      _checkId(ids[i]);
-      final writer = _WebNativeDocumentWriter(fieldTypes.length);
-      writeDocument(writer, objects[i]);
-      writes.add(WireNativeDocumentWrite(id: ids[i], values: writer.finish()));
+    for (final id in ids) {
+      _checkId(id);
     }
+    final bytes = encodeNativeDocumentWriteBatchDirect<T>(
+      ids: ids,
+      objects: objects,
+      fieldCount: fieldTypes.length,
+      writeDocument: (writer, object) => writeDocument(writer, object),
+    );
     await _sendVoid('putNativeAll', {
       'collection': collection,
-      'documents': encodeNativeDocumentWriteBatch(writes),
+      'documents': bytes,
     });
   }
 
@@ -275,6 +291,227 @@ class CindelDatabase {
   /// Returns ids for every document in [collection].
   Future<List<int>> documentIds(String collection) {
     return _sendIds('documentIds', {'collection': collection});
+  }
+
+  /// Returns documents whose indexed [field] equals [value].
+  Future<List<CindelDocument>> queryEqual(
+    String collection,
+    String field,
+    Object value,
+  ) async {
+    final schemaField = _indexedFieldSchema(collection, field);
+    final ids = schemaField.indexType == CindelIndexType.hash
+        ? _mergeQueryIds(
+            await _queryIndexEqualIds(
+              collection,
+              field,
+              _indexValueForField(value, schemaField),
+            ),
+            await _queryNativeIndexEqualIds(
+              collection,
+              field,
+              value,
+              schemaField,
+            ),
+          )
+        : await queryEqualIds(collection, field, value);
+    final documents = await documentsByIds(collection, ids);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      return documents
+          .where(
+            (document) =>
+                _indexedValuesEqual(document[field], value, schemaField),
+          )
+          .toList(growable: false);
+    }
+    return documents;
+  }
+
+  /// Returns ids whose indexed [field] equals [value].
+  Future<List<int>> queryEqualIds(
+    String collection,
+    String field,
+    Object value,
+  ) async {
+    final schemaField = _indexedFieldSchema(collection, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw CindelQueryError(
+        'Hash index `${schemaField.name}` requires document verification.',
+      );
+    }
+    final genericIds = await _queryIndexEqualIds(
+      collection,
+      field,
+      _indexValueForField(value, schemaField),
+    );
+    final nativeIds = await _queryNativeIndexEqualIds(
+      collection,
+      field,
+      value,
+      schemaField,
+    );
+    final ids = _mergeQueryIds(genericIds, nativeIds);
+    return schemaField.indexType == CindelIndexType.words
+        ? _dedupeIds(ids)
+        : ids;
+  }
+
+  /// Returns ids whose composite [indexName] equals [values].
+  Future<List<int>> queryCompositeEqualIds(
+    String collection,
+    String indexName,
+    List<Object> values,
+  ) async {
+    final value = _compositeIndexValue(collection, indexName, values);
+    final genericIds = await _queryIndexEqualIds(collection, indexName, value);
+    final nativeIds = await queryNativePlanIds(
+      collection,
+      WireQueryPlan(
+        source: WireQuerySource.indexEqual(
+          indexName: indexName,
+          value: value,
+          dedupe: false,
+        ),
+        filter: null,
+        sorts: const [],
+        distinctFields: const [],
+        offset: 0,
+        limit: null,
+      ),
+    );
+    return _mergeQueryIds(genericIds, nativeIds);
+  }
+
+  CindelFieldSchema _indexedFieldSchema(String collection, String field) {
+    final schema = _schemaForLookup(collection);
+    final schemaField = _requireSchemaField(schema, field);
+    if (!schemaField.isIndexed) {
+      throw CindelQueryError(
+        'Field `$field` is not indexed for `$collection`.',
+      );
+    }
+    return schemaField;
+  }
+
+  CindelCollectionSchema<dynamic> _schemaForLookup(String collection) {
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw CindelSchemaError(
+        'Collection `$collection` has no registered Cindel schema.',
+      );
+    }
+    return schema;
+  }
+
+  WireIndexValue _compositeIndexValue(
+    String collection,
+    String indexName,
+    List<Object> values,
+  ) {
+    final schema = _schemaForLookup(collection);
+    final composite = schema.compositeIndexes.firstWhere(
+      (index) => index.name == indexName,
+      orElse: () => throw CindelQueryError(
+        'Composite index `$indexName` is not registered for `$collection`.',
+      ),
+    );
+    if (values.length != composite.fields.length) {
+      throw ArgumentError.value(
+        values,
+        'values',
+        'Composite index `$indexName` expects ${composite.fields.length} values.',
+      );
+    }
+    return WireIndexValue.list([
+      for (var index = 0; index < values.length; index += 1)
+        _indexValueForField(
+          values[index],
+          _fieldWithCaseSensitivity(
+            _requireSchemaField(schema, composite.fields[index]),
+            composite.caseSensitive,
+          ),
+        ),
+    ]);
+  }
+
+  Future<List<int>> _queryIndexEqualIds(
+    String collection,
+    String index,
+    WireIndexValue value,
+  ) {
+    return _sendIds('queryIndexEqual', {
+      'collection': collection,
+      'index': index,
+      'value': encodeIndexValue(value),
+    });
+  }
+
+  Future<List<int>> _queryNativeIndexEqualIds(
+    String collection,
+    String field,
+    Object value,
+    CindelFieldSchema schemaField,
+  ) {
+    if (!_canUseSqliteNativeIndexSource(collection, schemaField)) {
+      return Future<List<int>>.value(const []);
+    }
+    return queryNativePlanIds(
+      collection,
+      WireQueryPlan(
+        source: WireQuerySource.indexEqual(
+          indexName: field,
+          value: _indexValueForField(value, schemaField),
+          dedupe: schemaField.indexType == CindelIndexType.words,
+        ),
+        filter: null,
+        sorts: const [],
+        distinctFields: const [],
+        offset: 0,
+        limit: null,
+      ),
+    );
+  }
+
+  bool _canUseSqliteNativeIndexSource(
+    String collection,
+    CindelFieldSchema field,
+  ) {
+    final schema = _schemas[collection];
+    if (schema == null ||
+        schema.writeNativeDocument == null ||
+        schema.readNativeDocument == null ||
+        _nativeFieldTypes(schema) == null) {
+      return false;
+    }
+    if (!field.indexCaseSensitive && field.binaryType == 'string') {
+      return false;
+    }
+    return field.indexType != CindelIndexType.words &&
+        field.indexType != CindelIndexType.multiEntry;
+  }
+
+  List<int> _mergeQueryIds(List<int> genericIds, List<int> nativeIds) {
+    if (nativeIds.isEmpty) {
+      return genericIds;
+    }
+    if (genericIds.isEmpty) {
+      return nativeIds;
+    }
+    final seen = <int>{};
+    return [
+      for (final id in genericIds)
+        if (seen.add(id)) id,
+      for (final id in nativeIds)
+        if (seen.add(id)) id,
+    ];
+  }
+
+  List<int> _dedupeIds(List<int> ids) {
+    final seen = <int>{};
+    return [
+      for (final id in ids)
+        if (seen.add(id)) id,
+    ];
   }
 
   /// Deletes [id] from [collection].
@@ -501,80 +738,6 @@ class CindelDatabase {
   }
 }
 
-final class _WebNativeDocumentWriter
-    implements CindelNativeStringListDocumentWriter {
-  _WebNativeDocumentWriter(int fieldCount)
-    : _values = List<WireNativeDocumentValue?>.filled(fieldCount, null);
-
-  final List<WireNativeDocumentValue?> _values;
-
-  List<WireNativeDocumentValue> finish() {
-    return [
-      for (final value in _values)
-        value ?? const WireNativeDocumentValue.nullValue(),
-    ];
-  }
-
-  @override
-  void writeNull(int fieldIndex) {
-    _values[fieldIndex] = const WireNativeDocumentValue.nullValue();
-  }
-
-  @override
-  void writeBool(int fieldIndex, bool value) {
-    _values[fieldIndex] = WireNativeDocumentValue.bool(value);
-  }
-
-  @override
-  void writeInt(int fieldIndex, int value) {
-    _values[fieldIndex] = WireNativeDocumentValue.int(value);
-  }
-
-  @override
-  void writeDouble(int fieldIndex, double value) {
-    _values[fieldIndex] = WireNativeDocumentValue.double(value);
-  }
-
-  @override
-  void writeString(int fieldIndex, String value) {
-    _values[fieldIndex] = WireNativeDocumentValue.bytes(
-      Uint8List.fromList(utf8.encode(value)),
-    );
-  }
-
-  @override
-  void writeStringList(int fieldIndex, List<String> value) {
-    // Web SQLite stores generated string-list native fields as JSON text so
-    // query-plan filtering can stay inside SQLite without the native binary
-    // list reader used by MDBX.
-    _values[fieldIndex] = WireNativeDocumentValue.bytes(
-      Uint8List.fromList(utf8.encode(jsonEncode(value))),
-    );
-  }
-
-  @override
-  void writeObject(int fieldIndex, Map<String, Object?> value) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object writes are not available yet.',
-    );
-  }
-
-  @override
-  void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object-list writes are not available yet.',
-    );
-  }
-
-  @override
-  CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
-    throw UnsupportedError('Nested native Web list writers are not supported.');
-  }
-
-  @override
-  void endList(CindelNativeDocumentWriter listWriter) {}
-}
-
 Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(
   Iterable<CindelCollectionSchema<dynamic>> schemas,
 ) {
@@ -599,29 +762,266 @@ List<WireIndexEntry> _indexEntriesFor(
     if (value == null) {
       continue;
     }
+    if (field.indexType == CindelIndexType.words) {
+      if (value is! String) {
+        throw ArgumentError.value(
+          value,
+          'value.${field.name}',
+          'Word indexes require String values.',
+        );
+      }
+      for (final token in cindelSplitWords(
+        value,
+        caseSensitive: field.indexCaseSensitive,
+      )) {
+        entries.add(
+          WireIndexEntry(
+            documentId: id,
+            indexName: field.name,
+            value: _indexValueForField(token, field),
+          ),
+        );
+      }
+      continue;
+    }
+    if (field.indexType == CindelIndexType.multiEntry) {
+      if (value is! Iterable) {
+        throw ArgumentError.value(
+          value,
+          'value.${field.name}',
+          'Multi-entry indexes require List values.',
+        );
+      }
+      for (final item in value) {
+        if (item == null) {
+          continue;
+        }
+        entries.add(
+          WireIndexEntry(
+            documentId: id,
+            indexName: field.name,
+            value: _indexValueForField(item, field),
+          ),
+        );
+      }
+      continue;
+    }
     entries.add(
       WireIndexEntry(
         documentId: id,
         indexName: field.name,
-        value: _indexValue(value),
+        value: _indexValueForField(value, field),
       ),
     );
+  }
+  for (final index in schema.compositeIndexes) {
+    final values = <WireIndexValue>[];
+    var hasAllValues = true;
+    for (final fieldName in index.fields) {
+      if (!document.containsKey(fieldName) || document[fieldName] == null) {
+        hasAllValues = false;
+        break;
+      }
+      final field = _requireSchemaField(schema, fieldName);
+      values.add(
+        _indexValueForField(
+          document[fieldName]!,
+          _fieldWithCaseSensitivity(field, index.caseSensitive),
+        ),
+      );
+    }
+    if (hasAllValues) {
+      entries.add(
+        WireIndexEntry(
+          documentId: id,
+          indexName: index.name,
+          value: WireIndexValue.list(values),
+        ),
+      );
+    }
   }
   return entries;
 }
 
-WireIndexValue _indexValue(Object value) {
-  return switch (value) {
-    bool() => WireIndexValue.bool(value),
-    int() => WireIndexValue.int(value),
-    double() => WireIndexValue.double(value),
-    String() => WireIndexValue.string(value),
-    List() => WireIndexValue.list([
-      for (final item in value)
-        if (item != null) _indexValue(item),
-    ]),
-    _ => throw ArgumentError.value(value, 'value', 'Unsupported index value.'),
+WireIndexValue _indexValueForField(Object value, CindelFieldSchema field) {
+  final normalizedType = _nonNullableDartType(field.dartType);
+  final wireValue = switch ((normalizedType, value)) {
+    ('bool', final bool value) => WireIndexValue.bool(value),
+    ('int', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, 'value'),
+    ),
+    ('double', final double value) when value.isFinite => WireIndexValue.double(
+      value,
+    ),
+    ('String', final String value) => _stringIndexValue(value, field),
+    ('DateTime', final DateTime value) => WireIndexValue.int(
+      _checkSqliteInteger(value.microsecondsSinceEpoch, 'value'),
+    ),
+    ('DateTime', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, 'value'),
+    ),
+    ('Duration', final Duration value) => WireIndexValue.int(
+      _checkSqliteInteger(value.inMicroseconds, 'value'),
+    ),
+    ('Duration', final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, 'value'),
+    ),
+    ('double', final double value) => throw ArgumentError.value(
+      value,
+      'value',
+      'Must be finite.',
+    ),
+    (_, final bool value) => WireIndexValue.bool(value),
+    (_, final int value) => WireIndexValue.int(
+      _checkSqliteInteger(value, 'value'),
+    ),
+    (_, final double value) when value.isFinite => WireIndexValue.double(value),
+    (_, final String value) =>
+      field.indexType == CindelIndexType.multiEntry
+          ? _stringIndexValue(value, field)
+          : WireIndexValue.string(value),
+    (_, final double value) => throw ArgumentError.value(
+      value,
+      'value',
+      'Must be finite.',
+    ),
+    _ => throw ArgumentError.value(
+      value,
+      'value',
+      'Must match indexed field type `${field.dartType}`.',
+    ),
   };
+  if (field.indexType == CindelIndexType.hash) {
+    return WireIndexValue.int(_stableHashBytes(encodeIndexValue(wireValue)));
+  }
+  return wireValue;
+}
+
+String _nonNullableDartType(String dartType) {
+  return dartType.endsWith('?')
+      ? dartType.substring(0, dartType.length - 1)
+      : dartType;
+}
+
+WireIndexValue _stringIndexValue(String value, CindelFieldSchema field) {
+  return WireIndexValue.string(
+    field.indexCaseSensitive ? value : value.toLowerCase(),
+  );
+}
+
+bool _indexedValuesEqual(
+  Object? actual,
+  Object expected,
+  CindelFieldSchema field,
+) {
+  if (_nonNullableDartType(field.dartType) == 'String' &&
+      !field.indexCaseSensitive) {
+    return actual is String &&
+        expected is String &&
+        actual.toLowerCase() == expected.toLowerCase();
+  }
+  if (_nonNullableDartType(field.dartType) == 'DateTime') {
+    return _dateTimeMicros(actual) == _dateTimeMicros(expected);
+  }
+  if (_nonNullableDartType(field.dartType) == 'Duration') {
+    return _durationMicros(actual) == _durationMicros(expected);
+  }
+  return actual == expected;
+}
+
+int? _dateTimeMicros(Object? value) {
+  return switch (value) {
+    DateTime() => value.microsecondsSinceEpoch,
+    int() => value,
+    _ => null,
+  };
+}
+
+int? _durationMicros(Object? value) {
+  return switch (value) {
+    Duration() => value.inMicroseconds,
+    int() => value,
+    _ => null,
+  };
+}
+
+int _stableHashBytes(Uint8List value) {
+  final offsetBasis = BigInt.parse('cbf29ce484222325', radix: 16);
+  final prime = BigInt.parse('100000001b3', radix: 16);
+  final mask = BigInt.parse('7fffffffffffffff', radix: 16);
+  var hash = offsetBasis;
+  for (final byte in value) {
+    hash ^= BigInt.from(byte);
+    hash = (hash * prime) & mask;
+  }
+  return hash.toInt();
+}
+
+int _checkSqliteInteger(int value, String argumentName) {
+  if (value < -0x8000000000000000 || value > _maximumSqliteId) {
+    throw ArgumentError.value(
+      value,
+      argumentName,
+      'Must fit in SQLite INTEGER range.',
+    );
+  }
+  return value;
+}
+
+Uint8List? _nativeFieldTypes(CindelCollectionSchema<dynamic> schema) {
+  final fields = schema.fields.toList(growable: false)
+    ..sort((left, right) => left.name.compareTo(right.name));
+  final nativeFields = fields
+      .where((field) => !field.isId)
+      .toList(growable: false);
+  final bytes = Uint8List(nativeFields.length);
+  for (var i = 0; i < nativeFields.length; i += 1) {
+    final value = switch (nativeFields[i].binaryType) {
+      'bool' => 0,
+      'int' => 1,
+      'double' => 2,
+      'string' => 3,
+      'list' => 4,
+      'object' => 5,
+      _ => null,
+    };
+    if (value == null) {
+      return null;
+    }
+    bytes[i] = value;
+  }
+  return bytes;
+}
+
+CindelFieldSchema _fieldWithCaseSensitivity(
+  CindelFieldSchema field,
+  bool caseSensitive,
+) {
+  return CindelFieldSchema(
+    name: field.name,
+    dartType: field.dartType,
+    binaryType: field.binaryType,
+    isId: field.isId,
+    isIndexed: field.isIndexed,
+    isIndexUnique: field.isIndexUnique,
+    isIndexReplace: field.isIndexReplace,
+    indexCaseSensitive: caseSensitive,
+    indexType: field.indexType,
+  );
+}
+
+CindelFieldSchema _requireSchemaField(
+  CindelCollectionSchema<dynamic> schema,
+  String field,
+) {
+  for (final schemaField in schema.fields) {
+    if (schemaField.name == field) {
+      return schemaField;
+    }
+  }
+  throw CindelSchemaError(
+    'Field `$field` is not registered for `${schema.name}`.',
+  );
 }
 
 Object? _wireScalarToObject(WireScalar scalar) {

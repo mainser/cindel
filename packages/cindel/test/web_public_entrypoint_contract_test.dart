@@ -65,4 +65,56 @@ void main() {
 
     expect(removedEntrypoint.existsSync(), isFalse);
   });
+
+  // Scenario: The Web query facade drifts back to Dart-only filtering.
+  // Covers:
+  // - Generated Web queries building native query plans.
+  // - Worker-backed count, find, delete, update, projection, and aggregate
+  //   operations.
+  // Expected: Query execution uses the same Worker query-plan surface exposed
+  // by the Web SQLite runtime when a generated SQLite-native schema can support
+  // it.
+  test(
+    'web query facade routes generated queries through native plans',
+    () async {
+      final source = await _readPackageFile(
+        'package:cindel/src/web/query.dart',
+      );
+
+      expect(source, contains('WireQueryPlan? _nativePlan'));
+      expect(source, contains('queryNativePlanIds'));
+      expect(source, contains('queryNativePlanCount'));
+      expect(source, contains('deleteNativePlan'));
+      expect(source, contains('updateNativePlan'));
+      expect(source, contains('queryNativePlanProjection'));
+      expect(source, contains('queryNativePlanAggregate'));
+      expect(source, contains('collectionHasGenericDocuments(_schema.name)'));
+    },
+  );
+
+  // Scenario: Web typed collections lose unique-index replacement semantics.
+  // Covers:
+  // - `putByUniqueIndex` and `putAllByUniqueIndex` reusing existing ids.
+  // - Field and composite unique lookup hooks on the Web database facade.
+  // Expected: Web generated APIs do not silently append duplicates when a
+  // replace index should target the existing row.
+  test('web typed collection reuses ids for unique replace indexes', () async {
+    final collectionSource = await _readPackageFile(
+      'package:cindel/src/web/typed_collection.dart',
+    );
+    final databaseSource = await _readPackageFile(
+      'package:cindel/src/web/database.dart',
+    );
+
+    expect(collectionSource, contains('_reuseUniqueIndexId'));
+    expect(collectionSource, contains('queryCompositeEqualIds'));
+    expect(collectionSource, contains('queryEqualIds'));
+    expect(databaseSource, contains('Future<List<int>> queryEqualIds'));
+    expect(
+      databaseSource,
+      contains('Future<List<int>> queryCompositeEqualIds'),
+    );
+    expect(databaseSource, contains("'queryIndexEqual'"));
+    expect(databaseSource, contains('WireQuerySource.indexEqual'));
+  });
 }

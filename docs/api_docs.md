@@ -110,6 +110,21 @@ assets/packages/cindel_flutter_libs/web/cindel_worker.js
 That worker loads the matching JS glue and Wasm runtime from the same companion
 package asset tree.
 
+Generated Web typed inserts use SQLite-native rows when the generated schema
+provides native document hooks. That path encodes the batch directly into the
+Worker binary payload, avoiding per-row `WireNativeDocumentWrite` allocations
+before `putNativeAll`.
+
+Generated Web typed queries also use the Worker native query-plan APIs when the
+schema exposes native document hooks and the collection has not accepted manual
+generic document rows. This covers `findAll`, `count`, query deletes, query
+updates, single-field projections, and scalar aggregates. Manual document rows
+keep the conservative Dart-side fallback so mixed generic collections remain
+visible through the public API.
+
+Generated Web unique-replace writes reuse existing row ids through field or
+composite index lookups before writing the object batch.
+
 Closing a Web `CindelDatabase` sends `close` to the Worker. During a
 controlled close, the Worker rolls back an active transaction before
 terminating. If the Worker or browser process dies abruptly, only a completed
@@ -1207,6 +1222,8 @@ typedef CindelReadNativeDocument<T> =
 generated non-null `List<String>` fields. Generated serializers should call
 `cindelWriteNativeStringList(writer, fieldIndex, value)` so writers that do not
 implement the fast path still fall back to `beginList` / `endList`.
+On Web, the SQLite-native direct batch writer implements this fast path and
+emits JSON list text directly into the wire payload for queryable list columns.
 
 `CindelNativeDocumentReader` supports:
 

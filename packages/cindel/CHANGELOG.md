@@ -9,6 +9,15 @@
 - Added `encodeNativeDocumentWriteBatchDirect` for Web SQLite-native batch
   writes so generated Web paths can emit CindelWireV1 rows without building
   per-document `WireNativeDocumentWrite` objects.
+- Routed generated Web SQLite-native typed writes through the direct batch
+  encoder by default, restoring the optimized insert path after the Web
+  entrypoint alignment.
+- Routed generated Web SQLite-native queries, counts, deletes, updates,
+  projections, and aggregates back through the Worker native query-plan APIs
+  when the schema has native document hooks.
+- Restored Web unique-replace typed writes so `putBy...` and `putAllBy...`
+  reuse existing ids through field or composite index lookups instead of
+  appending duplicate rows.
 - Optimized SQLite native document batch inserts by reusing the prepared
   statement for full chunks, improving the Web SQLite/Wasm typed insert path
   while keeping MDBX untouched.

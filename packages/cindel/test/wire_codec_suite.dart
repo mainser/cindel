@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cindel/src/native/wire.dart';
+import 'package:cindel/src/schema.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -441,6 +442,62 @@ void main() {
         ),
         throwsStateError,
       );
+    });
+
+    // Scenario: The Web typed collection path passes generated native writers
+    // through the direct encoder.
+    // Covers:
+    // - CindelNativeDocumentWireWriter implementing the generated writer API.
+    // - cindelWriteNativeStringList routing to direct JSON list bytes.
+    // Expected: Generated-style writers use the direct CindelWireV1 payload
+    // without constructing per-row WireNativeDocumentWrite objects.
+    test('direct native document encoder accepts generated native writers', () {
+      // Arrange.
+      final objects = [
+        _NativeWireFixture(
+          active: true,
+          count: 42,
+          score: 3.5,
+          title: 'Ana "Ñ"',
+          words: ['alpha', 'b\\eta', 'línea\nnueva'],
+        ),
+      ];
+      final expected = encodeNativeDocumentWriteBatch([
+        WireNativeDocumentWrite(
+          id: 7,
+          values: [
+            const WireNativeDocumentValue.bool(true),
+            const WireNativeDocumentValue.int(42),
+            const WireNativeDocumentValue.double(3.5),
+            WireNativeDocumentValue.bytes(bytes(utf8.encode('Ana "Ñ"'))),
+            WireNativeDocumentValue.bytes(
+              bytes(utf8.encode(jsonEncode(objects.first.words))),
+            ),
+          ],
+        ),
+      ]);
+
+      void writeGenerated(
+        CindelNativeDocumentWriter writer,
+        _NativeWireFixture object,
+      ) {
+        writer.writeBool(0, object.active);
+        writer.writeInt(1, object.count);
+        writer.writeDouble(2, object.score);
+        writer.writeString(3, object.title);
+        cindelWriteNativeStringList(writer, 4, object.words);
+      }
+
+      // Act.
+      final encoded = encodeNativeDocumentWriteBatchDirect<_NativeWireFixture>(
+        ids: const [7],
+        objects: objects,
+        fieldCount: 5,
+        writeDocument: writeGenerated,
+      );
+
+      // Assert.
+      expect(encoded, expected);
     });
 
     // Scenario: Rust returns projected cells without hydrating full documents.

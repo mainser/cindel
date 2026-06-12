@@ -246,6 +246,11 @@ What changes on Web:
 - Native Flutter platforms keep MDBX as the default backend.
 - MDBX is not used in the browser.
 - Schema metadata is registered on open and validated again on reopen.
+- Generated SQLite-native typed writes, query results, counts, deletes, updates,
+  projections, and aggregates use the Worker/Wasm native row path when the
+  schema supports native document hooks.
+- Unique replace helpers reuse existing Web SQLite row ids through field or
+  composite index lookups.
 - Database requests are serialized through the Worker, so transactions do not
   depend on `postMessage` timing.
 
@@ -290,6 +295,10 @@ final users = await db.users.getAll([jhon.dbId, maria.dbId, 404]);
 
 await db.users.deleteAll([jhon.dbId, maria.dbId]);
 ```
+
+On Web, generated typed inserts use the SQLite-native direct batch encoder when
+the schema exposes native document hooks, so large `putMany` calls avoid
+building per-row wire objects before crossing into the Worker.
 
 Only unique indexes with `replace: true` generate natural-key upsert helpers.
 The generated `putBy...` method reuses an existing id for the indexed value

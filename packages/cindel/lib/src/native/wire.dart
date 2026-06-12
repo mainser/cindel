@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../schema.dart';
+
 /// CindelWireV1 value tags shared by Dart and Rust.
 ///
 /// These numeric values are part of the native ABI. Do not reorder or reuse a
@@ -584,7 +586,8 @@ final class WireNativeDocumentWrite {
 /// row. Fields must be written in the same order as the registered native
 /// schema. This preserves the existing CindelWireV1 payload shape used by
 /// [encodeNativeDocumentWriteBatch].
-final class CindelNativeDocumentWireWriter {
+final class CindelNativeDocumentWireWriter
+    implements CindelNativeStringListDocumentWriter {
   CindelNativeDocumentWireWriter._(this._writer, this._fieldCount);
 
   final _CindelGrowableWireWriter _writer;
@@ -616,12 +619,14 @@ final class CindelNativeDocumentWireWriter {
   }
 
   /// Writes a null value to [fieldIndex].
+  @override
   void writeNull(int fieldIndex) {
     _checkFieldIndex(fieldIndex);
     _writer.writeUint8(wireTagNull);
   }
 
   /// Writes a boolean value to [fieldIndex].
+  @override
   void writeBool(int fieldIndex, bool value) {
     _checkFieldIndex(fieldIndex);
     _writer.writeUint8(wireTagBool);
@@ -629,6 +634,7 @@ final class CindelNativeDocumentWireWriter {
   }
 
   /// Writes an integer value to [fieldIndex].
+  @override
   void writeInt(int fieldIndex, int value) {
     _checkFieldIndex(fieldIndex);
     _writer.writeUint8(wireTagInt);
@@ -636,6 +642,7 @@ final class CindelNativeDocumentWireWriter {
   }
 
   /// Writes a finite double value to [fieldIndex].
+  @override
   void writeDouble(int fieldIndex, double value) {
     if (!value.isFinite) {
       throw const FormatException(
@@ -655,6 +662,7 @@ final class CindelNativeDocumentWireWriter {
   }
 
   /// Writes [value] as UTF-8 bytes to [fieldIndex].
+  @override
   void writeString(int fieldIndex, String value) {
     _checkFieldIndex(fieldIndex);
     _writer.writeUint8(wireTagString);
@@ -671,6 +679,33 @@ final class CindelNativeDocumentWireWriter {
     _writer.writeUint8(wireTagString);
     _writer.writeJsonStringListBytes(values);
   }
+
+  @override
+  void writeStringList(int fieldIndex, List<String> value) {
+    writeStringListJson(fieldIndex, value);
+  }
+
+  @override
+  void writeObject(int fieldIndex, Map<String, Object?> value) {
+    throw UnsupportedError(
+      'Cindel Web native embedded object writes are not available yet.',
+    );
+  }
+
+  @override
+  void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
+    throw UnsupportedError(
+      'Cindel Web native embedded object-list writes are not available yet.',
+    );
+  }
+
+  @override
+  CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
+    throw UnsupportedError('Nested native Web list writers are not supported.');
+  }
+
+  @override
+  void endList(CindelNativeDocumentWriter listWriter) {}
 }
 
 /// Callback used by [encodeNativeDocumentWriteBatchDirect].

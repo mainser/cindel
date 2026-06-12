@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../cindel_error.dart';
+import '../native/wire.dart';
 import '../schema.dart';
 import 'database.dart';
+
+typedef _CindelDocumentFilter = bool Function(CindelDocument document);
 
 /// Applies an optional query modifier.
 typedef CindelQueryOption<T> = CindelQuery<T> Function(CindelQuery<T> query);
@@ -186,6 +190,7 @@ final class CindelQuery<T> {
   CindelQuery._({
     required CindelDatabase database,
     required CindelCollectionSchema<T> schema,
+    _CindelDocumentFilter? sourceFilter,
     CindelFilterPredicate? filter,
     List<_SortKey> sortKeys = const [],
     List<String> distinctFields = const [],
@@ -193,7 +198,9 @@ final class CindelQuery<T> {
     int? limit,
   }) : _database = database,
        _schema = schema,
+       _sourceFilter = sourceFilter,
        _filter = filter,
+       _nativeFilter = _nativeFilterBytes(filter),
        _sortKeys = sortKeys,
        _distinctFields = distinctFields,
        _offset = offset,
@@ -297,7 +304,9 @@ final class CindelQuery<T> {
 
   final CindelDatabase _database;
   final CindelCollectionSchema<T> _schema;
+  final _CindelDocumentFilter? _sourceFilter;
   final CindelFilterPredicate? _filter;
+  final Uint8List? _nativeFilter;
   final List<_SortKey> _sortKeys;
   final List<String> _distinctFields;
   final int _offset;
@@ -439,43 +448,87 @@ final class CindelQuery<T> {
 
   /// Returns the number of objects matching this query.
   Future<int> count() async {
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      return _database.queryNativePlanCount(_schema.name, nativePlan);
+    }
     return (await _matchingDocuments()).length;
   }
 
   /// Deletes the first object matching this query, if one exists.
   Future<bool> deleteFirst() async {
+    final nativePlan = _nativePlan(limitOverride: 1);
+    if (nativePlan != null) {
+      final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
+      return ids.isNotEmpty;
+    }
     final documents = await _matchingDocuments();
     if (documents.isEmpty) {
       return false;
     }
-    await _database.deleteAll(_schema.name, [_idFromDocument(documents.first)]);
+    await _deleteIds([_idFromDocument(documents.first)]);
     return true;
   }
 
   /// Deletes every object matching this query atomically.
   Future<int> deleteAll() async {
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
+      return ids.length;
+    }
     final documents = await _matchingDocuments();
     final ids = documents.map(_idFromDocument).toList(growable: false);
-    await _database.deleteAll(_schema.name, ids);
+    await _deleteIds(ids);
     return ids.length;
   }
 
-  /// Updates are not part of the initial Web facade.
-  ///
-  /// Native query-plan updates exist in the Worker, but this high-level Web
-  /// query object does not yet translate arbitrary Dart-side predicates into
-  /// mutation plans.
+  /// Updates the first object matching this query using native property writes.
   Future<bool> updateFirst(Map<String, Object?> changes) async {
     return (await updateAll(changes)) > 0;
   }
 
-  /// Updates are not part of the initial Web facade.
-  Future<int> updateAll(Map<String, Object?> changes) {
-    throw UnsupportedError('Cindel Web query updates are not available yet.');
+  /// Updates every object matching this query using native property writes.
+  Future<int> updateAll(Map<String, Object?> changes) async {
+    if (changes.isEmpty) {
+      return 0;
+    }
+    final nativePlan = _nativePlan();
+    if (nativePlan == null) {
+      throw UnsupportedError(
+        'Cindel Web query updates require a SQLite-native query plan.',
+      );
+    }
+    final updates = <String, WireValue>{};
+    for (final entry in changes.entries) {
+      final field = _schemaField(_schema, entry.key);
+      if (field.isId) {
+        throw ArgumentError.value(entry.key, 'changes', 'Cannot update id.');
+      }
+      final value = entry.value;
+      if (!_isNativeFilterValue(value)) {
+        throw ArgumentError.value(
+          value,
+          entry.key,
+          'Native query updates support null, bool, int, double, String, List, and Map values.',
+        );
+      }
+      updates[field.name] = _nativeFilterValue(value);
+    }
+    return _database.updateNativePlan(_schema.name, nativePlan, updates);
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      final ids = await _database.queryNativePlanIds(_schema.name, nativePlan);
+      return _database.documentsByIds(_schema.name, ids);
+    }
     var documents = await _database.queryAll(_schema.name);
+    final sourceFilter = _sourceFilter;
+    if (sourceFilter != null) {
+      documents = documents.where(sourceFilter).toList(growable: false);
+    }
     final filter = _filter;
     if (filter != null) {
       documents = documents.where(filter.matches).toList(growable: false);
@@ -502,6 +555,81 @@ final class CindelQuery<T> {
     return documents;
   }
 
+  Future<void> _deleteIds(List<int> ids) {
+    if (_usesNativeDocuments()) {
+      return _database.deleteAllNativeDocuments(_schema.name, ids);
+    }
+    return _database.deleteAll(_schema.name, ids);
+  }
+
+  WireQueryPlan? _nativePlan({int? limitOverride}) {
+    final nativeFilter = _nativeFilter;
+    if (!_canUseNativePlanner || (_filter != null && nativeFilter == null)) {
+      return null;
+    }
+    final effectiveLimit = switch ((_limit, limitOverride)) {
+      (null, null) => null,
+      (final current?, null) => current,
+      (null, final override?) => override,
+      (final current?, final override?) =>
+        current < override ? current : override,
+    };
+    return WireQueryPlan(
+      source: const WireQuerySource.all(dedupe: false),
+      filter: nativeFilter,
+      sorts: [
+        for (final sortKey in _sortKeys)
+          WireQuerySort(
+            field: sortKey.field,
+            ascending: sortKey.order == CindelSortOrder.ascending,
+          ),
+      ],
+      distinctFields: _distinctFields,
+      offset: _offset,
+      limit: effectiveLimit,
+    );
+  }
+
+  bool get _canUseNativePlanner {
+    if (_sourceFilter != null ||
+        _distinctFields.isNotEmpty ||
+        _database.collectionHasGenericDocuments(_schema.name)) {
+      return false;
+    }
+    return _usesNativeDocuments() && _schema.readNativeDocument != null;
+  }
+
+  bool _usesNativeDocuments() {
+    return _database.usesSqliteNativeDocuments &&
+        _schema.writeNativeDocument != null &&
+        _nativeFieldTypes() != null;
+  }
+
+  Uint8List? _nativeFieldTypes() {
+    final fields = _schema.fields.toList(growable: false)
+      ..sort((left, right) => left.name.compareTo(right.name));
+    final nativeFields = fields
+        .where((field) => !field.isId)
+        .toList(growable: false);
+    final bytes = Uint8List(nativeFields.length);
+    for (var i = 0; i < nativeFields.length; i += 1) {
+      final value = switch (nativeFields[i].binaryType) {
+        'bool' => 0,
+        'int' => 1,
+        'double' => 2,
+        'string' => 3,
+        'list' => 4,
+        'object' => 5,
+        _ => null,
+      };
+      if (value == null) {
+        return null;
+      }
+      bytes[i] = value;
+    }
+    return bytes;
+  }
+
   int _idFromDocument(CindelDocument document) {
     final value = document[_schema.idField];
     if (value is int) {
@@ -522,6 +650,7 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: _database,
       schema: _schema,
+      sourceFilter: _sourceFilter,
       filter: filter ?? _filter,
       sortKeys: sortKeys ?? _sortKeys,
       distinctFields: distinctFields ?? _distinctFields,
@@ -529,6 +658,132 @@ final class CindelQuery<T> {
       limit: limit ?? _limit,
     );
   }
+}
+
+Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
+  if (predicate == null) {
+    return null;
+  }
+  final filter = _nativeFilterWire(predicate);
+  return filter == null ? null : encodeFilter(filter);
+}
+
+WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
+  if (predicate is _FieldFilterPredicate) {
+    if (predicate.path.length != 1 ||
+        !_isNativeFilterValue(predicate.expected)) {
+      return null;
+    }
+    final value = _nativeFilterValue(predicate.expected);
+    final operation = _nativeFilterOperation(predicate.operation, value);
+    if (operation == null) {
+      return null;
+    }
+    return WireFilter.field(
+      field: predicate.path.single,
+      operation: operation,
+      value: value,
+    );
+  }
+
+  if (predicate is _CompositeFilterPredicate) {
+    final predicates = <WireFilter>[];
+    for (final child in predicate.predicates) {
+      final encoded = _nativeFilterWire(child);
+      if (encoded == null) {
+        return null;
+      }
+      predicates.add(encoded);
+    }
+    return switch (predicate.mode) {
+      _CompositeFilterMode.all => WireFilter.all(predicates),
+      _CompositeFilterMode.any => WireFilter.any(predicates),
+    };
+  }
+
+  if (predicate is _NotFilterPredicate) {
+    final encoded = _nativeFilterWire(predicate.predicate);
+    return encoded == null ? null : WireFilter.not(encoded);
+  }
+
+  return null;
+}
+
+WireFilterOperation? _nativeFilterOperation(
+  _FilterOperation operation,
+  WireValue value,
+) {
+  if (operation == _FilterOperation.equalTo && value is WireNullValue) {
+    return WireFilterOperation.isNull;
+  }
+  return switch (operation) {
+    _FilterOperation.equalTo => WireFilterOperation.equal,
+    _FilterOperation.greaterThan => WireFilterOperation.greaterThan,
+    _FilterOperation.greaterThanOrEqualTo =>
+      WireFilterOperation.greaterThanOrEqual,
+    _FilterOperation.lessThan => WireFilterOperation.lessThan,
+    _FilterOperation.lessThanOrEqualTo => WireFilterOperation.lessThanOrEqual,
+    _FilterOperation.contains => WireFilterOperation.contains,
+    _FilterOperation.startsWith => WireFilterOperation.startsWith,
+    _FilterOperation.endsWith => WireFilterOperation.endsWith,
+    _FilterOperation.isEmpty ||
+    _FilterOperation.isNotEmpty ||
+    _FilterOperation.lengthEqualTo ||
+    _FilterOperation.lengthGreaterThan ||
+    _FilterOperation.lengthGreaterThanOrEqualTo ||
+    _FilterOperation.lengthLessThan ||
+    _FilterOperation.lengthLessThanOrEqualTo => null,
+  };
+}
+
+WireValue _nativeFilterValue(Object? value) {
+  return switch (value) {
+    null => const WireValue.nullValue(),
+    bool() => WireValue.bool(value),
+    int() => WireValue.int(value),
+    double() => WireValue.double(value),
+    String() => WireValue.string(value),
+    List() => WireValue.list([
+      for (final item in value) _nativeFilterValue(item),
+    ]),
+    Map() => WireValue.object(_nativeFilterObjectEntries(value)),
+    _ => throw ArgumentError.value(value, 'value', 'Unsupported filter value.'),
+  };
+}
+
+List<WireObjectEntry> _nativeFilterObjectEntries(Map<Object?, Object?> value) {
+  final entries = <WireObjectEntry>[
+    for (final MapEntry(:key, :value) in value.entries)
+      WireObjectEntry(key as String, _nativeFilterValue(value)),
+  ];
+  entries.sort((left, right) => left.name.compareTo(right.name));
+  return entries;
+}
+
+bool _isNativeFilterValue(Object? value) {
+  return switch (value) {
+    null || String() || bool() || int() => true,
+    double() => value.isFinite,
+    List() => value.every(_isNativeFilterValue),
+    Map() =>
+      value.keys.every((key) => key is String) &&
+          value.values.every(_isNativeFilterValue),
+    _ => false,
+  };
+}
+
+CindelFieldSchema _schemaField<T>(
+  CindelCollectionSchema<T> schema,
+  String field,
+) {
+  for (final schemaField in schema.fields) {
+    if (schemaField.name == field) {
+      return schemaField;
+    }
+  }
+  throw CindelSchemaError(
+    'Field `$field` is not part of `${schema.dartName}`.',
+  );
 }
 
 /// A projected query over a single field.
@@ -547,6 +802,19 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns every projected value.
   Future<List<R>> findAll() async {
+    final nativePlan = _query._nativePlan();
+    if (nativePlan != null) {
+      final values = await _query._database.queryNativePlanProjection(
+        _query._schema.name,
+        nativePlan,
+        _field,
+      );
+      final decode = _decode;
+      return [
+        for (final value in values)
+          if (decode == null) value as R else decode(value),
+      ];
+    }
     final decode = _decode;
     return [
       for (final document in await _query._matchingDocuments())
@@ -562,17 +830,51 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns the number of non-null projected values.
   Future<int> count() async {
+    final native = await _tryNativeAggregate('count');
+    if (native != null) {
+      final value = native.value;
+      if (value is int) {
+        return value;
+      }
+      if (value is num) {
+        return value.toInt();
+      }
+      throw CindelNativeError('Native Cindel returned a non-numeric count.');
+    }
     return (await findAll()).where((value) => value != null).length;
   }
 
   /// Returns the smallest projected value.
-  Future<R?> min() async => _minMax(await findAll(), true);
+  Future<R?> min() async {
+    final native = await _tryNativeAggregate('min');
+    if (native != null) {
+      return _decodeAggregateValue(native.value);
+    }
+    return _minMax(await findAll(), true);
+  }
 
   /// Returns the largest projected value.
-  Future<R?> max() async => _minMax(await findAll(), false);
+  Future<R?> max() async {
+    final native = await _tryNativeAggregate('max');
+    if (native != null) {
+      return _decodeAggregateValue(native.value);
+    }
+    return _minMax(await findAll(), false);
+  }
 
   /// Returns the sum of numeric projected values.
   Future<num?> sum() async {
+    final native = await _tryNativeAggregate('sum');
+    if (native != null) {
+      final value = native.value;
+      if (value == null) {
+        return null;
+      }
+      if (value is num) {
+        return value;
+      }
+      throw CindelNativeError('Native Cindel returned a non-numeric sum.');
+    }
     num total = 0;
     var count = 0;
     for (final value in await findAll()) {
@@ -586,6 +888,17 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns the average of numeric projected values.
   Future<double?> average() async {
+    final native = await _tryNativeAggregate('average');
+    if (native != null) {
+      final value = native.value;
+      if (value == null) {
+        return null;
+      }
+      if (value is num) {
+        return value.toDouble();
+      }
+      throw CindelNativeError('Native Cindel returned a non-numeric average.');
+    }
     final values = await findAll();
     num total = 0;
     var count = 0;
@@ -598,6 +911,28 @@ final class CindelPropertyQuery<T, R> {
       count += 1;
     }
     return count == 0 ? null : total / count;
+  }
+
+  Future<({Object? value})?> _tryNativeAggregate(String operation) async {
+    final nativePlan = _query._nativePlan();
+    if (nativePlan == null) {
+      return null;
+    }
+    final value = await _query._database.queryNativePlanAggregate(
+      _query._schema.name,
+      nativePlan,
+      _field,
+      operation,
+    );
+    return (value: value);
+  }
+
+  R? _decodeAggregateValue(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    final decode = _decode;
+    return decode == null ? value as R : decode(value);
   }
 
   R? _minMax(List<R> values, bool min) {

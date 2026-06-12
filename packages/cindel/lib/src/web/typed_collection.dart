@@ -125,7 +125,21 @@ final class CindelTypedCollection<T> {
     required List<Object?> values,
     required bool isComposite,
   }) async {
-    await put(object);
+    Future<void> writeObject() async {
+      await _reuseUniqueIndexId(
+        object,
+        indexName: indexName,
+        values: values,
+        isComposite: isComposite,
+      );
+      await put(object);
+    }
+
+    if (database.isInWriteTransaction) {
+      await writeObject();
+    } else {
+      await database.writeTxn(writeObject);
+    }
   }
 
   /// Stores every object by a unique replace index.
@@ -136,8 +150,30 @@ final class CindelTypedCollection<T> {
     required String indexName,
     required List<Object?> Function(T object) values,
     required bool isComposite,
-  }) {
-    return putAll(objects);
+  }) async {
+    final objectList = objects is List<T>
+        ? objects
+        : objects.toList(growable: false);
+    if (objectList.isEmpty) {
+      return;
+    }
+    Future<void> writeObjects() async {
+      for (final object in objectList) {
+        await _reuseUniqueIndexId(
+          object,
+          indexName: indexName,
+          values: values(object),
+          isComposite: isComposite,
+        );
+      }
+      await putAll(objectList);
+    }
+
+    if (database.isInWriteTransaction) {
+      await writeObjects();
+    } else {
+      await database.writeTxn(writeObjects);
+    }
   }
 
   /// Returns the typed object stored under [id], or `null`.
@@ -243,6 +279,64 @@ final class CindelTypedCollection<T> {
     return schema.writeNativeDocument != null && _nativeFieldTypes() != null;
   }
 
+  Future<void> _reuseUniqueIndexId(
+    T object, {
+    required String indexName,
+    required List<Object?> values,
+    required bool isComposite,
+  }) async {
+    if (values.any((value) => value == null)) {
+      return;
+    }
+    final existingIds = isComposite
+        ? await database.queryCompositeEqualIds(
+            schema.name,
+            indexName,
+            values.cast<Object>(),
+          )
+        : await _queryUniqueFieldIds(indexName, values.single as Object);
+    if (existingIds.isEmpty) {
+      return;
+    }
+    final existingId = existingIds.first;
+    if (existingIds.any((id) => id != existingId)) {
+      throw StateError(
+        'Unique index `$indexName` returned more than one existing id.',
+      );
+    }
+    final currentId = _idFromObject(object);
+    if (currentId != existingId) {
+      final setId = schema.setId;
+      if (setId == null) {
+        throw StateError(
+          'Generated schema `${schema.dartName}` cannot assign unique index ids.',
+        );
+      }
+      setId(object, existingId);
+    }
+  }
+
+  Future<List<int>> _queryUniqueFieldIds(String fieldName, Object value) async {
+    final field = schema.fields.firstWhere(
+      (field) => field.name == fieldName,
+      orElse: () => throw StateError(
+        'Unique index `$fieldName` is not declared in `${schema.name}`.',
+      ),
+    );
+    if (field.indexType == CindelIndexType.hash) {
+      final documents = await database.queryEqual(
+        schema.name,
+        fieldName,
+        value,
+      );
+      return [
+        for (final document in documents)
+          if (document[schema.idField] is int) document[schema.idField] as int,
+      ];
+    }
+    return database.queryEqualIds(schema.name, fieldName, value);
+  }
+
   T _objectFromDocument(CindelDocument document, int id) {
     final value = document[schema.idField];
     if (value is int) {
@@ -263,5 +357,13 @@ final class CindelTypedCollection<T> {
       'Generated schema `${schema.dartName}` returned a non-int id field '
       '`${schema.idField}`.',
     );
+  }
+
+  int _idFromObject(T object) {
+    final getId = schema.getId;
+    if (getId != null) {
+      return getId(object);
+    }
+    return _idFromDocument(schema.toDocument(object));
   }
 }
