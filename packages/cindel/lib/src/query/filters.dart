@@ -358,8 +358,8 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
 }
 
 // Deep equality for document values. This is intentionally structural for maps
-// and iterables because manual documents and embedded objects may contain nested
-// value trees.
+// and iterables because generated documents and embedded objects may contain
+// nested value trees.
 bool _deepEquals(Object? left, Object? right) {
   if (identical(left, right) || left == right) {
     return true;

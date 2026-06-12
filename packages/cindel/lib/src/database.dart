@@ -5,17 +5,15 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'cindel_error.dart';
-import 'generic_document.dart';
 import 'native/bindings.dart';
 import 'native/wire.dart';
 import 'schema.dart';
-import 'text.dart';
 
 part 'database/native_query_plan.dart';
 part 'database/document_codecs.dart';
 part 'database/change_set.dart';
 
-/// Internal JSON-like document representation used by Cindel runtime bridges.
+/// Internal map-shaped document representation used by Cindel runtime bridges.
 ///
 /// Values must be compatible with Cindel's persisted document format: `null`,
 /// `bool`, finite numbers, `String`, lists, and string-keyed maps.
@@ -80,23 +78,12 @@ class CindelDatabase {
   final bool _schemasWereRegisteredOnOpen;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
-  final Set<String> _genericDocumentCollections = {};
   Pointer<Void>? _handle;
   _TransactionMode? _activeTransaction;
 
   /// Whether SQLite can use generated native document readers for this handle.
   bool get usesSqliteNativeDocuments =>
       backend == CindelStorageBackend.sqlite && _schemasWereRegisteredOnOpen;
-
-  /// Returns whether this handle should read [collection] as generic documents.
-  bool collectionHasGenericDocuments(String collection) {
-    return _genericDocumentCollections.contains(collection);
-  }
-
-  /// Marks [collection] for generic document hydration in this handle.
-  void markCollectionHasGenericDocuments(String collection) {
-    _genericDocumentCollections.add(collection);
-  }
 
   // Opening and lifecycle.
 
@@ -251,90 +238,6 @@ class CindelDatabase {
   /// Whether this handle is currently inside a write transaction.
   bool get isInWriteTransaction => _activeTransaction == _TransactionMode.write;
 
-  // Manual document writes.
-
-  /// Stores [value] in [collection] under [id].
-  ///
-  /// Throws an [ArgumentError] when [collection], [id], or [value] is invalid.
-  /// Throws a [CindelDatabaseClosedError] when this database is already closed
-  /// or a [CindelNativeError] when the native write fails.
-  Future<void> put(String collection, int id, CindelDocument value) async {
-    final handle = _checkOpen();
-    _checkCanWrite();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkId(id);
-    _checkDocument(value);
-
-    final bytes = _encodeDocument(value);
-    final indexEntries = _indexEntriesFor(collection, value);
-    if (indexEntries == null) {
-      _bindings.put(handle, collection, id, bytes);
-      markCollectionHasGenericDocuments(collection);
-      _markNativeCollectionChanged(
-        collection,
-        () => CindelChangeSet.upsert(collection, id, value),
-      );
-      return;
-    }
-    await _checkUniqueIndexes(collection, {id: value}, indexEntries);
-
-    _bindings.putIndexed(
-      handle,
-      collection,
-      id,
-      bytes,
-      _encodeIndexEntries(indexEntries),
-    );
-    markCollectionHasGenericDocuments(collection);
-    _markNativeCollectionChanged(
-      collection,
-      () => CindelChangeSet.upsert(collection, id, value),
-    );
-  }
-
-  /// Stores every document in [values] atomically.
-  ///
-  /// All documents are committed in one native transaction. If validation or the
-  /// native write fails, none of the documents are persisted.
-  Future<void> putAll(
-    String collection,
-    Map<int, CindelDocument> values,
-  ) async {
-    final handle = _checkOpen();
-    _checkCanWrite();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    if (values.isEmpty) {
-      return;
-    }
-
-    final documents = <_BatchPutEntry>[];
-    for (final entry in values.entries) {
-      _checkId(entry.key);
-      _checkDocument(entry.value);
-      documents.add(
-        _BatchPutEntry(
-          id: entry.key,
-          document: entry.value,
-          indexes: _indexEntriesFor(collection, entry.value) ?? const [],
-        ),
-      );
-    }
-    await _checkUniqueBatchIndexes(collection, values, documents);
-
-    _bindings.putManyIndexed(
-      handle,
-      collection,
-      _encodeBatchPutEntries(documents),
-    );
-    markCollectionHasGenericDocuments(collection);
-    _markNativeCollectionChanged(
-      collection,
-      () => CindelChangeSet.upserts(collection, values),
-    );
-  }
-
   // Generated binary and native typed writes.
 
   /// Stores one generated binary document.
@@ -478,13 +381,6 @@ class CindelDatabase {
     );
   }
 
-  /// Stores many documents atomically.
-  ///
-  /// Alias for [putAll], provided for APIs that prefer `many` naming.
-  Future<void> putMany(String collection, Map<int, CindelDocument> values) {
-    return putAll(collection, values);
-  }
-
   /// Allocates the next native auto-increment id for [collection].
   ///
   /// The returned id is persisted by the native engine before this method
@@ -494,22 +390,6 @@ class CindelDatabase {
     _checkCanWrite();
     _checkCollection(collection);
     return _bindings.allocateId(handle, collection);
-  }
-
-  // Reads.
-
-  /// Returns the document stored in [collection] under [id], or `null`.
-  ///
-  /// Throws an [ArgumentError] when [collection] or [id] is invalid. Throws a
-  /// [CindelDatabaseClosedError] when this database is already closed or a
-  /// [CindelNativeError] when the native read returns invalid data.
-  Future<CindelDocument?> get(String collection, int id) async {
-    final handle = _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkId(id);
-
-    return _documentsByIdsNullable(handle, collection, [id]).single;
   }
 
   /// Returns raw generated binary document bytes, or `null`.
@@ -522,24 +402,6 @@ class CindelDatabase {
     _checkId(id);
 
     return _bindings.getStored(handle, collection, id);
-  }
-
-  /// Returns the documents stored under [ids], preserving input order.
-  ///
-  /// Missing documents are returned as `null`.
-  Future<List<CindelDocument?>> getAll(
-    String collection,
-    Iterable<int> ids,
-  ) async {
-    final handle = _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    final idList = ids.toList(growable: false);
-    for (final id in idList) {
-      _checkId(id);
-    }
-
-    return _documentsByIdsNullable(handle, collection, idList);
   }
 
   /// Returns raw generated binary document bytes, preserving input order.
@@ -620,31 +482,6 @@ class CindelDatabase {
     );
   }
 
-  /// Returns every document in [collection], ordered by id.
-  Future<List<CindelDocument>> queryAll(String collection) async {
-    final handle = _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-
-    final ids = _bindings.documentIds(handle, collection);
-    return _documentsByIds(collection, ids);
-  }
-
-  /// Returns documents stored under [ids], preserving input order.
-  Future<List<CindelDocument>> documentsByIds(
-    String collection,
-    Iterable<int> ids,
-  ) async {
-    _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    final idList = ids.toList(growable: false);
-    for (final id in idList) {
-      _checkId(id);
-    }
-    return _documentsByIds(collection, idList);
-  }
-
   /// Returns every id in [collection], ordered ascending.
   Future<List<int>> documentIds(String collection) async {
     final handle = _checkOpen();
@@ -721,136 +558,10 @@ class CindelDatabase {
     );
   }
 
-  // Watchers.
-
-  /// Watches the current value of a document and emits after committed changes.
-  ///
-  /// The stream emits the current snapshot first, then emits again whenever the
-  /// native collection revision changes. Local writes notify watchers as soon as
-  /// the native call returns, and [pollInterval] catches changes made by other
-  /// database handles.
-  Stream<CindelDocument?> watchDocument(
-    String collection,
-    int id, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = true,
-  }) {
-    _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkId(id);
-    _checkPollInterval(pollInterval);
-
-    return _watch(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-      shouldReadChange: (change) => change.mayAffectDocument(id),
-      readSnapshot: (_) => get(collection, id),
-      areSnapshotsEqual: _jsonLikeEquals,
-    );
-  }
-
-  /// Watches a document and emits without loading it for consumers.
-  ///
-  /// The stream emits after the visible document value changes. Set
-  /// [fireImmediately] to `true` to emit once when the listener starts.
-  Stream<void> watchDocumentLazy(
-    String collection,
-    int id, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = false,
-  }) {
-    return watchDocument(
-      collection,
-      id,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    ).map((_) {});
-  }
-
-  /// Watches all documents in [collection] and emits after committed changes.
-  ///
-  /// Documents are emitted in id order. The stream emits a snapshot immediately
-  /// and then reacts to native collection revision changes.
-  Stream<List<CindelDocument>> watchCollection(
-    String collection, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = true,
-  }) {
-    _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkPollInterval(pollInterval);
-
-    return _watch(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-      shouldReadChange: (_) => true,
-      readSnapshot: (_) async {
-        final handle = _checkOpen();
-        final ids = _bindings.documentIds(handle, collection);
-        return _documentsByIds(collection, ids);
-      },
-      areSnapshotsEqual: _jsonLikeEquals,
-    );
-  }
-
-  /// Watches a collection and emits without returning collection snapshots.
-  ///
-  /// The stream emits after the visible collection snapshot changes. Set
-  /// [fireImmediately] to `true` to emit once when the listener starts.
-  Stream<void> watchCollectionLazy(
-    String collection, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = false,
-  }) {
-    _checkManualDocumentsSupported();
-    return watchCollectionChanges(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    ).map((_) {});
-  }
-
-  /// Returns documents whose indexed [field] equals [value].
-  ///
-  /// Throws an [ArgumentError] when the input is invalid. Throws a
-  /// [CindelSchemaError] when [collection] has no registered schema or a
-  /// [CindelQueryError] when [field] is not indexed.
-  Future<List<CindelDocument>> queryEqual(
-    String collection,
-    String field,
-    Object value,
-  ) async {
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkIndexName(field);
-    final schemaField = _checkIndexedField(collection, field);
-    final ids = _mergeQueryIds(
-      _queryEqualRawIds(collection, field, value, schemaField),
-      _querySqliteNativeIndexEqualRawIds(collection, field, value, schemaField),
-    );
-    final documents = await _documentsByIds(
-      collection,
-      schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
-    );
-    if (schemaField.indexType == CindelIndexType.hash) {
-      return documents
-          .where(
-            (document) =>
-                _indexedValuesEqual(document[field], value, schemaField),
-          )
-          .toList(growable: false);
-    }
-    return documents;
-  }
-
   /// Returns ids whose indexed [field] equals [value].
   ///
-  /// Hash indexes intentionally use [queryEqual] instead, because hash
-  /// collisions need document verification before the result is observable.
+  /// Hash indexes are not exposed through id-only queries because collisions
+  /// need typed document verification before the result is observable.
   Future<List<int>> queryEqualIds(
     String collection,
     String field,
@@ -864,67 +575,17 @@ class CindelDatabase {
         'Hash index `${schemaField.name}` requires document verification.',
       );
     }
-    final ids = _mergeQueryIds(
-      _queryEqualRawIds(collection, field, value, schemaField),
-      _querySqliteNativeIndexEqualRawIds(collection, field, value, schemaField),
-    );
+    final ids =
+        _querySqliteNativeIndexEqualRawIds(
+          collection,
+          field,
+          value,
+          schemaField,
+        ) ??
+        _queryEqualRawIds(collection, field, value, schemaField);
     return schemaField.indexType == CindelIndexType.words
         ? _dedupeIds(ids)
         : ids;
-  }
-
-  /// Returns documents whose indexed [field] is inside the inclusive range.
-  ///
-  /// At least one of [lower] or [upper] must be provided. Range queries support
-  /// `int`, `double`, and `String` index values.
-  Future<List<CindelDocument>> queryRange(
-    String collection,
-    String field, {
-    Object? lower,
-    Object? upper,
-  }) async {
-    final handle = _checkOpen();
-    _checkManualDocumentsSupported();
-    _checkCollection(collection);
-    _checkIndexName(field);
-    final schemaField = _checkIndexedField(collection, field);
-    if (schemaField.indexType == CindelIndexType.hash) {
-      throw CindelQueryError(
-        'Hash index `${schemaField.name}` only supports equality queries.',
-      );
-    }
-    if (lower == null && upper == null) {
-      throw ArgumentError.value(null, 'lower/upper', 'Must provide a bound.');
-    }
-
-    final encodedLower = lower == null
-        ? null
-        : _encodeRangeIndexValue(lower, schemaField, 'lower');
-    final encodedUpper = upper == null
-        ? null
-        : _encodeRangeIndexValue(upper, schemaField, 'upper');
-    _checkMatchingRangeBounds(encodedLower, encodedUpper);
-
-    final ids = _mergeQueryIds(
-      _queryRangeRawIds(
-        handle,
-        collection,
-        field,
-        encodedLower?.bytes,
-        encodedUpper?.bytes,
-      ),
-      _querySqliteNativeIndexRangeRawIds(
-        collection,
-        field,
-        lower,
-        upper,
-        schemaField,
-      ),
-    );
-    return _documentsByIds(
-      collection,
-      schemaField.indexType == CindelIndexType.words ? _dedupeIds(ids) : ids,
-    );
   }
 
   /// Returns ids whose indexed [field] is inside the inclusive range.
@@ -955,22 +616,21 @@ class CindelDatabase {
         : _encodeRangeIndexValue(upper, schemaField, 'upper');
     _checkMatchingRangeBounds(encodedLower, encodedUpper);
 
-    final ids = _mergeQueryIds(
-      _queryRangeRawIds(
-        handle,
-        collection,
-        field,
-        encodedLower?.bytes,
-        encodedUpper?.bytes,
-      ),
-      _querySqliteNativeIndexRangeRawIds(
-        collection,
-        field,
-        lower,
-        upper,
-        schemaField,
-      ),
-    );
+    final ids =
+        _querySqliteNativeIndexRangeRawIds(
+          collection,
+          field,
+          lower,
+          upper,
+          schemaField,
+        ) ??
+        _queryRangeRawIds(
+          handle,
+          collection,
+          field,
+          encodedLower?.bytes,
+          encodedUpper?.bytes,
+        );
     return schemaField.indexType == CindelIndexType.words
         ? _dedupeIds(ids)
         : ids;
@@ -1094,40 +754,6 @@ class CindelDatabase {
       collection,
       _encodeNativeQueryPlan(collection, plan),
     );
-  }
-
-  /// Returns documents matched by [plan].
-  ///
-  /// This materializes matching ids first, then decodes the generated binary
-  /// documents for those ids.
-  Future<List<CindelDocument>> queryNativePlanDocuments(
-    String collection,
-    CindelNativeQueryPlan plan,
-  ) async {
-    final handle = _checkOpen();
-    _checkNativeQueryBackend();
-    _checkCollection(collection);
-    final ids = _bindings.queryPlanIds(
-      handle,
-      collection,
-      _encodeNativeQueryPlan(collection, plan),
-    );
-    if (ids.isEmpty) {
-      return const <CindelDocument>[];
-    }
-    final documents = _decodeBinaryDocumentBatch(
-      _bindings.getManyStored(handle, collection, _encodeIds(ids)),
-    );
-    return [
-      for (var i = 0; i < documents.length; i += 1)
-        if (documents[i] != null)
-          _decodeDocument(
-            collection,
-            documents[i]!,
-            _schemas[collection],
-            id: ids[i],
-          ),
-    ];
   }
 
   /// Returns the number of documents matched by [plan].
@@ -1350,177 +976,6 @@ class CindelDatabase {
     }
   }
 
-  // Index maintenance.
-
-  List<_IndexEntry>? _indexEntriesFor(String collection, CindelDocument value) {
-    final schema = _schemas[collection];
-    if (schema == null) {
-      return null;
-    }
-
-    final entries = <_IndexEntry>[];
-    for (final field in schema.fields) {
-      if (!field.isIndexed || !value.containsKey(field.name)) {
-        continue;
-      }
-      final fieldValue = value[field.name];
-      if (fieldValue == null) {
-        continue;
-      }
-      if (field.indexType == CindelIndexType.words) {
-        if (fieldValue is! String) {
-          throw ArgumentError.value(
-            fieldValue,
-            'value.${field.name}',
-            'Word indexes require String values.',
-          );
-        }
-        for (final token in cindelSplitWords(
-          fieldValue,
-          caseSensitive: field.indexCaseSensitive,
-        )) {
-          entries.add(
-            _IndexEntry(name: field.name, value: _indexValueWire(token, field)),
-          );
-        }
-        continue;
-      }
-      if (field.indexType == CindelIndexType.multiEntry) {
-        if (fieldValue is! Iterable) {
-          throw ArgumentError.value(
-            fieldValue,
-            'value.${field.name}',
-            'Multi-entry indexes require List values.',
-          );
-        }
-        for (final item in fieldValue) {
-          if (item == null) {
-            continue;
-          }
-          entries.add(
-            _IndexEntry(name: field.name, value: _indexValueWire(item, field)),
-          );
-        }
-        continue;
-      }
-      entries.add(
-        _IndexEntry(
-          name: field.name,
-          value: _indexValueWire(fieldValue, field),
-        ),
-      );
-    }
-    for (final index in schema.compositeIndexes) {
-      final values = <WireIndexValue>[];
-      var hasAllValues = true;
-      for (final fieldName in index.fields) {
-        if (!value.containsKey(fieldName) || value[fieldName] == null) {
-          hasAllValues = false;
-          break;
-        }
-        final field = _fieldSchema(collection, fieldName)!;
-        values.add(
-          _indexValueWire(
-            value[fieldName]!,
-            CindelFieldSchema(
-              name: field.name,
-              dartType: field.dartType,
-              binaryType: field.binaryType,
-              isId: field.isId,
-              isIndexed: field.isIndexed,
-              isIndexUnique: field.isIndexUnique,
-              isIndexReplace: field.isIndexReplace,
-              indexCaseSensitive: index.caseSensitive,
-              indexType: field.indexType,
-            ),
-          ),
-        );
-      }
-      if (hasAllValues) {
-        entries.add(
-          _IndexEntry(name: index.name, value: WireIndexValue.list(values)),
-        );
-      }
-    }
-    return entries;
-  }
-
-  Future<void> _checkUniqueBatchIndexes(
-    String collection,
-    Map<int, CindelDocument> values,
-    List<_BatchPutEntry> documents,
-  ) async {
-    final uniqueEntries = <_UniqueIndexEntry>[];
-    for (final document in documents) {
-      for (final index in document.indexes) {
-        final schemaField = _fieldSchema(collection, index.name);
-        if ((schemaField?.isIndexUnique ?? false) &&
-            !(schemaField?.isIndexReplace ?? false)) {
-          uniqueEntries.add(
-            _UniqueIndexEntry(
-              id: document.id,
-              field: schemaField!,
-              originalValue: values[document.id]![schemaField.name],
-              encodedValue: index.value,
-            ),
-          );
-        }
-      }
-    }
-    if (uniqueEntries.isEmpty) {
-      return;
-    }
-
-    final seen = <String, int>{};
-    for (final entry in uniqueEntries) {
-      final key = _uniqueValueKey(entry.field, entry.originalValue);
-      final existingId = seen[key];
-      if (existingId != null && existingId != entry.id) {
-        throw CindelUniqueIndexError(entry.field.name);
-      }
-      seen[key] = entry.id;
-    }
-
-    for (final entry in uniqueEntries) {
-      await _checkUniqueIndexes(
-        collection,
-        {entry.id: values[entry.id]!},
-        [_IndexEntry(name: entry.field.name, value: entry.encodedValue)],
-      );
-    }
-  }
-
-  Future<void> _checkUniqueIndexes(
-    String collection,
-    Map<int, CindelDocument> documents,
-    List<_IndexEntry> indexEntries,
-  ) async {
-    for (final documentEntry in documents.entries) {
-      for (final index in indexEntries) {
-        final schemaField = _fieldSchema(collection, index.name);
-        if (!(schemaField?.isIndexUnique ?? false) ||
-            (schemaField?.isIndexReplace ?? false)) {
-          continue;
-        }
-        final fieldValue = documentEntry.value[schemaField!.name];
-        if (fieldValue == null) {
-          continue;
-        }
-        final candidates = await queryEqual(
-          collection,
-          schemaField.name,
-          fieldValue,
-        );
-        for (final candidate in candidates) {
-          final candidateId = candidate[_schemas[collection]!.idField];
-          if (candidateId != documentEntry.key) {
-            throw CindelUniqueIndexError(schemaField.name);
-          }
-        }
-      }
-    }
-  }
-
   // Schema and query-plan helpers.
 
   CindelFieldSchema _checkIndexedField(String collection, String field) {
@@ -1548,16 +1003,6 @@ class CindelDatabase {
     }
   }
 
-  void _checkManualDocumentsSupported() {
-    if (backend == CindelStorageBackend.mdbx ||
-        backend == CindelStorageBackend.sqlite) {
-      throw UnsupportedError(
-        'Manual document APIs are disabled for native Cindel backends. Use '
-        'generated typed collections.',
-      );
-    }
-  }
-
   void _checkNativeQueryBackend() {
     if (backend == CindelStorageBackend.mdbx || usesSqliteNativeDocuments) {
       return;
@@ -1578,19 +1023,6 @@ class CindelDatabase {
       }
     }
     return null;
-  }
-
-  /// Returns documents whose composite [indexName] equals [values].
-  ///
-  /// Composite values are matched in the order declared by the generated schema.
-  Future<List<CindelDocument>> queryCompositeEqual(
-    String collection,
-    String indexName,
-    List<Object> values,
-  ) async {
-    _checkManualDocumentsSupported();
-    final ids = queryCompositeEqualIds(collection, indexName, values);
-    return _documentsByIds(collection, ids);
   }
 
   /// Returns ids whose composite [indexName] equals [values].
@@ -1833,13 +1265,6 @@ class CindelDatabase {
     return schema;
   }
 
-  CindelReadNativeDocument<dynamic> _nativeDocumentReader(
-    CindelCollectionSchema<dynamic> schema,
-  ) {
-    final dynamic dynamicSchema = schema;
-    return (reader, index) => dynamicSchema.readNativeDocument(reader, index);
-  }
-
   // Generic and SQLite-native read fallbacks.
 
   List<int>? _querySqliteNativeIndexEqualRawIds(
@@ -1927,110 +1352,6 @@ class CindelDatabase {
     Uint8List? upper,
   ) {
     return _bindings.queryIndexRange(handle, collection, field, lower, upper);
-  }
-
-  List<int> _mergeQueryIds(List<int> genericIds, List<int>? nativeIds) {
-    if (nativeIds == null || nativeIds.isEmpty) {
-      return genericIds;
-    }
-    if (genericIds.isEmpty) {
-      return nativeIds;
-    }
-    final seen = <int>{};
-    return [
-      for (final id in genericIds)
-        if (seen.add(id)) id,
-      for (final id in nativeIds)
-        if (seen.add(id)) id,
-    ];
-  }
-
-  Future<List<CindelDocument>> _documentsByIds(
-    String collection,
-    List<int> ids,
-  ) async {
-    final documents = _documentsByIdsNullable(_checkOpen(), collection, ids);
-    return [
-      for (final document in documents)
-        if (document != null) document,
-    ];
-  }
-
-  List<CindelDocument?> _documentsByIdsNullable(
-    Pointer<Void> handle,
-    String collection,
-    List<int> ids,
-  ) {
-    if (ids.isEmpty) {
-      return const <CindelDocument?>[];
-    }
-
-    final documents = _decodeBinaryDocumentBatch(
-      _bindings.getMany(handle, collection, _encodeIds(ids)),
-    );
-    final decoded = [
-      for (var i = 0; i < documents.length; i += 1)
-        if (documents[i] == null)
-          null
-        else
-          _decodeDocument(
-            collection,
-            documents[i]!,
-            _schemas[collection],
-            id: ids[i],
-          ),
-    ];
-    if (_sqliteNativeSchema(collection) == null ||
-        decoded.every((document) => document != null)) {
-      return decoded;
-    }
-
-    final missingIndexes = <int>[];
-    final missingIds = <int>[];
-    for (var i = 0; i < decoded.length; i += 1) {
-      if (decoded[i] == null) {
-        missingIndexes.add(i);
-        missingIds.add(ids[i]);
-      }
-    }
-    final nativeDocuments = _sqliteNativeDocumentsByIdsNullable(
-      handle,
-      collection,
-      missingIds,
-    );
-    for (var i = 0; i < missingIndexes.length; i += 1) {
-      decoded[missingIndexes[i]] = nativeDocuments[i];
-    }
-    return decoded;
-  }
-
-  List<CindelDocument?> _sqliteNativeDocumentsByIdsNullable(
-    Pointer<Void> handle,
-    String collection,
-    List<int> ids,
-  ) {
-    final schema = _sqliteNativeSchema(collection);
-    if (schema == null || ids.isEmpty) {
-      return List<CindelDocument?>.filled(ids.length, null);
-    }
-    final dynamic dynamicSchema = schema;
-    final objects = _bindings.getManyNativeDocuments<dynamic>(
-      handle,
-      collection,
-      _encodeIds(ids),
-      _nativeFieldTypes(schema)!,
-      _nativeDocumentReader(schema),
-    );
-    return [
-      for (var i = 0; i < objects.length; i += 1)
-        if (objects[i] == null)
-          null
-        else
-          <String, Object?>{
-            ...dynamicSchema.toDocument(objects[i]),
-            schema.idField: ids[i],
-          },
-    ];
   }
 
   // Watcher plumbing.
@@ -2222,13 +1543,4 @@ class CindelDatabase {
     _watchersByCollection.clear();
     await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
   }
-}
-
-String _uniqueValueKey(CindelFieldSchema field, Object? value) {
-  if (_nonNullableDartType(field.dartType) == 'String' &&
-      !field.indexCaseSensitive &&
-      value is String) {
-    return '${field.name}:String:${value.toLowerCase()}';
-  }
-  return '${field.name}:${value.runtimeType}:$value';
 }

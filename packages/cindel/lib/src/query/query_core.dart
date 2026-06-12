@@ -5,7 +5,7 @@ part of '../query.dart';
 // A `CindelQuery` carries the immutable query shape produced by generated
 // `where()` helpers: source, filter, sort, distinct, offset, and limit. Execution
 // chooses the fastest safe path available: native query plan, native filter,
-// SQLite native-document fallback, or Dart-side document filtering.
+// SQLite generated-document execution, or Dart-side typed filtering.
 
 typedef _CindelDocumentReader = Future<List<CindelDocument>> Function();
 typedef _CindelDocumentFilter = bool Function(CindelDocument document);
@@ -65,7 +65,7 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: database,
       schema: schema,
-      readDocuments: () => database.queryAll(schema.name),
+      readDocuments: () => _unavailableGeneratedDocumentReader(schema),
       readIds: () => database.documentIds(schema.name),
       nativeSource: const CindelNativeAllQuerySource(),
     );
@@ -79,13 +79,20 @@ final class CindelQuery<T> {
     required Object value,
   }) {
     final schemaField = _schemaField(schema, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      return CindelQuery._(
+        database: database,
+        schema: schema,
+        readDocuments: () => _unavailableGeneratedDocumentReader(schema),
+        nativeSource: const CindelNativeAllQuerySource(),
+        filter: CindelFilter.field(field).equalTo(value),
+      );
+    }
     return CindelQuery._(
       database: database,
       schema: schema,
-      readDocuments: () => database.queryEqual(schema.name, field, value),
-      readIds: schemaField.indexType == CindelIndexType.hash
-          ? null
-          : () => database.queryEqualIds(schema.name, field, value),
+      readDocuments: () => _unavailableGeneratedDocumentReader(schema),
+      readIds: () => database.queryEqualIds(schema.name, field, value),
       nativeSource: CindelNativeIndexEqualQuerySource(
         indexName: field,
         value: value,
@@ -104,8 +111,7 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: database,
       schema: schema,
-      readDocuments: () =>
-          database.queryCompositeEqual(schema.name, index, values),
+      readDocuments: () => _unavailableGeneratedDocumentReader(schema),
       readIds: () async =>
           database.queryCompositeEqualIds(schema.name, index, values),
       nativeSource: CindelNativeCompositeEqualQuerySource(
@@ -126,8 +132,7 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: database,
       schema: schema,
-      readDocuments: () =>
-          database.queryRange(schema.name, field, lower: lower, upper: upper),
+      readDocuments: () => _unavailableGeneratedDocumentReader(schema),
       readIds: () => database.queryRangeIds(
         schema.name,
         field,
@@ -173,17 +178,7 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: database,
       schema: schema,
-      readDocuments: () async {
-        final documents = await database.queryRange(
-          schema.name,
-          field,
-          lower: indexedPrefix,
-          upper: indexedPrefix.isEmpty
-              ? null
-              : _inclusivePrefixUpperBound(indexedPrefix),
-        );
-        return documents.where(sourceFilter).toList(growable: false);
-      },
+      readDocuments: () => _unavailableGeneratedDocumentReader(schema),
       sourceFilter: sourceFilter,
       readIds: () => database.queryRangeIds(
         schema.name,
@@ -570,7 +565,7 @@ final class CindelQuery<T> {
     }
     final nativePlan = _nativePlan();
     if (nativePlan != null) {
-      return _database.queryNativePlanDocuments(_schema.name, nativePlan);
+      _throwMissingGeneratedNativeReader(_schema);
     }
     if (_database.backend == CindelStorageBackend.mdbx) {
       _throwMdbxNativePlanRequired('find documents');
@@ -593,7 +588,7 @@ final class CindelQuery<T> {
   }
 
   // Returns matching ids without hydrating documents when the query shape
-  // allows it. Falls back to document matching for sorted, distinct, or windowed
+  // allows it. Uses typed document matching for sorted, distinct, or windowed
   // queries that require full result processing.
   Future<List<int>> _matchingIds() async {
     if (_sortKeys.isEmpty &&
@@ -713,8 +708,7 @@ final class CindelQuery<T> {
   }
 
   // Evaluates SQLite generated native documents in Dart when native SQL cannot
-  // represent the full query. It still reads through generated native readers;
-  // it does not fall back to manual document storage.
+  // represent the full query. It still reads through generated native readers.
   Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan() {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
@@ -1087,10 +1081,7 @@ final class CindelQuery<T> {
         candidateIds,
         nativeFilter,
       );
-      final documents = await _database.documentsByIds(
-        _schema.name,
-        matchingIds,
-      );
+      final documents = await _typedDocumentsByIds(matchingIds);
       final sourceFilter = _sourceFilter;
       if (sourceFilter == null) {
         return documents;
@@ -1104,6 +1095,24 @@ final class CindelQuery<T> {
       return documents;
     }
     return documents.where(filter.matches).toList();
+  }
+
+  Future<List<CindelDocument>> _typedDocumentsByIds(Iterable<int> ids) async {
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (readNativeDocument == null || fieldTypes == null) {
+      _throwMissingGeneratedNativeReader(_schema);
+    }
+    final objects = await _database.getAllNativeBinaryDocuments(
+      _schema.name,
+      ids,
+      fieldTypes,
+      readNativeDocument,
+    );
+    return [
+      for (final object in objects)
+        if (object != null) _documentFromObject(object),
+    ];
   }
 
   bool get _canUseNativeFilter {
@@ -1132,7 +1141,7 @@ final class CindelQuery<T> {
   Never _throwMdbxNativePlanRequired(String operation) {
     throw UnsupportedError(
       'MDBX `$operation` requires a generated typed native query plan. '
-      'Dart document fallback is disabled.',
+      'Untyped Dart materialization is disabled.',
     );
   }
 
@@ -1360,11 +1369,8 @@ final class CindelQuery<T> {
     return CindelQuery._(
       database: _database,
       schema: _schema,
-      readDocuments: () =>
-          _database.queryEqual(_schema.name, field.name, value),
-      readIds: field.indexType == CindelIndexType.hash
-          ? null
-          : () => _database.queryEqualIds(_schema.name, field.name, value),
+      readDocuments: () => _unavailableGeneratedDocumentReader(_schema),
+      readIds: () => _database.queryEqualIds(_schema.name, field.name, value),
       nativeSource: CindelNativeIndexEqualQuerySource(
         indexName: field.name,
         value: value,
@@ -1383,7 +1389,8 @@ final class CindelQuery<T> {
         continue;
       }
       if (field.indexType == CindelIndexType.multiEntry ||
-          field.indexType == CindelIndexType.words) {
+          field.indexType == CindelIndexType.words ||
+          field.indexType == CindelIndexType.hash) {
         return null;
       }
       if (!field.indexCaseSensitive &&
@@ -1450,4 +1457,22 @@ final class CindelQuery<T> {
       limit: limit ?? _limit,
     );
   }
+}
+
+Future<List<CindelDocument>> _unavailableGeneratedDocumentReader(
+  CindelCollectionSchema<dynamic> schema,
+) {
+  throw UnsupportedError(
+    'Generated query `${schema.dartName}` requires native typed document '
+    'readers; untyped document materialization is not available.',
+  );
+}
+
+Never _throwMissingGeneratedNativeReader(
+  CindelCollectionSchema<dynamic> schema,
+) {
+  throw CindelSchemaError(
+    'Generated schema `${schema.dartName}` does not expose native typed '
+    'document readers required by this query.',
+  );
 }

@@ -3,13 +3,13 @@ import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
+import 'cindel_error.dart';
 import 'database.dart';
 import 'query.dart';
 import 'schema.dart';
 
 // Typed collection bridge between generated schemas and the database runtime.
-// Public methods expose `T` objects and must not fall back to manual document
-// storage.
+// Public methods expose `T` objects and require generated typed storage.
 final _nativeFieldTypesCache = Expando<Uint8List>('cindelNativeFieldTypes');
 
 /// Adds typed collection access to [CindelDatabase].
@@ -315,17 +315,7 @@ final class CindelTypedCollection<T> {
           .transform(_distinctObjectSnapshots());
       return fireImmediately ? snapshots : snapshots.skip(1);
     }
-    return database
-        .watchDocument(
-          schema.name,
-          id,
-          pollInterval: pollInterval,
-          fireImmediately: fireImmediately,
-        )
-        .map(
-          (document) =>
-              document == null ? null : _objectFromDocument(document, id),
-        );
+    _throwMissingTypedStorage();
   }
 
   /// Watches one object and emits without returning the object value.
@@ -341,12 +331,7 @@ final class CindelTypedCollection<T> {
         fireImmediately: fireImmediately,
       ).map((_) {});
     }
-    return database.watchDocumentLazy(
-      schema.name,
-      id,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    );
+    _throwMissingTypedStorage();
   }
 
   /// Watches the entire typed collection.
@@ -367,13 +352,7 @@ final class CindelTypedCollection<T> {
           .transform(_distinctCollectionSnapshots());
       return fireImmediately ? snapshots : snapshots.skip(1);
     }
-    return database
-        .watchCollection(
-          schema.name,
-          pollInterval: pollInterval,
-          fireImmediately: fireImmediately,
-        )
-        .map(_objectsFromDocuments);
+    _throwMissingTypedStorage();
   }
 
   /// Watches the entire typed collection and emits without returning objects.
@@ -387,18 +366,7 @@ final class CindelTypedCollection<T> {
         fireImmediately: fireImmediately,
       ).map((_) {});
     }
-    return database.watchCollectionLazy(
-      schema.name,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    );
-  }
-
-  // Converts typed snapshots emitted by the current watcher bridge into the
-  // generated object type. This remains a temporary typed-internal bridge until
-  // watchers hydrate through generated readers directly.
-  List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
-    return documents.map(schema.fromDocument).toList(growable: false);
+    _throwMissingTypedStorage();
   }
 
   StreamTransformer<T?, T?> _distinctObjectSnapshots() {
@@ -540,19 +508,6 @@ final class CindelTypedCollection<T> {
     return object;
   }
 
-  // Converts a generic document map into a generated object. Some storage paths
-  // keep ids outside the stored payload, so the id is patched into the document
-  // when the generated schema expects it.
-  T _objectFromDocument(CindelDocument document, int id) {
-    if (document[schema.idField] is int) {
-      return schema.fromDocument(document);
-    }
-    return schema.fromDocument(<String, Object?>{
-      ...document,
-      schema.idField: id,
-    });
-  }
-
   // Reads the id through the generated accessor when available, otherwise from
   // the generated document map.
   int _idFromObject(T object) {
@@ -603,15 +558,10 @@ final class CindelTypedCollection<T> {
       ),
     );
     if (field.indexType == CindelIndexType.hash) {
-      final documents = await database.queryEqual(
-        schema.name,
-        fieldName,
-        value,
+      throw CindelQueryError(
+        'Hash unique replace index `$fieldName` requires document '
+        'verification and is not supported by typed id lookup.',
       );
-      return [
-        for (final document in documents)
-          if (document[schema.idField] is int) document[schema.idField] as int,
-      ];
     }
     return database.queryEqualIds(schema.name, fieldName, value);
   }

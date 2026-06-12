@@ -9,75 +9,6 @@ import 'schema_generation_fixture.dart';
 
 void main() {
   group('Cindel SQLite typed contract', () {
-    test('rejects manual document APIs.', () async {
-      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
-      addTearDown(database.close);
-
-      await expectLater(
-        database.put('users', 1, {'name': 'Ana'}),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.putAll('users', {
-          1: {'name': 'Ana'},
-        }),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.putMany('users', {
-          1: {'name': 'Ana'},
-        }),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.get('users', 1),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.getAll('users', [1, 2]),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.queryAll('users'),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.documentsByIds('users', [1, 2]),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.queryEqual('users', 'email', 'ana@example.com'),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.queryRange('users', 'email', lower: 'a', upper: 'z'),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      await expectLater(
-        database.queryCompositeEqual('users', 'email_active', [
-          'ana@example.com',
-          true,
-        ]),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      expect(
-        () => database.watchDocument('users', 1),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      expect(
-        () => database.watchDocumentLazy('users', 1),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      expect(
-        () => database.watchCollection('users'),
-        throwsA(_manualDocumentsUnsupported),
-      );
-      expect(
-        () => database.watchCollectionLazy('users'),
-        throwsA(_manualDocumentsUnsupported),
-      );
-    });
-
     test('persists and reopens generated typed objects.', () async {
       final directory = await Directory.systemTemp.createTemp(
         'cindel_sqlite_contract_',
@@ -241,14 +172,6 @@ void main() {
       expect(objectEvents.last?.email, 'committed@example.com');
     });
   });
-}
-
-Matcher get _manualDocumentsUnsupported {
-  return isA<UnsupportedError>().having(
-    (error) => error.message,
-    'message',
-    contains('Manual document APIs are disabled for native Cindel backends'),
-  );
 }
 
 Future<void> _waitUntil(

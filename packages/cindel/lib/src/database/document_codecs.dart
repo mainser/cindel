@@ -1,7 +1,7 @@
 part of '../database.dart';
 
-// Encoding and validation helpers shared by manual documents, generated binary
-// documents, schema registration, and index query planning.
+// Encoding and validation helpers shared by generated binary documents, schema
+// registration, and index query planning.
 
 // Query helpers can receive the same id more than once from multi-entry or word
 // indexes. Preserve first-seen order while removing duplicates.
@@ -13,77 +13,8 @@ List<int> _dedupeIds(List<int> ids) {
   ];
 }
 
-// Manual API documents use the generic document envelope. Generated typed
-// payloads use schema-backed binary documents and are decoded below.
-Uint8List _encodeDocument(CindelDocument value) {
-  return cindelEncodeGenericDocument(value);
-}
-
-// Decode either a manual generic document or a generated binary document.
-//
-// When native storage returns a generated payload, the schema serializer is used
-// to reconstruct an object and convert it back to CindelDocument form. The id is
-// reattached when the stored payload did not include it.
-CindelDocument _decodeDocument(
-  String collection,
-  Uint8List bytes,
-  CindelCollectionSchema<dynamic>? schema, {
-  int? id,
-}) {
-  if (cindelIsGenericDocument(bytes)) {
-    return _documentWithExternalId(
-      cindelDecodeGenericDocument(bytes),
-      schema,
-      id,
-    );
-  }
-
-  if (schema != null) {
-    final dynamic dynamicSchema = schema;
-    final fromBinaryDocument = dynamicSchema.fromBinaryDocument;
-    if (fromBinaryDocument != null) {
-      try {
-        final object = fromBinaryDocument(bytes);
-        if (id != null) {
-          final setId = dynamicSchema.setId;
-          if (setId != null) {
-            setId(object, id);
-          }
-        }
-        final document = dynamicSchema.toDocument(object);
-        if (document is Map) {
-          return _documentWithExternalId(
-            document.cast<String, Object?>(),
-            schema,
-            id,
-          );
-        }
-      } on Object {
-        // Fall through to the unsupported payload error below.
-      }
-    }
-  }
-
-  throw CindelNativeError(
-    'Native Cindel returned an unsupported document payload for `$collection`.',
-  );
-}
-
-// Ensure documents returned through manual APIs include the external id field
-// when the schema stores the id outside the payload.
-CindelDocument _documentWithExternalId(
-  CindelDocument document,
-  CindelCollectionSchema<dynamic>? schema,
-  int? id,
-) {
-  if (schema == null || id == null || document[schema.idField] is int) {
-    return document;
-  }
-  return <String, Object?>{...document, schema.idField: id};
-}
-
 // Convert wire values returned from native projections and aggregates into the
-// JSON-like shapes exposed by the Dart runtime.
+// Map-shaped values exposed by the Dart runtime.
 Object? _wireScalarToObject(WireScalar scalar) {
   return switch (scalar) {
     WireScalarNull() => null,
@@ -218,7 +149,7 @@ void _checkId(int id) {
   }
 }
 
-// Schema and document validation.
+// Schema validation.
 
 Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(
   Iterable<CindelCollectionSchema<dynamic>> schemas,
@@ -237,65 +168,7 @@ Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(
   return Map.unmodifiable(schemasByCollection);
 }
 
-void _checkDocument(CindelDocument value) {
-  for (final entry in value.entries) {
-    _checkJsonValue(entry.value, 'value.${entry.key}');
-  }
-}
-
-void _checkJsonValue(Object? value, String path) {
-  switch (value) {
-    case null || String() || bool():
-      return;
-    case int():
-      return;
-    case double() when value.isFinite:
-      return;
-    case List<Object?>():
-      for (var index = 0; index < value.length; index += 1) {
-        _checkJsonValue(value[index], '$path[$index]');
-      }
-      return;
-    case Map<String, Object?>():
-      for (final entry in value.entries) {
-        _checkJsonValue(entry.value, '$path.${entry.key}');
-      }
-      return;
-    default:
-      throw ArgumentError.value(
-        value,
-        path,
-        'Must be a JSON-compatible value.',
-      );
-  }
-}
-
 // Wire encoders used by native write paths.
-
-Uint8List _encodeIndexEntries(List<_IndexEntry> entries) {
-  return encodeIndexEntryList([
-    for (final entry in entries)
-      WireIndexEntry(documentId: 0, indexName: entry.name, value: entry.value),
-  ]);
-}
-
-Uint8List _encodeBatchPutEntries(List<_BatchPutEntry> entries) {
-  return encodeIndexedDocumentWriteBatch([
-    for (final entry in entries)
-      WireIndexedDocumentWrite(
-        id: entry.id,
-        bytes: _encodeDocument(entry.document),
-        indexes: [
-          for (final index in entry.indexes)
-            WireIndexEntry(
-              documentId: entry.id,
-              indexName: index.name,
-              value: index.value,
-            ),
-        ],
-      ),
-  ]);
-}
 
 Uint8List _encodeBinaryBatchPutEntries(Map<int, Uint8List> entries) {
   return encodeDocumentWriteBatch([
@@ -504,76 +377,6 @@ String _wireIndexValueKind(WireIndexValue value) {
   };
 }
 
-// Equality and range helpers for index fallback verification.
-
-bool _indexedValuesEqual(
-  Object? actual,
-  Object expected,
-  CindelFieldSchema field,
-) {
-  if (_nonNullableDartType(field.dartType) == 'String' &&
-      !field.indexCaseSensitive) {
-    return actual is String &&
-        expected is String &&
-        actual.toLowerCase() == expected.toLowerCase();
-  }
-  if (_nonNullableDartType(field.dartType) == 'DateTime') {
-    return _dateTimeMicros(actual) == _dateTimeMicros(expected);
-  }
-  if (_nonNullableDartType(field.dartType) == 'Duration') {
-    return _durationMicros(actual) == _durationMicros(expected);
-  }
-  return actual == expected;
-}
-
-int? _dateTimeMicros(Object? value) {
-  return switch (value) {
-    DateTime() => value.microsecondsSinceEpoch,
-    int() => value,
-    _ => null,
-  };
-}
-
-int? _durationMicros(Object? value) {
-  return switch (value) {
-    Duration() => value.inMicroseconds,
-    int() => value,
-    _ => null,
-  };
-}
-
-bool _jsonLikeEquals(Object? left, Object? right) {
-  if (identical(left, right)) {
-    return true;
-  }
-  if (left is Map && right is Map) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (final entry in left.entries) {
-      if (!right.containsKey(entry.key)) {
-        return false;
-      }
-      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (left is List && right is List) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (var index = 0; index < left.length; index += 1) {
-      if (!_jsonLikeEquals(left[index], right[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return left == right;
-}
-
 // Stable FNV-1a hash used by hash indexes. The mask keeps the value in the
 // positive SQLite INTEGER range.
 int _stableHashBytes(Uint8List value) {
@@ -612,41 +415,6 @@ void _checkMatchingRangeBounds(
       'Range bounds must have matching types.',
     );
   }
-}
-
-// Small write-planning records used while batching documents and indexes.
-
-final class _IndexEntry {
-  const _IndexEntry({required this.name, required this.value});
-
-  final String name;
-  final WireIndexValue value;
-}
-
-final class _BatchPutEntry {
-  const _BatchPutEntry({
-    required this.id,
-    required this.document,
-    required this.indexes,
-  });
-
-  final int id;
-  final CindelDocument document;
-  final List<_IndexEntry> indexes;
-}
-
-final class _UniqueIndexEntry {
-  const _UniqueIndexEntry({
-    required this.id,
-    required this.field,
-    required this.originalValue,
-    required this.encodedValue,
-  });
-
-  final int id;
-  final CindelFieldSchema field;
-  final Object? originalValue;
-  final WireIndexValue encodedValue;
 }
 
 final class _EncodedIndexValue {

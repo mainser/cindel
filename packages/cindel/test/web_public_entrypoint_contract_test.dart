@@ -93,15 +93,14 @@ void main() {
     },
   );
 
-  // Scenario: Web drifts back to manual document storage after the typed-only
+  // Scenario: Web drifts away from generated typed storage after the typed-only
   // contract was aligned with MDBX and SQLite native.
   // Covers:
-  // - Manual document methods throwing explicitly on the Web database facade.
+  // - Old untyped methods being absent from the Web database facade.
   // - Generated typed collections using native rows for put/get/delete/watch.
-  // - Query materialization using generated native readers, not manual maps.
-  // Expected: No Web generated path falls back to `database.putAll/getAll`,
-  // `documentsByIds`, or manual document watchers.
-  test('web generated APIs do not fall back to manual documents', () async {
+  // - Query materialization using generated native readers.
+  // Expected: No Web generated path calls the removed untyped facade methods.
+  test('web generated APIs stay on generated typed storage', () async {
     final databaseSource = await _readPackageFile(
       'package:cindel/src/web/database.dart',
     );
@@ -112,13 +111,25 @@ void main() {
       'package:cindel/src/web/typed_collection.dart',
     );
 
-    expect(
-      databaseSource,
-      contains('Manual document APIs are disabled for native Cindel backends.'),
-    );
     expect(databaseSource, contains('getAllNativeBinaryDocuments'));
     expect(databaseSource, contains('CindelWebNativeDocumentReader'));
     expect(databaseSource, contains('queryNativePlanObjects'));
+    expect(databaseSource, isNot(contains('Future<void> put(')));
+    expect(databaseSource, isNot(contains('Future<void> putAll(')));
+    expect(databaseSource, isNot(contains('Future<void> putMany(')));
+    expect(databaseSource, isNot(contains('Future<CindelDocument?> get(')));
+    expect(
+      databaseSource,
+      isNot(contains('Future<List<CindelDocument?>> getAll(')),
+    );
+    expect(databaseSource, isNot(contains('queryAll(')));
+    expect(databaseSource, isNot(contains('documentsByIds(')));
+    expect(
+      databaseSource,
+      isNot(contains('Future<List<CindelDocument>> queryEqual(')),
+    );
+    expect(databaseSource, isNot(contains('watchDocument(')));
+    expect(databaseSource, isNot(contains('watchCollection(')));
     expect(databaseSource, isNot(contains('cindelEncodeGenericDocument')));
     expect(databaseSource, isNot(contains('cindelDecodeGenericDocument')));
 

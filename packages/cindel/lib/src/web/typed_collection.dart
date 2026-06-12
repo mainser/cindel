@@ -247,11 +247,10 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    return database.watchCollectionLazy(
-      collection: schema.name,
+    return watchCollection(
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-    );
+    ).map((_) {});
   }
 
   Uint8List? _nativeFieldTypes() {

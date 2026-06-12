@@ -12,7 +12,7 @@ import 'schema_manifest.dart';
 import 'wire.dart';
 import 'worker_bridge.dart';
 
-/// A JSON-like document accepted by Cindel's manual API.
+/// Internal map-shaped document representation used by Cindel runtime bridges.
 typedef CindelDocument = Map<String, Object?>;
 
 /// A native-backed collection change observed by Cindel watchers.
@@ -148,9 +148,6 @@ const _maximumSqliteId = 0x1FFFFFFFFFFFFF;
 // from an app-local copy.
 const _defaultWorkerUrl =
     'assets/packages/cindel_flutter_libs/web/cindel_worker.js';
-const _manualDocumentsUnsupportedMessage =
-    'Manual document APIs are disabled for native Cindel backends. '
-    'Use generated typed collections.';
 
 /// Native storage backend used by a Cindel database.
 enum CindelStorageBackend {
@@ -272,19 +269,6 @@ class CindelDatabase {
     return ids.single;
   }
 
-  /// Stores [value] in [collection] under [id].
-  Future<void> put(String collection, int id, CindelDocument value) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Stores every document in [values] atomically.
-  Future<void> putAll(
-    String collection,
-    Map<int, CindelDocument> values,
-  ) async {
-    _throwManualDocumentsUnsupported();
-  }
-
   /// Stores generated typed objects through the Web SQLite native row path.
   Future<void> putAllNativeBinaryDocuments<T>(
     String collection,
@@ -337,24 +321,6 @@ class CindelDatabase {
       fieldTypes,
       writeDocument,
     );
-  }
-
-  /// Stores many documents atomically.
-  Future<void> putMany(String collection, Map<int, CindelDocument> values) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Returns the document stored in [collection] under [id], or `null`.
-  Future<CindelDocument?> get(String collection, int id) async {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Returns documents stored under [ids], preserving input order.
-  Future<List<CindelDocument?>> getAll(
-    String collection,
-    Iterable<int> ids,
-  ) async {
-    _throwManualDocumentsUnsupported();
   }
 
   /// Reads generated typed objects through the Web SQLite native row reader.
@@ -412,31 +378,9 @@ class CindelDatabase {
     ];
   }
 
-  /// Returns all documents from [collection].
-  Future<List<CindelDocument>> queryAll(String collection) async {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Returns documents by id.
-  Future<List<CindelDocument>> documentsByIds(
-    String collection,
-    Iterable<int> ids,
-  ) async {
-    _throwManualDocumentsUnsupported();
-  }
-
   /// Returns ids for every document in [collection].
   Future<List<int>> documentIds(String collection) {
     return _sendIds('documentIds', {'collection': collection});
-  }
-
-  /// Returns documents whose indexed [field] equals [value].
-  Future<List<CindelDocument>> queryEqual(
-    String collection,
-    String field,
-    Object value,
-  ) async {
-    _throwManualDocumentsUnsupported();
   }
 
   /// Returns ids whose indexed [field] equals [value].
@@ -590,16 +534,6 @@ class CindelDatabase {
     ];
   }
 
-  /// Deletes [id] from [collection].
-  Future<void> delete(String collection, int id) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Deletes [ids] from [collection].
-  Future<void> deleteAll(String collection, Iterable<int> ids) async {
-    _throwManualDocumentsUnsupported();
-  }
-
   /// Deletes generated native rows from [collection].
   Future<void> deleteAllNativeDocuments(
     String collection,
@@ -622,14 +556,6 @@ class CindelDatabase {
       collection,
       () => CindelChangeSet.deletes(collection, idList),
     );
-  }
-
-  /// Executes a native query plan and returns matching documents.
-  Future<List<CindelDocument>> queryNativePlanDocuments(
-    String collection,
-    WireQueryPlan plan,
-  ) async {
-    _throwManualDocumentsUnsupported();
   }
 
   /// Executes a native query plan and returns matching ids.
@@ -738,48 +664,6 @@ class CindelDatabase {
       payload: _payload({'collection': collection}),
     );
     return response.payload as int?;
-  }
-
-  /// Watches the current value of a document and emits after committed changes.
-  Stream<CindelDocument?> watchDocument(
-    String collection,
-    int id, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = true,
-  }) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Watches a document and emits without loading it for consumers.
-  Stream<void> watchDocumentLazy(
-    String collection,
-    int id, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = false,
-  }) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Watches all documents in [collection] and emits after committed changes.
-  Stream<List<CindelDocument>> watchCollection(
-    String collection, {
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = true,
-  }) {
-    _throwManualDocumentsUnsupported();
-  }
-
-  /// Watches a collection and emits without returning collection snapshots.
-  Stream<void> watchCollectionLazy({
-    required String collection,
-    Duration pollInterval = defaultCindelWatchPollInterval,
-    bool fireImmediately = false,
-  }) {
-    return watchCollectionChanges(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    ).map((_) {});
   }
 
   /// Watches raw collection change metadata.
@@ -1476,8 +1360,4 @@ void _checkId(int id) {
   if (id < 0 || id > _maximumSqliteId) {
     throw RangeError.range(id, 0, _maximumSqliteId, 'id');
   }
-}
-
-Never _throwManualDocumentsUnsupported() {
-  throw UnsupportedError(_manualDocumentsUnsupportedMessage);
 }

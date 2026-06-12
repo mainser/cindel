@@ -320,7 +320,7 @@ void main() {
     // Scenario: A typed object serializer produces an invalid id field.
     // Covers:
     // - [CindelTypedCollection.put] id extraction from schema metadata.
-    // - Defensive typed API validation before manual document writes.
+    // - Defensive typed API validation before storage writes.
     // Expected: Invalid generated id data fails with a [StateError].
     test('rejects typed objects with non-int id values.', () async {
       // Arrange.

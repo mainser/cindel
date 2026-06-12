@@ -127,8 +127,8 @@ final class CindelNativeBindings {
     _checkStatus(status, 'rollback transaction');
   }
 
-  // Manual document writes. Payloads are already encoded by higher layers as
-  // GenericDocumentV1 or schema-backed binary documents.
+  // Schema-backed binary document writes. Payloads are already encoded by
+  // higher layers.
   void put(Pointer<Void> handle, String collection, int id, Uint8List bytes) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
@@ -625,7 +625,7 @@ final class CindelNativeBindings {
   }
 
   // Delete APIs. Native-document deletes target generated/native rows when
-  // SQLite stores them separately from generic manual documents.
+  // SQLite stores them separately from MDBX binary document payloads.
   void delete(Pointer<Void> handle, String collection, int id) {
     _checkId(id);
     final status = _withNativeUtf8Bytes(collection, (
