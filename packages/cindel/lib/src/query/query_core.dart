@@ -683,8 +683,8 @@ final class CindelQuery<T> {
     }();
   }
 
-  // SQLite can store generated native documents next to generic manual rows.
-  // This path uses the native planner only when it can represent the full query.
+  // SQLite generated native documents use the native planner when it can
+  // represent the full query.
   Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments() {
     final dartDocuments = _matchingSqliteNativeDocumentsWithDartPlan();
     if (dartDocuments != null) {
@@ -712,9 +712,9 @@ final class CindelQuery<T> {
     }();
   }
 
-  // Fallback for SQLite native documents when Dart must evaluate part of the
-  // plan. It merges documents read through normal indexes with generated native
-  // rows that are not visible through generic document scans.
+  // Evaluates SQLite generated native documents in Dart when native SQL cannot
+  // represent the full query. It still reads through generated native readers;
+  // it does not fall back to manual document storage.
   Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan() {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
@@ -726,28 +726,17 @@ final class CindelQuery<T> {
     }
 
     return () async {
-      final seenIds = <int>{};
-      var documents = <CindelDocument>[];
-      for (final document in await _readDocuments()) {
-        if (_matchesSqliteNativeDartPlan(document)) {
-          documents.add(document);
-          seenIds.add(_idFromDocument(document));
-        }
-      }
       final objects = await _database.queryNativePlanObjects(
         _schema.name,
         const CindelNativeQueryPlan(source: CindelNativeAllQuerySource()),
         fieldTypes,
         readNativeDocument,
       );
-      for (final object in objects) {
-        final document = _documentFromObject(object);
-        final id = _idFromDocument(document);
-        if (!seenIds.contains(id) && _matchesSqliteNativeDartPlan(document)) {
-          documents.add(document);
-          seenIds.add(id);
-        }
-      }
+      var documents = <CindelDocument>[
+        for (final object in objects)
+          if (_matchesSqliteNativeDartPlan(_documentFromObject(object)))
+            _documentFromObject(object),
+      ];
       if (_sortKeys.isNotEmpty) {
         documents = _sortDocuments(documents, _sortKeys);
       } else {
@@ -766,7 +755,8 @@ final class CindelQuery<T> {
   bool get _canUseSqliteNativePlanner {
     if (!_database.usesSqliteNativeDocuments ||
         _sourceFilter != null ||
-        (_filter != null && _nativeFilter == null) ||
+        (_filter != null &&
+            (_nativeFilter == null || !_isSqliteNativeSqlFilter(_filter))) ||
         _distinctFields.isNotEmpty) {
       return false;
     }
@@ -788,6 +778,59 @@ final class CindelQuery<T> {
         },
       },
     };
+  }
+
+  bool _isSqliteNativeSqlFilter(CindelFilterPredicate predicate) {
+    if (predicate is _FieldFilterPredicate) {
+      if (!predicate.isTopLevel) {
+        return false;
+      }
+      final field = _fieldSchema(predicate.field);
+      if (field == null) {
+        return false;
+      }
+      final binaryType = field.binaryType;
+      final expected = predicate.expected;
+      return switch (predicate.operation) {
+        _FilterOperation.equalTo =>
+          _isSqliteScalarFilterValue(expected) &&
+              binaryType != 'list' &&
+              binaryType != 'object',
+        _FilterOperation.greaterThan ||
+        _FilterOperation.greaterThanOrEqualTo ||
+        _FilterOperation.lessThan ||
+        _FilterOperation.lessThanOrEqualTo =>
+          expected is num && (binaryType == 'int' || binaryType == 'double'),
+        _FilterOperation.contains =>
+          (binaryType == 'string' && expected is String) ||
+              (binaryType == 'list' && _isSqliteScalarFilterValue(expected)),
+        _FilterOperation.startsWith || _FilterOperation.endsWith =>
+          binaryType == 'string' && expected is String,
+        _FilterOperation.isEmpty ||
+        _FilterOperation.isNotEmpty => binaryType == 'list',
+        _FilterOperation.lengthEqualTo ||
+        _FilterOperation.lengthGreaterThan ||
+        _FilterOperation.lengthGreaterThanOrEqualTo ||
+        _FilterOperation.lengthLessThan ||
+        _FilterOperation.lengthLessThanOrEqualTo =>
+          binaryType == 'list' && expected is int,
+      };
+    }
+    if (predicate is _CompositeFilterPredicate) {
+      return predicate.predicates.every(_isSqliteNativeSqlFilter);
+    }
+    if (predicate is _NotFilterPredicate) {
+      return _isSqliteNativeSqlFilter(predicate.predicate);
+    }
+    return false;
+  }
+
+  bool _isSqliteScalarFilterValue(Object? value) {
+    return value == null ||
+        value is bool ||
+        value is int ||
+        (value is double && value.isFinite) ||
+        value is String;
   }
 
   List<CindelDocument> _sortDocumentsByNativeSource(

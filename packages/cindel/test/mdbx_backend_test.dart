@@ -10,7 +10,7 @@ void main() {
   configureTestStorageBackend(CindelStorageBackend.mdbx);
 
   mdbx_contract.main();
-  query_builder.main(includeMdbxOnlyTests: true);
+  query_builder.main();
   schema_generation.main(includeMdbxOnlyTests: true);
   typed_collection.main();
 }

@@ -5,7 +5,7 @@ import 'backend_test_support.dart';
 
 import 'schema_generation_fixture.dart';
 
-void main({bool includeMdbxOnlyTests = false}) {
+void main() {
   group('Cindel query builder', () {
     // Scenario: A generated where helper queries an indexed field by equality.
     // Covers:
@@ -300,46 +300,72 @@ void main({bool includeMdbxOnlyTests = false}) {
       expect(soloUser?.name, 'Ben');
     });
 
-    // Scenario: A filter-only query updates a compact native bool field.
+    // Scenario: A filter-only query updates compact native bool fields.
     // Covers:
     // - [CindelQuery.updateAll].
-    // - Native query-plan update count.
-    // - MDBX compact document update without Dart object hydration.
+    // - Native query-plan update count without Dart object hydration.
     // Expected: Matching documents are updated and the returned count matches.
-    if (includeMdbxOnlyTests) {
-      test('updates all matching native typed query results.', () async {
-        // Arrange.
-        final database = await openTestDatabaseInMemory(
-          schemas: [ImmutableUserSchema],
-          backend: CindelStorageBackend.mdbx,
-        );
-        addTearDown(database.close);
-        await database.immutableUsers.putAll([
-          const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
-          const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
-          const ImmutableUser(dbId: 3, email: 'c@example.com', active: true),
-        ]);
+    test('updates all matching native typed query results.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(
+        schemas: [ImmutableUserSchema],
+      );
+      addTearDown(database.close);
+      await database.immutableUsers.putAll([
+        const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
+        const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
+        const ImmutableUser(dbId: 3, email: 'c@example.com', active: true),
+      ]);
 
-        // Act.
-        final updated = await database.immutableUsers
-            .filter()
-            .activeEqualTo(true)
-            .updateAll({'active': false});
-        final activeCount = await database.immutableUsers
-            .filter()
-            .activeEqualTo(true)
-            .count();
-        final inactive = await database.immutableUsers
-            .filter()
-            .activeEqualTo(false)
-            .findAll();
+      // Act.
+      final updated = await database.immutableUsers
+          .filter()
+          .activeEqualTo(true)
+          .updateAll({'active': false});
+      final activeCount = await database.immutableUsers
+          .filter()
+          .activeEqualTo(true)
+          .count();
+      final inactive = await database.immutableUsers
+          .filter()
+          .activeEqualTo(false)
+          .findAll();
 
-        // Assert.
-        expect(updated, 2);
-        expect(activeCount, 0);
-        expect(inactive.map((user) => user.dbId), [1, 2, 3]);
-      });
-    }
+      // Assert.
+      expect(updated, 2);
+      expect(activeCount, 0);
+      expect(inactive.map((user) => user.dbId), [1, 2, 3]);
+    });
+
+    // Scenario: A filter-only query updates only its first matching row.
+    // Covers:
+    // - [CindelQuery.updateFirst].
+    // - Native query-plan limit handling for mutating queries.
+    // Expected: Only one matching object changes.
+    test('updates the first matching native typed query result.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(
+        schemas: [ImmutableUserSchema],
+      );
+      addTearDown(database.close);
+      await database.immutableUsers.putAll([
+        const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
+        const ImmutableUser(dbId: 2, email: 'b@example.com', active: true),
+        const ImmutableUser(dbId: 3, email: 'c@example.com', active: false),
+      ]);
+
+      // Act.
+      final updated = await database.immutableUsers
+          .filter()
+          .activeEqualTo(true)
+          .sortByDbId()
+          .updateFirst({'active': false});
+      final users = await database.immutableUsers.all().sortByDbId().findAll();
+
+      // Assert.
+      expect(updated, isTrue);
+      expect(users.map((user) => user.active), [false, true, false]);
+    });
 
     // Scenario: A generated filter starts from the whole collection.
     // Covers:

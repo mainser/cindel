@@ -8,7 +8,7 @@ import 'backend_test_support.dart';
 import 'schema_generation_fixture.dart';
 
 void main() {
-  group('Cindel MDBX typed contract', () {
+  group('Cindel SQLite typed contract', () {
     test('rejects manual document APIs.', () async {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
@@ -80,7 +80,7 @@ void main() {
 
     test('persists and reopens generated typed objects.', () async {
       final directory = await Directory.systemTemp.createTemp(
-        'cindel_mdbx_contract_',
+        'cindel_sqlite_contract_',
       );
       addTearDown(() => directory.delete(recursive: true));
       var database = await openTestDatabase(
@@ -93,11 +93,11 @@ void main() {
         ..name = 'Ana'
         ..email = 'ana@example.com'
         ..active = true
-        ..tags = ['typed', 'mdbx'];
+        ..tags = ['typed', 'sqlite'];
 
       await database.users.put(user);
       expect(await database.schemaVersion('users'), 1);
-      expect((await database.users.get(1))?.tags, ['typed', 'mdbx']);
+      expect((await database.users.get(1))?.tags, ['typed', 'sqlite']);
 
       await database.close();
       database = await openTestDatabase(
@@ -109,7 +109,7 @@ void main() {
       expect(reopened, isNotNull);
       expect(reopened!.name, 'Ana');
       expect(reopened.email, 'ana@example.com');
-      expect(reopened.tags, ['typed', 'mdbx']);
+      expect(reopened.tags, ['typed', 'sqlite']);
       expect(await database.schemaVersion('users'), 1);
     });
 
@@ -221,8 +221,8 @@ void main() {
         throwsA(isA<StateError>()),
       );
       await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(collectionEvents.single, isEmpty);
-      expect(objectEvents.single, isNull);
+      expect(collectionEvents.any((users) => users.isNotEmpty), isFalse);
+      expect(objectEvents.any((user) => user != null), isFalse);
       expect(lazyEvents.length, initialLazyEvents);
 
       await database.writeTxn<void>(() async {

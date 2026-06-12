@@ -15,7 +15,7 @@ part 'database/native_query_plan.dart';
 part 'database/document_codecs.dart';
 part 'database/change_set.dart';
 
-/// A JSON-like document accepted by Cindel's manual API.
+/// Internal JSON-like document representation used by Cindel runtime bridges.
 ///
 /// Values must be compatible with Cindel's persisted document format: `null`,
 /// `bool`, finite numbers, `String`, lists, and string-keyed maps.
@@ -54,9 +54,8 @@ const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 /// An open handle to a local Cindel database.
 ///
 /// This class is the runtime boundary between public Dart APIs, generated typed
-/// collection helpers, and the native storage engine. Manual document methods
-/// operate on [CindelDocument], while generated paths use binary document
-/// serializers and native query plans for lower overhead.
+/// collection helpers, and the native storage engine. Generated paths use
+/// binary document serializers and native query plans for lower overhead.
 class CindelDatabase {
   CindelDatabase._({
     required this.directory,
@@ -86,9 +85,6 @@ class CindelDatabase {
   _TransactionMode? _activeTransaction;
 
   /// Whether SQLite can use generated native document readers for this handle.
-  ///
-  /// SQLite falls back to generic documents unless the schema was registered at
-  /// open time and generated native serializers are available.
   bool get usesSqliteNativeDocuments =>
       backend == CindelStorageBackend.sqlite && _schemasWereRegisteredOnOpen;
 
@@ -1553,10 +1549,11 @@ class CindelDatabase {
   }
 
   void _checkManualDocumentsSupported() {
-    if (backend == CindelStorageBackend.mdbx) {
+    if (backend == CindelStorageBackend.mdbx ||
+        backend == CindelStorageBackend.sqlite) {
       throw UnsupportedError(
-        'MDBX manual document APIs are disabled. Use generated typed '
-        'collections.',
+        'Manual document APIs are disabled for native Cindel backends. Use '
+        'generated typed collections.',
       );
     }
   }

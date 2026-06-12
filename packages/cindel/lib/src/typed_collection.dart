@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
@@ -244,8 +245,7 @@ final class CindelTypedCollection<T> {
       final bytes = await database.getBinaryDocument(schema.name, id);
       return bytes == null ? null : _objectFromBinaryDocument(bytes, id);
     }
-    final document = await database.get(schema.name, id);
-    return document == null ? null : _objectFromDocument(document, id);
+    _throwMissingTypedStorage();
   }
 
   /// Returns typed objects stored under [ids], preserving input order.
@@ -303,15 +303,17 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    if (database.backend == CindelStorageBackend.mdbx) {
-      return database
+    if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
+      final snapshots = database
           .watchCollectionChanges(
             schema.name,
             pollInterval: pollInterval,
-            fireImmediately: fireImmediately,
+            fireImmediately: true,
           )
           .where((change) => change.mayAffectDocument(id))
-          .asyncMap((_) => get(id));
+          .asyncMap((_) => get(id))
+          .transform(_distinctObjectSnapshots());
+      return fireImmediately ? snapshots : snapshots.skip(1);
     }
     return database
         .watchDocument(
@@ -332,15 +334,12 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    if (database.backend == CindelStorageBackend.mdbx) {
-      return database
-          .watchCollectionChanges(
-            schema.name,
-            pollInterval: pollInterval,
-            fireImmediately: fireImmediately,
-          )
-          .where((change) => change.mayAffectDocument(id))
-          .map((_) {});
+    if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
+      return watchObject(
+        id,
+        pollInterval: pollInterval,
+        fireImmediately: fireImmediately,
+      ).map((_) {});
     }
     return database.watchDocumentLazy(
       schema.name,
@@ -357,14 +356,16 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    if (database.backend == CindelStorageBackend.mdbx) {
-      return database
+    if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
+      final snapshots = database
           .watchCollectionChanges(
             schema.name,
             pollInterval: pollInterval,
-            fireImmediately: fireImmediately,
+            fireImmediately: true,
           )
-          .asyncMap((_) => all().findAll());
+          .asyncMap((_) => all().findAll())
+          .transform(_distinctCollectionSnapshots());
+      return fireImmediately ? snapshots : snapshots.skip(1);
     }
     return database
         .watchCollection(
@@ -380,14 +381,11 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    if (database.backend == CindelStorageBackend.mdbx) {
-      return database
-          .watchCollectionChanges(
-            schema.name,
-            pollInterval: pollInterval,
-            fireImmediately: fireImmediately,
-          )
-          .map((_) {});
+    if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
+      return watchCollection(
+        pollInterval: pollInterval,
+        fireImmediately: fireImmediately,
+      ).map((_) {});
     }
     return database.watchCollectionLazy(
       schema.name,
@@ -401,6 +399,90 @@ final class CindelTypedCollection<T> {
   // watchers hydrate through generated readers directly.
   List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
     return documents.map(schema.fromDocument).toList(growable: false);
+  }
+
+  StreamTransformer<T?, T?> _distinctObjectSnapshots() {
+    T? previous;
+    var hasPrevious = false;
+    return StreamTransformer<T?, T?>.fromHandlers(
+      handleData: (snapshot, sink) {
+        if (hasPrevious && _objectsEqual(previous, snapshot)) {
+          previous = snapshot;
+          return;
+        }
+        previous = snapshot;
+        hasPrevious = true;
+        sink.add(snapshot);
+      },
+    );
+  }
+
+  StreamTransformer<List<T>, List<T>> _distinctCollectionSnapshots() {
+    List<T>? previous;
+    return StreamTransformer<List<T>, List<T>>.fromHandlers(
+      handleData: (snapshot, sink) {
+        final last = previous;
+        if (last != null && _objectListsEqual(last, snapshot)) {
+          previous = snapshot;
+          return;
+        }
+        previous = snapshot;
+        sink.add(snapshot);
+      },
+    );
+  }
+
+  bool _objectListsEqual(List<T> left, List<T> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var i = 0; i < left.length; i += 1) {
+      if (!_objectsEqual(left[i], right[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _objectsEqual(T? left, T? right) {
+    if (left == null || right == null) {
+      return left == right;
+    }
+    final getId = schema.getId;
+    if (getId != null && getId(left) != getId(right)) {
+      return false;
+    }
+    return _documentsEqual(schema.toDocument(left), schema.toDocument(right));
+  }
+
+  bool _documentsEqual(Object? left, Object? right) {
+    if (identical(left, right)) {
+      return true;
+    }
+    if (left is Map && right is Map) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (final entry in left.entries) {
+        if (!right.containsKey(entry.key) ||
+            !_documentsEqual(entry.value, right[entry.key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (var i = 0; i < left.length; i += 1) {
+        if (!_documentsEqual(left[i], right[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return left == right;
   }
 
   bool get _usesBinaryDocuments {

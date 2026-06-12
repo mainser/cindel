@@ -1880,6 +1880,19 @@ fn sqlite_field_filter_sql(
     {
         return sqlite_list_contains_sql(&column, value);
     }
+    if !schema_field.is_id
+        && sqlite_binary_type(&schema_field.binary_type) == "list"
+        && matches!(
+            operation,
+            WireFilterOperation::LengthEqual
+                | WireFilterOperation::LengthLessThan
+                | WireFilterOperation::LengthLessThanOrEqual
+                | WireFilterOperation::LengthGreaterThan
+                | WireFilterOperation::LengthGreaterThanOrEqual
+        )
+    {
+        return sqlite_list_length_sql(&column, operation, value);
+    }
     let sql = match operation {
         WireFilterOperation::IsNull => (format!("{column} IS NULL"), Vec::new()),
         WireFilterOperation::Equal => match value {
@@ -1915,9 +1928,7 @@ fn sqlite_field_filter_sql(
         | WireFilterOperation::LengthLessThan
         | WireFilterOperation::LengthLessThanOrEqual
         | WireFilterOperation::LengthGreaterThan
-        | WireFilterOperation::LengthGreaterThanOrEqual => {
-            return Err("SQLite native length filters are not implemented".into());
-        }
+        | WireFilterOperation::LengthGreaterThanOrEqual => ("FALSE".to_string(), Vec::new()),
     };
     Ok(sql)
 }
@@ -1941,6 +1952,28 @@ fn sqlite_list_contains_sql(
         }
     };
     Ok((predicate, Vec::new()))
+}
+
+fn sqlite_list_length_sql(
+    column: &str,
+    operation: WireFilterOperation,
+    value: &WireValue,
+) -> Result<(String, Vec<Value>), String> {
+    let WireValue::Int(length) = value else {
+        return Ok(("FALSE".to_string(), Vec::new()));
+    };
+    let operator = match operation {
+        WireFilterOperation::LengthEqual => "=",
+        WireFilterOperation::LengthLessThan => "<",
+        WireFilterOperation::LengthLessThanOrEqual => "<=",
+        WireFilterOperation::LengthGreaterThan => ">",
+        WireFilterOperation::LengthGreaterThanOrEqual => ">=",
+        _ => return Err("not a SQLite native list length filter".into()),
+    };
+    Ok((
+        format!("{column} IS NOT NULL AND json_array_length({column}) {operator} ?"),
+        vec![Value::Integer(*length)],
+    ))
 }
 
 fn sqlite_string_like_sql(
