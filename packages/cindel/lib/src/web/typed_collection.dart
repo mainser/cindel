@@ -208,38 +208,67 @@ final class CindelTypedCollection<T> {
         : database.deleteAll(schema.name, ids);
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches the typed object stored under [id].
   Stream<T?> watchObject(
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return database
+        .watchDocument(
+          schema.name,
+          id,
+          pollInterval: pollInterval,
+          fireImmediately: fireImmediately,
+        )
+        .map(
+          (document) =>
+              document == null ? null : _objectFromDocument(document, id),
+        );
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches one object and emits without returning the object value.
   Stream<void> watchObjectLazy(
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return database.watchDocumentLazy(
+      schema.name,
+      id,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    );
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches the entire typed collection.
   Stream<List<T>> watchCollection({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return database
+        .watchCollection(
+          schema.name,
+          pollInterval: pollInterval,
+          fireImmediately: fireImmediately,
+        )
+        .map(_objectsFromDocuments);
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches the entire typed collection and emits without returning objects.
   Stream<void> watchCollectionLazy({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return database.watchCollectionLazy(
+      collection: schema.name,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    );
+  }
+
+  List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
+    return documents.map(schema.fromDocument).toList(growable: false);
   }
 
   Uint8List? _nativeFieldTypes() {

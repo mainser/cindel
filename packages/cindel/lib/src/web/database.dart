@@ -16,6 +16,129 @@ import 'worker_bridge.dart';
 /// A JSON-like document accepted by Cindel's manual API.
 typedef CindelDocument = Map<String, Object?>;
 
+/// A native-backed collection change observed by Cindel watchers.
+final class CindelChangeSet {
+  const CindelChangeSet._({
+    required this.collection,
+    required this.documentIds,
+    required this.documents,
+    required this.hasUnknownDocuments,
+    required this.isExternal,
+    required this.revision,
+  });
+
+  /// Creates a change when the exact affected ids are unknown.
+  factory CindelChangeSet.external(String collection) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: null,
+      documents: const {},
+      hasUnknownDocuments: true,
+      isExternal: true,
+      revision: null,
+    );
+  }
+
+  /// Creates a change for one inserted or updated document.
+  factory CindelChangeSet.upsert(
+    String collection,
+    int id,
+    CindelDocument? document,
+  ) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: {id},
+      documents: document == null ? const {} : {id: Map.of(document)},
+      hasUnknownDocuments: document == null,
+      isExternal: false,
+      revision: null,
+    );
+  }
+
+  /// Creates a change for several inserted or updated documents.
+  factory CindelChangeSet.upserts(
+    String collection,
+    Map<int, CindelDocument>? documents, {
+    Iterable<int>? ids,
+  }) {
+    final documentCopies = {
+      for (final entry in (documents ?? const <int, CindelDocument>{}).entries)
+        entry.key: Map<String, Object?>.of(entry.value),
+    };
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: {...?ids, ...documentCopies.keys},
+      documents: documentCopies,
+      hasUnknownDocuments: documents == null,
+      isExternal: false,
+      revision: null,
+    );
+  }
+
+  /// Creates a change for one deleted document.
+  factory CindelChangeSet.delete(String collection, int id) {
+    return CindelChangeSet.deletes(collection, [id]);
+  }
+
+  /// Creates a change for several deleted documents.
+  factory CindelChangeSet.deletes(String collection, Iterable<int> ids) {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: ids.toSet(),
+      documents: const {},
+      hasUnknownDocuments: false,
+      isExternal: false,
+      revision: null,
+    );
+  }
+
+  /// Creates a change set returned by the Worker post-commit change path.
+  factory CindelChangeSet.native({
+    required String collection,
+    required int revision,
+    required Iterable<int> ids,
+    Map<int, CindelDocument> documents = const {},
+    bool hasUnknownDocuments = false,
+  }) {
+    final documentCopies = {
+      for (final entry in documents.entries)
+        entry.key: Map<String, Object?>.of(entry.value),
+    };
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: ids.toSet(),
+      documents: Map<int, CindelDocument>.unmodifiable(documentCopies),
+      hasUnknownDocuments: hasUnknownDocuments,
+      isExternal: false,
+      revision: revision,
+    );
+  }
+
+  /// Collection that changed.
+  final String collection;
+
+  /// Changed document ids, or `null` when the exact ids are unknown.
+  final Set<int>? documentIds;
+
+  /// Documents written by this handle, keyed by id when available.
+  final Map<int, CindelDocument> documents;
+
+  /// Whether this change includes writes whose document value is not available.
+  final bool hasUnknownDocuments;
+
+  /// Whether this change came from revision polling instead of local metadata.
+  final bool isExternal;
+
+  /// Native collection revision after the commit.
+  final int? revision;
+
+  /// Returns whether this change can affect document [id].
+  bool mayAffectDocument(int id) {
+    final ids = documentIds;
+    return ids == null || ids.contains(id);
+  }
+}
+
 // Keep ids inside JavaScript's precise integer range. Native backends can use
 // wider 64-bit ids, but Web messages and dart2js numbers cannot safely round
 // trip every signed 64-bit value.
@@ -67,6 +190,8 @@ class CindelDatabase {
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final CindelWebWorkerBridge _bridge;
   final Set<String> _genericDocumentCollections = <String>{};
+  final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
+  final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   bool _closed = false;
   _TransactionMode? _activeTransaction;
 
@@ -133,6 +258,7 @@ class CindelDatabase {
       return;
     }
     _closed = true;
+    await _closeWatchers();
     await _bridge.close();
   }
 
@@ -188,6 +314,10 @@ class CindelDatabase {
     }
     final bytes = encodeIndexedDocumentWriteBatch(writes);
     await _sendVoid('putAll', {'collection': collection, 'documents': bytes});
+    await _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.upserts(collection, values),
+    );
   }
 
   /// Stores generated typed objects through the Web SQLite native row path.
@@ -221,6 +351,10 @@ class CindelDatabase {
       'collection': collection,
       'documents': bytes,
     });
+    await _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.upserts(collection, documents?.call(), ids: ids),
+    );
   }
 
   /// Stores generated typed objects while reading ids from each object.
@@ -521,18 +655,47 @@ class CindelDatabase {
 
   /// Deletes [ids] from [collection].
   Future<void> deleteAll(String collection, Iterable<int> ids) async {
+    _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return;
+    }
     await _sendVoid('deleteAll', {
       'collection': collection,
-      'ids': encodeIdList(ids.toList(growable: false)),
+      'ids': encodeIdList(idList),
     });
+    await _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.deletes(collection, idList),
+    );
   }
 
   /// Deletes generated native rows from [collection].
-  Future<void> deleteAllNativeDocuments(String collection, Iterable<int> ids) {
-    return _sendVoid('deleteNativeAll', {
+  Future<void> deleteAllNativeDocuments(
+    String collection,
+    Iterable<int> ids,
+  ) async {
+    _checkOpen();
+    _checkCollection(collection);
+    final idList = ids.toList(growable: false);
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return;
+    }
+    await _sendVoid('deleteNativeAll', {
       'collection': collection,
-      'ids': encodeIdList(ids.toList(growable: false)),
+      'ids': encodeIdList(idList),
     });
+    await _markNativeCollectionChanged(
+      collection,
+      () => CindelChangeSet.deletes(collection, idList),
+    );
   }
 
   /// Executes a native query plan and returns matching documents.
@@ -611,11 +774,21 @@ class CindelDatabase {
   }
 
   /// Deletes every row matching [plan].
-  Future<List<int>> deleteNativePlan(String collection, WireQueryPlan plan) {
-    return _sendIds('queryPlanDelete', {
+  Future<List<int>> deleteNativePlan(
+    String collection,
+    WireQueryPlan plan,
+  ) async {
+    final ids = await _sendIds('queryPlanDelete', {
       'collection': collection,
       'plan': encodeQueryPlan(plan),
     });
+    if (ids.isNotEmpty) {
+      await _markNativeCollectionChanged(
+        collection,
+        () => CindelChangeSet.deletes(collection, ids),
+      );
+    }
+    return ids;
   }
 
   /// Query updates are routed through the Worker/Wasm native planner.
@@ -632,7 +805,14 @@ class CindelDatabase {
         'collectChanges': true,
       }),
     );
-    return scalar is WireScalarInt ? scalar.value : 0;
+    final count = scalar is WireScalarInt ? scalar.value : 0;
+    if (count > 0) {
+      await _markNativeCollectionChanged(
+        collection,
+        () => CindelChangeSet.external(collection),
+      );
+    }
+    return count;
   }
 
   /// Returns the schema version for [collection].
@@ -644,42 +824,98 @@ class CindelDatabase {
     return response.payload as int?;
   }
 
-  /// Watches are not part of the current single-tab Web preview.
+  /// Watches the current value of a document and emits after committed changes.
   Stream<CindelDocument?> watchDocument(
     String collection,
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    _checkOpen();
+    _checkCollection(collection);
+    _checkId(id);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+      shouldReadChange: (change) => change.mayAffectDocument(id),
+      readSnapshot: (_) => get(collection, id),
+      areSnapshotsEqual: _jsonLikeEquals,
+    );
   }
 
-  /// Watches are not part of the current single-tab Web preview.
+  /// Watches a document and emits without loading it for consumers.
   Stream<void> watchDocumentLazy(
     String collection,
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return watchDocument(
+      collection,
+      id,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
   }
 
-  /// Watches are not part of the current single-tab Web preview.
+  /// Watches all documents in [collection] and emits after committed changes.
   Stream<List<CindelDocument>> watchCollection(
     String collection, {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    _checkOpen();
+    _checkCollection(collection);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+      shouldReadChange: (_) => true,
+      readSnapshot: (_) async {
+        final ids = await documentIds(collection);
+        return documentsByIds(collection, ids);
+      },
+      areSnapshotsEqual: _jsonLikeEquals,
+    );
   }
 
-  /// Watches are not part of the current single-tab Web preview.
+  /// Watches a collection and emits without returning collection snapshots.
   Stream<void> watchCollectionLazy({
     required String collection,
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return watchCollectionChanges(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
+  }
+
+  /// Watches raw collection change metadata.
+  Stream<CindelChangeSet> watchCollectionChanges(
+    String collection, {
+    Duration pollInterval = defaultCindelWatchPollInterval,
+    bool fireImmediately = true,
+  }) {
+    _checkOpen();
+    _checkCollection(collection);
+    _checkPollInterval(pollInterval);
+
+    return _watch(
+      collection,
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+      shouldReadChange: (_) => true,
+      readSnapshot: (change) async =>
+          change ?? CindelChangeSet.external(collection),
+      areSnapshotsEqual: null,
+    );
   }
 
   Future<T> _runTransaction<T>(
@@ -690,6 +926,10 @@ class CindelDatabase {
     if (_activeTransaction != null) {
       throw CindelTransactionError('Nested transactions are not supported.');
     }
+    final previousChanges = Map<String, _CindelChangeSetBuilder>.of(
+      _changesInTransaction,
+    );
+    _changesInTransaction.clear();
     final begin = mode == _TransactionMode.read
         ? 'beginReadTransaction'
         : 'beginWriteTransaction';
@@ -698,13 +938,208 @@ class CindelDatabase {
     try {
       final result = await action();
       await _sendVoid('commitTransaction', const {});
+      final localChanges = {
+        for (final entry in _changesInTransaction.entries)
+          entry.key: entry.value.build(),
+      };
+      final changes = mode == _TransactionMode.write
+          ? await _nativeChangesForWatchers(localChanges)
+          : const <CindelChangeSet>[];
+      _changesInTransaction
+        ..clear()
+        ..addAll(previousChanges);
+      _activeTransaction = null;
+      if (mode == _TransactionMode.write) {
+        for (final change in changes) {
+          _notifyWatchers(change);
+        }
+      }
       return result;
     } catch (_) {
-      await _sendVoid('rollbackTransaction', const {});
+      try {
+        await _sendVoid('rollbackTransaction', const {});
+      } catch (_) {
+        // Preserve the original failure from user code or commit.
+      }
+      _changesInTransaction
+        ..clear()
+        ..addAll(previousChanges);
       rethrow;
     } finally {
       _activeTransaction = null;
     }
+  }
+
+  Stream<T> _watch<T>(
+    String collection, {
+    required Duration pollInterval,
+    required bool fireImmediately,
+    required bool Function(CindelChangeSet change) shouldReadChange,
+    required Future<T> Function(CindelChangeSet? change) readSnapshot,
+    required bool Function(T left, T right)? areSnapshotsEqual,
+  }) {
+    late final _CindelWatcher<T> watcher;
+    watcher = _CindelWatcher<T>(
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+      shouldPoll: () => _activeTransaction == null,
+      readRevision: () => _collectionRevision(collection),
+      shouldReadChange: shouldReadChange,
+      readSnapshot: readSnapshot,
+      areSnapshotsEqual: areSnapshotsEqual,
+      onListen: () => _registerWatcher(collection, watcher),
+      onCancel: () => _unregisterWatcher(collection, watcher),
+    );
+    return watcher.stream;
+  }
+
+  void _registerWatcher(String collection, _RegisteredWatcher watcher) {
+    _watchersByCollection
+        .putIfAbsent(collection, () => <_RegisteredWatcher>{})
+        .add(watcher);
+  }
+
+  Future<int> _collectionRevision(String collection) async {
+    final scalar = decodeScalar(
+      await _sendBytes('collectionRevision', {'collection': collection}),
+    );
+    return scalar is WireScalarInt ? scalar.value : 0;
+  }
+
+  void _notifyWatchers(CindelChangeSet change) {
+    final watchers = _watchersByCollection[change.collection];
+    if (watchers == null) {
+      return;
+    }
+    for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
+      unawaited(watcher.poll(change: change));
+    }
+  }
+
+  Future<void> _markNativeCollectionChanged(
+    String collection,
+    CindelChangeSet Function() fallback,
+  ) async {
+    if (_activeTransaction == _TransactionMode.write) {
+      _markCollectionChanged(fallback());
+      return;
+    }
+
+    final nativeChanges = await _takeNativeChangeSets();
+    if (!_hasWatchers(collection)) {
+      return;
+    }
+    final localChange = fallback();
+    final changes = _changesFromNative(nativeChanges, {
+      localChange.collection: localChange,
+    });
+    for (final change in changes) {
+      _notifyWatchers(change);
+    }
+  }
+
+  Future<List<CindelChangeSet>> _nativeChangesForWatchers(
+    Map<String, CindelChangeSet> localChanges,
+  ) async {
+    final nativeChanges = await _takeNativeChangeSets();
+    if (!localChanges.keys.any(_hasWatchers)) {
+      return const [];
+    }
+    return _changesFromNative(nativeChanges, localChanges);
+  }
+
+  bool _hasWatchers(String collection) {
+    return _watchersByCollection[collection]?.isNotEmpty ?? false;
+  }
+
+  Future<List<WireChangeSet>> _takeNativeChangeSets() async {
+    return decodeChangeSetList(await _sendBytes('takeChanges', const {}));
+  }
+
+  List<CindelChangeSet> _changesFromNative(
+    List<WireChangeSet> nativeChanges,
+    Map<String, CindelChangeSet> localChanges,
+  ) {
+    if (nativeChanges.isEmpty) {
+      return [
+        for (final change in localChanges.values)
+          if (change.hasUnknownDocuments || change.documents.isNotEmpty) change,
+      ];
+    }
+    final builders = <String, _CindelChangeSetBuilder>{};
+    for (final change in nativeChanges) {
+      builders
+          .putIfAbsent(
+            change.collection,
+            () => _CindelChangeSetBuilder(change.collection),
+          )
+          .add(_changeFromNative(change, localChanges[change.collection]));
+    }
+    return [for (final builder in builders.values) builder.build()];
+  }
+
+  CindelChangeSet _changeFromNative(
+    WireChangeSet change,
+    CindelChangeSet? localChange,
+  ) {
+    final nativeIds = change.documentIds.toSet();
+    final localIds = localChange?.documentIds;
+    final ids = nativeIds.isEmpty ? localIds?.toSet() : nativeIds;
+    final documents = {
+      for (final entry
+          in (localChange?.documents ?? const <int, CindelDocument>{}).entries)
+        if (ids == null || ids.contains(entry.key)) entry.key: entry.value,
+    };
+    if (ids == null) {
+      return CindelChangeSet._(
+        collection: change.collection,
+        documentIds: null,
+        documents: Map<int, CindelDocument>.unmodifiable(documents),
+        hasUnknownDocuments: true,
+        isExternal: false,
+        revision: change.revision,
+      );
+    }
+    return CindelChangeSet.native(
+      collection: change.collection,
+      revision: change.revision,
+      ids: ids,
+      documents: documents,
+      hasUnknownDocuments: localChange?.hasUnknownDocuments ?? false,
+    );
+  }
+
+  void _markCollectionChanged(CindelChangeSet change) {
+    if (_activeTransaction == _TransactionMode.write) {
+      _changesInTransaction
+          .putIfAbsent(
+            change.collection,
+            () => _CindelChangeSetBuilder(change.collection),
+          )
+          .add(change);
+      return;
+    }
+    _notifyWatchers(change);
+  }
+
+  void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
+    final watchers = _watchersByCollection[collection];
+    if (watchers == null) {
+      return;
+    }
+    watchers.remove(watcher);
+    if (watchers.isEmpty) {
+      _watchersByCollection.remove(collection);
+    }
+  }
+
+  Future<void> _closeWatchers() async {
+    final watchers = [
+      for (final collectionWatchers in _watchersByCollection.values)
+        ...collectionWatchers,
+    ];
+    _watchersByCollection.clear();
+    await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
   }
 
   Future<void> _sendVoid(String operation, Map<String, Object?> payload) async {
@@ -735,6 +1170,188 @@ class CindelDatabase {
     if (_closed) {
       throw CindelDatabaseClosedError();
     }
+  }
+}
+
+final class _CindelChangeSetBuilder {
+  _CindelChangeSetBuilder(this.collection);
+
+  final String collection;
+  final Set<int> _documentIds = {};
+  final Map<int, CindelDocument> _documents = {};
+  bool _unknownIds = false;
+  bool _hasUnknownDocuments = false;
+  int? _revision;
+
+  void add(CindelChangeSet change) {
+    if (change.documentIds == null) {
+      _unknownIds = true;
+    } else {
+      _documentIds.addAll(change.documentIds!);
+    }
+    _hasUnknownDocuments = _hasUnknownDocuments || change.hasUnknownDocuments;
+    final revision = change.revision;
+    if (revision != null) {
+      final current = _revision;
+      _revision = current == null || revision > current ? revision : current;
+    }
+    for (final entry in change.documents.entries) {
+      _documents[entry.key] = Map<String, Object?>.of(entry.value);
+    }
+  }
+
+  CindelChangeSet build() {
+    return CindelChangeSet._(
+      collection: collection,
+      documentIds: _unknownIds ? null : Set<int>.of(_documentIds),
+      documents: Map<int, CindelDocument>.unmodifiable(_documents),
+      hasUnknownDocuments: _hasUnknownDocuments,
+      isExternal: false,
+      revision: _revision,
+    );
+  }
+}
+
+abstract interface class _RegisteredWatcher {
+  Future<void> poll({bool force, CindelChangeSet? change});
+
+  Future<void> close();
+}
+
+final class _CindelWatcher<T> implements _RegisteredWatcher {
+  _CindelWatcher({
+    required Duration pollInterval,
+    required bool fireImmediately,
+    required bool Function() shouldPoll,
+    required Future<int> Function() readRevision,
+    required bool Function(CindelChangeSet change) shouldReadChange,
+    required Future<T> Function(CindelChangeSet? change) readSnapshot,
+    required bool Function(T left, T right)? areSnapshotsEqual,
+    required void Function() onListen,
+    required void Function() onCancel,
+  }) : _pollInterval = pollInterval,
+       _fireImmediately = fireImmediately,
+       _shouldPoll = shouldPoll,
+       _readRevision = readRevision,
+       _shouldReadChange = shouldReadChange,
+       _readSnapshot = readSnapshot,
+       _areSnapshotsEqual = areSnapshotsEqual,
+       _onListen = onListen,
+       _onCancel = onCancel {
+    _controller = StreamController<T>(
+      onListen: () {
+        _onListen();
+        if (_fireImmediately) {
+          unawaited(poll(force: true));
+        } else {
+          unawaited(_prime());
+        }
+        _timer = Timer.periodic(_pollInterval, (_) => unawaited(poll()));
+      },
+      onCancel: () {
+        _timer?.cancel();
+        _onCancel();
+      },
+    );
+  }
+
+  final Duration _pollInterval;
+  final bool _fireImmediately;
+  final bool Function() _shouldPoll;
+  final Future<int> Function() _readRevision;
+  final bool Function(CindelChangeSet change) _shouldReadChange;
+  final Future<T> Function(CindelChangeSet? change) _readSnapshot;
+  final bool Function(T left, T right)? _areSnapshotsEqual;
+  final void Function() _onListen;
+  final void Function() _onCancel;
+
+  late final StreamController<T> _controller;
+  Timer? _timer;
+  int? _lastRevision;
+  bool _hasLastSnapshot = false;
+  T? _lastSnapshot;
+  bool _isPolling = false;
+  bool _needsPoll = false;
+  bool _pendingForce = false;
+  CindelChangeSet? _pendingChange;
+
+  Stream<T> get stream => _controller.stream;
+
+  Future<void> _prime() async {
+    if (_isPolling || _controller.isClosed) {
+      return;
+    }
+    _isPolling = true;
+    try {
+      _lastRevision = await _readRevision();
+      _lastSnapshot = await _readSnapshot(null);
+      _hasLastSnapshot = true;
+    } catch (error, stackTrace) {
+      if (!_controller.isClosed) {
+        _controller.addError(error, stackTrace);
+      }
+    } finally {
+      _isPolling = false;
+    }
+  }
+
+  Future<void> poll({bool force = false, CindelChangeSet? change}) async {
+    if (_isPolling || _controller.isClosed) {
+      if (!_controller.isClosed) {
+        _needsPoll = true;
+        _pendingForce = _pendingForce || force;
+        _pendingChange ??= change;
+      }
+      return;
+    }
+    if (!force && !_shouldPoll()) {
+      return;
+    }
+    _isPolling = true;
+    try {
+      final revision = change?.revision ?? await _readRevision();
+      if (!force && change != null && !_shouldReadChange(change)) {
+        _lastRevision = revision;
+        return;
+      }
+      if (!force && change == null && revision == _lastRevision) {
+        return;
+      }
+      _lastRevision = revision;
+      final snapshot = await _readSnapshot(change);
+      final areSnapshotsEqual = _areSnapshotsEqual;
+      if (!force && _hasLastSnapshot && areSnapshotsEqual != null) {
+        final lastSnapshot = _lastSnapshot as T;
+        if (areSnapshotsEqual(lastSnapshot, snapshot)) {
+          _lastSnapshot = snapshot;
+          return;
+        }
+      }
+      _lastSnapshot = snapshot;
+      _hasLastSnapshot = true;
+      if (!_controller.isClosed) {
+        _controller.add(snapshot);
+      }
+    } catch (error, stackTrace) {
+      if (!_controller.isClosed) {
+        _controller.addError(error, stackTrace);
+      }
+    } finally {
+      _isPolling = false;
+      if (_needsPoll && !_controller.isClosed) {
+        final pendingForce = _pendingForce;
+        final pendingChange = _pendingChange;
+        _needsPoll = false;
+        _pendingForce = false;
+        _pendingChange = null;
+        unawaited(poll(force: pendingForce, change: pendingChange));
+      }
+    }
+  }
+
+  Future<void> close() async {
+    _timer?.cancel();
+    await _controller.close();
   }
 }
 
@@ -1091,8 +1708,50 @@ void _checkCollection(String collection) {
   }
 }
 
+void _checkPollInterval(Duration pollInterval) {
+  if (pollInterval <= Duration.zero) {
+    throw ArgumentError.value(
+      pollInterval,
+      'pollInterval',
+      'Must be greater than zero.',
+    );
+  }
+}
+
 void _checkId(int id) {
   if (id < 0 || id > _maximumSqliteId) {
     throw RangeError.range(id, 0, _maximumSqliteId, 'id');
   }
+}
+
+bool _jsonLikeEquals(Object? left, Object? right) {
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key)) {
+        return false;
+      }
+      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (!_jsonLikeEquals(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
 }

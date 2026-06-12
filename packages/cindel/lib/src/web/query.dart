@@ -424,20 +424,29 @@ final class CindelQuery<T> {
     return documents.map(_schema.fromDocument).toList(growable: false);
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches this query and emits typed results when the visible result changes.
   Stream<List<T>> watch({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return _watchMatchingDocuments(
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map(
+      (documents) =>
+          documents.map(_schema.fromDocument).toList(growable: false),
+    );
   }
 
-  /// Watches are not part of the current Web preview.
+  /// Watches this query and emits without returning the matching objects.
   Stream<void> watchLazy({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    throw UnsupportedError('Cindel Web watchers are not available yet.');
+    return _watchMatchingIds(
+      pollInterval: pollInterval,
+      fireImmediately: fireImmediately,
+    ).map((_) {});
   }
 
   /// Returns the first object matching this query, or `null`.
@@ -597,6 +606,223 @@ final class CindelQuery<T> {
       return false;
     }
     return _usesNativeDocuments() && _schema.readNativeDocument != null;
+  }
+
+  Future<List<int>> _matchingIds() async {
+    if (_sortKeys.isEmpty &&
+        _distinctFields.isEmpty &&
+        _offset == 0 &&
+        _limit == null &&
+        _filter == null &&
+        _sourceFilter == null) {
+      return _database.documentIds(_schema.name);
+    }
+
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      return _database.queryNativePlanIds(_schema.name, nativePlan);
+    }
+
+    final documents = await _matchingDocuments();
+    return documents.map(_idFromDocument).toList(growable: false);
+  }
+
+  Stream<List<CindelDocument>> _watchMatchingDocuments({
+    required Duration pollInterval,
+    required bool fireImmediately,
+  }) {
+    late final StreamController<List<CindelDocument>> controller;
+    StreamSubscription<CindelChangeSet>? subscription;
+    var hasSnapshot = false;
+    Set<int> previousIds = const {};
+    var isReading = false;
+    var needsRead = false;
+
+    bool canSkipLocalChange(CindelChangeSet change) {
+      if (change.isExternal) {
+        return false;
+      }
+      final changedIds = change.documentIds;
+      if (changedIds == null) {
+        return false;
+      }
+      if (changedIds.any(previousIds.contains)) {
+        return false;
+      }
+      if (change.hasUnknownDocuments) {
+        return false;
+      }
+      for (final document in change.documents.values) {
+        if (_matchesBeforeWindow(document)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    Future<void> readAndMaybeEmit(CindelChangeSet change) async {
+      if (hasSnapshot && canSkipLocalChange(change)) {
+        return;
+      }
+      if (isReading) {
+        needsRead = true;
+        return;
+      }
+      isReading = true;
+      try {
+        do {
+          needsRead = false;
+          final documents = await _matchingDocuments();
+          if (controller.isClosed) {
+            return;
+          }
+          final documentIds = documents.map(_idFromDocument).toSet();
+          if (!hasSnapshot) {
+            hasSnapshot = true;
+            previousIds = documentIds;
+            if (fireImmediately) {
+              controller.add(documents);
+            }
+            continue;
+          }
+
+          previousIds = documentIds;
+          controller.add(documents);
+        } while (needsRead && !controller.isClosed);
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        isReading = false;
+      }
+    }
+
+    controller = StreamController<List<CindelDocument>>(
+      onListen: () {
+        subscription = _database
+            .watchCollectionChanges(
+              _schema.name,
+              pollInterval: pollInterval,
+              fireImmediately: true,
+            )
+            .listen(
+              (change) => unawaited(readAndMaybeEmit(change)),
+              onError: controller.addError,
+              onDone: controller.close,
+            );
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
+  }
+
+  Stream<List<int>> _watchMatchingIds({
+    required Duration pollInterval,
+    required bool fireImmediately,
+  }) {
+    late final StreamController<List<int>> controller;
+    StreamSubscription<CindelChangeSet>? subscription;
+    var hasSnapshot = false;
+    Set<int> previousIdSet = const {};
+    var isReading = false;
+    var needsRead = false;
+
+    bool canSkipLocalChange(CindelChangeSet change) {
+      if (change.isExternal) {
+        return false;
+      }
+      final changedIds = change.documentIds;
+      if (changedIds == null) {
+        return false;
+      }
+      if (changedIds.any(previousIdSet.contains)) {
+        return false;
+      }
+      if (change.hasUnknownDocuments) {
+        return false;
+      }
+      for (final document in change.documents.values) {
+        if (_matchesBeforeWindow(document)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    Future<void> readAndMaybeEmit(CindelChangeSet change) async {
+      if (hasSnapshot && canSkipLocalChange(change)) {
+        return;
+      }
+      if (isReading) {
+        needsRead = true;
+        return;
+      }
+      isReading = true;
+      try {
+        do {
+          needsRead = false;
+          final ids = await _matchingIds();
+          if (controller.isClosed) {
+            return;
+          }
+          final idSet = ids.toSet();
+          if (!hasSnapshot) {
+            hasSnapshot = true;
+            previousIdSet = idSet;
+            if (fireImmediately) {
+              controller.add(ids);
+            }
+            continue;
+          }
+
+          previousIdSet = idSet;
+          controller.add(ids);
+        } while (needsRead && !controller.isClosed);
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        isReading = false;
+      }
+    }
+
+    controller = StreamController<List<int>>(
+      onListen: () {
+        subscription = _database
+            .watchCollectionChanges(
+              _schema.name,
+              pollInterval: pollInterval,
+              fireImmediately: true,
+            )
+            .listen(
+              (change) => unawaited(readAndMaybeEmit(change)),
+              onError: controller.addError,
+              onDone: controller.close,
+            );
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
+  }
+
+  bool _matchesBeforeWindow(CindelDocument document) {
+    final sourceFilter = _sourceFilter;
+    if (sourceFilter != null && !sourceFilter(document)) {
+      return false;
+    }
+    final filter = _filter;
+    if (filter != null && !filter.matches(document)) {
+      return false;
+    }
+    return true;
   }
 
   bool _usesNativeDocuments() {

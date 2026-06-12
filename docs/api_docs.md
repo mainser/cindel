@@ -144,6 +144,29 @@ use `Cindel.open(...)`.
 Manual document rows keep the conservative Dart-side fallback so mixed generic
 collections remain visible through the public API.
 
+### Single-Tab Watchers
+
+Web watchers use the same public API as native watchers:
+
+```dart
+final sub = db.users
+    .filter()
+    .activeEqualTo(true)
+    .watch()
+    .listen((users) {});
+```
+
+Under the hood:
+
+- the Worker records collection change sets after committed writes,
+- Dart Web translates those change sets into document, collection, typed,
+  query, and lazy watcher streams,
+- watcher events are ordered after the write commit completes,
+- closing the database closes active watcher streams.
+
+This is single-tab reactivity only. No `BroadcastChannel` or multi-tab delivery
+is included yet.
+
 ### Close Behavior
 
 The general `close()` API is documented below. On Web, closing also sends a
@@ -1017,6 +1040,9 @@ Cindel watchers emit after committed changes. Local writes notify watchers
 directly, while polling remains as the fallback for changes from another
 database handle.
 
+On Web, watcher delivery is scoped to the current tab and Worker-backed
+database handle. Multi-tab coordination is intentionally not enabled yet.
+
 The default polling interval is:
 
 ```dart
@@ -1307,7 +1333,6 @@ The current public API does not yet include:
 - `exists()` query result helper,
 - embedded-field indexes,
 - public migration/export tooling,
-- Web watchers.
 - multi-tab Web coordination.
 - Web embedded native object/list writers.
 

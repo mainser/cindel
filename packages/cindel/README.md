@@ -253,12 +253,14 @@ What changes on Web:
   composite index lookups.
 - Database requests are serialized through the Worker, so transactions do not
   depend on `postMessage` timing.
+- Single-tab watchers use Worker post-commit change sets for document,
+  collection, typed, query, and lazy streams.
 
 Current Web preview limits:
 
 - Requires browser support for Web Workers, Wasm, and OPFS.
 - Best validated with normal Flutter Web builds served from a browser context.
-- Web watchers and multi-tab coordination are not part of the preview yet.
+- Multi-tab watcher coordination is not part of the preview yet.
 - Application code should not open the Worker directly; use `Cindel.open(...)`.
 
 ## CRUD
@@ -402,6 +404,10 @@ final document = await db.get('users', 1);
 
 Cindel watchers expose Dart streams for objects, collections, queries, and
 manual documents:
+
+On Web, watchers are single-tab only. They react to changes committed by the
+current Worker-backed database handle; cross-tab delivery will need a future
+BroadcastChannel layer.
 
 ```dart
 final sub = db.users
