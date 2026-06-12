@@ -8,13 +8,26 @@ part of 'catalog_providers.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
+/// Runs catalog startup work that should happen once when the app launches.
+///
+/// The seed is guarded by the data source, so watching this provider from the
+/// app shell does not duplicate demo products.
 
 @ProviderFor(catalogStartup)
 final catalogStartupProvider = CatalogStartupProvider._();
 
+/// Runs catalog startup work that should happen once when the app launches.
+///
+/// The seed is guarded by the data source, so watching this provider from the
+/// app shell does not duplicate demo products.
+
 final class CatalogStartupProvider
     extends $FunctionalProvider<AsyncValue<void>, void, FutureOr<void>>
     with $FutureModifier<void>, $FutureProvider<void> {
+  /// Runs catalog startup work that should happen once when the app launches.
+  ///
+  /// The seed is guarded by the data source, so watching this provider from the
+  /// app shell does not duplicate demo products.
   CatalogStartupProvider._()
     : super(
         from: null,
@@ -40,14 +53,18 @@ final class CatalogStartupProvider
   }
 }
 
-String _$catalogStartupHash() => r'1b7ea2fcbb59d8b4eea795217ba8d9925250c97d';
+String _$catalogStartupHash() => r'5b4c0dc744edc0b66efb58dac6aecbb5dd93a3c0';
+
+/// Loads and appends catalog pages in response to scroll position.
 
 @ProviderFor(CatalogProductsController)
 final catalogProductsControllerProvider = CatalogProductsControllerProvider._();
 
+/// Loads and appends catalog pages in response to scroll position.
 final class CatalogProductsControllerProvider
     extends
         $AsyncNotifierProvider<CatalogProductsController, CatalogProductsPage> {
+  /// Loads and appends catalog pages in response to scroll position.
   CatalogProductsControllerProvider._()
     : super(
         from: null,
@@ -68,7 +85,9 @@ final class CatalogProductsControllerProvider
 }
 
 String _$catalogProductsControllerHash() =>
-    r'4b135abe627c12ee8d86197d893045bfb96285d9';
+    r'7fdc309aa8f0b699c54f18fde59bd473ffa77342';
+
+/// Loads and appends catalog pages in response to scroll position.
 
 abstract class _$CatalogProductsController
     extends $AsyncNotifier<CatalogProductsPage> {
@@ -90,12 +109,17 @@ abstract class _$CatalogProductsController
   }
 }
 
+/// Product count used by catalog chrome and lightweight status surfaces.
+
 @ProviderFor(catalogProductCount)
 final catalogProductCountProvider = CatalogProductCountProvider._();
+
+/// Product count used by catalog chrome and lightweight status surfaces.
 
 final class CatalogProductCountProvider
     extends $FunctionalProvider<AsyncValue<int>, int, FutureOr<int>>
     with $FutureModifier<int>, $FutureProvider<int> {
+  /// Product count used by catalog chrome and lightweight status surfaces.
   CatalogProductCountProvider._()
     : super(
         from: null,
@@ -122,13 +146,17 @@ final class CatalogProductCountProvider
 }
 
 String _$catalogProductCountHash() =>
-    r'1f24c8135a79486ae48dad124230b18c75ccb166';
+    r'7696b55d7ff7dd02d78b1382ae9c47253eed06cb';
+
+/// Stores the active catalog query selected by search and filter controls.
 
 @ProviderFor(CatalogQueryController)
 final catalogQueryControllerProvider = CatalogQueryControllerProvider._();
 
+/// Stores the active catalog query selected by search and filter controls.
 final class CatalogQueryControllerProvider
     extends $NotifierProvider<CatalogQueryController, CatalogQuery> {
+  /// Stores the active catalog query selected by search and filter controls.
   CatalogQueryControllerProvider._()
     : super(
         from: null,
@@ -158,6 +186,8 @@ final class CatalogQueryControllerProvider
 
 String _$catalogQueryControllerHash() =>
     r'ce99f7d7e8b4b4acb5736fb199f9ef0c3b883b8d';
+
+/// Stores the active catalog query selected by search and filter controls.
 
 abstract class _$CatalogQueryController extends $Notifier<CatalogQuery> {
   CatalogQuery build();

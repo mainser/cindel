@@ -14,9 +14,6 @@ const _catalogPageSize = 20;
 @riverpod
 Future<void> catalogStartup(Ref ref) async {
   await ref.watch(ensureCatalogSeededUseCaseProvider).call();
-  ref
-    ..invalidate(catalogProductCountProvider)
-    ..invalidate(catalogProductsControllerProvider);
 }
 
 /// Immutable page state for the paginated product grid.
@@ -49,6 +46,8 @@ final class CatalogProductsPage {
 class CatalogProductsController extends _$CatalogProductsController {
   @override
   Future<CatalogProductsPage> build() async {
+    await ref.watch(catalogStartupProvider.future);
+
     final query = ref.watch(catalogQueryControllerProvider);
     final products = await ref
         .watch(readCatalogProductsPageUseCaseProvider)
@@ -95,7 +94,8 @@ class CatalogProductsController extends _$CatalogProductsController {
 
 /// Product count used by catalog chrome and lightweight status surfaces.
 @riverpod
-Future<int> catalogProductCount(Ref ref) {
+Future<int> catalogProductCount(Ref ref) async {
+  await ref.watch(catalogStartupProvider.future);
   return ref.watch(countCatalogProductsUseCaseProvider).call();
 }
 

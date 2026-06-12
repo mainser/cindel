@@ -8,9 +8,18 @@ part of 'catalog_di.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
+/// Opens the local Cindel database used by the demo catalog.
+///
+/// The app registers only [ProductSchema] today, so catalog, dashboard, and
+/// checkout all operate over the same typed products collection.
 
 @ProviderFor(catalogDatabase)
 final catalogDatabaseProvider = CatalogDatabaseProvider._();
+
+/// Opens the local Cindel database used by the demo catalog.
+///
+/// The app registers only [ProductSchema] today, so catalog, dashboard, and
+/// checkout all operate over the same typed products collection.
 
 final class CatalogDatabaseProvider
     extends
@@ -20,6 +29,10 @@ final class CatalogDatabaseProvider
           FutureOr<CindelDatabase>
         >
     with $FutureModifier<CindelDatabase>, $FutureProvider<CindelDatabase> {
+  /// Opens the local Cindel database used by the demo catalog.
+  ///
+  /// The app registers only [ProductSchema] today, so catalog, dashboard, and
+  /// checkout all operate over the same typed products collection.
   CatalogDatabaseProvider._()
     : super(
         from: null,
@@ -46,10 +59,14 @@ final class CatalogDatabaseProvider
   }
 }
 
-String _$catalogDatabaseHash() => r'f187e6859a6632ed7786abf975d4945dd56b69db';
+String _$catalogDatabaseHash() => r'22eebb589cfc6c15a6d315a971f199b73958b4e9';
+
+/// Provides the catalog data source backed by the shared Cindel database.
 
 @ProviderFor(catalogLocalDataSource)
 final catalogLocalDataSourceProvider = CatalogLocalDataSourceProvider._();
+
+/// Provides the catalog data source backed by the shared Cindel database.
 
 final class CatalogLocalDataSourceProvider
     extends
@@ -59,6 +76,7 @@ final class CatalogLocalDataSourceProvider
           CatalogLocalDataSource
         >
     with $Provider<CatalogLocalDataSource> {
+  /// Provides the catalog data source backed by the shared Cindel database.
   CatalogLocalDataSourceProvider._()
     : super(
         from: null,
@@ -96,8 +114,12 @@ final class CatalogLocalDataSourceProvider
 String _$catalogLocalDataSourceHash() =>
     r'e5f5c2fa6ba6720ee4996df98628199489dc8fbe';
 
+/// Provides the catalog repository used by catalog-facing use cases.
+
 @ProviderFor(catalogRepository)
 final catalogRepositoryProvider = CatalogRepositoryProvider._();
+
+/// Provides the catalog repository used by catalog-facing use cases.
 
 final class CatalogRepositoryProvider
     extends
@@ -107,6 +129,7 @@ final class CatalogRepositoryProvider
           CatalogRepository
         >
     with $Provider<CatalogRepository> {
+  /// Provides the catalog repository used by catalog-facing use cases.
   CatalogRepositoryProvider._()
     : super(
         from: null,
@@ -143,9 +166,13 @@ final class CatalogRepositoryProvider
 
 String _$catalogRepositoryHash() => r'beaac6b7bd25bde352a8260b2c60703c4bc6a2d0';
 
+/// Use case that inserts deterministic demo products when the database is new.
+
 @ProviderFor(ensureCatalogSeededUseCase)
 final ensureCatalogSeededUseCaseProvider =
     EnsureCatalogSeededUseCaseProvider._();
+
+/// Use case that inserts deterministic demo products when the database is new.
 
 final class EnsureCatalogSeededUseCaseProvider
     extends
@@ -155,6 +182,7 @@ final class EnsureCatalogSeededUseCaseProvider
           EnsureCatalogSeeded
         >
     with $Provider<EnsureCatalogSeeded> {
+  /// Use case that inserts deterministic demo products when the database is new.
   EnsureCatalogSeededUseCaseProvider._()
     : super(
         from: null,
@@ -192,9 +220,13 @@ final class EnsureCatalogSeededUseCaseProvider
 String _$ensureCatalogSeededUseCaseHash() =>
     r'eb602e893cb2202163f7d9f29e090dbb3cb8aa59';
 
+/// Use case for paginated catalog reads.
+
 @ProviderFor(readCatalogProductsPageUseCase)
 final readCatalogProductsPageUseCaseProvider =
     ReadCatalogProductsPageUseCaseProvider._();
+
+/// Use case for paginated catalog reads.
 
 final class ReadCatalogProductsPageUseCaseProvider
     extends
@@ -204,6 +236,7 @@ final class ReadCatalogProductsPageUseCaseProvider
           ReadCatalogProductsPage
         >
     with $Provider<ReadCatalogProductsPage> {
+  /// Use case for paginated catalog reads.
   ReadCatalogProductsPageUseCaseProvider._()
     : super(
         from: null,
@@ -241,9 +274,13 @@ final class ReadCatalogProductsPageUseCaseProvider
 String _$readCatalogProductsPageUseCaseHash() =>
     r'18d435d7f5c395d9c318810e552a53a01978bd0f';
 
+/// Use case for lightweight catalog counts used by UI badges and startup.
+
 @ProviderFor(countCatalogProductsUseCase)
 final countCatalogProductsUseCaseProvider =
     CountCatalogProductsUseCaseProvider._();
+
+/// Use case for lightweight catalog counts used by UI badges and startup.
 
 final class CountCatalogProductsUseCaseProvider
     extends
@@ -253,6 +290,7 @@ final class CountCatalogProductsUseCaseProvider
           CountCatalogProducts
         >
     with $Provider<CountCatalogProducts> {
+  /// Use case for lightweight catalog counts used by UI badges and startup.
   CountCatalogProductsUseCaseProvider._()
     : super(
         from: null,

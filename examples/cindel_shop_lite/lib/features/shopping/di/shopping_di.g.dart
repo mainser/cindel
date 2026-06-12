@@ -8,9 +8,12 @@ part of 'shopping_di.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
+/// Shopping data source that performs checkout against catalog products.
 
 @ProviderFor(shoppingLocalDataSource)
 final shoppingLocalDataSourceProvider = ShoppingLocalDataSourceProvider._();
+
+/// Shopping data source that performs checkout against catalog products.
 
 final class ShoppingLocalDataSourceProvider
     extends
@@ -20,6 +23,7 @@ final class ShoppingLocalDataSourceProvider
           ShoppingLocalDataSource
         >
     with $Provider<ShoppingLocalDataSource> {
+  /// Shopping data source that performs checkout against catalog products.
   ShoppingLocalDataSourceProvider._()
     : super(
         from: null,
@@ -57,8 +61,12 @@ final class ShoppingLocalDataSourceProvider
 String _$shoppingLocalDataSourceHash() =>
     r'4e8cd520a0dfe70f7126716d2f59ee40958717ec';
 
+/// Repository boundary for the simulated checkout flow.
+
 @ProviderFor(shoppingRepository)
 final shoppingRepositoryProvider = ShoppingRepositoryProvider._();
+
+/// Repository boundary for the simulated checkout flow.
 
 final class ShoppingRepositoryProvider
     extends
@@ -68,6 +76,7 @@ final class ShoppingRepositoryProvider
           ShoppingRepository
         >
     with $Provider<ShoppingRepository> {
+  /// Repository boundary for the simulated checkout flow.
   ShoppingRepositoryProvider._()
     : super(
         from: null,
@@ -105,12 +114,17 @@ final class ShoppingRepositoryProvider
 String _$shoppingRepositoryHash() =>
     r'00508858c4ec58da216dde711b56aac0653adf5c';
 
+/// Use case that commits cart checkout effects to local storage.
+
 @ProviderFor(checkoutCartUseCase)
 final checkoutCartUseCaseProvider = CheckoutCartUseCaseProvider._();
+
+/// Use case that commits cart checkout effects to local storage.
 
 final class CheckoutCartUseCaseProvider
     extends $FunctionalProvider<CheckoutCart, CheckoutCart, CheckoutCart>
     with $Provider<CheckoutCart> {
+  /// Use case that commits cart checkout effects to local storage.
   CheckoutCartUseCaseProvider._()
     : super(
         from: null,

@@ -46,4 +46,4 @@ final class DashboardMetricsProvider
   }
 }
 
-String _$dashboardMetricsHash() => r'85a6cbe020c8ea4fdfeece8bec451fa2f2342e48';
+String _$dashboardMetricsHash() => r'de23656bc3ed4b3443243691eb0d079158b4d1aa';

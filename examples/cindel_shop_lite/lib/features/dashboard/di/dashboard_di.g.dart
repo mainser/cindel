@@ -8,10 +8,13 @@ part of 'dashboard_di.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
+/// Dashboard data source that derives metrics from the shared catalog database.
 
 @ProviderFor(dashboardCatalogDataSource)
 final dashboardCatalogDataSourceProvider =
     DashboardCatalogDataSourceProvider._();
+
+/// Dashboard data source that derives metrics from the shared catalog database.
 
 final class DashboardCatalogDataSourceProvider
     extends
@@ -21,6 +24,7 @@ final class DashboardCatalogDataSourceProvider
           DashboardCatalogDataSource
         >
     with $Provider<DashboardCatalogDataSource> {
+  /// Dashboard data source that derives metrics from the shared catalog database.
   DashboardCatalogDataSourceProvider._()
     : super(
         from: null,
@@ -58,8 +62,12 @@ final class DashboardCatalogDataSourceProvider
 String _$dashboardCatalogDataSourceHash() =>
     r'105cdb306ef19dc1bef894fe620c708b584e51d1';
 
+/// Repository boundary for dashboard metrics.
+
 @ProviderFor(dashboardRepository)
 final dashboardRepositoryProvider = DashboardRepositoryProvider._();
+
+/// Repository boundary for dashboard metrics.
 
 final class DashboardRepositoryProvider
     extends
@@ -69,6 +77,7 @@ final class DashboardRepositoryProvider
           DashboardRepository
         >
     with $Provider<DashboardRepository> {
+  /// Repository boundary for dashboard metrics.
   DashboardRepositoryProvider._()
     : super(
         from: null,
@@ -106,9 +115,13 @@ final class DashboardRepositoryProvider
 String _$dashboardRepositoryHash() =>
     r'6aca2b6c24e058ba03ecf2748446dafea7036ec6';
 
+/// Use case for reading the current dashboard inventory snapshot.
+
 @ProviderFor(readDashboardMetricsUseCase)
 final readDashboardMetricsUseCaseProvider =
     ReadDashboardMetricsUseCaseProvider._();
+
+/// Use case for reading the current dashboard inventory snapshot.
 
 final class ReadDashboardMetricsUseCaseProvider
     extends
@@ -118,6 +131,7 @@ final class ReadDashboardMetricsUseCaseProvider
           ReadDashboardMetrics
         >
     with $Provider<ReadDashboardMetrics> {
+  /// Use case for reading the current dashboard inventory snapshot.
   ReadDashboardMetricsUseCaseProvider._()
     : super(
         from: null,
