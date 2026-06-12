@@ -42,9 +42,9 @@ const int wireQuerySourceAll = 1;
 const int wireQuerySourceIndexEqual = 2;
 const int wireQuerySourceIndexRange = 3;
 
-const int _minInt64 = -0x8000000000000000;
-const int _maxInt64 = 0x7fffffffffffffff;
-const int _maxUint64 = _maxInt64;
+const int _uint32Range = 0x100000000;
+const int _int32SignBit = 0x80000000;
+const int _maxSafeInteger = 0x1fffffffffffff;
 
 /// Value stored inside a native index entry.
 ///
@@ -1679,19 +1679,20 @@ final class CindelWireWriter {
   }
 
   void writeUint64(int value) {
-    if (value < 0 || value > _maxUint64) {
-      throw RangeError.range(value, 0, _maxUint64, 'value');
+    if (value < 0) {
+      throw RangeError.range(value, 0, null, 'value');
     }
-    final data = ByteData(8)..setUint64(0, value, Endian.little);
-    _bytes.add(data.buffer.asUint8List());
+    final low = value % _uint32Range;
+    final high = value ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high);
   }
 
   void writeInt64(int value) {
-    if (value < _minInt64 || value > _maxInt64) {
-      throw RangeError.range(value, _minInt64, _maxInt64, 'value');
-    }
-    final data = ByteData(8)..setInt64(0, value, Endian.little);
-    _bytes.add(data.buffer.asUint8List());
+    final low = value % _uint32Range;
+    final high = (value - low) ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high % _uint32Range);
   }
 
   void writeFloat64(double value) {
@@ -1927,21 +1928,20 @@ final class _CindelGrowableWireWriter {
   }
 
   void writeUint64(int value) {
-    if (value < 0 || value > _maxUint64) {
-      throw RangeError.range(value, 0, _maxUint64, 'value');
+    if (value < 0) {
+      throw RangeError.range(value, 0, null, 'value');
     }
-    _ensure(8);
-    _data.setUint64(_offset, value, Endian.little);
-    _offset += 8;
+    final low = value % _uint32Range;
+    final high = value ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high);
   }
 
   void writeInt64(int value) {
-    if (value < _minInt64 || value > _maxInt64) {
-      throw RangeError.range(value, _minInt64, _maxInt64, 'value');
-    }
-    _ensure(8);
-    _data.setInt64(_offset, value, Endian.little);
-    _offset += 8;
+    final low = value % _uint32Range;
+    final high = (value - low) ~/ _uint32Range;
+    writeUint32(low);
+    writeUint32(high % _uint32Range);
   }
 
   void writeFloat64(double value) {
@@ -2092,11 +2092,14 @@ final class CindelWireReader {
   int readUint32() =>
       ByteData.sublistView(readExact(4)).getUint32(0, Endian.little);
 
-  int readUint64() =>
-      ByteData.sublistView(readExact(8)).getUint64(0, Endian.little);
+  int readUint64() => _combineUint64(readUint32(), readUint32());
 
-  int readInt64() =>
-      ByteData.sublistView(readExact(8)).getInt64(0, Endian.little);
+  int readInt64() {
+    final low = readUint32();
+    final high = readUint32();
+    final signedHigh = high >= _int32SignBit ? high - _uint32Range : high;
+    return signedHigh * _uint32Range + low;
+  }
 
   double readFloat64() =>
       ByteData.sublistView(readExact(8)).getFloat64(0, Endian.little);
@@ -2232,6 +2235,16 @@ final class CindelWireReader {
       final tag => throw FormatException('unknown wire filter operation $tag'),
     };
   }
+}
+
+int _combineUint64(int low, int high) {
+  final value = high * _uint32Range + low;
+  if (value > _maxSafeInteger) {
+    throw const FormatException(
+      'wire u64 value exceeds the Dart Web safe integer range',
+    );
+  }
+  return value;
 }
 
 int _filterOperationTag(WireFilterOperation operation) {

@@ -88,9 +88,53 @@ void main() {
       expect(source, contains('updateNativePlan'));
       expect(source, contains('queryNativePlanProjection'));
       expect(source, contains('queryNativePlanAggregate'));
-      expect(source, contains('collectionHasGenericDocuments(_schema.name)'));
+      expect(source, contains('queryNativePlanObjects'));
+      expect(source, isNot(contains('collectionHasGenericDocuments')));
     },
   );
+
+  // Scenario: Web drifts back to manual document storage after the typed-only
+  // contract was aligned with MDBX and SQLite native.
+  // Covers:
+  // - Manual document methods throwing explicitly on the Web database facade.
+  // - Generated typed collections using native rows for put/get/delete/watch.
+  // - Query materialization using generated native readers, not manual maps.
+  // Expected: No Web generated path falls back to `database.putAll/getAll`,
+  // `documentsByIds`, or manual document watchers.
+  test('web generated APIs do not fall back to manual documents', () async {
+    final databaseSource = await _readPackageFile(
+      'package:cindel/src/web/database.dart',
+    );
+    final querySource = await _readPackageFile(
+      'package:cindel/src/web/query.dart',
+    );
+    final typedCollectionSource = await _readPackageFile(
+      'package:cindel/src/web/typed_collection.dart',
+    );
+
+    expect(
+      databaseSource,
+      contains('Manual document APIs are disabled for native Cindel backends.'),
+    );
+    expect(databaseSource, contains('getAllNativeBinaryDocuments'));
+    expect(databaseSource, contains('CindelWebNativeDocumentReader'));
+    expect(databaseSource, contains('queryNativePlanObjects'));
+    expect(databaseSource, isNot(contains('cindelEncodeGenericDocument')));
+    expect(databaseSource, isNot(contains('cindelDecodeGenericDocument')));
+
+    expect(typedCollectionSource, contains('getAllNativeBinaryDocuments'));
+    expect(typedCollectionSource, contains('deleteAllNativeDocuments'));
+    expect(typedCollectionSource, contains('watchCollectionChanges'));
+    expect(typedCollectionSource, isNot(contains('database.putAll(')));
+    expect(typedCollectionSource, isNot(contains('database.getAll(')));
+    expect(typedCollectionSource, isNot(contains('database.deleteAll(')));
+    expect(typedCollectionSource, isNot(contains('database.watchDocument(')));
+    expect(typedCollectionSource, isNot(contains('database.watchCollection(')));
+
+    expect(querySource, contains('queryNativePlanObjects'));
+    expect(querySource, isNot(contains('database.documentsByIds')));
+    expect(querySource, isNot(contains('database.queryAll(_schema.name)')));
+  });
 
   // Scenario: Web typed collections lose unique-index replacement semantics.
   // Covers:
@@ -114,7 +158,6 @@ void main() {
       databaseSource,
       contains('Future<List<int>> queryCompositeEqualIds'),
     );
-    expect(databaseSource, contains("'queryIndexEqual'"));
     expect(databaseSource, contains('WireQuerySource.indexEqual'));
   });
 
@@ -149,7 +192,8 @@ void main() {
     expect(querySource, contains('watchCollectionChanges'));
     expect(querySource, contains('_watchMatchingDocuments'));
     expect(querySource, contains('_watchMatchingIds'));
-    expect(typedCollectionSource, contains('database.watchDocument'));
-    expect(typedCollectionSource, contains('database.watchCollection'));
+    expect(typedCollectionSource, contains('watchCollectionChanges'));
+    expect(typedCollectionSource, contains('watchObject('));
+    expect(typedCollectionSource, contains('watchCollection('));
   });
 }

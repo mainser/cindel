@@ -6,11 +6,10 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
-import '../generic_document.dart';
-import '../native/wire.dart';
 import '../schema.dart';
-import '../text.dart';
+import 'native_document_reader.dart';
 import 'schema_manifest.dart';
+import 'wire.dart';
 import 'worker_bridge.dart';
 
 /// A JSON-like document accepted by Cindel's manual API.
@@ -149,6 +148,9 @@ const _maximumSqliteId = 0x1FFFFFFFFFFFFF;
 // from an app-local copy.
 const _defaultWorkerUrl =
     'assets/packages/cindel_flutter_libs/web/cindel_worker.js';
+const _manualDocumentsUnsupportedMessage =
+    'Manual document APIs are disabled for native Cindel backends. '
+    'Use generated typed collections.';
 
 /// Native storage backend used by a Cindel database.
 enum CindelStorageBackend {
@@ -189,7 +191,6 @@ class CindelDatabase {
 
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final CindelWebWorkerBridge _bridge;
-  final Set<String> _genericDocumentCollections = <String>{};
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   bool _closed = false;
@@ -197,16 +198,6 @@ class CindelDatabase {
 
   /// Whether SQLite can use generated native document readers for this handle.
   bool get usesSqliteNativeDocuments => true;
-
-  /// Returns whether this collection has accepted generic document writes.
-  bool collectionHasGenericDocuments(String collection) {
-    return _genericDocumentCollections.contains(collection);
-  }
-
-  /// Marks a collection as containing generic document rows.
-  void markCollectionHasGenericDocuments(String collection) {
-    _genericDocumentCollections.add(collection);
-  }
 
   /// Opens a Web SQLite database.
   ///
@@ -283,7 +274,7 @@ class CindelDatabase {
 
   /// Stores [value] in [collection] under [id].
   Future<void> put(String collection, int id, CindelDocument value) {
-    return putAll(collection, {id: value});
+    _throwManualDocumentsUnsupported();
   }
 
   /// Stores every document in [values] atomically.
@@ -291,33 +282,7 @@ class CindelDatabase {
     String collection,
     Map<int, CindelDocument> values,
   ) async {
-    _checkOpen();
-    _checkCollection(collection);
-    if (values.isEmpty) {
-      return;
-    }
-    markCollectionHasGenericDocuments(collection);
-    final schema = _schemas[collection];
-    final writes = <WireIndexedDocumentWrite>[];
-    for (final entry in values.entries) {
-      _checkId(entry.key);
-      final document = Map<String, Object?>.from(entry.value);
-      writes.add(
-        WireIndexedDocumentWrite(
-          id: entry.key,
-          bytes: cindelEncodeGenericDocument(document),
-          indexes: schema == null
-              ? const []
-              : _indexEntriesFor(schema, entry.key, document),
-        ),
-      );
-    }
-    final bytes = encodeIndexedDocumentWriteBatch(writes);
-    await _sendVoid('putAll', {'collection': collection, 'documents': bytes});
-    await _markNativeCollectionChanged(
-      collection,
-      () => CindelChangeSet.upserts(collection, values),
-    );
+    _throwManualDocumentsUnsupported();
   }
 
   /// Stores generated typed objects through the Web SQLite native row path.
@@ -376,12 +341,12 @@ class CindelDatabase {
 
   /// Stores many documents atomically.
   Future<void> putMany(String collection, Map<int, CindelDocument> values) {
-    return putAll(collection, values);
+    _throwManualDocumentsUnsupported();
   }
 
   /// Returns the document stored in [collection] under [id], or `null`.
   Future<CindelDocument?> get(String collection, int id) async {
-    return (await getAll(collection, [id])).single;
+    _throwManualDocumentsUnsupported();
   }
 
   /// Returns documents stored under [ids], preserving input order.
@@ -389,25 +354,67 @@ class CindelDatabase {
     String collection,
     Iterable<int> ids,
   ) async {
+    _throwManualDocumentsUnsupported();
+  }
+
+  /// Reads generated typed objects through the Web SQLite native row reader.
+  Future<List<T?>> getAllNativeBinaryDocuments<T>(
+    String collection,
+    Iterable<int> ids,
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readDocument,
+  ) async {
+    _checkOpen();
+    _checkCollection(collection);
     final idList = ids.toList(growable: false);
-    final response = await _sendBytes('getAll', {
+    for (final id in idList) {
+      _checkId(id);
+    }
+    if (idList.isEmpty) {
+      return <T?>[];
+    }
+    final response = await _sendBytes('getAllStored', {
       'collection': collection,
       'ids': encodeIdList(idList),
     });
+    final reader = CindelWebNativeDocumentReader(
+      ids: idList,
+      documents: decodeOptionalDocumentBatch(response),
+      fieldTypes: fieldTypes,
+    );
+    try {
+      return <T?>[
+        for (var i = 0; i < reader.length; i += 1)
+          if (reader.isPresent(i)) readDocument(reader, i) else null,
+      ];
+    } finally {
+      reader.release();
+    }
+  }
+
+  /// Returns generated typed objects matched by [plan].
+  Future<List<T>> queryNativePlanObjects<T>(
+    String collection,
+    WireQueryPlan plan,
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readDocument,
+  ) async {
+    final ids = await queryNativePlanIds(collection, plan);
+    final objects = await getAllNativeBinaryDocuments(
+      collection,
+      ids,
+      fieldTypes,
+      readDocument,
+    );
     return [
-      for (final bytes in decodeOptionalDocumentBatch(response))
-        bytes == null ? null : cindelDecodeGenericDocument(bytes),
+      for (final object in objects)
+        if (object != null) object,
     ];
   }
 
   /// Returns all documents from [collection].
-  ///
-  /// Generic Web documents are read through `documentIds + getAll` because the
-  /// native query-plan document path is optimized for schema-backed native
-  /// rows. This keeps manual `Map` writes visible through the public API.
   Future<List<CindelDocument>> queryAll(String collection) async {
-    final ids = await documentIds(collection);
-    return documentsByIds(collection, ids);
+    _throwManualDocumentsUnsupported();
   }
 
   /// Returns documents by id.
@@ -415,11 +422,7 @@ class CindelDatabase {
     String collection,
     Iterable<int> ids,
   ) async {
-    final documents = await getAll(collection, ids);
-    return [
-      for (final document in documents)
-        if (document != null) document,
-    ];
+    _throwManualDocumentsUnsupported();
   }
 
   /// Returns ids for every document in [collection].
@@ -433,32 +436,7 @@ class CindelDatabase {
     String field,
     Object value,
   ) async {
-    final schemaField = _indexedFieldSchema(collection, field);
-    final ids = schemaField.indexType == CindelIndexType.hash
-        ? _mergeQueryIds(
-            await _queryIndexEqualIds(
-              collection,
-              field,
-              _indexValueForField(value, schemaField),
-            ),
-            await _queryNativeIndexEqualIds(
-              collection,
-              field,
-              value,
-              schemaField,
-            ),
-          )
-        : await queryEqualIds(collection, field, value);
-    final documents = await documentsByIds(collection, ids);
-    if (schemaField.indexType == CindelIndexType.hash) {
-      return documents
-          .where(
-            (document) =>
-                _indexedValuesEqual(document[field], value, schemaField),
-          )
-          .toList(growable: false);
-    }
-    return documents;
+    _throwManualDocumentsUnsupported();
   }
 
   /// Returns ids whose indexed [field] equals [value].
@@ -473,18 +451,12 @@ class CindelDatabase {
         'Hash index `${schemaField.name}` requires document verification.',
       );
     }
-    final genericIds = await _queryIndexEqualIds(
-      collection,
-      field,
-      _indexValueForField(value, schemaField),
-    );
-    final nativeIds = await _queryNativeIndexEqualIds(
+    final ids = await _queryNativeIndexEqualIds(
       collection,
       field,
       value,
       schemaField,
     );
-    final ids = _mergeQueryIds(genericIds, nativeIds);
     return schemaField.indexType == CindelIndexType.words
         ? _dedupeIds(ids)
         : ids;
@@ -497,8 +469,7 @@ class CindelDatabase {
     List<Object> values,
   ) async {
     final value = _compositeIndexValue(collection, indexName, values);
-    final genericIds = await _queryIndexEqualIds(collection, indexName, value);
-    final nativeIds = await queryNativePlanIds(
+    return queryNativePlanIds(
       collection,
       WireQueryPlan(
         source: WireQuerySource.indexEqual(
@@ -513,7 +484,6 @@ class CindelDatabase {
         limit: null,
       ),
     );
-    return _mergeQueryIds(genericIds, nativeIds);
   }
 
   CindelFieldSchema _indexedFieldSchema(String collection, String field) {
@@ -568,18 +538,6 @@ class CindelDatabase {
     ]);
   }
 
-  Future<List<int>> _queryIndexEqualIds(
-    String collection,
-    String index,
-    WireIndexValue value,
-  ) {
-    return _sendIds('queryIndexEqual', {
-      'collection': collection,
-      'index': index,
-      'value': encodeIndexValue(value),
-    });
-  }
-
   Future<List<int>> _queryNativeIndexEqualIds(
     String collection,
     String field,
@@ -624,22 +582,6 @@ class CindelDatabase {
         field.indexType != CindelIndexType.multiEntry;
   }
 
-  List<int> _mergeQueryIds(List<int> genericIds, List<int> nativeIds) {
-    if (nativeIds.isEmpty) {
-      return genericIds;
-    }
-    if (genericIds.isEmpty) {
-      return nativeIds;
-    }
-    final seen = <int>{};
-    return [
-      for (final id in genericIds)
-        if (seen.add(id)) id,
-      for (final id in nativeIds)
-        if (seen.add(id)) id,
-    ];
-  }
-
   List<int> _dedupeIds(List<int> ids) {
     final seen = <int>{};
     return [
@@ -650,28 +592,12 @@ class CindelDatabase {
 
   /// Deletes [id] from [collection].
   Future<void> delete(String collection, int id) {
-    return deleteAll(collection, [id]);
+    _throwManualDocumentsUnsupported();
   }
 
   /// Deletes [ids] from [collection].
   Future<void> deleteAll(String collection, Iterable<int> ids) async {
-    _checkOpen();
-    _checkCollection(collection);
-    final idList = ids.toList(growable: false);
-    for (final id in idList) {
-      _checkId(id);
-    }
-    if (idList.isEmpty) {
-      return;
-    }
-    await _sendVoid('deleteAll', {
-      'collection': collection,
-      'ids': encodeIdList(idList),
-    });
-    await _markNativeCollectionChanged(
-      collection,
-      () => CindelChangeSet.deletes(collection, idList),
-    );
+    _throwManualDocumentsUnsupported();
   }
 
   /// Deletes generated native rows from [collection].
@@ -699,21 +625,11 @@ class CindelDatabase {
   }
 
   /// Executes a native query plan and returns matching documents.
-  ///
-  /// This is used by generated/native-row paths and internal Web plumbing. The
-  /// manual `queryAll` path deliberately uses `documentIds + getAll`.
   Future<List<CindelDocument>> queryNativePlanDocuments(
     String collection,
     WireQueryPlan plan,
   ) async {
-    final bytes = await _sendBytes('queryPlanDocuments', {
-      'collection': collection,
-      'plan': encodeQueryPlan(plan),
-    });
-    return [
-      for (final document in decodeOptionalDocumentBatch(bytes))
-        if (document != null) cindelDecodeGenericDocument(document),
-    ];
+    _throwManualDocumentsUnsupported();
   }
 
   /// Executes a native query plan and returns matching ids.
@@ -831,19 +747,7 @@ class CindelDatabase {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    _checkOpen();
-    _checkCollection(collection);
-    _checkId(id);
-    _checkPollInterval(pollInterval);
-
-    return _watch(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-      shouldReadChange: (change) => change.mayAffectDocument(id),
-      readSnapshot: (_) => get(collection, id),
-      areSnapshotsEqual: _jsonLikeEquals,
-    );
+    _throwManualDocumentsUnsupported();
   }
 
   /// Watches a document and emits without loading it for consumers.
@@ -853,12 +757,7 @@ class CindelDatabase {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    return watchDocument(
-      collection,
-      id,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-    ).map((_) {});
+    _throwManualDocumentsUnsupported();
   }
 
   /// Watches all documents in [collection] and emits after committed changes.
@@ -867,21 +766,7 @@ class CindelDatabase {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    _checkOpen();
-    _checkCollection(collection);
-    _checkPollInterval(pollInterval);
-
-    return _watch(
-      collection,
-      pollInterval: pollInterval,
-      fireImmediately: fireImmediately,
-      shouldReadChange: (_) => true,
-      readSnapshot: (_) async {
-        final ids = await documentIds(collection);
-        return documentsByIds(collection, ids);
-      },
-      areSnapshotsEqual: _jsonLikeEquals,
-    );
+    _throwManualDocumentsUnsupported();
   }
 
   /// Watches a collection and emits without returning collection snapshots.
@@ -1018,10 +903,10 @@ class CindelDatabase {
 
   Future<void> _markNativeCollectionChanged(
     String collection,
-    CindelChangeSet Function() fallback,
+    CindelChangeSet Function() localChangeFactory,
   ) async {
     if (_activeTransaction == _TransactionMode.write) {
-      _markCollectionChanged(fallback());
+      _markCollectionChanged(localChangeFactory());
       return;
     }
 
@@ -1029,7 +914,7 @@ class CindelDatabase {
     if (!_hasWatchers(collection)) {
       return;
     }
-    final localChange = fallback();
+    final localChange = localChangeFactory();
     final changes = _changesFromNative(nativeChanges, {
       localChange.collection: localChange,
     });
@@ -1365,101 +1250,6 @@ Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(
   return byCollection;
 }
 
-List<WireIndexEntry> _indexEntriesFor(
-  CindelCollectionSchema<dynamic> schema,
-  int id,
-  CindelDocument document,
-) {
-  final entries = <WireIndexEntry>[];
-  for (final field in schema.fields) {
-    if (!field.isIndexed || field.isId) {
-      continue;
-    }
-    final value = document[field.name];
-    if (value == null) {
-      continue;
-    }
-    if (field.indexType == CindelIndexType.words) {
-      if (value is! String) {
-        throw ArgumentError.value(
-          value,
-          'value.${field.name}',
-          'Word indexes require String values.',
-        );
-      }
-      for (final token in cindelSplitWords(
-        value,
-        caseSensitive: field.indexCaseSensitive,
-      )) {
-        entries.add(
-          WireIndexEntry(
-            documentId: id,
-            indexName: field.name,
-            value: _indexValueForField(token, field),
-          ),
-        );
-      }
-      continue;
-    }
-    if (field.indexType == CindelIndexType.multiEntry) {
-      if (value is! Iterable) {
-        throw ArgumentError.value(
-          value,
-          'value.${field.name}',
-          'Multi-entry indexes require List values.',
-        );
-      }
-      for (final item in value) {
-        if (item == null) {
-          continue;
-        }
-        entries.add(
-          WireIndexEntry(
-            documentId: id,
-            indexName: field.name,
-            value: _indexValueForField(item, field),
-          ),
-        );
-      }
-      continue;
-    }
-    entries.add(
-      WireIndexEntry(
-        documentId: id,
-        indexName: field.name,
-        value: _indexValueForField(value, field),
-      ),
-    );
-  }
-  for (final index in schema.compositeIndexes) {
-    final values = <WireIndexValue>[];
-    var hasAllValues = true;
-    for (final fieldName in index.fields) {
-      if (!document.containsKey(fieldName) || document[fieldName] == null) {
-        hasAllValues = false;
-        break;
-      }
-      final field = _requireSchemaField(schema, fieldName);
-      values.add(
-        _indexValueForField(
-          document[fieldName]!,
-          _fieldWithCaseSensitivity(field, index.caseSensitive),
-        ),
-      );
-    }
-    if (hasAllValues) {
-      entries.add(
-        WireIndexEntry(
-          documentId: id,
-          indexName: index.name,
-          value: WireIndexValue.list(values),
-        ),
-      );
-    }
-  }
-  return entries;
-}
-
 WireIndexValue _indexValueForField(Object value, CindelFieldSchema field) {
   final normalizedType = _nonNullableDartType(field.dartType);
   final wireValue = switch ((normalizedType, value)) {
@@ -1524,42 +1314,6 @@ WireIndexValue _stringIndexValue(String value, CindelFieldSchema field) {
   return WireIndexValue.string(
     field.indexCaseSensitive ? value : value.toLowerCase(),
   );
-}
-
-bool _indexedValuesEqual(
-  Object? actual,
-  Object expected,
-  CindelFieldSchema field,
-) {
-  if (_nonNullableDartType(field.dartType) == 'String' &&
-      !field.indexCaseSensitive) {
-    return actual is String &&
-        expected is String &&
-        actual.toLowerCase() == expected.toLowerCase();
-  }
-  if (_nonNullableDartType(field.dartType) == 'DateTime') {
-    return _dateTimeMicros(actual) == _dateTimeMicros(expected);
-  }
-  if (_nonNullableDartType(field.dartType) == 'Duration') {
-    return _durationMicros(actual) == _durationMicros(expected);
-  }
-  return actual == expected;
-}
-
-int? _dateTimeMicros(Object? value) {
-  return switch (value) {
-    DateTime() => value.microsecondsSinceEpoch,
-    int() => value,
-    _ => null,
-  };
-}
-
-int? _durationMicros(Object? value) {
-  return switch (value) {
-    Duration() => value.inMicroseconds,
-    int() => value,
-    _ => null,
-  };
 }
 
 int _stableHashBytes(Uint8List value) {
@@ -1724,34 +1478,6 @@ void _checkId(int id) {
   }
 }
 
-bool _jsonLikeEquals(Object? left, Object? right) {
-  if (identical(left, right)) {
-    return true;
-  }
-  if (left is Map && right is Map) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (final entry in left.entries) {
-      if (!right.containsKey(entry.key)) {
-        return false;
-      }
-      if (!_jsonLikeEquals(entry.value, right[entry.key])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (left is List && right is List) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (var index = 0; index < left.length; index += 1) {
-      if (!_jsonLikeEquals(left[index], right[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return left == right;
+Never _throwManualDocumentsUnsupported() {
+  throw UnsupportedError(_manualDocumentsUnsupportedMessage);
 }

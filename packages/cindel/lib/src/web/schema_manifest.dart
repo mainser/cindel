@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import '../native/wire.dart';
 import '../schema.dart';
+import 'wire.dart';
 
 /// Encodes generated Cindel schemas for the Web worker/Wasm runtime.
 ///

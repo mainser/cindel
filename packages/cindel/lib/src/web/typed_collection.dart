@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
@@ -21,10 +22,9 @@ extension CindelTypedCollectionAccess on CindelDatabase {
 
 /// Generated typed access to a Cindel collection on Web.
 ///
-/// The Web facade prefers generated SQLite-native rows when the schema exposes
-/// a supported native writer. Schemas outside that subset fall back to generic
-/// document writes so `Cindel.open(...).typedCollection(schema)` remains usable
-/// for manual and lab schemas.
+/// The Web facade uses generated SQLite-native rows. Schemas that cannot expose
+/// native readers and writers are rejected instead of falling back to manual
+/// document storage.
 final class CindelTypedCollection<T> {
   /// Creates typed collection access over [database] using [schema].
   const CindelTypedCollection(this.database, this.schema);
@@ -46,10 +46,6 @@ final class CindelTypedCollection<T> {
   }
 
   /// Stores every object atomically.
-  ///
-  /// Auto-increment ids are allocated by the Worker/Wasm engine. Supported
-  /// generated schemas use the native row batch path; unsupported layouts fall
-  /// back to generic indexed documents.
   Future<void> putAll(Iterable<T> objects) async {
     final objectList = objects is List<T>
         ? objects
@@ -59,12 +55,7 @@ final class CindelTypedCollection<T> {
     }
     final getId = schema.getId;
     if (getId == null) {
-      final values = <int, CindelDocument>{};
-      for (final object in objectList) {
-        final document = schema.toDocument(object);
-        values[_idFromDocument(document)] = document;
-      }
-      return database.putAll(schema.name, values);
+      _throwMissingTypedStorage();
     }
 
     final setId = schema.setId;
@@ -103,10 +94,7 @@ final class CindelTypedCollection<T> {
       );
     }
 
-    return database.putAll(schema.name, {
-      for (var i = 0; i < objectList.length; i += 1)
-        ids[i]: schema.toDocument(objectList[i]),
-    });
+    _throwMissingTypedStorage();
   }
 
   /// Stores many objects atomically.
@@ -184,28 +172,27 @@ final class CindelTypedCollection<T> {
   /// Returns typed objects stored under [ids], preserving input order.
   Future<List<T?>> getAll(Iterable<int> ids) async {
     final idList = ids.toList(growable: false);
-    final documents = await database.getAll(schema.name, idList);
-    return [
-      for (var i = 0; i < idList.length; i += 1)
-        documents[i] == null
-            ? null
-            : _objectFromDocument(documents[i]!, idList[i]),
-    ];
+    final nativeReader = schema.readNativeDocument;
+    final nativeFieldTypes = _nativeFieldTypes();
+    if (nativeReader == null || nativeFieldTypes == null) {
+      _throwMissingTypedStorage();
+    }
+    return database.getAllNativeBinaryDocuments(
+      schema.name,
+      idList,
+      nativeFieldTypes,
+      nativeReader,
+    );
   }
 
   /// Deletes the object stored under [id], if it exists.
   Future<void> delete(int id) {
-    return deleteAll([id]);
+    return database.deleteAllNativeDocuments(schema.name, [id]);
   }
 
   /// Deletes every object stored under [ids] atomically.
-  ///
-  /// Generated native-row collections must use the native delete operation;
-  /// generic fallback collections use the document-table delete path.
   Future<void> deleteAll(Iterable<int> ids) {
-    return _usesNativeDocuments()
-        ? database.deleteAllNativeDocuments(schema.name, ids)
-        : database.deleteAll(schema.name, ids);
+    return database.deleteAllNativeDocuments(schema.name, ids);
   }
 
   /// Watches the typed object stored under [id].
@@ -214,17 +201,16 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    return database
-        .watchDocument(
+    final snapshots = database
+        .watchCollectionChanges(
           schema.name,
-          id,
           pollInterval: pollInterval,
-          fireImmediately: fireImmediately,
+          fireImmediately: true,
         )
-        .map(
-          (document) =>
-              document == null ? null : _objectFromDocument(document, id),
-        );
+        .where((change) => change.mayAffectDocument(id))
+        .asyncMap((_) => get(id))
+        .transform(_distinctObjectSnapshots());
+    return fireImmediately ? snapshots : snapshots.skip(1);
   }
 
   /// Watches one object and emits without returning the object value.
@@ -233,12 +219,11 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = false,
   }) {
-    return database.watchDocumentLazy(
-      schema.name,
+    return watchObject(
       id,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-    );
+    ).map((_) {});
   }
 
   /// Watches the entire typed collection.
@@ -246,13 +231,15 @@ final class CindelTypedCollection<T> {
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,
   }) {
-    return database
-        .watchCollection(
+    final snapshots = database
+        .watchCollectionChanges(
           schema.name,
           pollInterval: pollInterval,
-          fireImmediately: fireImmediately,
+          fireImmediately: true,
         )
-        .map(_objectsFromDocuments);
+        .asyncMap((_) => all().findAll())
+        .transform(_distinctCollectionSnapshots());
+    return fireImmediately ? snapshots : snapshots.skip(1);
   }
 
   /// Watches the entire typed collection and emits without returning objects.
@@ -265,10 +252,6 @@ final class CindelTypedCollection<T> {
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
     );
-  }
-
-  List<T> _objectsFromDocuments(Iterable<CindelDocument> documents) {
-    return documents.map(schema.fromDocument).toList(growable: false);
   }
 
   Uint8List? _nativeFieldTypes() {
@@ -304,8 +287,88 @@ final class CindelTypedCollection<T> {
     return bytes;
   }
 
-  bool _usesNativeDocuments() {
-    return schema.writeNativeDocument != null && _nativeFieldTypes() != null;
+  StreamTransformer<T?, T?> _distinctObjectSnapshots() {
+    T? previous;
+    var hasPrevious = false;
+    return StreamTransformer<T?, T?>.fromHandlers(
+      handleData: (snapshot, sink) {
+        if (hasPrevious && _objectsEqual(previous, snapshot)) {
+          previous = snapshot;
+          return;
+        }
+        previous = snapshot;
+        hasPrevious = true;
+        sink.add(snapshot);
+      },
+    );
+  }
+
+  StreamTransformer<List<T>, List<T>> _distinctCollectionSnapshots() {
+    List<T>? previous;
+    return StreamTransformer<List<T>, List<T>>.fromHandlers(
+      handleData: (snapshot, sink) {
+        final last = previous;
+        if (last != null && _objectListsEqual(last, snapshot)) {
+          previous = snapshot;
+          return;
+        }
+        previous = snapshot;
+        sink.add(snapshot);
+      },
+    );
+  }
+
+  bool _objectListsEqual(List<T> left, List<T> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var i = 0; i < left.length; i += 1) {
+      if (!_objectsEqual(left[i], right[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _objectsEqual(T? left, T? right) {
+    if (left == null || right == null) {
+      return left == right;
+    }
+    final getId = schema.getId;
+    if (getId != null && getId(left) != getId(right)) {
+      return false;
+    }
+    return _documentsEqual(schema.toDocument(left), schema.toDocument(right));
+  }
+
+  bool _documentsEqual(Object? left, Object? right) {
+    if (identical(left, right)) {
+      return true;
+    }
+    if (left is Map && right is Map) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (final entry in left.entries) {
+        if (!right.containsKey(entry.key) ||
+            !_documentsEqual(entry.value, right[entry.key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (var i = 0; i < left.length; i += 1) {
+        if (!_documentsEqual(left[i], right[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return left == right;
   }
 
   Future<void> _reuseUniqueIndexId(
@@ -353,28 +416,15 @@ final class CindelTypedCollection<T> {
       ),
     );
     if (field.indexType == CindelIndexType.hash) {
-      final documents = await database.queryEqual(
-        schema.name,
-        fieldName,
-        value,
-      );
-      return [
-        for (final document in documents)
-          if (document[schema.idField] is int) document[schema.idField] as int,
-      ];
+      final objects = await CindelQuery.equal(
+        database: database,
+        schema: schema,
+        field: fieldName,
+        value: value,
+      ).findAll();
+      return [for (final object in objects) _idFromObject(object)];
     }
     return database.queryEqualIds(schema.name, fieldName, value);
-  }
-
-  T _objectFromDocument(CindelDocument document, int id) {
-    final value = document[schema.idField];
-    if (value is int) {
-      return schema.fromDocument(document);
-    }
-    return schema.fromDocument(<String, Object?>{
-      ...document,
-      schema.idField: id,
-    });
   }
 
   int _idFromDocument(CindelDocument document) {
@@ -394,5 +444,12 @@ final class CindelTypedCollection<T> {
       return getId(object);
     }
     return _idFromDocument(schema.toDocument(object));
+  }
+
+  Never _throwMissingTypedStorage() {
+    throw CindelSchemaError(
+      'Generated schema `${schema.dartName}` does not expose SQLite-native '
+      'read/write support required by Cindel Web.',
+    );
   }
 }

@@ -22,6 +22,7 @@ abstract class AppRoutes {
 GoRouter appRouter(Ref ref) {
   return GoRouter(
     debugLogDiagnostics: true,
+    requestFocus: false,
     initialLocation: AppRoutes.dashboard,
     routes: [
       // Shell

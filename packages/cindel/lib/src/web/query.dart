@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../cindel_error.dart';
-import '../native/wire.dart';
 import '../schema.dart';
 import 'database.dart';
+import 'wire.dart';
 
 typedef _CindelDocumentFilter = bool Function(CindelDocument document);
 
@@ -420,6 +420,10 @@ final class CindelQuery<T> {
 
   /// Returns every object matching this query.
   Future<List<T>> findAll() async {
+    final nativeObjects = await _matchingNativeObjects();
+    if (nativeObjects != null) {
+      return nativeObjects;
+    }
     final documents = await _matchingDocuments();
     return documents.map(_schema.fromDocument).toList(growable: false);
   }
@@ -528,47 +532,22 @@ final class CindelQuery<T> {
   }
 
   Future<List<CindelDocument>> _matchingDocuments() async {
-    final nativePlan = _nativePlan();
-    if (nativePlan != null) {
-      final ids = await _database.queryNativePlanIds(_schema.name, nativePlan);
-      return _database.documentsByIds(_schema.name, ids);
+    final nativeDocuments = await _matchingNativeDocuments();
+    if (nativeDocuments != null) {
+      return nativeDocuments;
     }
-    var documents = await _database.queryAll(_schema.name);
-    final sourceFilter = _sourceFilter;
-    if (sourceFilter != null) {
-      documents = documents.where(sourceFilter).toList(growable: false);
-    }
-    final filter = _filter;
-    if (filter != null) {
-      documents = documents.where(filter.matches).toList(growable: false);
-    }
-    if (_sortKeys.isNotEmpty) {
-      documents = documents.toList(growable: false)
-        ..sort((left, right) => _compareDocuments(left, right, _sortKeys));
-    }
-    if (_distinctFields.isNotEmpty) {
-      final seen = <String>{};
-      documents = [
-        for (final document in documents)
-          if (seen.add(_distinctKey(document, _distinctFields))) document,
-      ];
-    }
-    if (_offset > 0 || _limit != null) {
-      final start = _offset.clamp(0, documents.length);
-      final limit = _limit;
-      final end = limit == null
-          ? documents.length
-          : (start + limit).clamp(start, documents.length);
-      documents = documents.sublist(start, end);
-    }
-    return documents;
+    throw UnsupportedError(
+      'Cindel Web typed queries require SQLite-native document support.',
+    );
   }
 
   Future<void> _deleteIds(List<int> ids) {
     if (_usesNativeDocuments()) {
       return _database.deleteAllNativeDocuments(_schema.name, ids);
     }
-    return _database.deleteAll(_schema.name, ids);
+    throw UnsupportedError(
+      'Cindel Web typed deletes require SQLite-native document support.',
+    );
   }
 
   WireQueryPlan? _nativePlan({int? limitOverride}) {
@@ -600,12 +579,103 @@ final class CindelQuery<T> {
   }
 
   bool get _canUseNativePlanner {
-    if (_sourceFilter != null ||
-        _distinctFields.isNotEmpty ||
-        _database.collectionHasGenericDocuments(_schema.name)) {
+    if (_sourceFilter != null) {
       return false;
     }
     return _usesNativeDocuments() && _schema.readNativeDocument != null;
+  }
+
+  Future<List<T>?> _matchingNativeObjects() async {
+    final nativePlan = _nativePlan();
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (!_usesNativeDocuments() ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+    if (nativePlan != null) {
+      return _database.queryNativePlanObjects(
+        _schema.name,
+        nativePlan,
+        fieldTypes,
+        readNativeDocument,
+      );
+    }
+    final documents = await _matchingNativeDocumentsWithDartPlan(
+      fieldTypes,
+      readNativeDocument,
+    );
+    return documents?.map(_schema.fromDocument).toList(growable: false);
+  }
+
+  Future<List<CindelDocument>?> _matchingNativeDocuments() {
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (!_usesNativeDocuments() ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return Future<List<CindelDocument>?>.value();
+    }
+    final nativePlan = _nativePlan();
+    if (nativePlan != null) {
+      return () async {
+        final objects = await _database.queryNativePlanObjects(
+          _schema.name,
+          nativePlan,
+          fieldTypes,
+          readNativeDocument,
+        );
+        return [for (final object in objects) _documentFromObject(object)];
+      }();
+    }
+    return _matchingNativeDocumentsWithDartPlan(fieldTypes, readNativeDocument);
+  }
+
+  Future<List<CindelDocument>?> _matchingNativeDocumentsWithDartPlan(
+    Uint8List fieldTypes,
+    CindelReadNativeDocument<T> readNativeDocument,
+  ) {
+    return () async {
+      final objects = await _database.queryNativePlanObjects(
+        _schema.name,
+        WireQueryPlan(
+          source: const WireQuerySource.all(dedupe: false),
+          filter: null,
+          sorts: const [],
+          distinctFields: const [],
+          offset: 0,
+          limit: null,
+        ),
+        fieldTypes,
+        readNativeDocument,
+      );
+      var documents = <CindelDocument>[
+        for (final object in objects)
+          if (_matchesBeforeWindow(_documentFromObject(object)))
+            _documentFromObject(object),
+      ];
+      if (_sortKeys.isNotEmpty) {
+        documents = documents.toList(growable: false)
+          ..sort((left, right) => _compareDocuments(left, right, _sortKeys));
+      }
+      if (_distinctFields.isNotEmpty) {
+        final seen = <String>{};
+        documents = [
+          for (final document in documents)
+            if (seen.add(_distinctKey(document, _distinctFields))) document,
+        ];
+      }
+      if (_offset > 0 || _limit != null) {
+        final start = _offset.clamp(0, documents.length);
+        final limit = _limit;
+        final end = limit == null
+            ? documents.length
+            : (start + limit).clamp(start, documents.length);
+        documents = documents.sublist(start, end);
+      }
+      return documents;
+    }();
   }
 
   Future<List<int>> _matchingIds() async {
@@ -823,6 +893,15 @@ final class CindelQuery<T> {
       return false;
     }
     return true;
+  }
+
+  CindelDocument _documentFromObject(T object) {
+    final document = _schema.toDocument(object);
+    final getId = _schema.getId;
+    if (getId == null || document.containsKey(_schema.idField)) {
+      return document;
+    }
+    return <String, Object?>{...document, _schema.idField: getId(object)};
   }
 
   bool _usesNativeDocuments() {
