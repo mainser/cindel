@@ -94,41 +94,63 @@ const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
 
 ## Experimental Web Runtime
 
-The Web runtime uses SQLite in a Worker with OPFS persistence. Application code
-opens it through the same `package:cindel/cindel.dart` import and
-`Cindel.open(...)` call used by iOS, Android, desktop, and server code. MDBX
-remains the default for native Flutter apps; Web transparently uses SQLite
-because MDBX is not the browser storage backend.
+Web support keeps the same Dart API and swaps only the browser storage engine:
+SQLite runs inside a Worker and persists through OPFS. MDBX remains the native
+default for iOS, Android, desktop, and server builds.
 
-The default Web worker URL is the Flutter package asset path exposed by
-`cindel_flutter_libs`:
+```dart
+import 'package:cindel/cindel.dart';
+
+final db = await Cindel.open(
+  directory: 'app-data',
+  schemas: [UserSchema],
+);
+```
+
+On native platforms this opens the default MDBX backend unless another backend
+is selected. On Web the same call opens SQLite, because MDBX is not a browser
+storage backend.
+
+### Runtime Assets
+
+Flutter serves the Worker from the companion package asset tree:
 
 ```text
 assets/packages/cindel_flutter_libs/web/cindel_worker.js
 ```
 
-That worker loads the matching JS glue and Wasm runtime from the same companion
-package asset tree.
+The Worker loads its matching JavaScript glue and Wasm runtime from the same
+asset directory. Application code should not instantiate the Worker directly;
+use `Cindel.open(...)`.
 
-Generated Web typed inserts use SQLite-native rows when the generated schema
-provides native document hooks. That path encodes the batch directly into the
-Worker binary payload, avoiding per-row `WireNativeDocumentWrite` allocations
-before `putNativeAll`.
+### Optimized Paths
 
-Generated Web typed queries also use the Worker native query-plan APIs when the
-schema exposes native document hooks and the collection has not accepted manual
-generic document rows. This covers `findAll`, `count`, query deletes, query
-updates, single-field projections, and scalar aggregates. Manual document rows
-keep the conservative Dart-side fallback so mixed generic collections remain
-visible through the public API.
+- Typed inserts use SQLite-native rows when the generated schema provides
+  native document hooks. Large `putAll` batches are encoded directly into the
+  Worker binary payload before `putNativeAll`.
 
-Generated Web unique-replace writes reuse existing row ids through field or
-composite index lookups before writing the object batch.
+- SQLite `getAll` reads use parameter-limited chunks and restore the requested
+  id order afterwards. Duplicate ids stay duplicated, and missing ids return
+  `null`.
 
-Closing a Web `CindelDatabase` sends `close` to the Worker. During a
-controlled close, the Worker rolls back an active transaction before
-terminating. If the Worker or browser process dies abruptly, only a completed
-commit is treated as visible; uncommitted SQLite transaction work is discarded.
+- Typed queries use Worker native query-plan APIs when the schema has native
+  hooks and the collection has not accepted manual generic rows. This covers
+  `findAll`, `count`, query deletes, query updates, single-field projections,
+  and scalar aggregates.
+
+- Unique-replace typed writes reuse existing row ids through field or composite
+  index lookups before writing the object batch.
+
+Manual document rows keep the conservative Dart-side fallback so mixed generic
+collections remain visible through the public API.
+
+### Close Behavior
+
+The general `close()` API is documented below. On Web, closing also sends a
+`close` message to the Worker. During a controlled close, the Worker rolls back
+an active transaction before terminating. If the Worker or browser process dies
+abruptly, only completed commits are visible; uncommitted SQLite transaction
+work is discarded.
 
 ## Closing Databases
 

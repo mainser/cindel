@@ -300,6 +300,10 @@ On Web, generated typed inserts use the SQLite-native direct batch encoder when
 the schema exposes native document hooks, so large `putMany` calls avoid
 building per-row wire objects before crossing into the Worker.
 
+On Web and SQLite, `getAll` reads are executed in parameter-limited chunks and
+then restored to the requested id order, preserving `null` entries for missing
+ids while avoiding one SQLite statement execution per id.
+
 Only unique indexes with `replace: true` generate natural-key upsert helpers.
 The generated `putBy...` method reuses an existing id for the indexed value
 instead of requiring a manual query first:

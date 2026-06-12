@@ -770,23 +770,13 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         if !table_exists(&self.connection, "documents")? {
             return Ok(vec![None; ids.len()]);
         }
-        let mut statement = self
-            .connection
-            .prepare("SELECT bytes FROM documents WHERE collection = ?1 AND id = ?2")
-            .map_err(|error| error.to_string())?;
-        let mut documents = Vec::with_capacity(ids.len());
-        for id in ids {
-            let id = sqlite_id(*id)?;
-            let document = statement
-                .query_row(params![collection, id], |row| row.get(0))
-                .optional()
-                .map_err(|error| error.to_string())?;
-            documents.push(document);
-        }
-        Ok(documents)
+        get_many_generic_documents(&self.connection, collection, ids)
     }
 
     fn get_many_stored(
@@ -2683,11 +2673,67 @@ fn push_json_string(json: &mut String, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn get_many_generic_documents(
+    connection: &Connection,
+    collection: &str,
+    ids: &[u64],
+) -> Result<Vec<Option<Vec<u8>>>, String> {
+    let sqlite_ids = ids
+        .iter()
+        .map(|id| sqlite_id(*id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let batch_limit = SQLITE_MAX_PARAM_COUNT.saturating_sub(1).max(1);
+    let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
+    for chunk in sqlite_ids.chunks(batch_limit) {
+        let sql = format!(
+            "SELECT id, bytes FROM documents WHERE collection = ?1 AND id IN {}",
+            sqlite_placeholders_from(2, chunk.len())
+        );
+        let mut params = Vec::with_capacity(chunk.len() + 1);
+        params.push(Value::Text(collection.to_string()));
+        params.extend(chunk.iter().copied().map(Value::Integer));
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let mut rows = statement
+            .query(params_from_iter(params.iter()))
+            .map_err(|error| error.to_string())?;
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            let id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+            let document = row
+                .get::<_, Vec<u8>>(1)
+                .map_err(|error| error.to_string())?;
+            found.insert(id, document);
+        }
+    }
+    Ok(sqlite_ids.iter().map(|id| found.get(id).cloned()).collect())
+}
+
+fn sqlite_placeholders(count: usize) -> String {
+    sqlite_placeholders_from(1, count)
+}
+
+fn sqlite_placeholders_from(start: usize, count: usize) -> String {
+    let mut sql = String::from("(");
+    for index in 0..count {
+        if index > 0 {
+            sql.push_str(", ");
+        }
+        sql.push('?');
+        sql.push_str(&(start + index).to_string());
+    }
+    sql.push(')');
+    sql
+}
+
 fn get_many_native_documents(
     connection: &Connection,
     schema: &CollectionSchemaManifest,
     ids: &[u64],
 ) -> Result<Vec<Option<Vec<u8>>>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let fields = native_fields(schema);
     let mut select = String::from("SELECT ");
     select.push_str(SQLITE_ROW_ID_COLUMN);
@@ -2699,21 +2745,30 @@ fn get_many_native_documents(
     select.push_str(&schema.name);
     select.push_str(" WHERE ");
     select.push_str(SQLITE_ROW_ID_COLUMN);
-    select.push_str(" = ?1");
+    select.push_str(" IN ");
 
-    let mut statement = connection
-        .prepare(&select)
-        .map_err(|error| error.to_string())?;
-    let mut documents = Vec::with_capacity(ids.len());
-    for id in ids {
-        let id = sqlite_id(*id)?;
-        let document = statement
-            .query_row(params![id], |row| native_document_from_row(row, &fields))
-            .optional()
+    let sqlite_ids = ids
+        .iter()
+        .map(|id| sqlite_id(*id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let batch_limit = SQLITE_MAX_PARAM_COUNT.max(1);
+    let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
+    for chunk in sqlite_ids.chunks(batch_limit) {
+        let sql = format!("{select}{}", sqlite_placeholders(chunk.len()));
+        let mut statement = connection
+            .prepare(&sql)
             .map_err(|error| error.to_string())?;
-        documents.push(document);
+        let mut rows = statement
+            .query(params_from_iter(chunk.iter()))
+            .map_err(|error| error.to_string())?;
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            let id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+            let document =
+                native_document_from_row(row, &fields).map_err(|error| error.to_string())?;
+            found.insert(id, document);
+        }
     }
-    Ok(documents)
+    Ok(sqlite_ids.iter().map(|id| found.get(id).cloned()).collect())
 }
 
 fn native_document_from_row(
@@ -4475,6 +4530,100 @@ mod tests {
         assert_eq!(cursor.read_bytes(0, 2), Some(&b"Ada"[..]));
         assert!(!cursor.is_present(1).unwrap());
         assert_eq!(cursor.document_id(1), None);
+    }
+
+    #[test]
+    fn gets_generic_documents_across_id_chunks_in_input_order() {
+        // Scenario: A generic SQLite getAll request crosses SQLite's parameter
+        // limit and contains hits, misses, and duplicate ids.
+        // Covers:
+        // - Chunked `IN (...)` reads for the generic document table.
+        // - Reconstructing the original id order after unordered SQL results.
+        // - Preserving nulls for missing ids and values for duplicate ids.
+        // Expected: The result length and order exactly match the input ids.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("generic_get_chunks");
+        let mut storage = SqliteStorage::open(directory.path()).unwrap();
+        let second_hit = (SQLITE_MAX_PARAM_COUNT + 1) as u64;
+        storage
+            .put_many_indexed(
+                "users",
+                &[
+                    document_write(1, b"first", Vec::new()),
+                    document_write(second_hit, b"second", Vec::new()),
+                ],
+            )
+            .unwrap();
+        let mut ids = (1..=second_hit).collect::<Vec<_>>();
+        ids.push(1);
+
+        // Act.
+        let documents = storage.get_many("users", &ids).unwrap();
+
+        // Assert.
+        assert_eq!(documents.len(), ids.len());
+        assert_eq!(documents[0].as_deref(), Some(&b"first"[..]));
+        assert_eq!(documents[1], None);
+        assert_eq!(
+            documents[SQLITE_MAX_PARAM_COUNT].as_deref(),
+            Some(&b"second"[..])
+        );
+        assert_eq!(documents.last().unwrap().as_deref(), Some(&b"first"[..]));
+    }
+
+    #[test]
+    fn gets_native_documents_across_id_chunks_in_input_order() {
+        // Scenario: A generated SQLite-native getAll request crosses SQLite's
+        // parameter limit and contains hits, misses, and duplicate ids.
+        // Covers:
+        // - Chunked native collection-table reads.
+        // - Reconstructing the original id order after unordered SQL results.
+        // - Preserving nulls for missing ids and values for duplicate ids.
+        // Expected: Stored native documents are returned in requested order.
+
+        // Arrange.
+        let directory = TemporaryDirectory::new("native_get_chunks");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let second_hit = (SQLITE_MAX_PARAM_COUNT + 1) as u64;
+        storage
+            .put_many_native_documents(
+                "users",
+                &[
+                    NativeDocumentWrite {
+                        id: 1,
+                        values: vec![
+                            NativeDocumentValue::Bool(true),
+                            NativeDocumentValue::Int(42),
+                            NativeDocumentValue::Bytes(b"first".to_vec()),
+                        ],
+                    },
+                    NativeDocumentWrite {
+                        id: second_hit,
+                        values: vec![
+                            NativeDocumentValue::Bool(false),
+                            NativeDocumentValue::Int(84),
+                            NativeDocumentValue::Bytes(b"second".to_vec()),
+                        ],
+                    },
+                ],
+                true,
+            )
+            .unwrap();
+        let mut ids = (1..=second_hit).collect::<Vec<_>>();
+        ids.push(1);
+
+        // Act.
+        let documents = storage.get_many_stored("users", &ids).unwrap();
+
+        // Assert.
+        assert_eq!(documents.len(), ids.len());
+        assert!(documents[0].is_some());
+        assert_eq!(documents[1], None);
+        assert!(documents[SQLITE_MAX_PARAM_COUNT].is_some());
+        assert!(documents.last().unwrap().is_some());
+        assert_eq!(documents[0], *documents.last().unwrap());
     }
 
     #[test]

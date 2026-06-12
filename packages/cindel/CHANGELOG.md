@@ -21,6 +21,9 @@
 - Optimized SQLite native document batch inserts by reusing the prepared
   statement for full chunks, improving the Web SQLite/Wasm typed insert path
   while keeping MDBX untouched.
+- Optimized SQLite `getAll` reads by querying ids in parameter-limited chunks
+  and restoring the requested order in memory, improving Web SQLite generated
+  typed `getAll` without changing MDBX.
 - Added SQLite native query-plan projection and aggregate execution for
   schema-backed generated documents, including count, min, max, sum, and
   average over scalar native columns.
