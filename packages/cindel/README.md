@@ -13,64 +13,51 @@
 </p>
 
 <p align="center">
-  <strong>Extremely fast, easy to use, and fully async NoSQL database, built as a Flutter-first local database with generated Dart APIs and a compact Rust native core.</strong>
+  <strong>A Flutter-first local database with generated typed Dart APIs, a Rust native core, MDBX by default, SQLite native, and SQLite Web/OPFS.</strong>
 </p>
 
 <p align="center">
-  Typed collections &middot; MDBX by default &middot; SQLite optional &middot; Native binaries for Flutter
+  Typed collections &middot; Generated queries &middot; Transactions &middot; Watchers &middot; Flutter native and Web
 </p>
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> &middot;
-  <a href="#features">Features</a> &middot;
+  <a href="#models">Models</a> &middot;
+  <a href="#opening-a-database">Opening</a> &middot;
   <a href="#crud">CRUD</a> &middot;
   <a href="#queries">Queries</a> &middot;
+  <a href="#transactions">Transactions</a> &middot;
   <a href="#watchers">Watchers</a> &middot;
-  <a href="#embedded-objects">Embedded Objects</a> &middot;
-  <a href="#web-runtime">Web Runtime</a> &middot;
-  <a href="#native-binaries">Native Binaries</a>
+  <a href="#web">Web</a> &middot;
+  <a href="#testing">Testing</a>
 </p>
 
 ## Status
 
-Cindel is in active pre-1.0 development. APIs and storage format may still
-change before a stable release, so preview database files should be treated as
-disposable while the optimized native format settles.
+Cindel is pre-1.0. The public direction is a generated typed API: application
+code works with typed collections such as `db.users`, and each backend adapts
+internally to that same app code.
 
 ## Features
 
-### Generated Dart API
-
-- Typed collections from regular Dart model classes.
-- Freezed classic class and primary factory model support.
-- Schema metadata and compatible additive schema version bumps.
-
-### Storage and Runtime
-
-- Rust native core behind Dart FFI.
-- MDBX default backend with SQLite as an explicit secondary backend.
-- Experimental Web runtime work uses SQLite in a Worker with OPFS persistence.
-- Native auto-increment ids and in-memory databases for tests.
-- Bulk writes, reads, updates, and deletes.
-- Explicit read and write transactions.
-
-### Querying
-
-- Equality, range, prefix, unique, unique replace, hash, case-insensitive,
-  word-token, composite, and primitive-list indexes.
-- Filter builders, sorting, pagination, distinct, property projections, and
-  property aggregates.
-
-### Reactivity and Models
-
-- Document, collection, object, query, and lazy watchers.
+- Generated typed collections from Dart model classes.
+- MDBX as the default native backend.
+- SQLite as an explicit native backend.
+- Experimental SQLite Web/OPFS backend for Flutter Web.
+- Auto-increment ids.
+- Typed CRUD and bulk operations.
+- Generated `where()` and `filter()` query helpers.
+- Sorting, pagination, distinct, projections, and aggregates.
+- Read and write transactions.
+- Typed object, collection, query, and lazy watchers.
 - Embedded objects and embedded object lists.
+- Freezed classic class and primary factory support.
 
 ## Quickstart
 
-### 1. Add dependencies
+### 1. Add Dependencies
 
-For Flutter apps, add Cindel plus the native library package:
+Flutter apps should depend on `cindel` and `cindel_flutter_libs`:
 
 ```yaml
 dependencies:
@@ -79,13 +66,13 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.1
+  cindel_generator: ^0.6.4
 ```
 
-Pure Dart projects can depend on `cindel` directly and provide a native library
-path with `CINDEL_NATIVE_LIBRARY` when needed.
+Pure Dart tools can depend on `cindel` directly and provide a native library
+with `CINDEL_NATIVE_LIBRARY` when needed.
 
-### 2. Create a collection
+### 2. Define A Model
 
 ```dart
 import 'package:cindel/cindel.dart';
@@ -99,7 +86,7 @@ class User {
   @Index(unique: true)
   late String email;
 
-  @index
+  @Index()
   late String name;
 
   bool active = true;
@@ -108,24 +95,189 @@ class User {
 }
 ```
 
-Use `@Name` when the persisted collection or field name should differ from
-the Dart identifier:
+### 3. Generate Code
+
+```sh
+dart run build_runner build --delete-conflicting-outputs
+```
+
+The generator creates the schema, serializers, typed collection getter, and
+query helpers.
+
+### 4. Open And Use
 
 ```dart
-@Name('accounts')
-@collection
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema],
+);
+
+final user = User()
+  ..email = 'ada@example.com'
+  ..name = 'Ada Lovelace';
+
+await db.users.put(user);
+
+final saved = await db.users.get(user.dbId);
+final activeUsers = await db.users.filter().activeEqualTo(true).findAll();
+
+await db.close();
+```
+
+## Models
+
+### Collection Names
+
+Use `@Collection` for root persisted objects:
+
+```dart
+@Collection(name: 'accounts')
 class Account {
   Id dbId = autoIncrement;
 
-  @Name('user_name')
-  @Index(unique: true)
+  @Index(unique: true, replace: true)
   late String username;
+
+  String? displayName;
 }
 ```
 
-`replace: true` is optional and defaults to `false`. Use it only when a unique
-index should behave as a natural-key upsert and replace an existing conflicting
-document:
+Use `@Name` when the stored collection or field name should differ from the
+Dart name:
+
+```dart
+@Name('products')
+@collection
+class Product {
+  Id dbId = autoIncrement;
+
+  @Name('sku_code')
+  @Index(unique: true)
+  late String sku;
+}
+```
+
+### Supported Field Shapes
+
+Cindel persists:
+
+- `bool`, `int`, `double`, and `String`
+- `DateTime` and `Duration`
+- enums
+- nullable supported values
+- embedded objects
+- lists of supported non-list values
+- lists of embedded objects
+
+Ignore transient fields with `@ignore`:
+
+```dart
+@ignore
+String runtimeOnlyLabel = '';
+```
+
+### Enums
+
+Enums can be stored by name, ordinal, or a value field:
+
+```dart
+enum Plan {
+  free('free'),
+  pro('pro');
+
+  const Plan(this.code);
+
+  final String code;
+}
+
+@collection
+class Subscription {
+  Id dbId = autoIncrement;
+
+  @Enumerated(CindelEnumType.value, valueField: 'code')
+  Plan plan = Plan.free;
+}
+```
+
+### Freezed
+
+Cindel supports Freezed classic classes and single primary factories:
+
+```dart
+import 'package:cindel/cindel.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'product.freezed.dart';
+part 'product.g.dart';
+
+@freezed
+@Collection(name: 'products')
+abstract class Product with _$Product {
+  const factory Product({
+    required Id dbId,
+    @Index(unique: true) required String sku,
+    @Index() required String name,
+    @Default(true) bool active,
+  }) = _Product;
+}
+```
+
+Freezed union/sealed multi-constructor models are not supported.
+
+## Opening A Database
+
+MDBX is the default backend on native platforms:
+
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema, AccountSchema],
+);
+```
+
+Select SQLite explicitly when you want the native SQLite backend:
+
+```dart
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema],
+  backend: CindelStorageBackend.sqlite,
+);
+```
+
+Use an in-memory database for tests:
+
+```dart
+final db = await Cindel.openInMemory(schemas: [UserSchema]);
+```
+
+## CRUD
+
+Generated collections are available from the database handle:
+
+```dart
+final ada = User()
+  ..email = 'ada@example.com'
+  ..name = 'Ada Lovelace';
+
+await db.users.put(ada);
+
+final saved = await db.users.get(ada.dbId);
+
+await db.users.delete(ada.dbId);
+```
+
+Bulk operations preserve input order and return `null` for missing ids:
+
+```dart
+await db.users.putAll([ada, grace, linus]);
+
+final users = await db.users.getAll([ada.dbId, 404, grace.dbId]);
+
+await db.users.deleteAll([ada.dbId, grace.dbId]);
+```
+
+Unique indexes with `replace: true` generate natural-key upsert helpers:
 
 ```dart
 @collection
@@ -137,211 +289,34 @@ class Account {
 }
 ```
 
-#### Freezed classic classes
-
-Cindel can also generate schemas for Freezed classic classes. This lets you keep
-immutable models while Freezed provides `copyWith`, equality, and hashCode:
-
-Freezed models also need `freezed_annotation` as an app dependency and
-`freezed` as a development dependency.
-
 ```dart
-import 'package:cindel/cindel.dart';
-import 'package:freezed_annotation/freezed_annotation.dart';
+final account = Account()..username = 'ada';
 
-part 'user.freezed.dart';
-part 'user.g.dart';
-
-@freezed
-@Collection(name: 'users')
-class User with _$User {
-  const User({
-    required this.dbId,
-    required this.email,
-    required this.name,
-    this.active = true,
-  });
-
-  @override
-  final Id dbId;
-
-  @override
-  @Index(unique: true)
-  final String email;
-
-  @override
-  final String name;
-
-  @override
-  final bool active;
-}
+await db.accounts.putByUsername(account);
 ```
 
-Cindel also supports the common Freezed primary factory style:
-
-```dart
-@freezed
-@Collection(name: 'users')
-abstract class User with _$User {
-  const factory User({
-    required Id dbId,
-    required String email,
-    required String name,
-    @Default(true) bool active,
-  }) = _User;
-}
-```
-
-IMPORTANT: Freezed union/sealed multi-constructor models are not supported.
-
-### 3. Generate code
-
-```sh
-dart run build_runner build --delete-conflicting-outputs
-```
-
-### 4. Open a database
-
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema],
-);
-```
-
-MDBX is the default backend. SQLite is available only when requested
-explicitly:
-
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema],
-  backend: CindelStorageBackend.sqlite,
-);
-```
-
-## Web Runtime
-
-Web support is experimental. The app code is the same as native:
-
-```dart
-final db = await Cindel.open(
-  directory: 'app.db',
-  schemas: [UserSchema],
-);
-```
-
-For Flutter Web, keep both runtime packages in `pubspec.yaml`:
-
-```yaml
-dependencies:
-  cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.4
-```
-
-What changes on Web:
-
-- `Cindel.open(...)` loads the packaged Worker/Wasm runtime automatically.
-- Web uses SQLite with OPFS persistence.
-- Native Flutter platforms keep MDBX as the default backend.
-- MDBX is not used in the browser.
-- Schema metadata is registered on open and validated again on reopen.
-- Generated SQLite-native typed writes, query results, counts, deletes, updates,
-  projections, and aggregates use the Worker/Wasm native row path when the
-  schema supports native document hooks.
-- Unique replace helpers reuse existing Web SQLite row ids through field or
-  composite index lookups.
-- Database requests are serialized through the Worker, so transactions do not
-  depend on `postMessage` timing.
-- Single-tab watchers use Worker post-commit change sets for document,
-  collection, typed, query, and lazy streams.
-
-Current Web preview limits:
-
-- Requires browser support for Web Workers, Wasm, and OPFS.
-- Best validated with normal Flutter Web builds served from a browser context.
-- Multi-tab watcher coordination is not part of the preview yet.
-- Application code should not open the Worker directly; use `Cindel.open(...)`.
-
-## CRUD
-
-Generated collections are available directly from the database handle:
-
-```dart
-final jhon = User()
-  ..name = 'Jhon Doe'
-  ..email = 'jhon@example.com'
-  ..active = true;
-
-await db.users.put(jhon);
-
-final saved = await db.users.get(jhon.dbId);
-
-await db.users.delete(jhon.dbId);
-```
-
-Bulk operations use native batch paths:
-
-```dart
-final maria = User()
-  ..name = 'Maria Cruz'
-  ..email = 'maria@example.com';
-
-final taylor = User()
-  ..name = 'Taylor Reed'
-  ..email = 'taylor@example.com';
-
-await db.users.putMany([jhon, maria, taylor]);
-
-final users = await db.users.getAll([jhon.dbId, maria.dbId, 404]);
-
-await db.users.deleteAll([jhon.dbId, maria.dbId]);
-```
-
-On Web, generated typed inserts use the SQLite-native direct batch encoder when
-the schema exposes native document hooks, so large `putMany` calls avoid
-building per-row wire objects before crossing into the Worker.
-
-On Web and SQLite, `getAll` reads are executed in parameter-limited chunks and
-then restored to the requested id order, preserving `null` entries for missing
-ids while avoiding one SQLite statement execution per id.
-
-Only unique indexes with `replace: true` generate natural-key upsert helpers.
-The generated `putBy...` method reuses an existing id for the indexed value
-instead of requiring a manual query first:
-
-```dart
-final updated = User()
-  ..email = 'jhon@example.com'
-  ..name = 'Jhon Updated';
-
-await db.users.putByEmail(updated);
-```
-
-Use transactions when multiple operations must commit together:
-
-```dart
-await db.writeTxn(() async {
-  await db.users.put(jhon);
-  await db.users.put(maria);
-});
-
-final activeUsers = await db.readTxn(() {
-  return db.users.filter().activeEqualTo(true).findAll();
-});
-```
+If another row already has `username == 'ada'`, the generated helper reuses that
+id instead of inserting a duplicate.
 
 ## Queries
 
-Generated query builders start from indexed `where` clauses or collection
-filters:
+Use generated `where()` helpers for indexed lookups:
 
 ```dart
-final jhon = await db.users
+final ada = await db.users
     .where()
-    .emailEqualTo('jhon@example.com')
+    .emailEqualTo('ada@example.com')
     .findFirst();
 
+final recentUsers = await db.users
+    .where()
+    .createdAtBetween(start, end)
+    .findAll();
+```
+
+Use generated `filter()` helpers for general filtering:
+
+```dart
 final activeUsers = await db.users
     .filter()
     .activeEqualTo(true)
@@ -349,14 +324,45 @@ final activeUsers = await db.users
     .findAll();
 ```
 
-String indexes get prefix helpers:
+String fields support contains, prefix, and suffix filters:
 
 ```dart
-final people = await db.users.where().nameStartsWith('Jh').findAll();
+final matches = await db.users
+    .filter()
+    .nameContains('Ada')
+    .findAll();
 ```
 
-Queries support counts, deletes, pagination, distinct values, property
-projections, and aggregates:
+List fields expose element and length helpers:
+
+```dart
+final flutterUsers = await db.users
+    .filter()
+    .tagsElementEqualTo('flutter')
+    .findAll();
+
+final taggedUsers = await db.users
+    .filter()
+    .tagsLengthGreaterThan(0)
+    .findAll();
+```
+
+Compose dynamic filters with `optional`, `anyOf`, and `allOf`:
+
+```dart
+final bySearch = await db.users
+    .filter()
+    .optional(search.isNotEmpty, (q) => q.nameContains(search))
+    .findAll();
+
+final byTags = await db.users
+    .filter()
+    .anyOf(selectedTags, (q, tag) => q.tagsElementEqualTo(tag))
+    .findAll();
+```
+
+Queries can count, delete, update, sort, paginate, deduplicate, project, and
+aggregate:
 
 ```dart
 final count = await db.users.filter().activeEqualTo(true).count();
@@ -365,49 +371,108 @@ final names = await db.users
     .filter()
     .activeEqualTo(true)
     .sortByName()
-    .distinctByEmail()
+    .offset(20)
+    .limit(10)
     .nameProperty()
     .findAll();
 
 final maxId = await db.users.all().dbIdProperty().max();
+
+final updated = await db.users
+    .filter()
+    .activeEqualTo(false)
+    .updateAll({'active': true});
+
+final deleted = await db.users
+    .filter()
+    .activeEqualTo(false)
+    .deleteAll();
 ```
 
-List fields expose Isar-style element and length helpers:
+## Indexes
+
+Add `@Index` to fields that should be queryable through generated `where()`
+helpers or optimized by the backend:
 
 ```dart
-final flutterUsers = await db.users
-    .filter()
-    .tagsElementEqualTo('flutter')
-    .findAll();
+@collection
+class Article {
+  Id dbId = autoIncrement;
 
-final usersWithoutTags = await db.users.filter().tagsIsEmpty().findAll();
+  @Index()
+  late String title;
 
-final usersWithOneOrTwoTags = await db.users
-    .filter()
-    .tagsLengthBetween(1, 2)
-    .findAll();
+  @Index(caseSensitive: false)
+  late String normalizedTitle;
+
+  @Index(type: CindelIndexType.words, caseSensitive: false)
+  late String body;
+
+  @Index(type: CindelIndexType.multiEntry, caseSensitive: false)
+  List<String> tags = const [];
+}
 ```
 
-The lower-level manual document API remains available:
+Composite indexes are declared on the collection:
 
 ```dart
-await db.put('users', 1, {
-  'name': 'Jhon Doe',
-  'email': 'jhon@example.com',
-  'active': true,
+@Collection(
+  name: 'events',
+  indexes: [
+    CompositeIndex(['accountId', 'createdAt']),
+  ],
+)
+class Event {
+  Id dbId = autoIncrement;
+
+  @Index()
+  late int accountId;
+
+  @Index()
+  late DateTime createdAt;
+}
+```
+
+## Transactions
+
+Use `writeTxn` when several writes must commit or roll back together:
+
+```dart
+await db.writeTxn(() async {
+  await db.users.put(ada);
+  await db.accounts.put(account);
 });
-
-final document = await db.get('users', 1);
 ```
+
+Use `readTxn` for a consistent read block:
+
+```dart
+final users = await db.readTxn(() {
+  return db.users.filter().activeEqualTo(true).findAll();
+});
+```
+
+If a write transaction throws, Cindel rolls back the pending writes.
 
 ## Watchers
 
-Cindel watchers expose Dart streams for objects, collections, queries, and
-manual documents:
+Watch one object:
 
-On Web, watchers are single-tab only. They react to changes committed by the
-current Worker-backed database handle; cross-tab delivery will need a future
-BroadcastChannel layer.
+```dart
+final sub = db.users.watchObject(ada.dbId).listen((user) {
+  // user is null when the object does not exist.
+});
+```
+
+Watch a collection:
+
+```dart
+final sub = db.users.watchCollection().listen((users) {
+  // Full typed snapshot.
+});
+```
+
+Watch a query:
 
 ```dart
 final sub = db.users
@@ -416,11 +481,11 @@ final sub = db.users
     .sortByName()
     .watch()
     .listen((users) {
-      // Rebuild visible state.
+      // Matching typed snapshot.
     });
 ```
 
-Lazy watchers emit only an invalidation signal:
+Lazy watchers emit invalidation signals without returning objects:
 
 ```dart
 final sub = db.users.watchCollectionLazy().listen((_) {
@@ -430,12 +495,10 @@ final sub = db.users.watchCollectionLazy().listen((_) {
 
 ## Embedded Objects
 
-Use `@Embedded` or `@embedded` for value objects stored inside a parent
-collection document. Embedded objects are not root collections; they are
-serialized as part of the parent object.
+Use `@embedded` for values stored inside a parent collection object:
 
 ```dart
-@Collection(name: 'emails')
+@collection
 class Email {
   Id dbId = autoIncrement;
 
@@ -446,7 +509,7 @@ class Email {
   List<Recipient>? recipients;
 }
 
-@Embedded()
+@embedded
 class Recipient {
   String? name;
   String? address;
@@ -459,8 +522,7 @@ class RecipientMetadata {
 }
 ```
 
-Generated filters can query fields inside a single embedded object, including
-nested embedded objects:
+Generated filters can query inside embedded objects:
 
 ```dart
 final messages = await db.emails
@@ -468,23 +530,7 @@ final messages = await db.emails
     .sender((recipient) => recipient.addressEqualTo('ada@example.com'))
     .findAll();
 
-final leadMessages = await db.emails
-    .filter()
-    .sender((recipient) {
-      return recipient.metadata((metadata) {
-        return metadata.labelEqualTo('lead');
-      });
-    })
-    .findAll();
-
-final maryMessages = await db.emails
-    .filter()
-    .recipientsElement((recipient) {
-      return recipient.addressEqualTo('mary@example.com');
-    })
-    .findAll();
-
-final secondaryMessages = await db.emails
+final secondary = await db.emails
     .filter()
     .recipientsElement((recipient) {
       return recipient.metadata((metadata) {
@@ -494,50 +540,73 @@ final secondaryMessages = await db.emails
     .findAll();
 ```
 
-Embedded object fields and embedded object lists can be stored through the
-native typed document path. The generated writer uses native object/list hooks,
-and the generated reader hydrates embedded objects without requiring a manual
-JSON round-trip.
+Embedded classes are not root collections. Add indexes to root collection
+fields, not inside embedded classes.
 
-Generated helpers support equality for the whole embedded value and element
-equality for embedded lists. Nested field filter helpers are generated for
-single embedded object fields and for elements inside embedded object lists.
+## Web
 
-Embedded indexes are not supported. Put `@Index` on root collection fields, not
-inside `@Embedded` classes.
+Flutter Web uses the same typed app code:
 
-## Supported Platforms
+```dart
+final db = await Cindel.open(
+  directory: 'app.db',
+  schemas: [UserSchema],
+);
+```
 
-The current package line ships prebuilt Flutter libraries for Android, iOS,
-Linux, macOS, and Windows through `cindel_flutter_libs`.
+Keep both packages in the app:
+
+```yaml
+dependencies:
+  cindel: ^0.6.4
+  cindel_flutter_libs: ^0.6.4
+```
+
+Current Web behavior:
+
+- Web uses SQLite in a Worker with OPFS persistence.
+- `Cindel.open(...)` loads the packaged Worker and Wasm assets.
+- MDBX is not used in the browser.
+- Generated typed CRUD, queries, transactions, and single-tab watchers are the
+  supported Web path.
+- Web support is experimental and should be validated in the target browser.
+- Multi-tab coordination is not part of the current preview.
 
 ## Native Binaries
 
-Flutter apps should depend on `cindel_flutter_libs` so the native runtime is
-bundled automatically.
+Flutter apps should include `cindel_flutter_libs` so native and Web runtime
+assets are bundled automatically.
 
-When testing a custom local build, set `CINDEL_NATIVE_LIBRARY` to an absolute
-path before running Dart tests or tools:
+For custom local native builds, set `CINDEL_NATIVE_LIBRARY` before running Dart
+tests or tools:
 
 ```powershell
 $env:CINDEL_NATIVE_LIBRARY = 'D:\path\to\cindel_native.dll'
 ```
 
-## Unit Tests
+## Testing
 
-Use in-memory databases for fast tests:
+Use `openInMemory` for fast unit tests:
 
 ```dart
-final db = await Cindel.openInMemory(schemas: [UserSchema]);
-addTearDown(db.close);
+test('stores users', () async {
+  final db = await Cindel.openInMemory(schemas: [UserSchema]);
+  addTearDown(db.close);
+
+  final user = User()
+    ..email = 'ada@example.com'
+    ..name = 'Ada';
+
+  await db.users.put(user);
+
+  expect(await db.users.get(user.dbId), isNotNull);
+});
 ```
 
 ## Benchmarks
 
-Benchmarks are a rough signal rather than an absolute performance guarantee,
-but they are useful for tracking whether changes move Cindel in the right
-direction. The charts below compare the current app-style benchmark in both
-small and larger payload modes.
+Benchmarks are a rough signal rather than a performance guarantee. They are
+useful for tracking whether changes move Cindel in the right direction.
 
 ### Small Payloads
 
@@ -550,10 +619,6 @@ small and larger payload modes.
 `big=true`
 
 <img src="https://raw.githubusercontent.com/mainser/cindel/main/.github/assets/benchmarks-big.png" alt="Cindel benchmark chart for larger payloads"/>
-
-If you want to inspect more benchmark cases or check how Cindel performs on
-your device, you can run the
-[benchmarks](https://github.com/mainser/cindel_benchmark) yourself.
 
 ## License
 

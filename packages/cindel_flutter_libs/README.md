@@ -1,6 +1,7 @@
 # Cindel Flutter Libs
 
-Flutter plugin package that bundles prebuilt Cindel native runtime libraries.
+Flutter plugin package that bundles Cindel native libraries and Web runtime
+assets.
 
 [Overview](#overview) |
 [When To Use It](#when-to-use-it) |
@@ -10,8 +11,8 @@ Flutter plugin package that bundles prebuilt Cindel native runtime libraries.
 [Maintainers](#maintainers)
 
 > This package does not expose a Dart database API. Apps use
-> `package:cindel/cindel.dart`; this package only makes Flutter include the
-> native Cindel library in the built application.
+> `package:cindel/cindel.dart`; this package makes Flutter include the runtime
+> files required by that API.
 
 ## Overview
 
@@ -31,13 +32,13 @@ native runtime:
 - MDBX, Cindel's default backend.
 - SQLite, available only when selected explicitly from the `cindel` API.
 
-The bundled Web runtime is SQLite-only. MDBX remains the default native backend
-and is not a browser backend.
+The bundled Web runtime is SQLite/OPFS only. MDBX remains the default native
+backend and is not a browser backend.
 
 ## When To Use It
 
 Add this package when a Flutter app depends on `cindel` and should use the
-prebuilt native runtime:
+packaged native or Web runtime:
 
 ```yaml
 dependencies:
@@ -52,7 +53,8 @@ import 'package:cindel/cindel.dart';
 ```
 
 The `cindel` package owns the public API. `cindel_flutter_libs` is present so
-Flutter's platform build can find and bundle the native library.
+Flutter's platform build can find and bundle the required native libraries or
+Web Worker/Wasm assets.
 
 ## Setup
 
@@ -65,7 +67,8 @@ final db = await Cindel.open(
 );
 ```
 
-MDBX is used by default. SQLite can still be selected explicitly:
+MDBX is used by default on native platforms. SQLite can still be selected
+explicitly:
 
 ```dart
 final db = await Cindel.open(
@@ -108,8 +111,8 @@ This package contains:
 
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
-- Experimental Web SQLite Wasm runtime assets, including the Worker transaction
-  surface and cached SQLite native batch insert path used by Cindel Web.
+- Experimental Web SQLite/OPFS Worker/Wasm runtime assets used by
+  `Cindel.open(...)` on Flutter Web.
 - Minimal Dart library metadata.
 
 It does not contain:
@@ -121,7 +124,8 @@ It does not contain:
 
 Those live in the other Cindel packages:
 
-- `cindel`: runtime API, typed collections, queries, watchers, and FFI loading.
+- `cindel`: runtime API, typed collections, queries, watchers, and backend
+  loading.
 - `cindel_annotations`: public annotations and schema metadata types.
 - `cindel_generator`: build-time source generator for annotated models.
 

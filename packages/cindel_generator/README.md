@@ -22,8 +22,8 @@ builders, filters, projections, and native typed document hooks.
 typed database access:
 
 - Collection schema metadata.
-- Manual document serializers and deserializers.
-- Compact binary document serializers and deserializers.
+- Generated typed document serializers and deserializers.
+- Compact binary serializers and deserializers.
 - Native typed document readers and writers when the field layout supports it.
 - Typed collection accessors on `CindelDatabase`.
 - Indexed `where()` query helpers.
@@ -46,12 +46,12 @@ then add the generator as a dev dependency:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.2
-  cindel_flutter_libs: ^0.6.0
+  cindel: ^0.6.4
+  cindel_flutter_libs: ^0.6.4
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.1
+  cindel_generator: ^0.6.4
 ```
 
 Pure Dart packages can depend on `cindel` directly and provide a native library
@@ -126,7 +126,7 @@ Supported persisted field shapes are:
 - Enums.
 - Embedded objects annotated with `@Embedded`.
 - Nullable variants of supported shapes.
-- Lists of supported non-list shapes.
+- Lists of supported non-list shapes, including embedded objects.
 
 Nested lists are not supported.
 
@@ -218,8 +218,8 @@ final users = db.users;
 
 It also emits conversion functions used by the runtime:
 
-- Dart object to manual Cindel document.
-- Manual Cindel document to Dart object.
+- Dart object to generated Cindel document.
+- Generated Cindel document to Dart object.
 - Dart object to compact binary document.
 - Compact binary document to Dart object.
 - Native typed writer and reader hooks when supported by the field layout.
@@ -416,7 +416,7 @@ final team = await db.users
 
 The generator also emits:
 
-- embedded conversion helpers used by document and binary serializers,
+- embedded conversion helpers used by generated document and binary serializers,
 - whole-object equality filters such as `primaryContactEqualTo(value)`,
 - embedded-list equality filters such as `contactsEqualTo(values)`,
 - embedded-list element equality filters such as `contactsElementEqualTo(value)`,

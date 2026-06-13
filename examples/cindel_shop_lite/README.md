@@ -4,10 +4,15 @@ Cindel Shop Lite is a small offline store demo built to show how Cindel behaves
 inside a practical Flutter app: local catalog data, filtering, pagination,
 dashboard metrics, a cart, and a simulated checkout that updates product stock.
 
+The same application code runs on Android, iOS, Linux, macOS, Windows, and Web.
+Cindel selects the correct backend internally: MDBX by default on native
+platforms and SQLite Web/OPFS through Worker/Wasm in the browser.
+
 [Overview](#overview) |
 [Features](#features) |
 [Architecture](#architecture) |
 [Cindel Usage](#cindel-usage) |
+[Platforms](#platforms) |
 [Run](#run) |
 [Development](#development)
 
@@ -39,6 +44,7 @@ CRUD screen.
 - Simulated checkout that decrements product stock.
 - Riverpod providers and hooks-based presentation widgets.
 - Flutter localization using ARB files.
+- One codebase for native Flutter targets and Flutter Web.
 
 ## Screens
 
@@ -120,15 +126,23 @@ Shop Lite demonstrates these Cindel concepts:
 - Bulk writes through `putAll`.
 - Explicit `writeTxn` during checkout.
 - Local persistent database opening through `Cindel.open`.
+- Platform-specific storage selection without platform-specific repository or
+  datasource code.
 
 The database is opened with:
 
 ```dart
 final database = await Cindel.open(
-  directory: databaseDirectory.path,
+  directory: databaseDirectory,
   schemas: [ProductSchema],
 );
 ```
+
+`databaseDirectory` is resolved per platform:
+
+- Native Flutter targets use an app documents directory through
+  `path_provider`.
+- Flutter Web uses a stable database name for the SQLite Web/OPFS runtime.
 
 Checkout uses a write transaction so stock validation and stock updates stay in
 one operation:
@@ -138,6 +152,37 @@ await database.writeTxn(() async {
   // Read current products, validate stock, then put updated products.
 });
 ```
+
+## Platforms
+
+The demo is intentionally written as one app, not separate native and Web
+implementations.
+
+Supported targets:
+
+- Android
+- iOS
+- Linux
+- macOS
+- Windows
+- Web
+
+The same Cindel API is used everywhere:
+
+```dart
+await database.products.putAll(products);
+
+final page = await database.products
+    .filter()
+    .categoryEqualTo(category)
+    .sortByName()
+    .offset(offset)
+    .limit(limit)
+    .findAll();
+```
+
+Native builds use the runtime bundled by `cindel_flutter_libs`. Web builds load
+the packaged Worker/Wasm assets from the same companion package.
 
 ## Run
 
@@ -160,6 +205,18 @@ Run a flavor:
 flutter run --flavor development --target lib/main_development.dart
 flutter run --flavor staging --target lib/main_staging.dart
 flutter run --flavor production --target lib/main_production.dart
+```
+
+Run on Web:
+
+```sh
+flutter run -d chrome --target lib/main_development.dart
+```
+
+Build Web:
+
+```sh
+flutter build web --target lib/main_development.dart
 ```
 
 ## Development

@@ -1,8 +1,8 @@
 # Cindel Roadmap
 
-Cindel is a Flutter-first local database with a generated Dart API, a Rust
-native core, MDBX as the default backend, and SQLite available as an explicit
-secondary backend.
+Cindel is a Flutter-first local database with a generated typed Dart API, a Rust
+native core, MDBX as the default backend, SQLite as an explicit native backend,
+and SQLite Web/OPFS as the browser backend.
 
 [Status](#status) |
 [Delivered](#delivered) |
@@ -11,43 +11,57 @@ secondary backend.
 [Later](#later) |
 [Quality](#quality)
 
-> Cindel is still pre-1.0. The API and storage format can still change while
-> the optimized native path settles.
+> Cindel is still pre-1.0. The typed public API and storage format can still
+> change while backend parity, Web behavior, and release packaging settle.
 
 ## Status
 
-The current development line is focused on hardening the optimized MDBX runtime,
-keeping the generated typed API stable, keeping SQLite aligned as the complete
-explicit secondary backend for the current typed app surface, and bringing the
-experimental Web SQLite/OPFS runtime toward a reproducible preview.
+The current development line is focused on a typed-only public contract:
+application code should use generated collections, generated queries, typed
+transactions, and typed watchers. MDBX, SQLite native, and SQLite Web must
+adapt internally to that same public app surface.
 
 Current package roles:
 
-- `cindel`: runtime API, typed collections, queries, watchers, and FFI loading.
+- `cindel`: runtime API, typed collections, typed queries, watchers,
+  transactions, and backend loading.
 - `cindel_annotations`: public annotations and shared schema metadata.
 - `cindel_generator`: build-time source generator for annotated models.
 - `cindel_flutter_libs`: prebuilt native libraries and Web runtime assets for
   Flutter apps.
 
-Current native backend policy:
+Current backend policy:
 
-- MDBX is the default backend.
-- SQLite remains selectable explicitly.
-- Web uses the experimental SQLite/OPFS runtime path; MDBX is not a browser
-  backend and remains the native default.
+- MDBX is the default native backend and the reference implementation for the
+  typed API.
+- SQLite is selectable explicitly and must stay aligned with the same typed API.
+- Web uses the SQLite/OPFS Worker/Wasm runtime. It is still experimental, but it
+  is a real typed backend path, not a separate app API.
+- Unsupported backend behavior must fail explicitly instead of silently falling
+  back to untyped storage.
+
+Current public API policy:
+
+- Public persistence is generated and typed.
+- App code should use `db.users.put(...)`, `db.users.getAll(...)`,
+  `db.users.where()...findAll()`, typed transactions, and typed watchers.
+- Untyped collection-level document APIs are not part of the public direction.
+- Backend-specific implementation details must not leak into app code.
 
 ## Delivered
 
-### Dart API
+### Typed Dart API
 
 - `Cindel.open` and `Cindel.openInMemory`.
-- Manual document API by collection and id.
 - Generated typed collections.
 - Native auto-increment ids with `Id` and `autoIncrement`.
-- Bulk `putAll`, `getAll`, and `deleteAll`.
+- Typed `put`, `putAll`, `putMany`, `get`, `getAll`, `delete`, and
+  `deleteAll`.
+- Typed unique replace helpers generated from unique indexes.
 - Query-based `deleteFirst`, `deleteAll`, `updateFirst`, and `updateAll`.
 - Explicit `readTxn` and `writeTxn`.
-- In-memory databases for tests and short-lived work.
+- In-memory databases for typed tests and short-lived typed work.
+- Typed-only runtime paths for MDBX, SQLite native, and SQLite Web.
 
 ### Models And Schemas
 
@@ -72,6 +86,7 @@ Current native backend policy:
 - Schema metadata persistence.
 - Compatible additive schema version bumps.
 - Rejection of unsafe type, id, and index option changes.
+- Generated native reader and writer hooks for backend-specific storage.
 
 ### Queries
 
@@ -80,17 +95,21 @@ Current native backend policy:
 - Equality, range, prefix, contains, suffix, and null predicates where
   supported.
 - Boolean filter composition.
+- `optional`, `anyOf`, and `allOf` query modifiers.
 - `findAll`, `findFirst`, and `count`.
 - Sorting and pagination.
+- Secondary sort keys.
 - Distinct queries.
-- Property projections.
+- Single-property projections.
+- Multi-property projections.
 - Property aggregates.
 - Nested filter helpers for fields inside single embedded objects.
 - Nested filter helpers for fields inside embedded object-list elements.
 - Deep equality for whole embedded object filters and embedded-list element
   equality filters.
-- Native query-plan execution for supported generated binary-document queries
-  on MDBX and SQLite.
+- Native query-plan execution for supported typed queries on MDBX, SQLite, and
+  Web SQLite.
+- Typed native-reader materialization when a query needs Dart-side filtering.
 
 ### Indexes
 
@@ -103,30 +122,27 @@ Current native backend policy:
 - Word-token indexes.
 - Primitive-list multi-entry indexes.
 - Collection-level composite indexes.
-- Native index maintenance for writes, updates, and deletes.
+- Native index maintenance for typed writes, updates, and deletes.
 
 ### Storage And Native Runtime
 
 - Rust native core behind Dart FFI.
-- MDBX storage backend.
-- SQLite storage backend for the generated typed app path, including schema
-  collection tables, open-time schema registration, `putAll`, `getAll`,
-  query-based update/delete, filter queries, sorted queries, projections,
-  aggregates, and direct native typed reads.
-- Experimental Web SQLite/OPFS baseline with persisted schema metadata and
-  runtime schema registration for native document cursors after reopen.
-- Experimental Web typed CRUD worker/Wasm surface over the shared SQLite
-  engine, including typed batch writes, ordered reads, deletes, id allocation,
-  stored-document reads, native-document write/delete batches, index queries,
-  native query-plan ids/documents/count/projection/aggregate/update/delete
-  operations, collection revisions, change-set draining, explicit
+- MDBX storage backend for generated typed binary documents.
+- SQLite storage backend for generated typed app data, including schema
+  collection tables, open-time schema registration, typed batch writes, ordered
+  reads, query-based update/delete, filter queries, sorted queries, projections,
+  aggregates, transactions, watchers, and direct native typed reads.
+- SQLite Web/OPFS Worker/Wasm backend for generated typed app data, including
+  persisted schema metadata, runtime schema registration, typed batch writes,
+  ordered reads, deletes, id allocation, native-document write/delete batches,
+  index queries, native query-plan ids/documents/count/projection/aggregate/
+  update/delete operations, collection revisions, change-set draining, explicit
   read/write transactions, nested-transaction rejection, and controlled-close
   rollback of active Web transactions.
-- Web SQLite native batch writes now have a direct wire encoder for generated
-  rows and reuse prepared SQLite insert statements across full chunks in the
-  Wasm runtime.
+- Web SQLite native batch writes with a direct wire encoder for generated rows
+  and prepared SQLite insert statement reuse across full chunks in the Wasm
+  runtime.
 - Compact generated binary document format.
-- Generic binary manual document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.
 - Native typed document writer and reader hooks.
@@ -136,15 +152,15 @@ Current native backend policy:
 
 ### Watchers
 
-- Manual document watchers.
-- Collection watchers.
 - Typed object watchers.
+- Typed collection watchers.
 - Query watchers.
 - Lazy object, collection, and query watchers.
 - `fireImmediately` support.
 - Native collection revision counters.
 - Native committed change sets with changed document ids.
 - Local watcher notifications after commit only.
+- Single-tab Web watcher path through Worker change sets.
 
 ### Platforms
 
@@ -177,10 +193,21 @@ Current native backend policy:
 
 - Keep accumulating confirmed fixes in the `0.6.4` line until the next publish
   decision.
-- Android, iOS, Linux, macOS, and Windows native prebuilts are generated by the
-  release workflow for the current native ABI.
+- Android, iOS, Linux, macOS, Windows, and Web runtime assets must be generated
+  from the current native ABI before benchmarking or release validation.
 - Keep root and package READMEs aligned with the actual package roles.
 - Keep package changelogs current.
+
+### Typed Backend Parity
+
+- Keep MDBX as the reference backend for the typed API.
+- Keep SQLite native aligned with the same typed operations, result ordering,
+  errors, transaction behavior, and watcher behavior.
+- Keep SQLite Web aligned with the same typed app code wherever the browser
+  platform can support the behavior.
+- Classify unsupported Web behavior explicitly and make it fail clearly instead
+  of falling back to untyped storage.
+- Keep parity labs focused on observable public typed API behavior.
 
 ### Runtime Improvements
 
@@ -191,20 +218,22 @@ Current native backend policy:
   the default backend.
 - Continue Web SQLite/OPFS work on the shared SQLite engine, keeping the Web
   Worker as transport, scheduling, and Wasm initialization code rather than a
-  separate storage backend.
+  separate app API.
 - Keep Web benchmarks separated into UI, Worker, Wasm, SQLite, serialization,
-  and OPFS/startup costs before moving into watcher work.
+  and OPFS/startup costs before optimization work.
 - Preserve lazy local watcher change-set creation when no watcher is
   registered.
 
 ### Web Runtime
 
+- Treat Web as an experimental but real backend for generated typed Flutter Web
+  apps.
 - Keep Web validation focused on SQLite/OPFS persistence, binary Worker
-  payloads, query parity, transaction atomicity, and browser behavior.
+  payloads, query parity, transaction atomicity, watcher behavior, and browser
+  storage behavior.
 - Establish Web benchmark CSVs for the same typed app workloads used by native
   backend comparisons before starting optimization work.
-- Add single-tab Web watcher support after the Worker emits committed change
-  sets through the existing watcher model.
+- Keep single-tab behavior correct before evaluating multi-tab coordination.
 
 ## Next
 
@@ -212,18 +241,27 @@ Current native backend policy:
 
 - Run package analysis and tests from a clean release state.
 - Run `dart pub publish --dry-run` for publishable packages.
-- Validate Flutter Android, iOS, Linux, macOS, and Windows consumers with
-  prebuilts.
-- Validate Flutter Web consumers with packaged Worker/Wasm assets through the
-  companion package.
-- Confirm package archives include the expected native files.
+- Validate Flutter Android, iOS, Linux, macOS, Windows, and Web consumers with
+  current prebuilts/assets.
+- Confirm package archives include the expected native and Web files.
 - Keep example and package snippets on the correct version line.
+
+### Typed API Coverage
+
+- Keep tests centered on generated typed collections and generated queries.
+- Add missing typed coverage before changing production behavior.
+- Keep MDBX, SQLite native, and SQLite Web parity reports understandable enough
+  to identify the exact typed API call, backend, expected result, and actual
+  result.
+- Prevent reintroduction of untyped collection-level persistence APIs.
 
 ### Web Platform Preview
 
 - Keep Web asset packaging reproducible through the internal release workflow.
 - Prove `flutter run -d chrome`, `flutter build web`, and served release builds
   load the Worker, JS glue, and `.wasm` assets without 404s.
+- Validate fresh browser storage, reopen persistence, typed seed flows,
+  transactions, queries, watchers, and checkout-style app mutations.
 - Document secure-context, OPFS availability, storage quota, and current
   single-tab limitations before calling Web preview-ready.
 - Keep multi-tab behavior out of the stable Web preview until the single-tab
@@ -239,25 +277,27 @@ Current native backend policy:
 ### Documentation
 
 - Keep package READMEs concise and user-facing.
+- Document public typed API usage directly.
 - Document public limitations directly.
 - Keep Freezed support documented as classic classes and single primary
   factories only; union/sealed multi-constructor models remain out of scope.
-- Add focused examples for annotations, generator usage, runtime API, and
-  Flutter native libraries.
+- Add focused examples for annotations, generator usage, runtime API, Flutter
+  native libraries, and Flutter Web setup.
 
 ### Diagnostics
 
 - Improve native error reporting across FFI.
-- Add clearer Dart exception types for validation, schema, transaction, and
-  native storage failures.
+- Add clearer Dart exception types for validation, schema, transaction, Web
+  storage, and native storage failures.
 - Improve generator errors for unsupported field shapes and invalid indexes.
 
 ## Later
 
 ### Migration And Storage Stability
 
-- Add public migration tooling only when the storage format is close to 1.0.
-- Support explicit export and import utilities.
+- Add public migration tooling only when the typed storage format is close to
+  1.0.
+- Support explicit export and import utilities for typed collections.
 - Add index rebuild and verification tools.
 - Add guidance for backups and rollback before migrations.
 
@@ -266,7 +306,7 @@ Current native backend policy:
 - Add broader Web browser validation after the Chrome/Edge Worker/OPFS path is
   stable.
 - Evaluate multi-tab Web coordination with Web Locks or a single-writer
-  coordinator after single-tab watchers are working.
+  coordinator after single-tab correctness is validated.
 
 ### Maintenance APIs
 
@@ -289,8 +329,10 @@ Near-term quality goals:
 - Keep Dart analyzer clean.
 - Keep Rust tests passing.
 - Keep package-level tests passing.
+- Keep typed backend parity tests passing.
 - Keep watcher behavior covered.
-- Keep package docs synchronized with the real API.
+- Keep Web build and packaged asset checks passing.
+- Keep package docs synchronized with the real typed API.
 
 Future CI goals:
 
@@ -299,4 +341,5 @@ Future CI goals:
 - Android build smoke test.
 - Windows desktop smoke test.
 - Linux native/prebuilt validation.
+- Web Worker/Wasm asset validation.
 - Apple build smoke tests when macOS runner access is available.

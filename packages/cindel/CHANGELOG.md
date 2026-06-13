@@ -2,44 +2,25 @@
 
 ## 0.6.4
 
-- Added Web support to the normal `Cindel.open(...)` entrypoint, loading the
-  packaged Worker/Wasm runtime automatically.
-- Removed the separate public Web entrypoint so Web applications use the same
-  opening path as every other platform.
-- Added `encodeNativeDocumentWriteBatchDirect` for Web SQLite-native batch
-  writes so generated Web paths can emit CindelWireV1 rows without building
-  per-document `WireNativeDocumentWrite` objects.
-- Routed generated Web SQLite-native typed writes through the direct batch
-  encoder by default, restoring the optimized insert path after the Web
-  entrypoint alignment.
-- Routed generated Web SQLite-native queries, counts, deletes, updates,
-  projections, and aggregates back through the Worker native query-plan APIs
-  when the schema has native document hooks.
-- Restored Web unique-replace typed writes so `putBy...` and `putAllBy...`
-  reuse existing ids through field or composite index lookups instead of
-  appending duplicate rows.
-- Optimized SQLite native document batch inserts by reusing the prepared
-  statement for full chunks, improving the Web SQLite/Wasm typed insert path
-  while keeping MDBX untouched.
-- Optimized SQLite `getAll` reads by querying ids in parameter-limited chunks
-  and restoring the requested order in memory, improving Web SQLite generated
-  typed `getAll` without changing MDBX.
-- Added SQLite native query-plan projection and aggregate execution for
-  schema-backed generated documents, including count, min, max, sum, and
-  average over scalar native columns.
-- Added Web worker query operations for index equality/range, native query-plan
-  ids, documents, count, projection, and aggregate payloads over the SQLite/OPFS
-  runtime.
-- Added Web worker query-plan update/delete operations, collection revision
-  reads, and change-set draining for the SQLite/OPFS runtime.
-- Added single-tab Web watchers by translating Worker post-commit change sets
-  into the existing document, collection, typed, query, and lazy watcher APIs.
-- Added Web worker read/write transaction operations over the shared
-  SQLite/OPFS engine, including nested-transaction rejection, serialized
-  request execution, failed-batch rollback coverage, and controlled-close
-  rollback for active transactions.
-- Kept MDBX unchanged as the default native backend while aligning SQLite and
-  Web SQLite query-plan behavior for the generated typed app path.
+- Aligned MDBX, SQLite native, and SQLite Web around the generated typed public
+  API. Applications now use the same `Cindel.open(...)`, typed collections,
+  typed queries, transactions, and watchers across supported platforms.
+- Added the experimental SQLite Web/OPFS backend behind the normal
+  `Cindel.open(...)` path, loading packaged Worker/Wasm assets from
+  `cindel_flutter_libs`.
+- Removed the separate public Web entrypoint and removed untyped
+  collection-level document APIs from the current public direction.
+- Completed the Web typed runtime surface for CRUD, bulk reads/writes,
+  unique-replace helpers, query plans, projections, aggregates, updates,
+  deletes, transactions, collection revisions, change-set draining, and
+  single-tab watchers.
+- Optimized SQLite native/Web typed writes and `getAll` reads with direct
+  generated-row batch encoding, prepared-statement reuse, chunked id queries,
+  and stable requested-order restoration.
+- Added SQLite native query-plan projection and aggregate execution for typed
+  schema-backed rows, including count, min, max, sum, and average.
+- Kept MDBX as the default native backend and reference path while aligning
+  SQLite and Web SQLite behavior with the same typed app workloads.
 
 ## 0.6.3
 

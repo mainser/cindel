@@ -284,7 +284,7 @@ class User {
   User({required this.dbId, required this.name});
 }
 
-final user = User(id: 42, name: 'Jhon Doe');
+final user = User(dbId: 42, name: 'Jhon Doe');
 ```
 
 ## Enum Fields
@@ -336,6 +336,8 @@ The Cindel packages are published separately:
 - `cindel_annotations`: annotations and metadata types.
 - `cindel_generator`: code generation for annotated models.
 - `cindel`: runtime API, typed collections, queries, watchers, and native FFI.
+- `cindel_flutter_libs`: native libraries and Web runtime assets for Flutter
+  apps.
 
 This package is intentionally small so generator and tooling packages can share
 the schema contract without depending on the database runtime.

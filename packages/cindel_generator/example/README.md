@@ -5,11 +5,11 @@ annotated Cindel models.
 
 ```yaml
 dependencies:
-  cindel: ^0.6.0
+  cindel: ^0.6.4
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.0
+  cindel_generator: ^0.6.4
 ```
 
 Given an annotated model:
@@ -23,7 +23,7 @@ part 'user.g.dart';
 class User {
   Id dbId = autoIncrement;
 
-  @index
+  @Index()
   late String email;
 
   late String name;

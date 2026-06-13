@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4
+
+- Updated package documentation for the current generated typed Cindel API and
+  coordinated package release line.
+
 ## 0.5.4
 
 - Added the `@Name` annotation for persisted collection and field names.
