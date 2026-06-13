@@ -105,10 +105,6 @@ jobs:
             -r expanded \
             --coverage=coverage/dart-packages/raw/packages_cindel_core
 
-          dart test packages/cindel/test/web_backend_test.dart \
-            -r expanded \
-            --coverage=coverage/dart-packages/raw/packages_cindel_web
-
           mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' -not -path 'packages/cindel/test' | sort)
           if [ "${#test_dirs[@]}" -eq 0 ]; then
             echo "::error::No backend-neutral package test directories found."
@@ -148,6 +144,81 @@ jobs:
           files: coverage/dart-packages/lcov.info
           flags: dart-packages
           name: dart-packages
+          fail_ci_if_error: true
+
+  mdbx-backend:
+    name: MDBX backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Cache Dart packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock', 'examples/**/pubspec.lock', '**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install LLVM/libclang
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - name: Set up Rust
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-mdbx
+          workspaces: |
+            packages/cindel/native -> target
+
+      - name: Install Flutter workspace dependencies
+        run: flutter pub get
+
+      - name: Build Rust native core with MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml
+
+      - name: Run Rust tests with MDBX
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
+
+      - name: Run Cindel package tests with MDBX and collect coverage
+        shell: bash
+        run: |
+          rm -rf coverage/mdbx
+          mkdir -p coverage/mdbx/raw
+
+          dart test packages/cindel/test/mdbx_backend_test.dart \
+            -r expanded \
+            --coverage=coverage/mdbx/raw
+
+          dart run coverage:format_coverage \
+            --lcov \
+            --in=coverage/mdbx/raw \
+            --out=coverage/mdbx/lcov.info \
+            --package=. \
+            --base-directory=. \
+            --report-on=packages/cindel/lib
+
+      - name: Upload MDBX coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/mdbx/lcov.info
+          flags: dart-mdbx
+          name: dart-mdbx
           fail_ci_if_error: true
 
   sqlite-backend:
@@ -225,12 +296,10 @@ jobs:
           name: dart-sqlite
           fail_ci_if_error: true
 
-  mdbx-backend:
-    name: MDBX backend tests
+  web-backend:
+    name: Web backend tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -251,51 +320,32 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      - name: Install LLVM/libclang
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
-
-      - name: Set up Rust
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: native-mdbx
-          workspaces: |
-            packages/cindel/native -> target
-
       - name: Install Flutter workspace dependencies
         run: flutter pub get
 
-      - name: Build Rust native core with MDBX
-        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --manifest-path packages/cindel/native/Cargo.toml
-
-      - name: Run Rust tests with MDBX
-        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --manifest-path packages/cindel/native/Cargo.toml
-
-      - name: Run Cindel package tests with MDBX and collect coverage
+      - name: Run Cindel package tests with Web backend and collect coverage
         shell: bash
         run: |
-          rm -rf coverage/mdbx
-          mkdir -p coverage/mdbx/raw
+          rm -rf coverage/web
+          mkdir -p coverage/web/raw
 
-          dart test packages/cindel/test/mdbx_backend_test.dart \
+          dart test packages/cindel/test/web_backend_test.dart \
             -r expanded \
-            --coverage=coverage/mdbx/raw
+            --coverage=coverage/web/raw
 
           dart run coverage:format_coverage \
             --lcov \
-            --in=coverage/mdbx/raw \
-            --out=coverage/mdbx/lcov.info \
+            --in=coverage/web/raw \
+            --out=coverage/web/lcov.info \
             --package=. \
             --base-directory=. \
             --report-on=packages/cindel/lib
 
-      - name: Upload MDBX coverage to Codecov
+      - name: Upload Web backend coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/mdbx/lcov.info
-          flags: dart-mdbx
-          name: dart-mdbx
+          files: coverage/web/lcov.info
+          flags: dart-web
+          name: dart-web
           fail_ci_if_error: true

@@ -219,6 +219,52 @@ jobs:
           path: release-artifacts/packages
           if-no-files-found: error
 
+  build_web:
+    name: Build Web runtime
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal
+          rustup default $env:RUST_TOOLCHAIN
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm -y --no-progress
+
+      - name: Install wasm-bindgen CLI
+        shell: pwsh
+        run: cargo install wasm-bindgen-cli --version 0.2.104 --locked
+
+      - name: Build Web prebuilt runtime
+        shell: pwsh
+        run: .\tool\prebuilt\build_web.ps1
+
+      - name: Collect Web runtime
+        shell: pwsh
+        run: |
+          $out = 'release-artifacts\packages\cindel_flutter_libs\web'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Recurse -Force `
+            -LiteralPath 'packages\cindel_flutter_libs\web\pkg' `
+            -Destination $out
+          Copy-Item -Force `
+            -LiteralPath 'packages\cindel_flutter_libs\web\cindel_worker.js' `
+            -Destination "$out\cindel_worker.js"
+
+      - name: Upload Web runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: cindel-prebuilt-web
+          path: release-artifacts/packages
+          if-no-files-found: error
+
   publish:
     name: Publish matching packages
     needs:
@@ -227,6 +273,7 @@ jobs:
       - build_linux
       - build_windows
       - build_apple
+      - build_web
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -278,6 +325,11 @@ jobs:
           test -f packages/cindel_flutter_libs/windows/cindel_native.dll
           test -d packages/cindel_flutter_libs/ios/cindel.xcframework
           test -f packages/cindel_flutter_libs/macos/libcindel_native.dylib
+          test -f packages/cindel_flutter_libs/web/cindel_worker.js
+          test -f packages/cindel_flutter_libs/web/pkg/cindel_native.js
+          test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm
+          test -f packages/cindel_flutter_libs/web/pkg/cindel_native.d.ts
+          test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm.d.ts
 
       - name: Install workspace dependencies
         run: dart pub get
@@ -411,6 +463,12 @@ jobs:
             github-release-assets/cindel_native_windows_x64.dll
 
           (
+            cd "${artifact_libs_dir}/web"
+            zip -qr "${GITHUB_WORKSPACE}/github-release-assets/cindel_web_runtime.zip" \
+              cindel_worker.js pkg
+          )
+
+          (
             cd "${artifact_libs_dir}/ios"
             zip -qr "${GITHUB_WORKSPACE}/github-release-assets/cindel_native_ios.xcframework.zip" \
               cindel.xcframework
@@ -423,7 +481,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          release_notes="$(printf 'Cindel %s release.\n\nNative binaries are attached here for direct testing and tooling use. They are also embedded in the published cindel_flutter_libs package.' "${RELEASE_VERSION}")"
+          release_notes="$(printf 'Cindel %s release.\n\nNative binaries and Web runtime assets are attached here for direct testing and tooling use. They are also embedded in the published cindel_flutter_libs package.' "${RELEASE_VERSION}")"
 
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" \
