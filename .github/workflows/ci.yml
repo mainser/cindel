@@ -105,6 +105,10 @@ jobs:
             -r expanded \
             --coverage=coverage/dart-packages/raw/packages_cindel_core
 
+          dart test packages/cindel/test/web_backend_test.dart \
+            -r expanded \
+            --coverage=coverage/dart-packages/raw/packages_cindel_web
+
           mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' -not -path 'packages/cindel/test' | sort)
           if [ "${#test_dirs[@]}" -eq 0 ]; then
             echo "::error::No backend-neutral package test directories found."

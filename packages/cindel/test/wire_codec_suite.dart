@@ -500,6 +500,151 @@ void main() {
       expect(encoded, expected);
     });
 
+    // Scenario: The direct native document encoder receives uncommon generated
+    // writer calls and invalid callback shapes.
+    // Covers:
+    // - Null and raw-byte direct field writes.
+    // - Exact field-count completion guard.
+    // - ids/object count validation.
+    // - Negative field-count validation.
+    // - Non-finite double rejection.
+    // - Unsupported nested object/list writer methods in the wire-only writer.
+    // Expected: Valid direct bytes decode normally and invalid callback shapes
+    //   fail before producing malformed wire payloads.
+    test('direct native document encoder handles edge writer paths', () {
+      // Act.
+      final encoded = encodeNativeDocumentWriteBatchDirect<Object>(
+        ids: const [1],
+        objects: const [Object()],
+        fieldCount: 2,
+        writeDocument: (writer, _) {
+          writer.writeNull(0);
+          writer.writeBytes(1, bytes([1, 2, 3]));
+          writer.endList(writer);
+        },
+      );
+
+      // Assert.
+      expect(decodeNativeDocumentWriteBatch(encoded), [
+        WireNativeDocumentWrite(
+          id: 1,
+          values: [
+            const WireNativeDocumentValue.nullValue(),
+            WireNativeDocumentValue.bytes(bytes([1, 2, 3])),
+          ],
+        ),
+      ]);
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1, 2],
+          objects: const [Object()],
+          fieldCount: 0,
+          writeDocument: (_, _) {},
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [],
+          objects: const [],
+          fieldCount: -1,
+          writeDocument: (_, _) {},
+        ),
+        throwsRangeError,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 1,
+          writeDocument: (_, _) {},
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 1,
+          writeDocument: (writer, _) => writer.writeDouble(0, double.nan),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 1,
+          writeDocument: (writer, _) => writer.writeObject(0, const {}),
+        ),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 1,
+          writeDocument: (writer, _) => writer.writeObjectList(0, const []),
+        ),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => encodeNativeDocumentWriteBatchDirect<Object>(
+          ids: const [1],
+          objects: const [Object()],
+          fieldCount: 1,
+          writeDocument: (writer, _) => writer.beginList(0, 0),
+        ),
+        throwsUnsupportedError,
+      );
+    });
+
+    // Scenario: The direct JSON list writer receives every JSON escape family
+    // and multi-byte UTF-8 ranges.
+    // Covers:
+    // - JSON quote, slash, control, named-control, BMP, and non-BMP escaping.
+    // - Growable wire buffer byte writes for larger string-list payloads.
+    // Expected: The direct writer emits the same JSON bytes as dart:convert.
+    test('direct string-list writer escapes JSON and UTF-8 ranges', () {
+      // Arrange.
+      final values = [
+        '"',
+        r'\',
+        '\b',
+        '\f',
+        '\n',
+        '\r',
+        '\t',
+        '\u0001',
+        'ñ',
+        '東京',
+        '😀',
+      ];
+      final expected = encodeNativeDocumentWriteBatch([
+        WireNativeDocumentWrite(
+          id: 1,
+          values: [
+            WireNativeDocumentValue.bytes(
+              bytes(utf8.encode(jsonEncode(values))),
+            ),
+          ],
+        ),
+      ]);
+
+      // Act.
+      final encoded = encodeNativeDocumentWriteBatchDirect<Object>(
+        ids: const [1],
+        objects: const [Object()],
+        fieldCount: 1,
+        writeDocument: (writer, _) {
+          writer.writeStringListJson(0, values);
+        },
+      );
+
+      // Assert.
+      expect(encoded, expected);
+    });
+
     // Scenario: Rust returns projected cells without hydrating full documents.
     // Covers:
     // - ProjectionRows row/column counts.
@@ -625,6 +770,180 @@ void main() {
       expect(decodeIndexEntryList(bytes(indexEntryListFixture)), entries);
     });
 
+    // Scenario: Wire model objects are used as map/set keys by tests and cache
+    // code.
+    // Covers:
+    // - hashCode implementations for the public wire value objects.
+    // - Query-plan equality with non-null filter bytes.
+    // Expected: Equal objects produce usable hash codes and query-plan equality
+    //   compares filter bytes by content.
+    test('computes hash codes for wire model objects', () {
+      // Arrange.
+      final objects = <Object>[
+        const WireIndexValue.nullValue(),
+        const WireIndexValue.bool(true),
+        const WireIndexValue.int(1),
+        const WireIndexValue.double(1.5),
+        const WireIndexValue.string('a'),
+        const WireIndexValue.list([WireIndexValue.string('a')]),
+        const WireScalar.nullValue(),
+        const WireScalar.bool(true),
+        const WireScalar.int(1),
+        const WireScalar.double(1.5),
+        const WireScalar.string('a'),
+        const WireValue.nullValue(),
+        const WireValue.bool(true),
+        const WireValue.int(1),
+        const WireValue.double(1.5),
+        const WireValue.string('a'),
+        const WireValue.list([WireValue.string('a')]),
+        const WireValue.object([
+          WireObjectEntry('name', WireValue.string('Ana')),
+        ]),
+        const WireObjectEntry('name', WireValue.string('Ana')),
+        const WireFilter.field(
+          field: 'active',
+          operation: WireFilterOperation.equal,
+          value: WireValue.bool(true),
+        ),
+        const WireFilter.all([]),
+        const WireFilter.any([]),
+        const WireFilter.not(WireFilter.all([])),
+        WireDocumentWrite(id: 1, bytes: bytes([1])),
+        WireIndexedDocumentWrite(
+          id: 1,
+          bytes: bytes([1]),
+          indexes: const [
+            WireIndexEntry(
+              documentId: 1,
+              indexName: 'email',
+              value: WireIndexValue.string('a'),
+            ),
+          ],
+        ),
+        const WireNativeDocumentValue.nullValue(),
+        const WireNativeDocumentValue.bool(true),
+        const WireNativeDocumentValue.int(1),
+        const WireNativeDocumentValue.double(1.5),
+        WireNativeDocumentValue.bytes(bytes([1])),
+        const WireNativeDocumentWrite(
+          id: 1,
+          values: [WireNativeDocumentValue.int(1)],
+        ),
+        const WireProjectionRows(
+          rowCount: 1,
+          columnCount: 1,
+          cells: [WireValue.int(1)],
+        ),
+        const WireSchemaManifest(
+          version: 1,
+          collections: [
+            WireCollectionSchema(
+              name: 'users',
+              idField: 'id',
+              fields: [
+                WireFieldSchema(
+                  name: 'id',
+                  typeName: 'int',
+                  binaryType: 'int',
+                  indexType: 'value',
+                  isId: true,
+                  isIndexed: false,
+                  isUnique: false,
+                  isReplace: false,
+                  isNullable: false,
+                  caseSensitive: true,
+                ),
+              ],
+              indexes: [
+                WireIndexSchema(
+                  name: 'by_id',
+                  fields: ['id'],
+                  isUnique: true,
+                  isReplace: false,
+                  caseSensitive: true,
+                ),
+              ],
+            ),
+          ],
+        ),
+        const WireCollectionSchema(
+          name: 'users',
+          idField: 'id',
+          fields: [],
+          indexes: [],
+        ),
+        const WireFieldSchema(
+          name: 'id',
+          typeName: 'int',
+          binaryType: 'int',
+          indexType: 'value',
+          isId: true,
+          isIndexed: false,
+          isUnique: false,
+          isReplace: false,
+          isNullable: false,
+          caseSensitive: true,
+        ),
+        const WireIndexSchema(
+          name: 'by_id',
+          fields: ['id'],
+          isUnique: true,
+          isReplace: false,
+          caseSensitive: true,
+        ),
+        const WireIndexEntry(
+          documentId: 1,
+          indexName: 'email',
+          value: WireIndexValue.string('a'),
+        ),
+        const WireQuerySource.all(dedupe: true),
+        const WireQuerySource.indexEqual(
+          indexName: 'email',
+          value: WireIndexValue.string('a'),
+        ),
+        const WireQuerySource.indexRange(
+          indexName: 'email',
+          lower: WireIndexValue.string('a'),
+          upper: WireIndexValue.string('z'),
+        ),
+        const WireQuerySort(field: 'email', ascending: true),
+        WireQueryPlan(
+          source: const WireQuerySource.all(),
+          filter: bytes([1, 2]),
+          sorts: const [WireQuerySort(field: 'email', ascending: true)],
+          distinctFields: const ['email'],
+          offset: 1,
+          limit: 2,
+        ),
+        const WireChangeSet(collection: 'users', revision: 1, documentIds: [1]),
+      ];
+      final left = WireQueryPlan(
+        source: const WireQuerySource.all(),
+        filter: bytes([1, 2]),
+        sorts: const [],
+        distinctFields: const [],
+        offset: 0,
+        limit: null,
+      );
+      final right = WireQueryPlan(
+        source: const WireQuerySource.all(),
+        filter: bytes([1, 2]),
+        sorts: const [],
+        distinctFields: const [],
+        offset: 0,
+        limit: null,
+      );
+
+      // Act / Assert.
+      expect(
+        objects.map((object) => object.hashCode),
+        everyElement(isA<int>()),
+      );
+      expect(left, right);
+      expect(left.hashCode, right.hashCode);
+    });
+
     // Scenario: Dart receives malformed wire payloads from native code.
     // Covers:
     // - Truncated payloads.
@@ -648,6 +967,24 @@ void main() {
         throwsFormatException,
       );
       expect(() => decodeFilter(bytes([99])), throwsFormatException);
+      expect(
+        () => decodeFilter(
+          bytes([wireFilterTagField, 1, 0, 0, 0, 97, 99, wireTagNull]),
+        ),
+        throwsFormatException,
+      );
+      expect(() => decodeScalar(bytes([99])), throwsFormatException);
+      expect(
+        () => decodeProjectionRows(bytes([0, 0, 0, 0, 1])),
+        throwsFormatException,
+      );
+      expect(
+        () => decodeNativeDocumentWriteBatch(
+          bytes([1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 99]),
+        ),
+        throwsFormatException,
+      );
+      expect(() => decodeQueryPlan(bytes([99, 0])), throwsFormatException);
       expect(
         () => decodeFilter(
           bytes([wireFilterTagField, 1, 0, 0, 0, 97, 99, wireTagNull]),

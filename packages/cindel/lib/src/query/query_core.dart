@@ -217,6 +217,8 @@ final class CindelQuery<T> {
         schema: schema,
         readDocuments: () async => <CindelDocument>[],
         readIds: () async => <int>[],
+        nativeSource: const CindelNativeAllQuerySource(),
+        filter: CindelFilter.any(const []),
       );
     }
     return CindelQuery.equal(
@@ -246,6 +248,8 @@ final class CindelQuery<T> {
         schema: schema,
         readDocuments: () async => <CindelDocument>[],
         readIds: () async => <int>[],
+        nativeSource: const CindelNativeAllQuerySource(),
+        filter: CindelFilter.any(const []),
       );
     }
     final tokenPrefix = tokens.first;

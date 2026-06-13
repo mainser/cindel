@@ -124,6 +124,37 @@ void main() {
       expect(deletedUsers, [null, null]);
     });
 
+    // Scenario: Bulk typed writes receive a lazy iterable rather than a List.
+    // Covers:
+    // - [CindelTypedCollection.putMany] aliasing [putAll].
+    // - [CindelTypedCollection.putAll] materializing non-List iterables.
+    // Expected: Lazy iterables are stored exactly like List batches.
+    test('stores typed objects from lazy iterables.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+
+      Iterable<User> users() sync* {
+        yield User()
+          ..name = 'Ana'
+          ..email = 'ana@example.com';
+        yield User()
+          ..name = 'Ben'
+          ..email = 'ben@example.com';
+      }
+
+      // Act.
+      await database.users.putMany(users());
+      final stored = await database.users.all().sortByEmail().findAll();
+
+      // Assert.
+      expect(stored.map((user) => user.email), [
+        'ana@example.com',
+        'ben@example.com',
+      ]);
+      expect(stored.map((user) => user.dbId), [1, 2]);
+    });
+
     // Scenario: A generated replace index helper upserts by natural key.
     // Covers:
     // - Generated [putByUsername] method for a unique replace index.
@@ -238,6 +269,42 @@ void main() {
       expect(matches.map((account) => account.dbId), [8]);
     });
 
+    // Scenario: Replace-index helpers are called inside an existing write
+    // transaction.
+    // Covers:
+    // - [CindelTypedCollection.putByUniqueIndex] transaction reuse branch.
+    // - [CindelTypedCollection.putAllByUniqueIndex] transaction reuse branch.
+    // - Empty replace-index batches as no-ops.
+    // Expected: Helpers reuse the active transaction instead of nesting another
+    // write transaction.
+    test('reuses active transactions for replace-index helpers.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [AccountSchema]);
+      addTearDown(database.close);
+      final existing = Account()
+        ..username = 'ana'
+        ..displayLabel = 'Old';
+      final replacement = Account()
+        ..username = 'ana'
+        ..displayLabel = 'New';
+      final ben = Account()
+        ..username = 'ben'
+        ..displayLabel = 'Ben';
+
+      // Act.
+      await database.accounts.put(existing);
+      await database.writeTxn<void>(() async {
+        await database.accounts.putAllByUsername(const []);
+        await database.accounts.putByUsername(replacement);
+        await database.accounts.putAllByUsername([ben]);
+      });
+      final stored = await database.accounts.all().sortByUsername().findAll();
+
+      // Assert.
+      expect(replacement.dbId, existing.dbId);
+      expect(stored.map((account) => account.displayLabel), ['New', 'Ben']);
+    });
+
     // Scenario: A typed bulk write receives duplicate explicit ids.
     // Covers:
     // - [CindelTypedCollection.putAll] preflight duplicate id validation.
@@ -317,6 +384,101 @@ void main() {
       expect(objectEvents.last, isNull);
     });
 
+    // Scenario: Lazy typed watchers are subscribed without initial emissions.
+    // Covers:
+    // - [CindelTypedCollection.watchObjectLazy].
+    // - [CindelTypedCollection.watchCollectionLazy].
+    // - `fireImmediately: false` stream skip branch.
+    // Expected: Lazy streams emit only after a matching collection change.
+    test('emits lazy watcher events after changes only.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final objectEvents = <void>[];
+      final collectionEvents = <void>[];
+      final objectSubscription = database.users
+          .watchObjectLazy(
+            1,
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen(objectEvents.add);
+      final collectionSubscription = database.users
+          .watchCollectionLazy(
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen(collectionEvents.add);
+      addTearDown(objectSubscription.cancel);
+      addTearDown(collectionSubscription.cancel);
+
+      // Act.
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      final initialObjectEvents = objectEvents.length;
+      final initialCollectionEvents = collectionEvents.length;
+      await database.users.put(
+        User()
+          ..dbId = 1
+          ..name = 'Ana'
+          ..email = 'ana@example.com',
+      );
+      await _waitUntil(() => objectEvents.length > initialObjectEvents);
+      await _waitUntil(() => collectionEvents.length > initialCollectionEvents);
+
+      // Assert.
+      expect(initialObjectEvents, 0);
+      expect(initialCollectionEvents, 0);
+      expect(objectEvents, hasLength(1));
+      expect(collectionEvents, hasLength(1));
+    });
+
+    // Scenario: Typed watcher snapshots are unchanged after rewriting the same
+    // object value.
+    // Covers:
+    // - [CindelTypedCollection._distinctObjectSnapshots] duplicate suppression.
+    // - [CindelTypedCollection._distinctCollectionSnapshots] duplicate
+    //   suppression.
+    // - Deep document equality used by watcher transforms.
+    // Expected: Rewriting an identical object does not emit a second snapshot.
+    test('suppresses duplicate typed watcher snapshots.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final objectEvents = <User?>[];
+      final collectionEvents = <List<User>>[];
+      final objectSubscription = database.users
+          .watchObject(1, pollInterval: const Duration(milliseconds: 5))
+          .listen(objectEvents.add);
+      final collectionSubscription = database.users
+          .watchCollection(pollInterval: const Duration(milliseconds: 5))
+          .listen(collectionEvents.add);
+      addTearDown(objectSubscription.cancel);
+      addTearDown(collectionSubscription.cancel);
+      final user = User()
+        ..dbId = 1
+        ..name = 'Ana'
+        ..email = 'ana@example.com'
+        ..tags = ['vip']
+        ..primaryRecipient = (Recipient()
+          ..name = 'Ana'
+          ..address = 'ana@example.com');
+
+      // Act.
+      await _waitUntil(() => objectEvents.length == 1);
+      await _waitUntil(() => collectionEvents.length == 1);
+      await database.users.put(user);
+      await _waitUntil(() => objectEvents.length == 2);
+      await _waitUntil(() => collectionEvents.length == 2);
+      await database.users.put(user);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      // Assert.
+      expect(objectEvents, hasLength(2));
+      expect(collectionEvents, hasLength(2));
+      expect(objectEvents.last!.name, 'Ana');
+      expect(collectionEvents.last.single.name, 'Ana');
+    });
+
     // Scenario: A typed object serializer produces an invalid id field.
     // Covers:
     // - [CindelTypedCollection.put] id extraction from schema metadata.
@@ -387,6 +549,56 @@ void main() {
       // Assert.
       expect(putInvalidObject, throwsA(isA<StateError>()));
     });
+
+    // Scenario: A manually wired schema has typed id accessors but no generated
+    // binary/native storage path.
+    // Covers:
+    // - [CindelTypedCollection.put] missing typed storage branch.
+    // - [CindelTypedCollection.get] missing typed storage branch.
+    // - [CindelTypedCollection.getAll] missing typed storage branch.
+    // - [CindelTypedCollection.watchObject] and [watchCollection] missing typed
+    //   storage branches.
+    // Expected: Incomplete schemas fail explicitly instead of falling back to a
+    // generic document path.
+    test('rejects schemas without a typed storage path.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory();
+      addTearDown(database.close);
+      final schema = CindelCollectionSchema<_ManualStoredUser>(
+        name: 'manualStoredUsers',
+        dartName: 'ManualStoredUser',
+        idField: 'id',
+        fields: const [
+          CindelFieldSchema(
+            name: 'id',
+            dartType: 'int',
+            isId: true,
+            isIndexed: false,
+          ),
+        ],
+        toDocument: (user) => {'id': user.id},
+        fromDocument: (document) => _ManualStoredUser(document['id']! as int),
+        getId: (user) => user.id,
+        setId: (user, id) => user.id = id,
+      );
+      final collection = database.typedCollection(schema);
+
+      // Act / Assert.
+      await expectLater(
+        collection.put(_ManualStoredUser(1)),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(collection.get(1), throwsA(isA<StateError>()));
+      await expectLater(collection.getAll([1]), throwsA(isA<StateError>()));
+      expect(
+        () => collection.watchObject(1).listen(null),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        () => collection.watchCollection().listen(null),
+        throwsA(isA<StateError>()),
+      );
+    });
   });
 }
 
@@ -396,6 +608,12 @@ final class _BrokenUser {
 
 final class _ManualAutoUser {
   const _ManualAutoUser();
+}
+
+final class _ManualStoredUser {
+  _ManualStoredUser(this.id);
+
+  int id;
 }
 
 Future<void> _waitUntil(

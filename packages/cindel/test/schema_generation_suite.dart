@@ -710,6 +710,137 @@ void main({bool includeMdbxOnlyTests = false}) {
       },
     );
 
+    // Scenario: A manually defined schema uses the native document reader for
+    // scalar, list, and embedded payloads.
+    // Covers:
+    // - Native double reader values, including null sentinels.
+    // - Native object-reader fast path for embedded objects.
+    // - Binary object fallback reader path.
+    // - Child list reader lifecycle for primitive lists.
+    // Expected: Values written through the native writer hydrate back through
+    //   the native reader without generated fixture changes.
+    test(
+      'hydrates native reader scalar list and embedded field paths.',
+      () async {
+        // Arrange.
+        final db = await openTestDatabaseInMemory(
+          schemas: [_nativeReaderFixtureSchema],
+        );
+        final first = _NativeReaderFixture(
+          dbId: 1,
+          active: true,
+          count: 7,
+          fallbackObject: {'name': 'fallback', 'rank': 1},
+          metadata: const _NativeReaderMetadata(label: 'lead', name: 'Ada'),
+          ratio: 1.25,
+          scores: const [10, 20],
+          tags: const ['native', 'reader'],
+          title: 'First',
+        );
+        final second = _NativeReaderFixture(
+          dbId: 2,
+          active: false,
+          count: 0,
+          fallbackObject: {'name': 'empty'},
+          metadata: const _NativeReaderMetadata(
+            label: 'secondary',
+            name: 'Ben',
+          ),
+          ratio: null,
+          scores: const [],
+          tags: const [],
+          title: 'Second',
+        );
+
+        addTearDown(db.close);
+
+        // Act.
+        await db.putAllNativeBinaryObjects<_NativeReaderFixture>(
+          _nativeReaderFixtureSchema.name,
+          [first, second],
+          _nativeReaderFieldTypes,
+          (object) => object.dbId,
+          _writeNativeReaderFixture,
+        );
+        final restored = await db
+            .getAllNativeBinaryDocuments<_NativeReaderFixture>(
+              _nativeReaderFixtureSchema.name,
+              [1, 2, 404],
+              _nativeReaderFieldTypes,
+              _readNativeReaderFixture,
+            );
+
+        // Assert.
+        expect(restored[0]?.active, isTrue);
+        expect(restored[0]?.count, 7);
+        expect(restored[0]?.fallbackObject, {'name': 'fallback', 'rank': 1});
+        expect(restored[0]?.metadata.label, 'lead');
+        expect(restored[0]?.metadata.name, 'Ada');
+        expect(restored[0]?.ratio, 1.25);
+        expect(restored[0]?.scores, [10, 20]);
+        expect(restored[0]?.tags, ['native', 'reader']);
+        expect(restored[0]?.title, 'First');
+        expect(restored[1]?.ratio, isNull);
+        expect(restored[1]?.scores, isEmpty);
+        expect(restored[1]?.tags, isEmpty);
+        expect(restored[2], isNull);
+      },
+    );
+
+    // Scenario: A manually defined schema writes native-only payloads that are
+    // not covered by the generated fixture model.
+    // Covers:
+    // - Binary object-list fallback writes.
+    // - Large string byte-cache reuse and eviction.
+    // - Embedded object field-name cache reuse and eviction.
+    // Expected: The batch writes successfully and scalar fields remain readable
+    //   after writer cache churn.
+    test('writes native object-list and writer cache paths.', () async {
+      // Arrange.
+      final db = await openTestDatabaseInMemory(
+        schemas: [_nativeWriterFixtureSchema],
+      );
+      final objects = [
+        for (var i = 1; i <= 17; i += 1)
+          _NativeWriterFixture(
+            dbId: i,
+            embeddedName: 'embedded-$i',
+            objectList: [
+              {'name': 'first-$i'},
+              null,
+              {'name': 'second-$i'},
+            ],
+            title: 'title-$i-${List.filled(140, 'x').join()}',
+          ),
+      ];
+
+      addTearDown(db.close);
+
+      // Act.
+      await db.putAllNativeBinaryObjects<_NativeWriterFixture>(
+        _nativeWriterFixtureSchema.name,
+        objects,
+        _nativeWriterFieldTypes,
+        (object) => object.dbId,
+        _writeNativeWriterFixture,
+      );
+      final restored = await db
+          .getAllNativeBinaryDocuments<_NativeWriterFixture>(
+            _nativeWriterFixtureSchema.name,
+            [1, 9, 17],
+            _nativeWriterFieldTypes,
+            _readNativeWriterFixture,
+          );
+
+      // Assert.
+      expect(restored.map((object) => object?.dbId), [1, 9, 17]);
+      expect(restored.map((object) => object?.title), [
+        objects[0].title,
+        objects[8].title,
+        objects[16].title,
+      ]);
+    });
+
     // Scenario: A generated query update changes a string-list field.
     // Covers:
     // - Native update serialization for compact List<String> fields.
@@ -924,10 +1055,16 @@ void main({bool includeMdbxOnlyTests = false}) {
             ..name = 'Ben'
             ..email = 'ben@example.com'
             ..active = false;
+          final extra = User()
+            ..dbId = 3
+            ..name = 'Cid'
+            ..email = 'cid@example.com'
+            ..active = true;
           final values = <int, Uint8List>{
             1: UserSchema.toBinaryDocument!(active),
             2: UserSchema.toBinaryDocument!(inactive),
           };
+          final extraBytes = UserSchema.toBinaryDocument!(extra);
           final filter = encodeFilter(
             const WireFilter.field(
               field: 'active',
@@ -947,22 +1084,50 @@ void main({bool includeMdbxOnlyTests = false}) {
               2: UserSchema.toDocument(inactive),
             },
           );
+          await db.putBinaryDocument(
+            'users',
+            3,
+            extraBytes,
+            document: UserSchema.toDocument(extra),
+          );
+          final single = await db.getBinaryDocument('users', 3);
+          final missingSingle = await db.getBinaryDocument('users', 404);
           final stored = await db.getAllBinaryDocuments('users', [2, 404, 1]);
+          final ids = await db.documentIds('users');
+          final rangeIds = await db.queryRangeIds(
+            'users',
+            'email',
+            lower: 'ana@example.com',
+            upper: 'cid@example.com',
+          );
           final matchingIds = await db.queryNativeFilterIds('users', [
             1,
             2,
+            3,
           ], filter);
           final projectedNames = await db.queryNativeProjection('users', [
             1,
             2,
+            3,
           ], 'name');
+          final activeCount = await db.queryNativeAggregate(
+            'users',
+            [1, 2, 3],
+            'active',
+            'count',
+          );
 
           // Assert.
+          expect(single, orderedEquals(extraBytes));
+          expect(missingSingle, isNull);
           expect(stored[0], orderedEquals(values[2]!));
           expect(stored[1], isNull);
           expect(stored[2], orderedEquals(values[1]!));
-          expect(matchingIds, [1]);
-          expect(projectedNames, ['Ana', 'Ben']);
+          expect(ids, [1, 2, 3]);
+          expect(rangeIds, [1, 2, 3]);
+          expect(matchingIds, [1, 3]);
+          expect(projectedNames, ['Ana', 'Ben', 'Cid']);
+          expect(activeCount, 3);
         },
       );
     }
@@ -988,6 +1153,382 @@ Uint8List _userNativeFieldTypes() {
     4, // tags
     3, // username
   ]);
+}
+
+final _nativeReaderFixtureSchema = CindelCollectionSchema<_NativeReaderFixture>(
+  name: 'nativeReaderFixtures',
+  dartName: 'NativeReaderFixture',
+  idField: 'dbId',
+  fields: const [
+    CindelFieldSchema(
+      name: 'dbId',
+      dartType: 'Id',
+      binaryType: 'int',
+      isId: true,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'active',
+      dartType: 'bool',
+      binaryType: 'bool',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'count',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'fallbackObject',
+      dartType: 'Map<String, Object?>',
+      binaryType: 'object',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'metadata',
+      dartType: '_NativeReaderMetadata',
+      binaryType: 'object',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'ratio',
+      dartType: 'double?',
+      binaryType: 'double',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'scores',
+      dartType: 'List<int>',
+      binaryType: 'list',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'tags',
+      dartType: 'List<String>',
+      binaryType: 'list',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'title',
+      dartType: 'String',
+      binaryType: 'string',
+      isId: false,
+      isIndexed: false,
+    ),
+  ],
+  toDocument: _nativeReaderFixtureToDocument,
+  fromDocument: _nativeReaderFixtureFromDocument,
+  getId: (object) => object.dbId,
+  writeNativeDocument: _writeNativeReaderFixture,
+  readNativeDocument: _readNativeReaderFixture,
+);
+
+final _nativeReaderFieldTypes = Uint8List.fromList(const [
+  0, // active
+  1, // count
+  5, // fallbackObject
+  5, // metadata
+  2, // ratio
+  4, // scores
+  4, // tags
+  3, // title
+]);
+
+const _nativeReaderMetadataFieldNames = ['label', 'name'];
+
+final class _NativeReaderFixture {
+  const _NativeReaderFixture({
+    required this.dbId,
+    required this.active,
+    required this.count,
+    required this.fallbackObject,
+    required this.metadata,
+    required this.ratio,
+    required this.scores,
+    required this.tags,
+    required this.title,
+  });
+
+  final int dbId;
+  final bool active;
+  final int count;
+  final Map<String, Object?> fallbackObject;
+  final _NativeReaderMetadata metadata;
+  final double? ratio;
+  final List<int> scores;
+  final List<String> tags;
+  final String title;
+}
+
+final class _NativeReaderMetadata {
+  const _NativeReaderMetadata({required this.label, required this.name});
+
+  final String label;
+  final String name;
+}
+
+Map<String, Object?> _nativeReaderFixtureToDocument(
+  _NativeReaderFixture object,
+) {
+  return {
+    'active': object.active,
+    'count': object.count,
+    'fallbackObject': object.fallbackObject,
+    'metadata': _nativeReaderMetadataToDocument(object.metadata),
+    'ratio': object.ratio,
+    'scores': object.scores,
+    'tags': object.tags,
+    'title': object.title,
+  };
+}
+
+_NativeReaderFixture _nativeReaderFixtureFromDocument(
+  Map<String, Object?> document,
+) {
+  return _NativeReaderFixture(
+    dbId: document['dbId'] as int,
+    active: document['active'] as bool,
+    count: document['count'] as int,
+    fallbackObject: (document['fallbackObject'] as Map).cast<String, Object?>(),
+    metadata: _nativeReaderMetadataFromDocument(
+      (document['metadata'] as Map).cast<String, Object?>(),
+    ),
+    ratio: document['ratio'] as double?,
+    scores: (document['scores'] as List).cast<int>(),
+    tags: (document['tags'] as List).cast<String>(),
+    title: document['title'] as String,
+  );
+}
+
+void _writeNativeReaderFixture(
+  CindelNativeDocumentWriter writer,
+  _NativeReaderFixture object,
+) {
+  writer.writeBool(0, object.active);
+  writer.writeInt(1, object.count);
+  writer.writeObject(2, object.fallbackObject);
+  cindelWriteNativeObject<_NativeReaderMetadata>(
+    writer,
+    3,
+    _nativeReaderMetadataFieldNames,
+    object.metadata,
+    _writeNativeReaderMetadata,
+    _nativeReaderMetadataToDocument,
+  );
+  final ratio = object.ratio;
+  if (ratio == null) {
+    writer.writeNull(4);
+  } else {
+    writer.writeDouble(4, ratio);
+  }
+  final scoresWriter = writer.beginList(5, object.scores.length);
+  for (var i = 0; i < object.scores.length; i += 1) {
+    scoresWriter.writeInt(i, object.scores[i]);
+  }
+  writer.endList(scoresWriter);
+  cindelWriteNativeStringList(writer, 6, object.tags);
+  writer.writeString(7, object.title);
+}
+
+_NativeReaderFixture _readNativeReaderFixture(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  final scoresReader = reader.readList(documentIndex, 5);
+  final scores = <int>[];
+  if (scoresReader != null) {
+    try {
+      for (var i = 0; i < scoresReader.length; i += 1) {
+        scores.add(scoresReader.readInt(0, i) as int);
+      }
+    } finally {
+      scoresReader.release();
+    }
+  }
+
+  return _NativeReaderFixture(
+    dbId: reader.readId(documentIndex),
+    active: reader.readBool(documentIndex, 0) as bool,
+    count: reader.readInt(documentIndex, 1) as int,
+    fallbackObject: reader.readObject(documentIndex, 2)!,
+    metadata: cindelReadNativeObject<_NativeReaderMetadata>(
+      reader,
+      documentIndex,
+      3,
+      _nativeReaderMetadataFieldNames,
+      _readNativeReaderMetadata,
+      _nativeReaderMetadataFromDocument,
+    )!,
+    ratio: reader.readDouble(documentIndex, 4),
+    scores: scores,
+    tags: reader.readStringList(documentIndex, 6) ?? const [],
+    title: reader.readString(documentIndex, 7) as String,
+  );
+}
+
+Map<String, Object?> _nativeReaderMetadataToDocument(
+  _NativeReaderMetadata object,
+) {
+  return {'label': object.label, 'name': object.name};
+}
+
+_NativeReaderMetadata _nativeReaderMetadataFromDocument(
+  Map<String, Object?> document,
+) {
+  return _NativeReaderMetadata(
+    label: document['label'] as String,
+    name: document['name'] as String,
+  );
+}
+
+void _writeNativeReaderMetadata(
+  CindelNativeDocumentWriter writer,
+  _NativeReaderMetadata object,
+) {
+  writer.writeString(0, object.label);
+  writer.writeString(1, object.name);
+}
+
+_NativeReaderMetadata _readNativeReaderMetadata(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return _NativeReaderMetadata(
+    label: reader.readString(documentIndex, 0) as String,
+    name: reader.readString(documentIndex, 1) as String,
+  );
+}
+
+final _nativeWriterFixtureSchema = CindelCollectionSchema<_NativeWriterFixture>(
+  name: 'nativeWriterFixtures',
+  dartName: 'NativeWriterFixture',
+  idField: 'dbId',
+  fields: const [
+    CindelFieldSchema(
+      name: 'dbId',
+      dartType: 'Id',
+      binaryType: 'int',
+      isId: true,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'embeddedVariant',
+      dartType: 'Map<String, Object?>',
+      binaryType: 'object',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'objectList',
+      dartType: 'List<Map<String, Object?>?>',
+      binaryType: 'list',
+      isId: false,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'title',
+      dartType: 'String',
+      binaryType: 'string',
+      isId: false,
+      isIndexed: false,
+    ),
+  ],
+  toDocument: _nativeWriterFixtureToDocument,
+  fromDocument: _nativeWriterFixtureFromDocument,
+  getId: (object) => object.dbId,
+  writeNativeDocument: _writeNativeWriterFixture,
+  readNativeDocument: _readNativeWriterFixture,
+);
+
+final _nativeWriterFieldTypes = Uint8List.fromList(const [
+  5, // embeddedVariant
+  4, // objectList
+  3, // title
+]);
+
+final class _NativeWriterFixture {
+  const _NativeWriterFixture({
+    required this.dbId,
+    required this.embeddedName,
+    required this.objectList,
+    required this.title,
+  });
+
+  final int dbId;
+  final String embeddedName;
+  final List<Map<String, Object?>?> objectList;
+  final String title;
+}
+
+Map<String, Object?> _nativeWriterFixtureToDocument(
+  _NativeWriterFixture object,
+) {
+  return {
+    'embeddedVariant': {'name_${object.dbId}': object.embeddedName},
+    'objectList': object.objectList,
+    'title': object.title,
+  };
+}
+
+_NativeWriterFixture _nativeWriterFixtureFromDocument(
+  Map<String, Object?> document,
+) {
+  final embeddedVariant = (document['embeddedVariant'] as Map)
+      .cast<String, Object?>();
+  return _NativeWriterFixture(
+    dbId: document['dbId'] as int,
+    embeddedName: embeddedVariant.values.single as String,
+    objectList: (document['objectList'] as List)
+        .map<Map<String, Object?>?>(
+          (value) =>
+              value == null ? null : (value as Map).cast<String, Object?>(),
+        )
+        .toList(growable: false),
+    title: document['title'] as String,
+  );
+}
+
+void _writeNativeWriterFixture(
+  CindelNativeDocumentWriter writer,
+  _NativeWriterFixture object,
+) {
+  cindelWriteNativeObject<_NativeWriterFixture>(
+    writer,
+    0,
+    ['name_${object.dbId}'],
+    object,
+    _writeNativeWriterEmbedded,
+    (value) => {'name_${value.dbId}': value.embeddedName},
+  );
+  writer.writeObjectList(1, object.objectList);
+  writer.writeString(2, object.title);
+}
+
+void _writeNativeWriterEmbedded(
+  CindelNativeDocumentWriter writer,
+  _NativeWriterFixture object,
+) {
+  writer.writeString(0, object.embeddedName);
+}
+
+_NativeWriterFixture _readNativeWriterFixture(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return _NativeWriterFixture(
+    dbId: reader.readId(documentIndex),
+    embeddedName: '',
+    objectList: const [],
+    title: reader.readString(documentIndex, 2) as String,
+  );
 }
 
 Uint8List _compactSingleListDocument(List<String?> values) {

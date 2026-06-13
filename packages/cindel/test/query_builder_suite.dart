@@ -162,6 +162,12 @@ void main() {
           .tagsLengthLessThan(2)
           .sortByDbId()
           .findAll();
+      final lengthLessThanTwoInclusive = await database.users
+          .all()
+          .filter()
+          .tagsLengthLessThan(2, include: true)
+          .sortByDbId()
+          .findAll();
       final lengthGreaterThanTwoInclusive = await database.users
           .all()
           .filter()
@@ -186,6 +192,12 @@ void main() {
       expect(nonEmptyTags.map((user) => user.name), ['Ana', 'Dee']);
       expect(lengthTwo.map((user) => user.name), ['Ana', 'Dee']);
       expect(lengthLessThanTwo.map((user) => user.name), ['Ben', 'Cid']);
+      expect(lengthLessThanTwoInclusive.map((user) => user.name), [
+        'Ana',
+        'Ben',
+        'Cid',
+        'Dee',
+      ]);
       expect(lengthGreaterThanTwoInclusive.map((user) => user.name), [
         'Ana',
         'Dee',
@@ -365,6 +377,52 @@ void main() {
       // Assert.
       expect(updated, isTrue);
       expect(users.map((user) => user.active), [false, true, false]);
+    });
+
+    // Scenario: Query updates reject unsupported public mutation shapes.
+    // Covers:
+    // - Update attempts without a native query plan.
+    // - Id field updates.
+    // - Values that cannot be encoded as native query update values.
+    // Expected: Invalid updates fail before mutating documents.
+    test('rejects invalid native typed query updates.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(
+        schemas: [UserSchema, ImmutableUserSchema],
+      );
+      addTearDown(database.close);
+      await database.users.put(
+        _user(dbId: 1, name: 'Ana', email: 'a@example.com'),
+      );
+      await database.immutableUsers.put(
+        const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
+      );
+
+      // Assert.
+      await expectLater(
+        database.users
+            .all()
+            .whereMatches(
+              CindelFilter.path([
+                'primaryRecipient',
+                'address',
+              ]).equalTo('a@example.com'),
+            )
+            .updateAll({'active': false}),
+        throwsUnsupportedError,
+      );
+      await expectLater(
+        database.immutableUsers.filter().activeEqualTo(true).updateAll({
+          'dbId': 99,
+        }),
+        throwsArgumentError,
+      );
+      await expectLater(
+        database.immutableUsers.filter().activeEqualTo(true).updateAll({
+          'active': DateTime.utc(2024),
+        }),
+        throwsArgumentError,
+      );
     });
 
     // Scenario: A generated filter starts from the whole collection.
@@ -625,6 +683,100 @@ void main() {
       expect(emptyAllMatches.map((user) => user.name), ['Ana', 'Cid', 'Dee']);
     });
 
+    // Scenario: Query builders reject invalid public modifiers.
+    // Covers:
+    // - Empty field lists for distinct and projection.
+    // - Negative window arguments.
+    // - [CindelQuery.anyOf] and [CindelQuery.allOf] rejecting callbacks that
+    //   change anything other than filters.
+    // Expected: Invalid query shapes fail immediately.
+    test('rejects invalid query modifiers.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Assert.
+      expect(
+        () => database.users.all().distinctByFields([]),
+        throwsArgumentError,
+      );
+      expect(() => database.users.all().offset(-1), throwsArgumentError);
+      expect(() => database.users.all().limit(-1), throwsArgumentError);
+      expect(() => database.users.all().properties([]), throwsArgumentError);
+      expect(() => database.users.all().sortBy(' '), throwsArgumentError);
+      expect(
+        () => CindelQuery.equal(
+          database: database,
+          schema: UserSchema,
+          field: 'missing',
+          value: 'value',
+        ),
+        throwsA(isA<CindelSchemaError>()),
+      );
+      expect(
+        () => CindelQuery.wordsContain(
+          database: database,
+          schema: UserSchema,
+          field: 'email',
+          word: 'team',
+        ),
+        throwsA(isA<CindelQueryError>()),
+      );
+      expect(
+        () => database.users.all().anyOf(['Ana'], (query, name) {
+          return query.sortByName();
+        }),
+        throwsArgumentError,
+      );
+      expect(
+        () => database.users.all().allOf(['Ana'], (query, name) {
+          return query.limit(1);
+        }),
+        throwsArgumentError,
+      );
+      expect(
+        () => database.users.all().sortByEmail().anyOf(['Ana'], (query, name) {
+          return query.sortByName();
+        }),
+        throwsArgumentError,
+      );
+      expect(
+        () => database.users.all().distinctByEmail().allOf(['Ana'], (
+          query,
+          name,
+        ) {
+          return query.distinctByName();
+        }),
+        throwsArgumentError,
+      );
+    });
+
+    // Scenario: Word-index where helpers receive input without searchable
+    // tokens.
+    // Covers:
+    // - Empty token branch for [CindelQuery.wordsContain].
+    // - Empty token branch for [CindelQuery.wordsStartWith].
+    // Expected: Inputs that split into no words match no documents.
+    test('word queries with no tokens match nothing.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final exactMatches = await database.users
+          .where()
+          .bioWordEqualTo('!!!')
+          .findAll();
+      final prefixMatches = await database.users
+          .where()
+          .bioWordStartsWith('---')
+          .findAll();
+
+      // Assert.
+      expect(exactMatches, isEmpty);
+      expect(prefixMatches, isEmpty);
+    });
+
     // Scenario: A query sorts, offsets, and limits typed results.
     // Covers:
     // - Generated sortBy and descending helpers.
@@ -645,6 +797,48 @@ void main() {
 
       // Assert.
       expect(users.map((user) => user.name), ['Cid', 'Ben']);
+    });
+
+    // Scenario: A query shape that cannot be represented as a native plan uses
+    // Dart-side result helpers.
+    // Covers:
+    // - Sorting null and bool values.
+    // - Offset without limit.
+    // - Offset beyond the result length.
+    // Expected: Dart-side sorting and windowing keep the public query contract.
+    test('processes Dart-side sort and window helpers.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      CindelQuery<User> dartPlannedQuery() {
+        return database.users.all().whereMatches(
+          CindelFilter.path([
+            'primaryRecipient',
+            'metadata',
+            'label',
+          ]).equalTo('seeded'),
+        );
+      }
+
+      // Act.
+      final sorted = await dartPlannedQuery()
+          .sortByDisplayName()
+          .thenByActive()
+          .findAll();
+      final offsetOnly = await dartPlannedQuery()
+          .sortByName()
+          .offset(1)
+          .findAll();
+      final beyondWindow = await dartPlannedQuery()
+          .sortByName()
+          .offset(10)
+          .findAll();
+
+      // Assert.
+      expect(sorted.map((user) => user.name), ['Ana', 'Cid', 'Ben', 'Dee']);
+      expect(offsetOnly.map((user) => user.name), ['Ben', 'Cid', 'Dee']);
+      expect(beyondWindow, isEmpty);
     });
 
     // Scenario: A query uses a secondary sort key.
@@ -731,6 +925,15 @@ void main() {
         'name',
         'active',
       ]).findAll();
+      final firstRow = await database.users.all().sortByDbId().properties([
+        'name',
+        'email',
+      ]).findFirst();
+      final missingRow = await database.users
+          .where()
+          .emailEqualTo('missing@example.com')
+          .properties(['name'])
+          .findFirst();
 
       // Assert.
       expect(names, ['Ana', 'Ben', 'Cid', 'Dee']);
@@ -739,6 +942,8 @@ void main() {
         {'name': 'Ana', 'active': true},
         {'name': 'Ben', 'active': true},
       ]);
+      expect(firstRow, {'name': 'Ana', 'email': 'team@example.com'});
+      expect(missingRow, isNull);
     });
 
     // Scenario: A query aggregates projected primitive values.
@@ -767,6 +972,14 @@ void main() {
           .activeEqualTo(true)
           .dbIdProperty()
           .average();
+      final firstCreatedAt = await database.users
+          .all()
+          .createdAtProperty()
+          .min();
+      final lastCreatedAt = await database.users
+          .all()
+          .createdAtProperty()
+          .max();
       final firstName = await database.users.all().nameProperty().min();
       final lastName = await database.users.all().nameProperty().max();
 
@@ -776,6 +989,8 @@ void main() {
       expect(maxId, 4);
       expect(activeIdSum, 7);
       expect(activeIdAverage, closeTo(7 / 3, 0.0001));
+      expect(firstCreatedAt, DateTime.utc(2024));
+      expect(lastCreatedAt, DateTime.utc(2024, 1, 4));
       expect(firstName, 'Ana');
       expect(lastName, 'Dee');
     });
@@ -867,20 +1082,29 @@ Future<CindelDatabase> _openSeededUsers() async {
       dbId: 1,
       name: 'Ana',
       email: 'team@example.com',
+      displayName: null,
+      sessionLength: const Duration(minutes: 3),
       tags: ['flutter', 'database'],
     ),
   );
   await database.users.put(
-    _user(dbId: 2, name: 'Ben', email: 'solo@example.com'),
+    _user(dbId: 2, name: 'Ben', email: 'solo@example.com', displayName: 'same'),
   );
   await database.users.put(
-    _user(dbId: 3, name: 'Cid', email: 'team@example.com', active: false),
+    _user(
+      dbId: 3,
+      name: 'Cid',
+      email: 'team@example.com',
+      active: false,
+      displayName: 'same',
+    ),
   );
   await database.users.put(
     _user(
       dbId: 4,
       name: 'Dee',
       email: 'team-alpha@example.com',
+      displayName: 'same',
       tags: ['Flutter', 'todo'],
     ),
   );
@@ -929,12 +1153,20 @@ User _user({
   required String name,
   required String email,
   bool active = true,
+  String? displayName,
+  Duration? sessionLength,
   List<String> tags = const [],
 }) {
   return User()
     ..dbId = dbId
     ..name = name
     ..email = email
+    ..displayName = displayName
     ..active = active
+    ..createdAt = DateTime.utc(2024, 1, dbId)
+    ..sessionLength = sessionLength
+    ..primaryRecipient = (Recipient()
+      ..address = email
+      ..metadata = (RecipientMetadata()..label = 'seeded'))
     ..tags = tags;
 }
