@@ -157,12 +157,16 @@ String _emitCollection(_CollectionInfo collection) {
     ..writeln(
       'extension ${collection.dartName}CindelQueryAccess '
       'on CindelTypedCollection<${collection.dartName}> {',
-    )
-    ..writeln(
-      '  ${collection.queryWhereName} where() => '
-      '${collection.queryWhereName}(this);',
-    )
-    ..writeln()
+    );
+  if (collection.hasWhereHelpers) {
+    buffer
+      ..writeln(
+        '  ${collection.queryWhereName} where() => '
+        '${collection.queryWhereName}(this);',
+      )
+      ..writeln();
+  }
+  buffer
     ..writeln(
       '  ${collection.queryFilterName} filter() => '
       '${collection.queryFilterName}(',
@@ -207,23 +211,6 @@ String _emitCollection(_CollectionInfo collection) {
   buffer
     ..writeln('}')
     ..writeln()
-    ..writeln('final class ${collection.queryWhereName} {')
-    ..writeln('  const ${collection.queryWhereName}(this._collection);')
-    ..writeln()
-    ..writeln(
-      '  final CindelTypedCollection<${collection.dartName}> _collection;',
-    );
-
-  for (final field in collection.indexedFields) {
-    _emitIndexedWhereMethods(buffer, collection, field);
-  }
-  for (final index in collection.compositeIndexes) {
-    _emitCompositeWhereMethod(buffer, collection, index);
-  }
-
-  buffer
-    ..writeln('}')
-    ..writeln()
     ..writeln('final class ${collection.queryFilterName} {')
     ..writeln('  const ${collection.queryFilterName}(this._query);')
     ..writeln()
@@ -236,6 +223,26 @@ String _emitCollection(_CollectionInfo collection) {
   _emitQueryFilterModifierMethods(buffer, collection);
 
   buffer..writeln('}');
+
+  if (collection.hasWhereHelpers) {
+    buffer
+      ..writeln()
+      ..writeln('final class ${collection.queryWhereName} {')
+      ..writeln('  const ${collection.queryWhereName}(this._collection);')
+      ..writeln()
+      ..writeln(
+        '  final CindelTypedCollection<${collection.dartName}> _collection;',
+      );
+
+    for (final field in collection.indexedFields) {
+      _emitIndexedWhereMethods(buffer, collection, field);
+    }
+    for (final index in collection.compositeIndexes) {
+      _emitCompositeWhereMethod(buffer, collection, index);
+    }
+
+    buffer.writeln('}');
+  }
 
   for (final embedded in collection.embeddedTypes) {
     _emitEmbeddedFilterClass(buffer, collection, embedded);
@@ -747,6 +754,10 @@ final class _CollectionInfo {
 
   Iterable<_FieldInfo> get indexedFields {
     return fields.where((field) => field.isIndexed);
+  }
+
+  bool get hasWhereHelpers {
+    return indexedFields.isNotEmpty || compositeIndexes.isNotEmpty;
   }
 
   List<_FieldInfo> get binaryFields {
@@ -1718,7 +1729,7 @@ $writeValue      }
           '_\$${typeName}CindelNativeFieldNames, '
           '_\$${typeName}ReadCindelNativeEmbedded, '
           '_\$${typeName}FromCindelEmbedded)';
-      final fallback = element.isNullable
+      final emptyListExpression = element.isNullable
           ? 'const <${element.dartType}>[]'
           : 'const <${element.dartTypeWithoutNull}?>[]';
       if (isNullable) {
@@ -1733,9 +1744,9 @@ $writeValue      }
 ''';
       }
       if (element.isNullable) {
-        return '$expression ?? $fallback';
+        return '$expression ?? $emptyListExpression';
       }
-      return '($expression ?? $fallback).cast<${element.dartTypeWithoutNull}>()';
+      return '($expression ?? $emptyListExpression).cast<${element.dartTypeWithoutNull}>()';
     }
     if (element.binaryType == 'string' && !element.isNullable) {
       if (isNullable) {
@@ -2511,13 +2522,14 @@ final class _EnumInfo {
     return _fromAnnotation(enumElement, annotation, element);
   }
 
-  static _EnumInfo? fromType(DartType type, _EnumInfo? fallback) {
+  static _EnumInfo? fromType(DartType type, _EnumInfo? inheritedEnumInfo) {
     final enumElement = _enumElement(type);
     if (enumElement == null) {
       return null;
     }
-    if (fallback != null && fallback.enumType == enumElement.name) {
-      return fallback;
+    if (inheritedEnumInfo != null &&
+        inheritedEnumInfo.enumType == enumElement.name) {
+      return inheritedEnumInfo;
     }
     return _EnumInfo(
       enumType: enumElement.name ?? enumElement.displayName,
@@ -2958,17 +2970,17 @@ String _accessorName(String collectionName, String dartName) {
       : _lowerFirst(dartName);
 }
 
-String _persistedName(Element element, String fallback) {
+String _persistedName(Element element, String defaultName) {
   final annotation = _nameChecker.firstAnnotationOf(
     element,
     throwOnUnresolved: false,
   );
   if (annotation == null) {
-    return fallback;
+    return defaultName;
   }
   final value = ConstantReader(annotation).peek('value')?.stringValue;
   if (value == null || value.isEmpty) {
-    return fallback;
+    return defaultName;
   }
   return value;
 }

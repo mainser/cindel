@@ -172,7 +172,8 @@ final class _CindelNativeDocumentReader
   /// Reads a nullable string-list field.
   ///
   /// The native payload may be compact offsets, a versioned native list, or a
-  /// legacy JSON fallback; decoding is centralized in `_decodeNativeStringList`.
+  /// legacy generated list payload; decoding is centralized in
+  /// `_decodeNativeStringList`.
   @override
   List<String>? readStringList(int documentIndex, int fieldIndex) {
     final ok = _useCurrentDocument
@@ -275,7 +276,7 @@ final class _CindelNativeDocumentReader
     return _CindelNativeDocumentReader._child(_functions, objectReader, this);
   }
 
-  // Shared raw-byte read helper used by embedded object fallbacks.
+  // Shared raw-byte read helper used by embedded object payloads.
   bool _readBytes(int documentIndex, int fieldIndex) {
     return _useCurrentDocument
         ? _functions.nativeDocumentReaderReadCurrentBytes(

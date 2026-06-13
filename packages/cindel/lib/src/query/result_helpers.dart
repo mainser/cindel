@@ -3,7 +3,7 @@ part of '../query.dart';
 // Shared helpers for query validation and Dart-side result processing.
 //
 // These functions are used when native storage cannot fully execute a query, and
-// they keep the Dart fallback semantics aligned with generated query helpers.
+// they keep Dart-side semantics aligned with generated query helpers.
 
 // Compares immutable query modifier lists when validating `anyOf` and `allOf`.
 bool _sortKeyListsEqual(List<_CindelSortKey> left, List<_CindelSortKey> right) {
@@ -108,7 +108,7 @@ List<CindelDocument> _sortDocuments(
 }
 
 // Compares Cindel document values using the same broad ordering used by Dart
-// fallback query sorting.
+// Dart-side query sorting.
 int _compareValues(Object? left, Object? right) {
   if (left == null && right == null) {
     return 0;

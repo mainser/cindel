@@ -139,7 +139,7 @@ final class CindelPropertyQuery<T, R> {
   }
 
   // Attempts a native aggregate. Returning null means the caller should use the
-  // Dart fallback over projected values.
+  // Dart-side evaluation over projected values.
   Future<({Object? value})?> _tryNativeAggregate(String operation) async {
     final nativePlan = _query._nativePlan();
     if (nativePlan == null || !_query._canUseNativeProjection) {
@@ -223,7 +223,7 @@ final class CindelPropertyQuery<T, R> {
   }
 }
 
-// Internal order used by the Dart min/max fallback.
+// Internal order used by Dart-side min/max evaluation.
 enum _AggregateOrder { min, max }
 
 /// A projected query over multiple fields.

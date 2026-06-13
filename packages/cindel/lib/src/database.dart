@@ -1265,7 +1265,7 @@ class CindelDatabase {
     return schema;
   }
 
-  // Generic and SQLite-native read fallbacks.
+  // SQLite-native index source helpers.
 
   List<int>? _querySqliteNativeIndexEqualRawIds(
     String collection,
@@ -1427,10 +1427,10 @@ class CindelDatabase {
 
   void _markNativeCollectionChanged(
     String collection,
-    CindelChangeSet Function() fallback,
+    CindelChangeSet Function() localChangeFactory,
   ) {
     if (_activeTransaction == _TransactionMode.write) {
-      _markCollectionChanged(fallback());
+      _markCollectionChanged(localChangeFactory());
       return;
     }
 
@@ -1439,7 +1439,7 @@ class CindelDatabase {
       _bindings.discardChanges(handle);
       return;
     }
-    final localChange = fallback();
+    final localChange = localChangeFactory();
     final changes = _changesFromNative(_takeNativeChangeSets(handle), {
       localChange.collection: localChange,
     });

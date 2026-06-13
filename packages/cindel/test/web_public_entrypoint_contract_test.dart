@@ -66,7 +66,7 @@ void main() {
     expect(removedEntrypoint.existsSync(), isFalse);
   });
 
-  // Scenario: The Web query facade drifts back to Dart-only filtering.
+  // Scenario: The Web query facade drifts back to Dart-only execution.
   // Covers:
   // - Generated Web queries building native query plans.
   // - Worker-backed count, find, delete, update, projection, and aggregate
@@ -172,14 +172,14 @@ void main() {
     expect(databaseSource, contains('WireQuerySource.indexEqual'));
   });
 
-  // Scenario: Web watchers regress to preview stubs or stop consuming Worker
+  // Scenario: Web watchers regress to unsupported stubs or stop consuming Worker
   // change sets.
   // Covers:
   // - Worker `takeChanges` and `collectionRevision` feeding Dart watchers.
   // - Collection/query/typed watcher APIs using the same change stream.
   // - Closing a Web database closing active watcher streams.
   // Expected: Single-tab Web watchers are wired through the Web database
-  // facade and no longer throw the preview UnsupportedError.
+  // facade and no longer throw the old UnsupportedError.
   test('web single-tab watchers are wired to Worker change sets', () async {
     final databaseSource = await _readPackageFile(
       'package:cindel/src/web/database.dart',

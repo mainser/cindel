@@ -50,8 +50,8 @@ final class CindelNativeBindings {
   /// Opens a database handle at [directory].
   ///
   /// [backend] is forwarded to native storage. If the loaded library does not
-  /// expose backend-aware open symbols, backend `0` falls back to the legacy
-  /// `open` function and other backend values fail with `nullptr`.
+  /// expose backend-aware open symbols, backend `0` uses the legacy `open`
+  /// function and other backend values fail with `nullptr`.
   Pointer<Void> open(String directory, {int backend = 1}) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
       try {

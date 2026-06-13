@@ -15,7 +15,10 @@ import 'worker_bridge.dart';
 /// Internal map-shaped document representation used by Cindel runtime bridges.
 typedef CindelDocument = Map<String, Object?>;
 
-/// A native-backed collection change observed by Cindel watchers.
+/// A collection change observed by Web Cindel watchers.
+///
+/// Change sets are produced after committed writes in the current Web database
+/// handle or by Worker collection-revision polling while a watcher is active.
 final class CindelChangeSet {
   const CindelChangeSet._({
     required this.collection,
@@ -229,6 +232,10 @@ class CindelDatabase {
   }
 
   /// Opens a short-lived Web SQLite database name.
+  ///
+  /// Browser storage does not expose the same native in-memory mode as MDBX or
+  /// desktop SQLite, so this creates a unique persisted Web database name for
+  /// tests and temporary work.
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
@@ -241,6 +248,9 @@ class CindelDatabase {
   }
 
   /// Closes this database.
+  ///
+  /// Calling [close] more than once is safe. Active Web watchers are closed
+  /// before the Worker bridge is terminated.
   Future<void> close() async {
     if (_closed) {
       return;
@@ -250,12 +260,20 @@ class CindelDatabase {
     await _bridge.close();
   }
 
-  /// Runs [action] inside a native read transaction.
+  /// Runs [action] inside a Web SQLite read transaction.
+  ///
+  /// Read transactions provide a consistent snapshot for reads performed by
+  /// this database handle. Write operations inside [readTxn] throw
+  /// [CindelTransactionError].
   Future<T> readTxn<T>(Future<T> Function() action) {
     return _runTransaction(_TransactionMode.read, action);
   }
 
-  /// Runs [action] inside a native write transaction.
+  /// Runs [action] inside a Web SQLite write transaction.
+  ///
+  /// All writes performed by this database handle are committed together. If
+  /// [action] throws, Worker changes are rolled back and watchers are not
+  /// notified.
   Future<T> writeTxn<T>(Future<T> Function() action) {
     return _runTransaction(_TransactionMode.write, action);
   }
@@ -263,7 +281,7 @@ class CindelDatabase {
   /// Whether this handle is currently inside a write transaction.
   bool get isInWriteTransaction => _activeTransaction == _TransactionMode.write;
 
-  /// Allocates the next native auto-increment id for [collection].
+  /// Allocates the next Web SQLite auto-increment id for [collection].
   Future<int> allocateId(String collection) async {
     final ids = await _sendIds('allocateId', {'collection': collection});
     return ids.single;
@@ -666,7 +684,11 @@ class CindelDatabase {
     return response.payload as int?;
   }
 
-  /// Watches raw collection change metadata.
+  /// Watches raw collection change metadata for this Web database handle.
+  ///
+  /// This is the shared single-tab change stream used by typed object,
+  /// collection, query, and lazy watchers. It does not coordinate changes
+  /// across multiple browser tabs.
   Stream<CindelChangeSet> watchCollectionChanges(
     String collection, {
     Duration pollInterval = defaultCindelWatchPollInterval,

@@ -486,7 +486,7 @@ final class WireIndexedDocumentWrite {
       Object.hash(id, Object.hashAll(bytes), Object.hashAll(indexes));
 }
 
-/// Value written into the SQLite-native generated document table on Web.
+/// Value written into the SQLite-native generated document table.
 ///
 /// Strings, enum names, list payloads, and embedded object payloads are carried
 /// as bytes because generated document writers already know the compact field
@@ -572,7 +572,7 @@ final class WireNativeDocumentBytes extends WireNativeDocumentValue {
       Object.hash(WireNativeDocumentBytes, Object.hashAll(value));
 }
 
-/// SQLite-native generated document row queued for a Web batch write.
+/// SQLite-native generated document row queued for a batch write.
 final class WireNativeDocumentWrite {
   const WireNativeDocumentWrite({required this.id, required this.values});
 
@@ -589,9 +589,9 @@ final class WireNativeDocumentWrite {
   int get hashCode => Object.hash(id, Object.hashAll(values));
 }
 
-/// Writes one ordered SQLite-native Web document into a wire batch.
+/// Writes one ordered SQLite-native generated document into a wire batch.
 ///
-/// Generated Web serializers can use this writer to avoid constructing
+/// Generated serializers can use this writer to avoid constructing
 /// [WireNativeDocumentWrite] and [WireNativeDocumentValue] objects for every
 /// row. Fields must be written in the same order as the registered native
 /// schema. This preserves the existing CindelWireV1 payload shape used by
@@ -698,20 +698,20 @@ final class CindelNativeDocumentWireWriter
   @override
   void writeObject(int fieldIndex, Map<String, Object?> value) {
     throw UnsupportedError(
-      'Cindel Web native embedded object writes are not available yet.',
+      'Cindel native embedded object writes are not available yet.',
     );
   }
 
   @override
   void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
     throw UnsupportedError(
-      'Cindel Web native embedded object-list writes are not available yet.',
+      'Cindel native embedded object-list writes are not available yet.',
     );
   }
 
   @override
   CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
-    throw UnsupportedError('Nested native Web list writers are not supported.');
+    throw UnsupportedError('Nested native list writers are not supported.');
   }
 
   @override
@@ -1313,7 +1313,7 @@ List<Uint8List?> decodeOptionalDocumentBatch(Uint8List bytes) {
   return documents;
 }
 
-/// Encodes SQLite-native generated document rows for Web batch writes.
+/// Encodes SQLite-native generated document rows for batch writes.
 Uint8List encodeNativeDocumentWriteBatch(
   List<WireNativeDocumentWrite> documents,
 ) {
@@ -1365,7 +1365,7 @@ Uint8List encodeNativeDocumentWriteBatchDirect<T>({
   return writer.finish();
 }
 
-/// Decodes SQLite-native generated document rows from a Web batch payload.
+/// Decodes SQLite-native generated document rows from a batch payload.
 List<WireNativeDocumentWrite> decodeNativeDocumentWriteBatch(Uint8List bytes) {
   final reader = CindelWireReader(bytes);
   final count = reader.readLength();

@@ -402,7 +402,7 @@ int _checkSqliteInteger(int value, String argumentName) {
   return value;
 }
 
-// Range bounds must encode to the same wire value kind so native and fallback
+// Range bounds must encode to the same wire value kind so native and Dart-side
 // comparisons agree.
 void _checkMatchingRangeBounds(
   _EncodedIndexValue? lower,

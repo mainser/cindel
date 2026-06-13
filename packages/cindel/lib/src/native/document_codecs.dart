@@ -5,7 +5,7 @@ part of 'bindings.dart';
 // These helpers sit below the public `CindelNativeDocumentReader` /
 // `CindelNativeDocumentWriter` interfaces. They keep native document hydration
 // fast by avoiding extra allocations for ASCII strings while preserving UTF-8
-// fallback paths for every value that cannot use the compact representation.
+// encoding paths for every value that cannot use the compact representation.
 
 // Reusable scratch buffer for generated native document writers.
 //
@@ -52,7 +52,7 @@ final class _ReusableNativeBytes {
   }
 
   // Writes a compact string-list payload directly into the reusable buffer when
-  // all strings are ASCII. Non-ASCII lists fall back to `_encodeCompactStringList`.
+  // all strings are ASCII. Non-ASCII lists use `_encodeCompactStringList`.
   void withCompactStringList(
     List<String> values,
     void Function(Pointer<Uint8>, int) action,
@@ -113,7 +113,7 @@ String _decodeNativeString(Uint8List bytes, {required bool isAscii}) {
 // Decodes the string-list formats that Cindel has emitted over time.
 //
 // Supported inputs:
-// - legacy JSON lists used by generated fallback writers,
+// - legacy generated JSON list payloads,
 // - native offset-table lists with a version marker,
 // - compact U24 offset-table lists used by current generated writers.
 List<String>? _decodeNativeStringList(Uint8List bytes) {

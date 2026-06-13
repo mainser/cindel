@@ -96,7 +96,7 @@ final class _CindelNativeDocumentWriter
     });
   }
 
-  /// Writes an embedded object field through the binary object fallback.
+  /// Writes an embedded object field as a binary object payload.
   @override
   void writeObject(int fieldIndex, Map<String, Object?> value) {
     final bytes = cindelEncodeBinaryObject(value);
@@ -110,7 +110,7 @@ final class _CindelNativeDocumentWriter
     });
   }
 
-  /// Writes a list of embedded objects through the binary list fallback.
+  /// Writes a list of embedded objects as a binary list payload.
   @override
   void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
     final bytes = cindelEncodeBinaryList(value);

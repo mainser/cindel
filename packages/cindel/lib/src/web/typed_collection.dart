@@ -13,6 +13,9 @@ final _nativeFieldTypesCache = Expando<Uint8List>('cindelWebNativeFieldTypes');
 /// Adds typed collection access to [CindelDatabase].
 extension CindelTypedCollectionAccess on CindelDatabase {
   /// Returns typed access for the generated [schema].
+  ///
+  /// Generated extension getters usually call this helper so application code
+  /// can use `database.todos` instead of manually wiring schemas.
   CindelTypedCollection<T> typedCollection<T>(
     CindelCollectionSchema<T> schema,
   ) {
@@ -40,12 +43,18 @@ final class CindelTypedCollection<T> {
     return CindelQuery.all(database: database, schema: schema);
   }
 
-  /// Stores [object].
+  /// Stores [object] using the id field declared by [schema].
+  ///
+  /// If the id is [autoIncrement], the next Web SQLite id is allocated and
+  /// written back through the generated id setter before persistence.
   Future<void> put(T object) {
     return putAll([object]);
   }
 
   /// Stores every object atomically.
+  ///
+  /// Duplicate ids are rejected before the batch reaches the Worker. Empty
+  /// batches are treated as a no-op.
   Future<void> putAll(Iterable<T> objects) async {
     final objectList = objects is List<T>
         ? objects
@@ -104,9 +113,9 @@ final class CindelTypedCollection<T> {
 
   /// Stores [object] by a unique replace index.
   ///
-  /// Natural-key replacement is not specialized in the Web preview yet. The
-  /// method is present so generated APIs compile against the same surface while
-  /// Web routes the write through the regular typed path.
+  /// Existing ids are looked up through the generated index metadata before the
+  /// object is written, so natural-key writes replace the current row instead
+  /// of appending duplicates.
   Future<void> putByUniqueIndex(
     T object, {
     required String indexName,
@@ -132,7 +141,8 @@ final class CindelTypedCollection<T> {
 
   /// Stores every object by a unique replace index.
   ///
-  /// See [putByUniqueIndex] for the current Web preview behavior.
+  /// Existing ids are reused before the batch write, matching the native typed
+  /// collection contract.
   Future<void> putAllByUniqueIndex(
     Iterable<T> objects, {
     required String indexName,
@@ -170,6 +180,8 @@ final class CindelTypedCollection<T> {
   }
 
   /// Returns typed objects stored under [ids], preserving input order.
+  ///
+  /// Missing ids are returned as `null`.
   Future<List<T?>> getAll(Iterable<int> ids) async {
     final idList = ids.toList(growable: false);
     final nativeReader = schema.readNativeDocument;
@@ -196,6 +208,10 @@ final class CindelTypedCollection<T> {
   }
 
   /// Watches the typed object stored under [id].
+  ///
+  /// The stream emits the current value when [fireImmediately] is true, then
+  /// emits again when the underlying document changes in this Web database
+  /// handle.
   Stream<T?> watchObject(
     int id, {
     Duration pollInterval = defaultCindelWatchPollInterval,
@@ -227,6 +243,9 @@ final class CindelTypedCollection<T> {
   }
 
   /// Watches the entire typed collection.
+  ///
+  /// Each event contains the full decoded collection snapshot for this Web
+  /// database handle.
   Stream<List<T>> watchCollection({
     Duration pollInterval = defaultCindelWatchPollInterval,
     bool fireImmediately = true,

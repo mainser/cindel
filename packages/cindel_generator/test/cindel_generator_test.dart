@@ -4,6 +4,14 @@ import 'package:test/test.dart';
 
 void main() {
   group('CindelGenerator', () {
+    // Scenario: A rich mutable collection model uses ids, indexes, composite
+    // indexes, ignored fields, binary documents, and native document hooks.
+    // Covers:
+    // - Generated schema metadata and field/index descriptors.
+    // - Generated document/binary/native serializers.
+    // - Generated typed collection extension access.
+    // Expected: The generated schema exposes the typed API surface and omits
+    // ignored fields from persisted metadata.
     test(
       'generates schema metadata, serializers, and collection access.',
       () async {
@@ -44,6 +52,14 @@ void main() {
       },
     );
 
+    // Scenario: Generated query helpers are emitted for every supported indexed
+    // and filtered field shape in the rich model.
+    // Covers:
+    // - `where()` helpers for value, word, multi-entry, and composite indexes.
+    // - `filter()` helpers for scalar, list, and embedded object fields.
+    // - Optional, anyOf, and allOf query combinators.
+    // Expected: Generated query helpers expose the complete typed query API for
+    // the model without requiring manual document predicates.
     test(
       'generates query helpers for indexes, filters, lists, and embedded objects.',
       () async {
@@ -81,6 +97,33 @@ void main() {
       },
     );
 
+    // Scenario: A collection has no indexed or composite-indexed fields.
+    // Covers:
+    // - Avoiding empty generated `where()` helpers.
+    // - Keeping the filter API available for non-indexed collections.
+    // Expected: The generated API exposes `filter()` but does not emit an empty
+    // `QueryWhere` class or a `where()` method with no valid methods.
+    test('does not generate empty where helpers without indexes.', () async {
+      final generated = await _generate(_noIndexModelSource);
+
+      _expectAll(generated, [
+        'final NoIndexModelSchema = CindelCollectionSchema<NoIndexModel>(',
+        'NoIndexModelQueryFilter filter() => NoIndexModelQueryFilter(',
+        'final class NoIndexModelQueryFilter',
+      ]);
+
+      expect(generated, isNot(contains('NoIndexModelQueryWhere')));
+      expect(generated, isNot(contains('where() =>')));
+    });
+
+    // Scenario: Persisted values need conversions between Dart types and
+    // Cindel's stored representation.
+    // Covers:
+    // - DateTime and Duration microsecond storage.
+    // - Enum ordinal/name/value strategies.
+    // - Embedded object and embedded list mapping.
+    // Expected: Generated conversion code is explicit and deterministic for
+    // every supported persisted value shape.
     test(
       'generates conversion code for enums, date/time, duration, and embedded lists.',
       () async {
@@ -106,6 +149,14 @@ void main() {
       },
     );
 
+    // Scenario: The generator emits native document readers and writers for
+    // values that can use Cindel's typed native row path.
+    // Covers:
+    // - String-list native writer helpers.
+    // - Embedded object native writer/reader helpers.
+    // - Embedded object-list native writer/reader helpers.
+    // Expected: Native fast-path hooks are present in generated schemas so MDBX,
+    // SQLite native, and SQLite Web can use typed storage.
     test(
       'generates native fast paths for string lists and embedded objects.',
       () async {
@@ -125,6 +176,14 @@ void main() {
       },
     );
 
+    // Scenario: A class is immutable and must be hydrated through its
+    // constructor instead of field assignment.
+    // Covers:
+    // - Explicit `dbId` constructor hydration.
+    // - Required constructor parameters for final persisted fields.
+    // - Omitting setters when generated code cannot mutate ids.
+    // Expected: Generated `fromDocument` calls the constructor and does not emit
+    // an unavailable id setter.
     test(
       'supports immutable explicit-id classes with constructor hydration.',
       () async {
@@ -147,6 +206,14 @@ void main() {
       },
     );
 
+    // Scenario: A Freezed model exposes its persisted fields through the
+    // primary factory constructor.
+    // Covers:
+    // - Freezed factory parameter discovery.
+    // - Generated id getter and constructor hydration.
+    // - Ignored Freezed parameters.
+    // Expected: Generated code hydrates through the Freezed factory and omits
+    // ignored values from storage.
     test('supports Freezed primary-factory collection models.', () async {
       final generated = await _generate(_freezedPrimaryFactorySource);
 
@@ -164,6 +231,14 @@ void main() {
       expect(generated, isNot(contains('transientNote')));
     });
 
+    // Scenario: A collection model uses positional constructor parameters and
+    // does not specify an explicit collection name.
+    // Covers:
+    // - Positional constructor hydration.
+    // - Default collection naming.
+    // - Generated extension getter naming.
+    // Expected: Generated code calls the positional constructor and derives the
+    // default collection accessor from the class name.
     test(
       'supports positional constructors and default collection names.',
       () async {
@@ -181,8 +256,15 @@ void main() {
       },
     );
 
+    // Scenario: A persisted collection name cannot be used directly as a Dart
+    // getter identifier.
+    // Covers:
+    // - Stable Dart accessor generation for non-identifier collection names.
+    // - Preserving the exact persisted collection name in schema metadata.
+    // Expected: The generated getter uses a valid lower-camel Dart name while
+    // the stored collection name remains unchanged.
     test(
-      'falls back to lower-camel accessors for non-identifier names.',
+      'normalizes lower-camel accessors for non-identifier names.',
       () async {
         final generated = await _generate(_nonIdentifierCollectionNameSource);
 
@@ -193,6 +275,14 @@ void main() {
       },
     );
 
+    // Scenario: Non-null scalar lists and embedded values are generated for the
+    // native document branch.
+    // Covers:
+    // - Required scalar writer calls.
+    // - Native nested list writer calls.
+    // - Native embedded object and object-list reader/writer calls.
+    // Expected: Generated native code covers required scalar/list/embedded
+    // fields without dropping to manual document storage.
     test(
       'generates native paths for non-null embedded and scalar lists.',
       () async {
@@ -221,6 +311,14 @@ void main() {
       },
     );
 
+    // Scenario: Enum fields use a mix of default, ordinal, and custom value
+    // persistence strategies.
+    // Covers:
+    // - Name-based enum persistence.
+    // - Ordinal enum persistence.
+    // - Custom int, double, String, and bool value fields.
+    // Expected: Generated code emits matching read/write branches and binary
+    // field metadata for every enum strategy.
     test(
       'generates enum strategies for default and nullable values.',
       () async {
@@ -242,6 +340,10 @@ void main() {
       },
     );
 
+    // Scenario: An abstract class is annotated as a collection without being a
+    // supported Freezed model.
+    // Covers: Generator validation for constructible collection shapes.
+    // Expected: The build fails with a concrete-class diagnostic.
     test('rejects abstract non-Freezed collections.', () async {
       await _expectBuildError(
         _abstractCollectionSource,
@@ -249,6 +351,9 @@ void main() {
       );
     });
 
+    // Scenario: `@collection` is applied to a non-class element.
+    // Covers: Generator target validation before schema analysis.
+    // Expected: The build fails with a class-only diagnostic.
     test('rejects @collection on non-class elements.', () async {
       await _expectBuildError(
         _nonClassCollectionSource,
@@ -256,6 +361,9 @@ void main() {
       );
     });
 
+    // Scenario: A collection has no persisted fields after ignoring fields.
+    // Covers: Minimum persisted-field validation.
+    // Expected: The build fails before generating an unusable schema.
     test('rejects collections without persisted fields.', () async {
       await _expectBuildError(
         _emptyPersistedFieldsSource,
@@ -263,6 +371,9 @@ void main() {
       );
     });
 
+    // Scenario: A collection does not expose exactly one `dbId` field.
+    // Covers: Typed public id convention enforcement.
+    // Expected: The build fails and points at the `dbId` requirement.
     test('rejects collections without exactly one dbId field.', () async {
       await _expectBuildError(
         _missingIdSource,
@@ -270,6 +381,10 @@ void main() {
       );
     });
 
+    // Scenario: A collection cannot be hydrated through a usable unnamed
+    // constructor.
+    // Covers: Constructor discovery for generated object hydration.
+    // Expected: The build fails with a usable-constructor diagnostic.
     test('rejects collections without a usable unnamed constructor.', () async {
       await _expectBuildError(
         _noUsableConstructorSource,
@@ -277,6 +392,11 @@ void main() {
       );
     });
 
+    // Scenario: Final persisted fields exist but the constructor cannot hydrate
+    // all of them.
+    // Covers: Immutable model validation before generating assignment code.
+    // Expected: The build fails instead of generating code that cannot write
+    // final fields.
     test(
       'rejects final persisted fields without constructor hydration.',
       () async {
@@ -288,6 +408,12 @@ void main() {
       },
     );
 
+    // Scenario: Constructor parameters drift away from persisted field metadata.
+    // Covers:
+    // - Unknown constructor parameters.
+    // - Constructor type mismatches.
+    // - Missing persisted constructor parameters.
+    // Expected: Each invalid constructor shape fails with a targeted diagnostic.
     test('rejects invalid constructor hydration signatures.', () async {
       await _expectBuildError(
         _constructorUnknownParameterSource,
@@ -303,6 +429,9 @@ void main() {
       );
     });
 
+    // Scenario: A list field is indexed without declaring a multi-entry index.
+    // Covers: List index validation.
+    // Expected: The build fails before generating an unusable list index.
     test('rejects list indexes that are not multi-entry.', () async {
       await _expectBuildError(
         _invalidListIndexSource,
@@ -310,6 +439,13 @@ void main() {
       );
     });
 
+    // Scenario: Index annotations combine options that cannot be represented by
+    // the typed query/index contract.
+    // Covers:
+    // - Invalid multi-entry targets.
+    // - Invalid case-insensitive targets.
+    // - Invalid word-index targets.
+    // Expected: The generator reports precise diagnostics for each bad option.
     test('rejects invalid index options.', () async {
       await _expectBuildError(
         _invalidMultiEntryIndexSource,
@@ -325,6 +461,10 @@ void main() {
       );
     });
 
+    // Scenario: An embedded field is annotated as indexed.
+    // Covers: Rejection of unsupported embedded indexes.
+    // Expected: The build fails instead of generating partial embedded index
+    // support.
     test('rejects embedded indexes.', () async {
       await _expectBuildError(
         _invalidEmbeddedIndexSource,
@@ -332,6 +472,9 @@ void main() {
       );
     });
 
+    // Scenario: A persisted field is a nested list.
+    // Covers: Persisted type validation for unsupported nested lists.
+    // Expected: The build fails with the unsupported type name.
     test('rejects nested lists.', () async {
       await _expectBuildError(
         _nestedListSource,
@@ -339,6 +482,14 @@ void main() {
       );
     });
 
+    // Scenario: Composite index declarations are malformed.
+    // Covers:
+    // - Too few fields.
+    // - Unknown fields.
+    // - List fields in composite indexes.
+    // - Duplicate composite index names.
+    // Expected: Each invalid composite declaration fails with a specific
+    // diagnostic before code generation.
     test('rejects invalid composite indexes.', () async {
       await _expectBuildError(
         _shortCompositeIndexSource,
@@ -358,6 +509,12 @@ void main() {
       );
     });
 
+    // Scenario: Embedded classes cannot be safely instantiated by generated
+    // code.
+    // Covers:
+    // - Abstract embedded classes.
+    // - Embedded classes without a default constructor.
+    // Expected: The build fails before generating embedded hydration helpers.
     test('rejects invalid embedded class shapes.', () async {
       await _expectBuildError(
         _abstractEmbeddedSource,
@@ -369,6 +526,14 @@ void main() {
       );
     });
 
+    // Scenario: Enum annotations refer to unsupported targets or value fields.
+    // Covers:
+    // - `@Enumerated` on non-enum fields.
+    // - Missing value-field configuration.
+    // - Unknown enum value fields.
+    // - Non-primitive enum value fields.
+    // Expected: The build fails with diagnostics that identify the invalid enum
+    // configuration.
     test('rejects invalid enum annotations.', () async {
       await _expectBuildError(
         _enumeratedNonEnumSource,
@@ -388,6 +553,10 @@ void main() {
       );
     });
 
+    // Scenario: A required Freezed factory parameter is marked ignored.
+    // Covers: Freezed-specific validation for values required by construction.
+    // Expected: The build fails instead of generating a constructor call that
+    // cannot supply a required value.
     test('rejects ignored required Freezed factory parameters.', () async {
       await _expectBuildError(
         _freezedIgnoredRequiredParameterSource,
@@ -586,6 +755,19 @@ part 'model.g.dart';
 class EventLog {
   Id dbId = autoIncrement;
   String message = '';
+}
+''';
+
+const _noIndexModelSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class NoIndexModel {
+  Id dbId = autoIncrement;
+
+  String title = '';
 }
 ''';
 

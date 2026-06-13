@@ -181,11 +181,12 @@ final class CindelFilterField {
 
 /// A typed query over a generated Cindel collection on Web.
 ///
-/// This preview implementation preserves the generated Dart query surface and
-/// evaluates filters, sorting, distinct, and projection in Dart over documents
-/// read from the Web database. Native Worker query-plan acceleration remains
-/// available through the lower-level database methods used by generated/native
-/// paths that can provide a supported wire plan.
+/// Web queries use the same generated public API as native queries. When the
+/// query can be represented as a SQLite-native plan, execution is delegated to
+/// the Worker/Wasm backend for ids, objects, counts, projection, aggregates,
+/// updates, and deletes. Query shapes that cannot be encoded as a native plan
+/// are evaluated over generated typed rows instead of falling back to untyped
+/// document storage.
 final class CindelQuery<T> {
   CindelQuery._({
     required CindelDatabase database,
