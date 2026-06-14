@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5
+
+- Released in lockstep with `cindel` 0.6.5 so the runtime package and bundled
+  Flutter libraries keep matching versions.
+
 ## 0.6.4
 
 - Updated the bundled Web SQLite/OPFS Worker/Wasm assets for the generated

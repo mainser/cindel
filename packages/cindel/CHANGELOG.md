@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.5
+
+- Updated package metadata so the published documentation link points to the
+  extended Cindel API guide.
+- Updated the `hooks` dependency constraint to support the latest stable
+  release used by pub.dev scoring.
+- Fixed a dangling Web worker bridge library documentation comment reported by
+  static analysis.
+
 ## 0.6.4
 
 - Aligned MDBX, SQLite native, and SQLite Web around the generated typed public
