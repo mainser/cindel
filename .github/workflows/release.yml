@@ -240,7 +240,19 @@ jobs:
 
       - name: Install wasm-bindgen CLI
         shell: pwsh
-        run: cargo install wasm-bindgen-cli --version 0.2.104 --locked
+        run: |
+          $cargoLock = Get-Content packages\cindel\native\Cargo.lock -Raw
+          $match = [regex]::Match(
+            $cargoLock,
+            '(?ms)^\[\[package\]\]\s+name = "wasm-bindgen"\s+version = "([^"]+)"'
+          )
+          if (-not $match.Success) {
+            throw 'Could not find wasm-bindgen version in packages\cindel\native\Cargo.lock.'
+          }
+
+          $wasmBindgenVersion = $match.Groups[1].Value
+          Write-Host "Installing wasm-bindgen-cli $wasmBindgenVersion"
+          cargo install wasm-bindgen-cli --version $wasmBindgenVersion --locked
 
       - name: Build Web prebuilt runtime
         shell: pwsh
