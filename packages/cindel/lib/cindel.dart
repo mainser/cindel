@@ -8,6 +8,7 @@ library cindel;
 
 export 'package:cindel_annotations/cindel_annotations.dart';
 
+export 'src/backup.dart';
 export 'src/binary_document.dart'
     if (dart.library.js_interop) 'src/web/binary_document.dart'
     show

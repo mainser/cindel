@@ -175,6 +175,7 @@ void main() {
     ).readAsString();
 
     expect(publicSource, contains("export 'src/migration.dart';"));
+    expect(publicSource, contains("export 'src/backup.dart';"));
     expect(cindelSource, contains('CindelMigrationPlan? migrationPlan'));
     expect(databaseSource, contains('CindelMigrationPlan? migrationPlan'));
     expect(databaseSource, contains('Future<int?> migrationVersion()'));
@@ -213,6 +214,26 @@ void main() {
       expect(source, contains("case 'documentIdsPage':"));
       expect(source, contains('documentIdsPage('));
     }
+  });
+
+  // Scenario: Full backup helpers are exported for Web without importing
+  // `dart:io` from the shared backup API.
+  // Covers:
+  // - Public backup export from the normal package entrypoint.
+  // - Conditional gzip helper import for native-only compression.
+  // Expected: Web can use uncompressed JSONL backup streams through the same
+  // package import.
+  test('web exposes backup stream contract', () async {
+    final publicSource = await _readPackageFile('package:cindel/cindel.dart');
+    final backupSource = await _readPackageFile(
+      'package:cindel/src/backup.dart',
+    );
+
+    expect(publicSource, contains("export 'src/backup.dart';"));
+    expect(backupSource, contains('enum CindelBackupCompression'));
+    expect(backupSource, contains('none,'));
+    expect(backupSource, contains("if (dart.library.io)"));
+    expect(backupSource, isNot(contains("import 'dart:io';")));
   });
 
   // Scenario: Web typed collections lose unique-index replacement semantics.

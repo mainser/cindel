@@ -55,6 +55,9 @@ internally to that same app code.
   compaction hooks.
 - Bounded document-id page reads for backup/export tooling on SQLite native,
   MDBX, and Web SQLite.
+- Full typed backup/export/import streams with JSONL archives, checksum
+  verification, native gzip compression, and Web-compatible uncompressed
+  fallback.
 - Embedded objects and embedded object lists.
 - Freezed classic class and primary factory support.
 
@@ -179,8 +182,40 @@ Web SQLite expose the same migration contract.
 ## Maintenance Tooling
 
 Most application code should use generated typed collections and queries.
-Tooling that needs to scan large collections can use `documentIdsPage` to read a
-bounded, ascending page of ids without materializing the whole collection:
+Tooling that needs full database backup can stream a typed archive through
+`CindelBackup`:
+
+```dart
+final output = File('backup.cindelbak').openWrite();
+await CindelBackup.exportDatabase(
+  database: db,
+  collections: [
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
+  ],
+  output: output,
+);
+```
+
+Restore targets must be opened with matching schemas and must be empty:
+
+```dart
+await CindelBackup.importDatabase(
+  database: restoredDb,
+  collections: [
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
+  ],
+  input: File('backup.cindelbak').openRead(),
+);
+```
+
+The archive is JSONL after decompression. Native Dart uses gzip by default;
+Web-compatible code can pass `compression: CindelBackupCompression.none` and
+store or transport the same JSONL bytes.
+
+Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
+of ids without materializing the whole collection:
 
 ```dart
 int? afterId;

@@ -1,5 +1,6 @@
 import 'package:cindel/cindel.dart';
 
+import 'backup_suite.dart' as backup;
 import 'backend_test_support.dart';
 import 'migration_suite.dart' as migration;
 import 'query_builder_suite.dart' as query_builder;
@@ -11,6 +12,7 @@ import 'typed_collection_suite.dart' as typed_collection;
 void main() {
   configureTestStorageBackend(CindelStorageBackend.sqlite);
 
+  backup.main();
   sqlite_contract.main();
   migration.main();
   schema_version.main();

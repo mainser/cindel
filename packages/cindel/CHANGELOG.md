@@ -20,6 +20,9 @@
 - Added `CindelDatabase.documentIdsPage` for bounded, ascending document-id
   scans across SQLite native, MDBX, and Web SQLite so backup/export tooling does
   not need to materialize entire collections.
+- Added public typed full-database backup/export/import streams with JSONL v1
+  archives, checksum verification, progress callbacks, native gzip compression,
+  Web-compatible uncompressed archives, and empty-target restore validation.
 - Bumped the native ABI to 32 for the paged document-id FFI/Web surface.
 
 ## 0.6.5

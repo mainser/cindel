@@ -1208,6 +1208,7 @@ Supported Web app APIs:
 - query updates and deletes,
 - read and write transactions,
 - bounded `documentIdsPage` scans,
+- uncompressed JSONL backup import/export streams,
 - typed object, collection, query, and lazy watchers.
 
 Current Web limits:
@@ -1293,6 +1294,50 @@ final version = await db.schemaVersion('todos');
 
 Most application code should use typed collections. These helpers are still
 public for advanced tooling and generated code.
+
+### `CindelBackup`
+
+Exports and imports full typed database archives. The archive format is JSONL
+after decompression and includes a header, schema records, document records,
+and a footer with document count and checksum.
+
+Native Dart uses gzip by default. Web-compatible callers can pass
+`compression: CindelBackupCompression.none` and store or transport the same
+JSONL bytes without gzip.
+
+```dart
+final report = await CindelBackup.exportDatabase(
+  database: db,
+  collections: [
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
+  ],
+  output: File('backup.cindelbak').openWrite(),
+);
+```
+
+Restore targets must be opened with matching schemas and must be empty:
+
+```dart
+await CindelBackup.importDatabase(
+  database: restoredDb,
+  collections: [
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
+  ],
+  input: File('backup.cindelbak').openRead(),
+);
+```
+
+Backup APIs:
+
+- `CindelBackup.exportDatabase`: streams a backup archive to a
+  `StreamConsumer<List<int>>`.
+- `CindelBackup.importDatabase`: streams an archive into an empty database.
+- `CindelBackupCollection`: keeps generated schema typing intact for backup.
+- `CindelBackupProgress`: reports phase, collection, and document count.
+- `CindelBackupReport`: reports document count, archive size, checksum, and
+  compression.
 
 ### `allocateId`
 
@@ -1416,7 +1461,7 @@ generated schemas.
 
 The current public API does not include:
 
-- full-database backup/export/import orchestration,
+- incremental backups or merge-restore into a non-empty database,
 - embedded-field indexes,
 - relationship links/backlinks,
 - multi-tab Web coordination.

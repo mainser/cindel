@@ -192,6 +192,9 @@ Current public API policy:
   and Web SQLite.
 - Bounded `documentIdsPage` scans for maintenance tooling that needs to walk
   large collections without reading every id at once.
+- Full typed backup/export/import streams with JSONL archives, checksum
+  verification, native gzip compression, empty-target restore, and cross-backend
+  SQLite/MDBX coverage.
 
 ## Current Focus
 
@@ -301,7 +304,7 @@ Current public API policy:
 
 ### Migration And Storage Stability
 
-- Add backup and rollback guidance for production migration rollouts.
+- Add rollback guidance for production migration rollouts.
 - Add richer migration diagnostics and native error details.
 - Add database statistics around migrated collection sizes and compaction
   effects.
@@ -316,9 +319,9 @@ Current public API policy:
 ### Maintenance APIs
 
 - Add database statistics.
-- Design full-database backup/export/import orchestration on top of bounded id
-  pages, typed hydration, compression, and Web-compatible streams.
-- Add more maintenance operations beyond migration compact and bounded id pages.
+- Add incremental backup or merge-restore only if a real app needs it.
+- Add more maintenance operations beyond migration compact, bounded id pages,
+  and full typed backup.
 - Evaluate encryption at rest after storage layout and performance are stable.
 
 ### Relationships
