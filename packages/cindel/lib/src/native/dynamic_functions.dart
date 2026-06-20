@@ -612,6 +612,29 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Pointer<Size>,
             )
           >('cindel_document_ids'),
+      documentIdsPage = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Int32,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              int,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_document_ids_page'),
       delete = library
           .lookupFunction<
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint64),
@@ -1404,6 +1427,19 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     Pointer<Size>,
   )
   documentIds;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  documentIdsPage;
 
   // Id, delete, revision, and change-tracking symbols.
   @override

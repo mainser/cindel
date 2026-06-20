@@ -249,6 +249,31 @@ impl CindelWebEngine {
         encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
     }
 
+    #[wasm_bindgen(js_name = documentIdsPage)]
+    pub fn document_ids_page(
+        &self,
+        collection: String,
+        after_id: f64,
+        has_after_id: bool,
+        limit: u32,
+    ) -> Result<Vec<u8>, JsValue> {
+        if limit == 0 {
+            return Err(JsValue::from_str(
+                "document id page limit must be greater than zero",
+            ));
+        }
+        let after_id = if has_after_id {
+            Some(js_safe_id(after_id)?)
+        } else {
+            None
+        };
+        let ids = self
+            .inner
+            .document_ids_page(&collection, after_id, limit as usize)
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
     #[wasm_bindgen(js_name = collectionRevision)]
     pub fn collection_revision(&self, collection: String) -> Result<Vec<u8>, JsValue> {
         let revision = self
@@ -516,6 +541,14 @@ fn native_document_value(value: WireNativeDocumentValue) -> Result<NativeDocumen
         }
         WireNativeDocumentValue::Bytes(value) => Ok(NativeDocumentValue::Bytes(value)),
     }
+}
+
+fn js_safe_id(value: f64) -> Result<u64, JsValue> {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if !value.is_finite() || value < 0.0 || value > MAX_SAFE_INTEGER || value.fract() != 0.0 {
+        return Err(JsValue::from_str("document id must be a safe integer"));
+    }
+    Ok(value as u64)
 }
 
 fn metadata_json(metadata: StorageMetadata) -> String {

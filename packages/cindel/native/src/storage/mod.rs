@@ -262,6 +262,12 @@ pub trait StorageEngine {
         self.get_many(collection, ids)
     }
     fn document_ids(&self, collection: &str) -> Result<Vec<u64>, String>;
+    fn document_ids_page(
+        &self,
+        collection: &str,
+        after_id: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>, String>;
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String>;
     fn put_indexed(
         &mut self,
@@ -514,6 +520,19 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.document_ids(collection),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.document_ids(collection),
+        }
+    }
+
+    fn document_ids_page(
+        &self,
+        collection: &str,
+        after_id: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.document_ids_page(collection, after_id, limit),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.document_ids_page(collection, after_id, limit),
         }
     }
 

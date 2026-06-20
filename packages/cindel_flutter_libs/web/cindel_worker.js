@@ -208,6 +208,17 @@ async function execute(message) {
       case 'documentIds':
         response(message.requestId, requireEngine().documentIds(payload.collection));
         return;
+      case 'documentIdsPage':
+        response(
+          message.requestId,
+          requireEngine().documentIdsPage(
+            payload.collection,
+            Number(payload.afterId ?? 0),
+            payload.afterId !== null && payload.afterId !== undefined,
+            Number(payload.limit),
+          ),
+        );
+        return;
       case 'collectionRevision':
         response(
           message.requestId,

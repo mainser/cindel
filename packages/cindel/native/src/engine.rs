@@ -107,6 +107,18 @@ impl CindelEngine {
         self.storage.document_ids(collection)
     }
 
+    pub fn document_ids_page(
+        &self,
+        collection: &str,
+        after_id: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>, String> {
+        if limit == 0 {
+            return Err("document id page limit must be greater than zero".into());
+        }
+        self.storage.document_ids_page(collection, after_id, limit)
+    }
+
     pub fn begin_read_transaction(&mut self) -> Result<(), String> {
         self.storage.begin_read_transaction()
     }

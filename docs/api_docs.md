@@ -1207,6 +1207,7 @@ Supported Web app APIs:
 - property projections and aggregates,
 - query updates and deletes,
 - read and write transactions,
+- bounded `documentIdsPage` scans,
 - typed object, collection, query, and lazy watchers.
 
 Current Web limits:
@@ -1306,7 +1307,7 @@ Generated typed `put` and `putAll` use this automatically when an object id is
 
 ### `documentIds`
 
-Returns every id in a collection, ordered by the backend.
+Returns every id in a collection, ordered ascending.
 
 ```dart
 final ids = await db.documentIds('todos');
@@ -1317,6 +1318,32 @@ To hydrate objects from ids, use the typed collection:
 ```dart
 final todos = await db.todos.getAll(ids);
 ```
+
+### `documentIdsPage`
+
+Returns a bounded page of ids in a collection, ordered ascending. The optional
+`afterId` cursor is exclusive, and `limit` must be greater than zero.
+
+```dart
+int? afterId;
+while (true) {
+  final ids = await db.documentIdsPage(
+    'todos',
+    afterId: afterId,
+    limit: 1000,
+  );
+  if (ids.isEmpty) break;
+
+  final todos = await db.todos.getAll(ids);
+  // Export, verify, or copy this page.
+
+  afterId = ids.last;
+}
+```
+
+Use this for maintenance flows such as backup/export tooling where reading the
+full id list may be too large. SQLite native, MDBX, and Web SQLite expose the
+same API.
 
 ## Errors
 
@@ -1389,8 +1416,7 @@ generated schemas.
 
 The current public API does not include:
 
-- public migrations,
-- public export/import tooling,
+- full-database backup/export/import orchestration,
 - embedded-field indexes,
 - relationship links/backlinks,
 - multi-tab Web coordination.

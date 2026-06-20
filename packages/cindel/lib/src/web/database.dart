@@ -424,6 +424,24 @@ class CindelDatabase {
     return _sendIds('documentIds', {'collection': collection});
   }
 
+  /// Returns up to [limit] ids in [collection] after [afterId], ordered ascending.
+  Future<List<int>> documentIdsPage(
+    String collection, {
+    int? afterId,
+    int limit = 1000,
+  }) {
+    _checkCollection(collection);
+    if (afterId != null) {
+      _checkId(afterId);
+    }
+    _checkPageLimit(limit);
+    return _sendIds('documentIdsPage', {
+      'collection': collection,
+      'afterId': afterId,
+      'limit': limit,
+    });
+  }
+
   /// Returns ids whose indexed [field] equals [value].
   Future<List<int>> queryEqualIds(
     String collection,
@@ -1457,5 +1475,11 @@ void _checkPollInterval(Duration pollInterval) {
 void _checkId(int id) {
   if (id < 0 || id > _maximumSqliteId) {
     throw RangeError.range(id, 0, _maximumSqliteId, 'id');
+  }
+}
+
+void _checkPageLimit(int limit) {
+  if (limit <= 0) {
+    throw ArgumentError.value(limit, 'limit', 'Must be greater than zero.');
   }
 }

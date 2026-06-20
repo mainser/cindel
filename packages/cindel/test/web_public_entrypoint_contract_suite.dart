@@ -189,6 +189,32 @@ void main() {
     }
   });
 
+  // Scenario: Large export tooling needs bounded id scans on Web too.
+  // Covers:
+  // - Web database exposing the same id-page API as native.
+  // - Worker operation names matching the Dart Web facade.
+  // Expected: Web can page document ids without forcing a full id-list read.
+  test('web exposes paged document id contract', () async {
+    final databaseSource = await _readPackageFile(
+      'package:cindel/src/web/database.dart',
+    );
+    final publicEntrypoint = await _packageFile('package:cindel/cindel.dart');
+    final workerSource = await File.fromUri(
+      publicEntrypoint.uri.resolve('../web/cindel_worker.js'),
+    ).readAsString();
+    final packagedWorkerSource = await File.fromUri(
+      publicEntrypoint.uri.resolve(
+        '../../cindel_flutter_libs/web/cindel_worker.js',
+      ),
+    ).readAsString();
+
+    expect(databaseSource, contains('Future<List<int>> documentIdsPage'));
+    for (final source in [workerSource, packagedWorkerSource]) {
+      expect(source, contains("case 'documentIdsPage':"));
+      expect(source, contains('documentIdsPage('));
+    }
+  });
+
   // Scenario: Web typed collections lose unique-index replacement semantics.
   // Covers:
   // - `putByUniqueIndex` and `putAllByUniqueIndex` reusing existing ids.

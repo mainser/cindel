@@ -821,6 +821,56 @@ impl StorageEngine for SqliteStorage {
         )
     }
 
+    fn document_ids_page(
+        &self,
+        collection: &str,
+        after_id: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>, String> {
+        let after_id = optional_sql_id(after_id)?;
+        let limit = i64::try_from(limit).map_err(|error| error.to_string())?;
+        if self.collection_schema(collection).is_some() {
+            if table_exists(&self.connection, "documents")? {
+                let sql = format!(
+                    "SELECT id FROM (
+                         SELECT {SQLITE_ROW_ID_COLUMN} AS id
+                         FROM {collection}
+                         WHERE (?2 IS NULL OR {SQLITE_ROW_ID_COLUMN} > ?2)
+                         UNION
+                         SELECT id
+                         FROM documents
+                         WHERE collection = ?1 AND (?2 IS NULL OR id > ?2)
+                     )
+                     ORDER BY id
+                     LIMIT ?3"
+                );
+                return query_ids(&self.connection, &sql, params![collection, after_id, limit]);
+            }
+            let sql = format!(
+                "SELECT {SQLITE_ROW_ID_COLUMN}
+                 FROM {collection}
+                 WHERE (?1 IS NULL OR {SQLITE_ROW_ID_COLUMN} > ?1)
+                 ORDER BY {SQLITE_ROW_ID_COLUMN}
+                 LIMIT ?2"
+            );
+            return query_ids(&self.connection, &sql, params![after_id, limit]);
+        }
+        if !table_exists(&self.connection, "documents")? {
+            return Ok(Vec::new());
+        }
+        query_ids(
+            &self.connection,
+            r#"
+            SELECT id
+            FROM documents
+            WHERE collection = ?1 AND (?2 IS NULL OR id > ?2)
+            ORDER BY id
+            LIMIT ?3
+            "#,
+            params![collection, after_id, limit],
+        )
+    }
+
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.put_indexed(collection, id, bytes, &[])
     }
@@ -4186,6 +4236,11 @@ where
         ids.push(u64::try_from(id).map_err(|error| error.to_string())?);
     }
     Ok(ids)
+}
+
+fn optional_sql_id(id: Option<u64>) -> Result<Option<i64>, String> {
+    id.map(|value| i64::try_from(value).map_err(|error| error.to_string()))
+        .transpose()
 }
 
 const INDEX_KIND_BOOL: i64 = 1;

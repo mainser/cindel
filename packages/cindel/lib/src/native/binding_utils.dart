@@ -174,6 +174,12 @@ void _checkId(int id) {
   }
 }
 
+void _checkPageLimit(int limit) {
+  if (limit <= 0) {
+    throw ArgumentError.value(limit, 'limit', 'Must be greater than zero.');
+  }
+}
+
 // Converts C-style status codes into Dart exceptions.
 void _checkStatus(int status, String operation) {
   if (status != 0) {

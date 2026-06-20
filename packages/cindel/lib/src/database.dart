@@ -529,6 +529,30 @@ class CindelDatabase {
     return _bindings.documentIds(handle, collection);
   }
 
+  /// Returns up to [limit] ids in [collection] after [afterId], ordered ascending.
+  ///
+  /// This is intended for backup/export and maintenance flows that need to
+  /// scan very large collections without materializing every id at once.
+  Future<List<int>> documentIdsPage(
+    String collection, {
+    int? afterId,
+    int limit = 1000,
+  }) async {
+    final handle = _checkOpen();
+    _checkCollection(collection);
+    if (afterId != null) {
+      _checkId(afterId);
+    }
+    _checkPageLimit(limit);
+
+    return _bindings.documentIdsPage(
+      handle,
+      collection,
+      afterId: afterId,
+      limit: limit,
+    );
+  }
+
   // Deletes.
 
   /// Deletes the document stored in [collection] under [id], if it exists.

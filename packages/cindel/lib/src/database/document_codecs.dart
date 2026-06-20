@@ -149,6 +149,12 @@ void _checkId(int id) {
   }
 }
 
+void _checkPageLimit(int limit) {
+  if (limit <= 0) {
+    throw ArgumentError.value(limit, 'limit', 'Must be greater than zero.');
+  }
+}
+
 // Schema validation.
 
 Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(

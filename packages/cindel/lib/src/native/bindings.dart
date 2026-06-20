@@ -636,6 +636,40 @@ final class CindelNativeBindings {
     );
   }
 
+  /// Returns a bounded page of document ids in [collection].
+  List<int> documentIdsPage(
+    Pointer<Void> handle,
+    String collection, {
+    required int? afterId,
+    required int limit,
+  }) {
+    _checkPageLimit(limit);
+    if (afterId != null) {
+      _checkId(afterId);
+    }
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(collection, (
+          collectionPointer,
+          collectionLength,
+        ) {
+          return _functions.documentIdsPage(
+            handle,
+            collectionPointer,
+            collectionLength,
+            afterId ?? 0,
+            afterId == null ? 0 : 1,
+            limit,
+            outPointer,
+            outLength,
+          );
+        });
+      },
+      _functions.freeBuffer,
+      'document ids page',
+    );
+  }
+
   // Delete APIs. Native-document deletes target generated/native rows when
   // SQLite stores them separately from MDBX binary document payloads.
   void delete(Pointer<Void> handle, String collection, int id) {

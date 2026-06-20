@@ -53,6 +53,8 @@ internally to that same app code.
 - Typed object, collection, query, and lazy watchers.
 - Open-time data migrations with versioning, verification, export/import, and
   compaction hooks.
+- Bounded document-id page reads for backup/export tooling on SQLite native,
+  MDBX, and Web SQLite.
 - Embedded objects and embedded object lists.
 - Freezed classic class and primary factory support.
 
@@ -173,6 +175,27 @@ and `importDocuments`. `registerTargetSchemas` accepts incompatible schema
 changes only inside the migration step, clears the target collection storage,
 and lets the callback import rewritten target data. SQLite native, MDBX, and
 Web SQLite expose the same migration contract.
+
+## Maintenance Tooling
+
+Most application code should use generated typed collections and queries.
+Tooling that needs to scan large collections can use `documentIdsPage` to read a
+bounded, ascending page of ids without materializing the whole collection:
+
+```dart
+int? afterId;
+while (true) {
+  final page = await db.documentIdsPage('orders', afterId: afterId, limit: 1000);
+  if (page.isEmpty) break;
+
+  final orders = await db.orders.getAll(page);
+  // Export, verify, or copy this page.
+
+  afterId = page.last;
+}
+```
+
+`documentIds()` remains available when a full id list is acceptable.
 
 ## Models
 

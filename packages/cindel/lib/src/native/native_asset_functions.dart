@@ -382,6 +382,19 @@ final class _NativeAssetCindelNativeFunctions
   get documentIds => _cindelDocumentIds;
 
   @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get documentIdsPage => _cindelDocumentIdsPage;
+
+  @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete =>
       _cindelDelete;
 
@@ -1465,6 +1478,29 @@ external int _cindelDocumentIds(
   Pointer<Void> handle,
   Pointer<Uint8> collection,
   int collectionLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Uint64,
+    Int32,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_document_ids_page', assetId: _assetId)
+external int _cindelDocumentIdsPage(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  int afterId,
+  int hasAfterId,
+  int limit,
   Pointer<Pointer<Uint8>> outPointer,
   Pointer<Size> outLength,
 );

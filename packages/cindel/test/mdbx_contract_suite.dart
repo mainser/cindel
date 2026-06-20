@@ -44,6 +44,48 @@ void main() {
       expect(await database.schemaVersion('users'), 1);
     });
 
+    // Scenario: maintenance tooling walks a typed MDBX collection without
+    // requesting the full id list.
+    // Covers:
+    // - Public `documentIdsPage` ordering and exclusive `afterId` cursor.
+    // - Generated MDBX typed collection storage.
+    // - Public argument validation before crossing FFI.
+    // Expected: pages are stable, ascending, bounded, and end with an empty
+    // page once the cursor reaches the last id.
+    test('pages generated typed document ids.', () async {
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+
+      await database.users.putAll([
+        User()
+          ..dbId = 3
+          ..name = 'Cid'
+          ..email = 'cid@example.com',
+        User()
+          ..dbId = 1
+          ..name = 'Ana'
+          ..email = 'ana@example.com',
+        User()
+          ..dbId = 5
+          ..name = 'Eli'
+          ..email = 'eli@example.com',
+      ]);
+
+      expect(await database.documentIdsPage('users', limit: 2), [1, 3]);
+      expect(await database.documentIdsPage('users', afterId: 1, limit: 2), [
+        3,
+        5,
+      ]);
+      expect(
+        await database.documentIdsPage('users', afterId: 5, limit: 2),
+        isEmpty,
+      );
+      await expectLater(
+        database.documentIdsPage('users', limit: 0),
+        throwsArgumentError,
+      );
+    });
+
     test('commits and rolls back generated typed transactions.', () async {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);

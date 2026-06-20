@@ -17,6 +17,10 @@
   compatibility checks for non-migration opens.
 - Added migration coverage across SQLite native, MDBX, and the Web public
   worker contract.
+- Added `CindelDatabase.documentIdsPage` for bounded, ascending document-id
+  scans across SQLite native, MDBX, and Web SQLite so backup/export tooling does
+  not need to materialize entire collections.
+- Bumped the native ABI to 32 for the paged document-id FFI/Web surface.
 
 ## 0.6.5
 

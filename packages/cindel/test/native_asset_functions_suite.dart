@@ -183,6 +183,7 @@ const _nativeAssetFunctionMembers = [
   'getMany',
   'getManyStored',
   'documentIds',
+  'documentIdsPage',
   'delete',
   'deleteMany',
   'deleteManyNativeDocuments',

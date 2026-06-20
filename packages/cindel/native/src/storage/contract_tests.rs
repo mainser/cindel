@@ -20,6 +20,7 @@ pub(super) fn run_storage_engine_contract<S>(
     reads_many_documents_in_input_order(backend, &open);
     keeps_documents_with_the_same_id_separate_by_collection(backend, &open);
     lists_document_ids_by_collection(backend, &open);
+    pages_document_ids_by_collection(backend, &open);
     advances_collection_revision_after_committed_changes(backend, &open);
     registers_and_migrates_schema_versions(backend, &open);
     rejects_incompatible_schema_changes(backend, &open);
@@ -125,6 +126,40 @@ where
     storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
 
     assert_eq!(storage.document_ids("users").unwrap(), vec![1, 3]);
+}
+
+fn pages_document_ids_by_collection<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    // Scenario: storage-level maintenance scans need a bounded id cursor.
+    // Covers all storage engines behind the shared contract.
+    // Expected: pages are collection-scoped, ascending, exclusive after the
+    // cursor id, and empty after the last document.
+    let directory = TemporaryDirectory::new(backend, "document_ids_page");
+    let mut storage = open(directory.path()).unwrap();
+
+    storage.put("users", 3, br#"{"name":"Cid"}"#).unwrap();
+    storage.put("settings", 1, br#"{"theme":"dark"}"#).unwrap();
+    storage.put("users", 1, br#"{"name":"Ana"}"#).unwrap();
+    storage.put("users", 5, br#"{"name":"Eli"}"#).unwrap();
+
+    assert_eq!(
+        storage.document_ids_page("users", None, 2).unwrap(),
+        vec![1, 3]
+    );
+    assert_eq!(
+        storage.document_ids_page("users", Some(1), 2).unwrap(),
+        vec![3, 5]
+    );
+    assert_eq!(
+        storage.document_ids_page("users", Some(3), 2).unwrap(),
+        vec![5]
+    );
+    assert_eq!(
+        storage.document_ids_page("users", Some(5), 2).unwrap(),
+        Vec::<u64>::new()
+    );
 }
 
 fn advances_collection_revision_after_committed_changes<S>(

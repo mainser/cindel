@@ -190,6 +190,8 @@ Current public API policy:
   before/after verification callbacks, paged export/import helpers, migrated
   schema registration, and backend compact requests across SQLite native, MDBX,
   and Web SQLite.
+- Bounded `documentIdsPage` scans for maintenance tooling that needs to walk
+  large collections without reading every id at once.
 
 ## Current Focus
 
@@ -314,7 +316,9 @@ Current public API policy:
 ### Maintenance APIs
 
 - Add database statistics.
-- Add more maintenance operations beyond the migration compact request.
+- Design full-database backup/export/import orchestration on top of bounded id
+  pages, typed hydration, compression, and Web-compatible streams.
+- Add more maintenance operations beyond migration compact and bounded id pages.
 - Evaluate encryption at rest after storage layout and performance are stable.
 
 ### Relationships

@@ -2,11 +2,12 @@
 
 ## 0.7.0
 
-- Released in lockstep with `cindel` 0.7.0 for the native ABI 31 migration
-  runtime symbols.
+- Released in lockstep with `cindel` 0.7.0 for the native ABI 32 migration and
+  paged document-id runtime symbols.
 - Requires regenerated native libraries and Web Wasm assets that expose
   migrated schema registration, migration version persistence, and compact
   requests for SQLite, MDBX, and Web SQLite/OPFS.
+- Updated the packaged Web worker template for the `documentIdsPage` operation.
 
 ## 0.6.5
 

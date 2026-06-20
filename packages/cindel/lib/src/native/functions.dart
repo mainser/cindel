@@ -276,6 +276,18 @@ abstract interface class _CindelNativeFunctions {
   )
   get documentIds;
 
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    int,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get documentIdsPage;
+
   // Delete, revision, change-tracking, and schema metadata symbols.
   int Function(Pointer<Void>, Pointer<Uint8>, int, int) get delete;
 

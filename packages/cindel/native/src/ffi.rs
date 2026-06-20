@@ -20,7 +20,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    31
+    32
 }
 
 #[no_mangle]
@@ -1397,6 +1397,42 @@ pub unsafe extern "C" fn cindel_document_ids(
     };
 
     match engine.document_ids(collection) {
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_document_ids_page(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    after_id: u64,
+    has_after_id: i32,
+    limit: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    let after_id = if has_after_id == 0 {
+        None
+    } else {
+        Some(after_id)
+    };
+
+    match engine.document_ids_page(collection, after_id, limit) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
         Err(_) => -1,
     }

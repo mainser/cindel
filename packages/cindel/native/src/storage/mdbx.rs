@@ -2138,6 +2138,35 @@ impl StorageEngine for MdbxStorage {
         })
     }
 
+    fn document_ids_page(
+        &self,
+        collection: &str,
+        after_id: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>, String> {
+        if let Some(transaction) = self.active_write() {
+            let ids = self.with_read_transaction(|read_transaction, tables| {
+                let _ = tables;
+                let Ok(documents_table) = open_documents_table(read_transaction, collection) else {
+                    return Ok(Vec::new());
+                };
+                scan_document_ids(read_transaction, &documents_table)
+            })?;
+            return Ok(page_document_ids(
+                transaction.staged_document_ids(collection, ids),
+                after_id,
+                limit,
+            ));
+        }
+        self.with_read_transaction(|transaction, tables| {
+            let _ = tables;
+            let Ok(documents_table) = open_documents_table(transaction, collection) else {
+                return Ok(Vec::new());
+            };
+            scan_document_ids_page(transaction, &documents_table, after_id, limit)
+        })
+    }
+
     fn put(&mut self, collection: &str, id: u64, bytes: &[u8]) -> Result<(), String> {
         self.put_indexed(collection, id, bytes, &[])
     }
@@ -5702,6 +5731,55 @@ where
         ids.push(decode_document_table_key(&key)?);
     }
     Ok(ids)
+}
+
+fn scan_document_ids_page<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    table: &Table<'_>,
+    after_id: Option<u64>,
+    limit: usize,
+) -> Result<Vec<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let mut cursor = transaction
+        .cursor(table)
+        .map_err(|error| error.to_string())?;
+    let mut ids = Vec::with_capacity(limit);
+    let start_key = after_id.and_then(|id| id.checked_add(1).map(document_table_key));
+    match start_key {
+        Some(key) => {
+            for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&key) {
+                let (key, _) = row.map_err(|error| error.to_string())?;
+                let id = decode_document_table_key(&key)?;
+                if after_id.map_or(false, |after_id| id <= after_id) {
+                    continue;
+                }
+                ids.push(id);
+                if ids.len() == limit {
+                    break;
+                }
+            }
+        }
+        None if after_id.is_some() => {}
+        None => {
+            for row in cursor.iter_start::<Cow<'_, [u8]>, Cow<'_, [u8]>>() {
+                let (key, _) = row.map_err(|error| error.to_string())?;
+                ids.push(decode_document_table_key(&key)?);
+                if ids.len() == limit {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
+fn page_document_ids(ids: Vec<u64>, after_id: Option<u64>, limit: usize) -> Vec<u64> {
+    ids.into_iter()
+        .filter(|id| after_id.map_or(true, |after_id| *id > after_id))
+        .take(limit)
+        .collect()
 }
 
 fn max_document_id<K>(
