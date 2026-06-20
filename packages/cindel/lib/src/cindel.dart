@@ -8,6 +8,9 @@ import 'text.dart';
 abstract final class Cindel {
   /// Opens a database stored under [directory].
   ///
+  /// When [migrationPlan] is provided, Cindel runs the plan before registering
+  /// [schemas] as the final target shape.
+  ///
   /// Throws an [ArgumentError] when [directory] is empty and a
   /// [CindelOpenError] when the native engine cannot be opened.
   static Future<CindelDatabase> open({

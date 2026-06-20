@@ -153,6 +153,14 @@ fn registers_and_migrates_schema_versions<S>(
 ) where
     S: StorageEngine,
 {
+    // Scenario: A backend registers an initial schema and then accepts a
+    // compatible additive schema change.
+    // Covers:
+    // - Persisted per-collection schema version reads.
+    // - Version advancement on compatible registration.
+    // - Shared SQLite/MDBX schema-version contract used by public migrations.
+    // Expected: The first registration stores version 1 and the additive
+    // registration advances the same collection to version 2.
     let directory = TemporaryDirectory::new(backend, "schema_versions");
     let mut storage = open(directory.path()).unwrap();
     let original = schema_manifest(vec![user_schema(vec![field(

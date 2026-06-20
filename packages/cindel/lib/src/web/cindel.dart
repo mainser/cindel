@@ -15,6 +15,9 @@ abstract final class Cindel {
   /// The [backend] argument is kept for source compatibility with native code.
   /// Browsers do not use MDBX, so Web always routes through the packaged
   /// Worker/Wasm SQLite runtime.
+  ///
+  /// When [migrationPlan] is provided, Cindel runs the plan before registering
+  /// [schemas] as the final target shape.
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],

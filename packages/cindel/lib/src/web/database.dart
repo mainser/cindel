@@ -204,6 +204,8 @@ class CindelDatabase {
   ///
   /// The schema manifest is sent during open so the Wasm engine can validate
   /// persisted schema metadata before any typed reads or writes run.
+  /// When [migrationPlan] is provided, Cindel runs controlled migration
+  /// callbacks before opening the final handle with [schemas].
   static Future<CindelDatabase> open({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
@@ -257,6 +259,9 @@ class CindelDatabase {
   }
 
   /// Opens a Web database handle suitable for controlled migration callbacks.
+  ///
+  /// This mirrors the native migration handle and lets migration callbacks read
+  /// old data before registering the final target schemas.
   static Future<CindelDatabase> openForMigration({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
@@ -693,7 +698,7 @@ class CindelDatabase {
     return count;
   }
 
-  /// Returns the schema version for [collection].
+  /// Returns the persisted schema version for [collection], or `null`.
   Future<int?> schemaVersion(String collection) async {
     final response = await _bridge.send(
       operation: 'schemaVersion',
@@ -703,12 +708,18 @@ class CindelDatabase {
   }
 
   /// Returns the persisted database data migration version, or `null`.
+  ///
+  /// This version is independent from per-collection schema versions and is
+  /// advanced only by a successful [CindelMigrationPlan].
   Future<int?> migrationVersion() async {
     final response = await _bridge.send(operation: 'migrationVersion');
     return response.payload as int?;
   }
 
   /// Persists the database data migration [version].
+  ///
+  /// Migration plans call this only after verification and target schema
+  /// registration complete.
   Future<void> setMigrationVersion(int version) async {
     _checkOpen();
     if (version < 0) {
@@ -721,6 +732,9 @@ class CindelDatabase {
   }
 
   /// Registers [schemas] after caller-controlled data migration.
+  ///
+  /// Unlike normal open-time schema registration, this accepts incompatible
+  /// target schema changes after migration callbacks have rewritten data.
   Future<void> registerMigratedSchemas(
     Iterable<CindelCollectionSchema<dynamic>> schemas,
   ) async {
@@ -738,6 +752,9 @@ class CindelDatabase {
   }
 
   /// Requests backend-level compaction for this Web SQLite database.
+  ///
+  /// This is intended for migration cleanup after rewritten data has been
+  /// verified and the target migration version has been persisted.
   Future<void> compact() async {
     _checkOpen();
     await _bridge.send(operation: 'compact');

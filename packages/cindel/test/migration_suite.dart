@@ -7,6 +7,17 @@ import 'backend_test_support.dart';
 
 void main() {
   group('Cindel public migrations', () {
+    // Scenario: A database is opened with an old persisted schema, migrated
+    // before target schema registration, and reopened with the final schema.
+    // Covers:
+    // - `Cindel.open(..., migrationPlan: ...)` native/Web-compatible flow.
+    // - Persisted data migration version reads and writes.
+    // - Opening with old schemas for migration callbacks.
+    // - Explicit target schema registration before importing rewritten data.
+    // - Verify-before and verify-after callbacks.
+    // - Reopen idempotency after the target version has already been reached.
+    // Expected: The migration runs once, persists version 2, rewrites the old
+    // birth-year field into the new indexed field, and later opens skip work.
     test(
       'runs verified open-time migration and reopens target schema.',
       () async {
@@ -119,6 +130,8 @@ void main() {
   });
 }
 
+// Old fixture shape used to prove migration callbacks can read the persisted
+// source layout before Cindel registers the final target schema.
 final _oldUserSchema = CindelCollectionSchema<_OldUser>(
   name: 'migration_users',
   dartName: '_OldUser',
@@ -184,6 +197,9 @@ final _oldUserSchema = CindelCollectionSchema<_OldUser>(
   ),
 );
 
+// Target fixture shape used after migration. The renamed/indexed field makes
+// normal compatible registration insufficient, so the test exercises migrated
+// schema registration instead of additive-only schema evolution.
 final _newUserSchema = CindelCollectionSchema<_NewUser>(
   name: 'migration_users',
   dartName: '_NewUser',

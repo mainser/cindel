@@ -46,6 +46,11 @@ final class CindelMigrationPlan {
   /// Whether to compact the backend after a successful migration run.
   final bool compactOnSuccess;
 
+  /// Runs this plan for `Cindel.open`.
+  ///
+  /// This is public so the native and Web database facades can share one
+  /// implementation. Application code should usually pass the plan to
+  /// `Cindel.open` instead of calling this method directly.
   Future<void> run({
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> targetSchemas,

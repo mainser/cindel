@@ -90,6 +90,9 @@ class CindelDatabase {
 
   /// Opens a database stored under [directory].
   ///
+  /// When [migrationPlan] is provided, Cindel runs controlled migration
+  /// callbacks before opening the final handle with [schemas].
+  ///
   /// Throws an [ArgumentError] when [directory] is empty and a
   /// [CindelOpenError] when the native engine cannot be opened.
   static Future<CindelDatabase> open({
@@ -130,6 +133,9 @@ class CindelDatabase {
   }
 
   /// Opens a database handle suitable for controlled migration callbacks.
+  ///
+  /// This bypasses normal target-schema registration so a migration step can
+  /// read old data, rewrite it, and then call [registerMigratedSchemas].
   static Future<CindelDatabase> openForMigration({
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
@@ -936,12 +942,18 @@ class CindelDatabase {
   }
 
   /// Returns the persisted database data migration version, or `null`.
+  ///
+  /// This version is independent from per-collection schema versions and is
+  /// advanced only by a successful [CindelMigrationPlan].
   Future<int?> migrationVersion() async {
     final handle = _checkOpen();
     return _bindings.migrationVersion(handle);
   }
 
   /// Persists the database data migration [version].
+  ///
+  /// Migration plans call this only after verification and target schema
+  /// registration complete.
   Future<void> setMigrationVersion(int version) async {
     final handle = _checkOpen();
     _checkCanWrite();
@@ -970,6 +982,9 @@ class CindelDatabase {
   }
 
   /// Requests backend-level compaction for this database.
+  ///
+  /// This is intended for migration cleanup after rewritten data has been
+  /// verified and the target migration version has been persisted.
   Future<void> compact() async {
     final handle = _checkOpen();
     _checkCanWrite();
