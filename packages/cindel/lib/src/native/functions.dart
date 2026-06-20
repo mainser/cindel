@@ -58,6 +58,8 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
 
+  int Function(Pointer<Void>, Pointer<Uint8>, int) get registerMigratedSchemas;
+
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -293,6 +295,12 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion;
+
+  int Function(Pointer<Void>, Pointer<Uint64>) get migrationVersion;
+
+  int Function(Pointer<Void>, int) get setMigrationVersion;
+
+  int Function(Pointer<Void>) get compact;
 
   // Legacy query symbols that execute one native operation at a time.
   int Function(

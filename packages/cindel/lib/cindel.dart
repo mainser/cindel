@@ -22,6 +22,7 @@ export 'src/binary_document.dart'
 export 'src/cindel.dart' if (dart.library.js_interop) 'src/web/cindel.dart';
 export 'src/cindel_error.dart';
 export 'src/database.dart' if (dart.library.js_interop) 'src/web/database.dart';
+export 'src/migration.dart';
 export 'src/query.dart' if (dart.library.js_interop) 'src/web/query.dart';
 export 'src/schema.dart';
 export 'src/text.dart';

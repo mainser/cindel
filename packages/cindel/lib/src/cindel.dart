@@ -1,5 +1,6 @@
 import 'cindel_error.dart';
 import 'database.dart';
+import 'migration.dart';
 import 'schema.dart';
 import 'text.dart';
 
@@ -13,11 +14,13 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelMigrationPlan? migrationPlan,
   }) {
     return CindelDatabase.open(
       directory: directory,
       schemas: schemas,
       backend: backend,
+      migrationPlan: migrationPlan,
     );
   }
 

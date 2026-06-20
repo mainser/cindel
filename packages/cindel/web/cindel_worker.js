@@ -23,6 +23,10 @@ function bytes(value) {
   throw new Error('Expected binary payload.');
 }
 
+function optionalVersion(value) {
+  return value === 0 ? null : value;
+}
+
 function response(requestId, payload) {
   if (payload instanceof Uint8Array) {
     self.postMessage({ type: 'response', requestId, payload }, [
@@ -107,10 +111,22 @@ async function execute(message) {
         response(message.requestId, null);
         return;
       case 'schemaVersion':
-        response(
-          message.requestId,
-          requireEngine().schemaVersion(payload.collection),
-        );
+        response(message.requestId, optionalVersion(requireEngine().schemaVersion(payload.collection)));
+        return;
+      case 'migrationVersion':
+        response(message.requestId, optionalVersion(requireEngine().migrationVersion()));
+        return;
+      case 'setMigrationVersion':
+        requireEngine().setMigrationVersion(payload.version);
+        response(message.requestId, null);
+        return;
+      case 'registerMigratedSchemas':
+        requireEngine().registerMigratedSchemas(bytes(payload.manifest));
+        response(message.requestId, null);
+        return;
+      case 'compact':
+        requireEngine().compact();
+        response(message.requestId, null);
         return;
       case 'storageMetadata':
         response(message.requestId, requireEngine().storageMetadataJson());

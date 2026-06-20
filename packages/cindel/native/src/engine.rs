@@ -328,12 +328,28 @@ impl CindelEngine {
         self.storage.register_schemas(manifest)
     }
 
+    pub fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        self.storage.register_migrated_schemas(manifest)
+    }
+
     pub fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.storage.schema_version(collection)
     }
 
+    pub fn migration_version(&self) -> Result<Option<u64>, String> {
+        self.storage.migration_version()
+    }
+
+    pub fn set_migration_version(&mut self, version: u64) -> Result<(), String> {
+        self.storage.set_migration_version(version)
+    }
+
     pub fn storage_metadata(&self) -> Result<StorageMetadata, String> {
         self.storage.storage_metadata()
+    }
+
+    pub fn compact(&mut self) -> Result<(), String> {
+        self.storage.compact()
     }
 }
 

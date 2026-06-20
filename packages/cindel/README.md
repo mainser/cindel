@@ -24,6 +24,7 @@
   <a href="#quickstart">Quickstart</a> &middot;
   <a href="#models">Models</a> &middot;
   <a href="#opening-a-database">Opening</a> &middot;
+  <a href="#migrations">Migrations</a> &middot;
   <a href="#crud">CRUD</a> &middot;
   <a href="#queries">Queries</a> &middot;
   <a href="#transactions">Transactions</a> &middot;
@@ -50,6 +51,8 @@ internally to that same app code.
 - Sorting, pagination, distinct, projections, and aggregates.
 - Read and write transactions.
 - Typed object, collection, query, and lazy watchers.
+- Open-time data migrations with versioning, verification, export/import, and
+  compaction hooks.
 - Embedded objects and embedded object lists.
 - Freezed classic class and primary factory support.
 
@@ -61,8 +64,8 @@ Flutter apps should depend on `cindel` and `cindel_flutter_libs`:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.4
+  cindel: ^0.7.0
+  cindel_flutter_libs: ^0.7.0
 
 dev_dependencies:
   build_runner: ^2.15.0
@@ -123,6 +126,53 @@ final activeUsers = await db.users.filter().activeEqualTo(true).findAll();
 
 await db.close();
 ```
+
+## Migrations
+
+Pass a `CindelMigrationPlan` to `Cindel.open` on every app start. Cindel stores
+the database data version inside the database, skips completed steps, and opens
+the final handle with the target schemas after successful migration.
+
+```dart
+final migrations = CindelMigrationPlan(
+  targetVersion: 2,
+  baselineVersion: 1,
+  steps: [
+    CindelMigrationStep(
+      fromVersion: 1,
+      toVersion: 2,
+      openSchemas: [OldUserSchema],
+      targetSchemas: [UserSchema],
+      verifyBefore: (context) async {
+        await context.database.documentIds('users');
+      },
+      migrate: (context) async {
+        final oldUsers = await context.exportObjects(OldUserSchema);
+        await context.registerTargetSchemas();
+        await context.importObjects(
+          UserSchema,
+          oldUsers.map((old) => User.fromLegacy(old)),
+        );
+      },
+      verifyAfter: (context) async {
+        await context.database.schemaVersion('users');
+      },
+    ),
+  ],
+);
+
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema],
+  migrationPlan: migrations,
+);
+```
+
+Migration steps can use `exportObjects`, `exportDocuments`, `importObjects`,
+and `importDocuments`. `registerTargetSchemas` accepts incompatible schema
+changes only inside the migration step, clears the target collection storage,
+and lets the callback import rewritten target data. SQLite native, MDBX, and
+Web SQLite expose the same migration contract.
 
 ## Models
 
@@ -558,8 +608,8 @@ Keep both packages in the app:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.4
+  cindel: ^0.7.0
+  cindel_flutter_libs: ^0.7.0
 ```
 
 Current Web behavior:

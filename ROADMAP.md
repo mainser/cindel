@@ -186,12 +186,16 @@ Current public API policy:
 - Linux native prebuilt generation through WSL.
 - Web SQLite/OPFS validation through browser probes for the Worker/Wasm
   runtime.
+- Public open-time data migration tooling with database-level versions,
+  before/after verification callbacks, paged export/import helpers, migrated
+  schema registration, and backend compact requests across SQLite native, MDBX,
+  and Web SQLite.
 
 ## Current Focus
 
 ### Release Line
 
-- Keep accumulating confirmed fixes in the `0.6.4` line until the next publish
+- Keep accumulating confirmed fixes in the `0.7.0` line until the next publish
   decision.
 - Android, iOS, Linux, macOS, Windows, and Web runtime assets must be generated
   from the current native ABI before benchmarking or release validation.
@@ -295,11 +299,10 @@ Current public API policy:
 
 ### Migration And Storage Stability
 
-- Add public migration tooling only when the typed storage format is close to
-  1.0.
-- Support explicit export and import utilities for typed collections.
-- Add index rebuild and verification tools.
-- Add guidance for backups and rollback before migrations.
+- Add backup and rollback guidance for production migration rollouts.
+- Add richer migration diagnostics and native error details.
+- Add database statistics around migrated collection sizes and compaction
+  effects.
 
 ### Platforms
 
@@ -311,7 +314,7 @@ Current public API policy:
 ### Maintenance APIs
 
 - Add database statistics.
-- Add explicit compaction or maintenance operations.
+- Add more maintenance operations beyond the migration compact request.
 - Evaluate encryption at rest after storage layout and performance are stable.
 
 ### Relationships

@@ -21,6 +21,7 @@ This single import exposes:
 - query and filter helpers,
 - transaction helpers,
 - typed watcher helpers,
+- migration plan and migration context helpers,
 - schema metadata types,
 - public Cindel error types,
 - binary helpers used by generated code.
@@ -46,6 +47,9 @@ Parameters:
   browser database name on Web.
 - `schemas`: generated collection schemas to register.
 - `backend`: optional native backend selector.
+- `migrationPlan`: optional database migration plan. Pass the same plan on each
+  app start so completed steps are skipped and the final handle opens with the
+  target schemas.
 
 MDBX is the default native backend:
 
@@ -113,6 +117,75 @@ await db.close();
 
 Closing more than once is safe. Closing rolls back an active transaction and
 closes active watcher streams.
+
+## Data Migrations
+
+Cindel stores a database-level data migration version inside the database.
+`CindelMigrationPlan` compares that stored version with `targetVersion`, runs
+the missing ordered steps, persists each successful `toVersion`, and returns a
+database opened with the target schemas.
+
+```dart
+final migrations = CindelMigrationPlan(
+  targetVersion: 2,
+  baselineVersion: 1,
+  steps: [
+    CindelMigrationStep(
+      fromVersion: 1,
+      toVersion: 2,
+      openSchemas: [OldUserSchema],
+      targetSchemas: [UserSchema],
+      verifyBefore: (context) async {
+        final ids = await context.database.documentIds('users');
+        if (ids.isEmpty) {
+          return;
+        }
+      },
+      migrate: (context) async {
+        final oldUsers = await context.exportObjects(OldUserSchema);
+        await context.registerTargetSchemas();
+        await context.importObjects(
+          UserSchema,
+          oldUsers.map(User.fromLegacy),
+        );
+      },
+      verifyAfter: (context) async {
+        await context.database.schemaVersion('users');
+      },
+    ),
+  ],
+);
+
+final db = await Cindel.open(
+  directory: directory.path,
+  schemas: [UserSchema],
+  migrationPlan: migrations,
+);
+```
+
+Migration APIs:
+
+- `CindelMigrationPlan`: declares the final `targetVersion`, the legacy
+  `baselineVersion`, ordered steps, and whether to compact after successful
+  steps.
+- `CindelMigrationStep`: declares `fromVersion`, `toVersion`, schemas used to
+  open legacy data, target schemas, and optional before/after verification
+  callbacks.
+- `CindelMigrationContext.exportObjects` and `exportDocuments`: read existing
+  data in id order with bounded batches.
+- `CindelMigrationContext.registerTargetSchemas`: registers the target schemas
+  in migrated mode. Incompatible schema changes are accepted only here, and
+  target collection storage is cleared before imports.
+- `CindelMigrationContext.importObjects` and `importDocuments`: write rewritten
+  target data in batches.
+- `CindelDatabase.migrationVersion`, `setMigrationVersion`,
+  `registerMigratedSchemas`, and `compact`: lower-level primitives used by the
+  migration plan and available for controlled tooling.
+
+SQLite native, MDBX, and Web SQLite/OPFS expose the same migration contract.
+For SQLite native, migrated schema registration rebuilds the target collection
+table before import so removed, renamed, or type-changed fields cannot leave
+stale columns behind.
 
 ## Schema Annotations
 
@@ -1120,8 +1193,8 @@ Requirements:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.4
+  cindel: ^0.7.0
+  cindel_flutter_libs: ^0.7.0
 ```
 
 Supported Web app APIs:

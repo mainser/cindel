@@ -53,11 +53,44 @@ impl CindelWebEngine {
         u32::try_from(version).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
+    #[wasm_bindgen(js_name = migrationVersion)]
+    pub fn migration_version(&self) -> Result<u32, JsValue> {
+        let version = self
+            .inner
+            .migration_version()
+            .map_err(|error| JsValue::from_str(&error))?
+            .unwrap_or(0);
+        u32::try_from(version).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = setMigrationVersion)]
+    pub fn set_migration_version(&mut self, version: u32) -> Result<(), JsValue> {
+        self.inner
+            .set_migration_version(u64::from(version))
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = registerMigratedSchemas)]
+    pub fn register_migrated_schemas(&mut self, manifest_bytes: Vec<u8>) -> Result<(), JsValue> {
+        let manifest = schema_manifest_from_wire(&manifest_bytes)
+            .map_err(|error| JsValue::from_str(&error))?;
+        self.inner
+            .register_migrated_schemas(&manifest)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
     #[wasm_bindgen(js_name = storageMetadataJson)]
     pub fn storage_metadata_json(&self) -> Result<String, JsValue> {
         self.inner
             .storage_metadata()
             .map(metadata_json)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = compact)]
+    pub fn compact(&mut self) -> Result<(), JsValue> {
+        self.inner
+            .compact()
             .map_err(|error| JsValue::from_str(&error))
     }
 

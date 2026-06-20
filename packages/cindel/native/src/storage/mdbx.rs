@@ -2745,6 +2745,34 @@ impl StorageEngine for MdbxStorage {
         self.cache_schema_manifest(manifest)
     }
 
+    fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            self.active_write_mut()
+                .expect("write transaction must still be active")
+                .operations
+                .push(MdbxWriteOperation::RegisterSchemas {
+                    manifest: manifest.clone(),
+                    mode: SchemaRegistrationMode::Migrated,
+                });
+            return Ok(());
+        }
+
+        self.with_write_transaction(|transaction, tables| {
+            for collection in &manifest.collections {
+                register_collection_schema(
+                    transaction,
+                    &tables,
+                    collection,
+                    SchemaRegistrationMode::Migrated,
+                )?;
+            }
+            Ok(())
+        })?;
+        self.cache_schema_manifest(manifest)
+    }
+
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         self.with_read_transaction(|transaction, tables| {
             transaction
@@ -2758,10 +2786,37 @@ impl StorageEngine for MdbxStorage {
         })
     }
 
+    fn migration_version(&self) -> Result<Option<u64>, String> {
+        self.with_read_transaction(|transaction, tables| {
+            read_migration_version(transaction, &tables)
+        })
+    }
+
+    fn set_migration_version(&mut self, version: u64) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            return Err(
+                "migration version updates are not supported inside an active MDBX write transaction"
+                    .into(),
+            );
+        }
+        self.with_write_transaction(|transaction, tables| {
+            write_migration_version(transaction, &tables, version)
+        })
+    }
+
     fn storage_metadata(&self) -> Result<StorageMetadata, String> {
         self.with_read_transaction(|transaction, tables| {
             read_storage_metadata(transaction, &tables)
         })
+    }
+
+    fn compact(&mut self) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_write_mut().is_some() {
+            return Err("MDBX compact cannot run inside an active write transaction".into());
+        }
+        self.with_write_transaction(|_, _| Ok(()))
     }
 
     fn rebuild_indexes(
@@ -3029,6 +3084,7 @@ fn decode_document_table_key(bytes: &[u8]) -> Result<u64, String> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SchemaRegistrationMode {
     Compatible,
+    Migrated,
 }
 
 fn register_collection_schema(
@@ -3063,11 +3119,13 @@ fn register_collection_schema(
         return put_schema_record(transaction, tables, &key, 1, collection);
     };
 
-    if existing.1 == *collection {
+    if existing.1 == *collection && mode == SchemaRegistrationMode::Compatible {
         return Ok(());
     }
     if mode == SchemaRegistrationMode::Compatible {
         validate_compatible_schema_change(&existing.1, collection)?;
+    } else {
+        clear_collection_documents(transaction, tables, &collection.name)?;
     }
     create_documents_table(transaction, &collection.name)?;
     for field in &collection.fields {
@@ -3103,6 +3161,20 @@ fn put_schema_record(
     transaction
         .put(&tables.schema_collections, key, bytes, WriteFlags::UPSERT)
         .map_err(|error| error.to_string())
+}
+
+fn clear_collection_documents(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+) -> Result<(), String> {
+    let documents_table = create_documents_table(transaction, collection)?;
+    let ids = scan_document_ids(transaction, &documents_table)?;
+    if !ids.is_empty() {
+        delete_many_documents(transaction, tables, collection, &ids)?;
+    }
+    MdbxIndex::clear_collection(transaction, tables, collection)?;
+    Ok(())
 }
 
 fn schema_record<K>(
@@ -5258,6 +5330,33 @@ where
         .map_err(|error| error.to_string())?
         .map(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
         .transpose()
+}
+
+fn read_migration_version<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+) -> Result<Option<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    read_metadata_value(transaction, tables, "data_migration_version")?
+        .map(|value| value.parse::<u64>().map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn write_migration_version(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    version: u64,
+) -> Result<(), String> {
+    transaction
+        .put(
+            &tables.storage_metadata,
+            b"data_migration_version",
+            version.to_string().as_bytes(),
+            WriteFlags::UPSERT,
+        )
+        .map_err(|error| error.to_string())
 }
 
 fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {

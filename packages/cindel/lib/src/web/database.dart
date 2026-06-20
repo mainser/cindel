@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
+import '../migration.dart';
 import '../schema.dart';
 import 'native_document_reader.dart';
 import 'schema_manifest.dart';
@@ -180,7 +181,7 @@ class CindelDatabase {
     required Map<String, CindelCollectionSchema<dynamic>> schemas,
     required CindelWebWorkerBridge bridge,
   }) : backend = CindelStorageBackend.sqlite,
-       _schemas = schemas,
+       _schemas = Map.of(schemas),
        _bridge = bridge;
 
   /// Browser database name used by the Web SQLite runtime.
@@ -207,8 +208,16 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelMigrationPlan? migrationPlan,
   }) async {
     _checkDirectory(directory);
+    if (migrationPlan != null) {
+      await migrationPlan.run(
+        directory: directory,
+        targetSchemas: schemas,
+        backend: backend,
+      );
+    }
     final schemasByCollection = _schemasByCollection(schemas);
     final bridge = CindelWebWorkerBridge(_defaultWorkerUrl);
     try {
@@ -245,6 +254,15 @@ class CindelDatabase {
       schemas: schemas,
       backend: backend,
     );
+  }
+
+  /// Opens a Web database handle suitable for controlled migration callbacks.
+  static Future<CindelDatabase> openForMigration({
+    required String directory,
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+    CindelStorageBackend backend = defaultCindelStorageBackend,
+  }) {
+    return open(directory: directory, schemas: schemas, backend: backend);
   }
 
   /// Closes this database.
@@ -682,6 +700,47 @@ class CindelDatabase {
       payload: _payload({'collection': collection}),
     );
     return response.payload as int?;
+  }
+
+  /// Returns the persisted database data migration version, or `null`.
+  Future<int?> migrationVersion() async {
+    final response = await _bridge.send(operation: 'migrationVersion');
+    return response.payload as int?;
+  }
+
+  /// Persists the database data migration [version].
+  Future<void> setMigrationVersion(int version) async {
+    _checkOpen();
+    if (version < 0) {
+      throw ArgumentError.value(version, 'version', 'Must not be negative.');
+    }
+    await _bridge.send(
+      operation: 'setMigrationVersion',
+      payload: _payload({'version': version}),
+    );
+  }
+
+  /// Registers [schemas] after caller-controlled data migration.
+  Future<void> registerMigratedSchemas(
+    Iterable<CindelCollectionSchema<dynamic>> schemas,
+  ) async {
+    _checkOpen();
+    final schemasByCollection = _schemasByCollection(schemas);
+    await _bridge.send(
+      operation: 'registerMigratedSchemas',
+      payload: _payload({
+        'manifest': cindelEncodeWebSchemaManifest(schemasByCollection.values),
+      }),
+    );
+    _schemas
+      ..clear()
+      ..addAll(schemasByCollection);
+  }
+
+  /// Requests backend-level compaction for this Web SQLite database.
+  Future<void> compact() async {
+    _checkOpen();
+    await _bridge.send(operation: 'compact');
   }
 
   /// Watches raw collection change metadata for this Web database handle.

@@ -1218,6 +1218,15 @@ impl StorageEngine for SqliteStorage {
             if self.active_transaction.is_some() {
                 for collection in &manifest.collections {
                     register_persisted_collection_schema(&self.connection, collection)?;
+                    let version =
+                        persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
+                    self.schemas.insert(
+                        collection.name.clone(),
+                        RegisteredCollectionSchema {
+                            version,
+                            schema: collection.clone(),
+                        },
+                    );
                 }
                 return Ok(());
             }
@@ -1229,7 +1238,19 @@ impl StorageEngine for SqliteStorage {
             for collection in &manifest.collections {
                 register_persisted_collection_schema(&transaction, collection)?;
             }
-            return transaction.commit().map_err(|error| error.to_string());
+            transaction.commit().map_err(|error| error.to_string())?;
+            for collection in &manifest.collections {
+                let version =
+                    persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
+                self.schemas.insert(
+                    collection.name.clone(),
+                    RegisteredCollectionSchema {
+                        version,
+                        schema: collection.clone(),
+                    },
+                );
+            }
+            return Ok(());
         }
 
         if self.active_transaction.is_some() {
@@ -1254,6 +1275,50 @@ impl StorageEngine for SqliteStorage {
             .map_err(|error| error.to_string())
     }
 
+    fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        validate_schema_manifest(manifest)?;
+        self.ensure_can_write()?;
+        if !self.persist_schema_metadata {
+            return self.register_schemas(manifest);
+        }
+        if self.active_transaction.is_some() {
+            for collection in &manifest.collections {
+                register_migrated_collection_schema(&self.connection, collection)?;
+                let version =
+                    persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
+                self.schemas.insert(
+                    collection.name.clone(),
+                    RegisteredCollectionSchema {
+                        version,
+                        schema: collection.clone(),
+                    },
+                );
+            }
+            return Ok(());
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        for collection in &manifest.collections {
+            register_migrated_collection_schema(&transaction, collection)?;
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+        for collection in &manifest.collections {
+            let version =
+                persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
+            self.schemas.insert(
+                collection.name.clone(),
+                RegisteredCollectionSchema {
+                    version,
+                    schema: collection.clone(),
+                },
+            );
+        }
+        Ok(())
+    }
+
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         if self.persist_schema_metadata {
             return self
@@ -1272,12 +1337,31 @@ impl StorageEngine for SqliteStorage {
         Ok(self.schemas.get(collection).map(|schema| schema.version))
     }
 
+    fn migration_version(&self) -> Result<Option<u64>, String> {
+        read_migration_version(&self.connection)
+    }
+
+    fn set_migration_version(&mut self, version: u64) -> Result<(), String> {
+        self.ensure_can_write()?;
+        write_migration_version(&self.connection, version)
+    }
+
     fn storage_metadata(&self) -> Result<StorageMetadata, String> {
         Ok(StorageMetadata {
             layout: StorageLayoutVersion::SqliteV1,
             document_format: DocumentFormatVersion::BinaryV2,
             schema_metadata_format: SchemaMetadataVersion::BinaryV1,
         })
+    }
+
+    fn compact(&mut self) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if self.active_transaction.is_some() {
+            return Err("SQLite compact cannot run inside an active transaction".into());
+        }
+        self.connection
+            .execute_batch("VACUUM")
+            .map_err(|error| error.to_string())
     }
 
     fn rebuild_indexes(
@@ -3303,6 +3387,47 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
     })
 }
 
+fn read_migration_version(connection: &Connection) -> Result<Option<u64>, String> {
+    if !table_exists(connection, "storage_metadata")? {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT value FROM storage_metadata WHERE key = 'data_migration_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .map(|value| value.parse::<u64>().map_err(|error| error.to_string()))
+        .transpose()
+}
+
+fn write_migration_version(connection: &Connection, version: u64) -> Result<(), String> {
+    connection
+        .execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS storage_metadata (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            )
+            "#,
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO storage_metadata (key, value)
+            VALUES ('data_migration_version', ?1)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![version.to_string()],
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 #[allow(dead_code)]
 fn parse_storage_layout(value: &str) -> Result<StorageLayoutVersion, String> {
     match value {
@@ -3570,6 +3695,79 @@ fn register_persisted_collection_schema(
         .map_err(|error| error.to_string())?;
     create_collection_table(connection, collection)?;
     Ok(())
+}
+
+fn register_migrated_collection_schema(
+    connection: &Connection,
+    collection: &CollectionSchemaManifest,
+) -> Result<(), String> {
+    let existing = connection
+        .query_row(
+            "SELECT version FROM schema_collections WHERE collection = ?1",
+            params![collection.name],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let next_version = match existing {
+        Some(version) => version
+            .checked_add(1)
+            .ok_or_else(|| format!("schema version for `{}` overflowed", collection.name))?,
+        None => 1,
+    };
+    let schema_bytes = encode_schema_record(
+        u64::try_from(next_version).map_err(|error| error.to_string())?,
+        collection,
+    )?;
+
+    if table_exists(connection, &collection.name)? {
+        let sql = format!("DROP TABLE {}", collection.name);
+        connection
+            .execute(&sql, [])
+            .map_err(|error| error.to_string())?;
+    }
+    connection
+        .execute(
+            "DELETE FROM documents WHERE collection = ?1",
+            params![collection.name],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "DELETE FROM index_entries WHERE collection = ?1",
+            params![collection.name],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO schema_collections (collection, version, schema_bytes)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(collection) DO UPDATE
+            SET version = excluded.version,
+                schema_bytes = excluded.schema_bytes
+            "#,
+            params![collection.name, next_version, schema_bytes],
+        )
+        .map_err(|error| error.to_string())?;
+    create_collection_table(connection, collection)
+}
+
+fn persisted_schema_version(
+    connection: &Connection,
+    collection: &str,
+) -> Result<Option<u64>, String> {
+    connection
+        .query_row(
+            "SELECT version FROM schema_collections WHERE collection = ?1",
+            params![collection],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|error| error.to_string())
 }
 
 fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(), String> {

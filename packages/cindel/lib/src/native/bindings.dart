@@ -179,6 +179,18 @@ final class CindelNativeBindings {
     _checkStatus(status, 'register schemas');
   }
 
+  /// Registers schemas after a controlled data migration.
+  void registerMigratedSchemas(Pointer<Void> handle, Uint8List schemas) {
+    final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {
+      return _functions.registerMigratedSchemas(
+        handle,
+        schemasPointer,
+        schemasLength,
+      );
+    });
+    _checkStatus(status, 'register migrated schemas');
+  }
+
   // Indexed write APIs update document storage and index entries in one native
   // operation.
   void putIndexed(
@@ -738,6 +750,36 @@ final class CindelNativeBindings {
     } finally {
       calloc.free(outVersion);
     }
+  }
+
+  /// Returns the persisted database data migration version, if any.
+  int? migrationVersion(Pointer<Void> handle) {
+    final outVersion = calloc<Uint64>();
+    try {
+      final status = _functions.migrationVersion(handle, outVersion);
+      if (status == 1) {
+        return null;
+      }
+      _checkStatus(status, 'migration version');
+      return outVersion.value;
+    } finally {
+      calloc.free(outVersion);
+    }
+  }
+
+  /// Persists the database data migration [version].
+  void setMigrationVersion(Pointer<Void> handle, int version) {
+    if (version < 0) {
+      throw ArgumentError.value(version, 'version', 'Must not be negative.');
+    }
+    final status = _functions.setMigrationVersion(handle, version);
+    _checkStatus(status, 'set migration version');
+  }
+
+  /// Requests backend-level compaction for this database handle.
+  void compact(Pointer<Void> handle) {
+    final status = _functions.compact(handle);
+    _checkStatus(status, 'compact');
   }
 
   // Index and filter query APIs return id lists encoded with Cindel wire

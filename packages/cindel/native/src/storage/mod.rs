@@ -358,8 +358,12 @@ pub trait StorageEngine {
         Ok(Vec::new())
     }
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
+    fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String>;
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String>;
+    fn migration_version(&self) -> Result<Option<u64>, String>;
+    fn set_migration_version(&mut self, version: u64) -> Result<(), String>;
     fn storage_metadata(&self) -> Result<StorageMetadata, String>;
+    fn compact(&mut self) -> Result<(), String>;
     fn rebuild_indexes(
         &mut self,
         collection: &str,
@@ -719,6 +723,14 @@ impl StorageEngine for StorageBackend {
         }
     }
 
+    fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.register_migrated_schemas(manifest),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.register_migrated_schemas(manifest),
+        }
+    }
+
     fn schema_version(&self, collection: &str) -> Result<Option<u64>, String> {
         match self {
             Self::Sqlite(storage) => storage.schema_version(collection),
@@ -727,11 +739,35 @@ impl StorageEngine for StorageBackend {
         }
     }
 
+    fn migration_version(&self) -> Result<Option<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.migration_version(),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.migration_version(),
+        }
+    }
+
+    fn set_migration_version(&mut self, version: u64) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.set_migration_version(version),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.set_migration_version(version),
+        }
+    }
+
     fn storage_metadata(&self) -> Result<StorageMetadata, String> {
         match self {
             Self::Sqlite(storage) => storage.storage_metadata(),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.storage_metadata(),
+        }
+    }
+
+    fn compact(&mut self) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.compact(),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.compact(),
         }
     }
 

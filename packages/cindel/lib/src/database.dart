@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import 'cindel_error.dart';
+import 'migration.dart';
 import 'native/bindings.dart';
 import 'native/wire.dart';
 import 'schema.dart';
@@ -64,7 +65,7 @@ class CindelDatabase {
     required bool schemasWereRegisteredOnOpen,
   }) : _bindings = bindings,
        _handle = handle,
-       _schemas = schemas,
+       _schemas = Map.of(schemas),
        _schemasWereRegisteredOnOpen = schemasWereRegisteredOnOpen;
 
   /// The directory where the database files are stored.
@@ -75,7 +76,7 @@ class CindelDatabase {
 
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
-  final bool _schemasWereRegisteredOnOpen;
+  bool _schemasWereRegisteredOnOpen;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   Pointer<Void>? _handle;
@@ -95,12 +96,22 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelMigrationPlan? migrationPlan,
   }) async {
     _checkDirectory(directory);
+    final usePersistedSchemaMetadata = migrationPlan != null;
+    if (migrationPlan != null) {
+      await migrationPlan.run(
+        directory: directory,
+        targetSchemas: schemas,
+        backend: backend,
+      );
+    }
     return _openUnchecked(
       directory: directory,
       schemas: schemas,
       backend: backend,
+      persistSchemaMetadata: usePersistedSchemaMetadata,
     );
   }
 
@@ -118,17 +129,34 @@ class CindelDatabase {
     );
   }
 
+  /// Opens a database handle suitable for controlled migration callbacks.
+  static Future<CindelDatabase> openForMigration({
+    required String directory,
+    Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
+    CindelStorageBackend backend = defaultCindelStorageBackend,
+  }) {
+    _checkDirectory(directory);
+    return _openUnchecked(
+      directory: directory,
+      schemas: schemas,
+      backend: backend,
+      persistSchemaMetadata: true,
+    );
+  }
+
   static Future<CindelDatabase> _openUnchecked({
     required String directory,
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
     required CindelStorageBackend backend,
+    bool persistSchemaMetadata = false,
   }) async {
     final schemasByCollection = _schemasByCollection(schemas);
     final schemaManifest = schemasByCollection.isEmpty
         ? null
         : _encodeSchemaManifest(schemasByCollection.values);
     final schemaManifestForOpen =
-        schemaManifest != null &&
+        !persistSchemaMetadata &&
+            schemaManifest != null &&
             (backend != CindelStorageBackend.sqlite ||
                 _canOpenSqliteWithNativeSchemas(schemasByCollection.values))
         ? schemaManifest
@@ -145,6 +173,11 @@ class CindelDatabase {
           database._checkOpen(),
           schemaManifest,
         );
+        if (persistSchemaMetadata &&
+            backend == CindelStorageBackend.sqlite &&
+            _canOpenSqliteWithNativeSchemas(schemasByCollection.values)) {
+          database._schemasWereRegisteredOnOpen = true;
+        }
       } catch (_) {
         await database.close();
         rethrow;
@@ -900,6 +933,47 @@ class CindelDatabase {
     final handle = _checkOpen();
     _checkCollection(collection);
     return _bindings.schemaVersion(handle, collection);
+  }
+
+  /// Returns the persisted database data migration version, or `null`.
+  Future<int?> migrationVersion() async {
+    final handle = _checkOpen();
+    return _bindings.migrationVersion(handle);
+  }
+
+  /// Persists the database data migration [version].
+  Future<void> setMigrationVersion(int version) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _bindings.setMigrationVersion(handle, version);
+  }
+
+  /// Registers [schemas] after caller-controlled data migration.
+  ///
+  /// Unlike [Cindel.open]'s normal schema registration, this method accepts
+  /// incompatible schema changes and clears storage for the migrated target
+  /// collections so callers can import the rewritten documents.
+  Future<void> registerMigratedSchemas(
+    Iterable<CindelCollectionSchema<dynamic>> schemas,
+  ) async {
+    final schemasByCollection = _schemasByCollection(schemas);
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _bindings.registerMigratedSchemas(
+      handle,
+      _encodeSchemaManifest(schemasByCollection.values),
+    );
+    _schemas
+      ..clear()
+      ..addAll(schemasByCollection);
+    _schemasWereRegisteredOnOpen = true;
+  }
+
+  /// Requests backend-level compaction for this database.
+  Future<void> compact() async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _bindings.compact(handle);
   }
 
   // State and transaction guards.

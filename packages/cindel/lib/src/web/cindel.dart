@@ -1,6 +1,7 @@
 import '../schema.dart';
 import '../text.dart';
 import 'database.dart';
+import '../migration.dart';
 
 /// Entry point for opening Cindel databases on Dart Web.
 ///
@@ -18,11 +19,13 @@ abstract final class Cindel {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelMigrationPlan? migrationPlan,
   }) {
     return CindelDatabase.open(
       directory: directory,
       schemas: schemas,
       backend: backend,
+      migrationPlan: migrationPlan,
     );
   }
 

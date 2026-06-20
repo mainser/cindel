@@ -79,6 +79,11 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
             int Function(Pointer<Void>, Pointer<Uint8>, int)
           >('cindel_register_schemas'),
+      registerMigratedSchemas = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
+            int Function(Pointer<Void>, Pointer<Uint8>, int)
+          >('cindel_register_migrated_schemas'),
       putIndexed = library
           .lookupFunction<
             Int32 Function(
@@ -680,6 +685,21 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             ),
             int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
           >('cindel_schema_version'),
+      migrationVersion = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Pointer<Uint64>),
+            int Function(Pointer<Void>, Pointer<Uint64>)
+          >('cindel_migration_version'),
+      setMigrationVersion = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Uint64),
+            int Function(Pointer<Void>, int)
+          >('cindel_set_migration_version'),
+      compact = library
+          .lookupFunction<
+            Int32 Function(Pointer<Void>),
+            int Function(Pointer<Void>)
+          >('cindel_compact'),
       queryIndexEqual = library
           .lookupFunction<
             Int32 Function(
@@ -1083,6 +1103,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;
 
   @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int)
+  registerMigratedSchemas;
+
+  @override
   final int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -1407,6 +1431,15 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   schemaVersion;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint64>) migrationVersion;
+
+  @override
+  final int Function(Pointer<Void>, int) setMigrationVersion;
+
+  @override
+  final int Function(Pointer<Void>) compact;
 
   // Index/filter query symbols that return native-owned buffers.
   @override

@@ -77,6 +77,10 @@ final class _NativeAssetCindelNativeFunctions
       _cindelRegisterSchemas;
 
   @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int)
+  get registerMigratedSchemas => _cindelRegisterMigratedSchemas;
+
+  @override
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -404,6 +408,17 @@ final class _NativeAssetCindelNativeFunctions
   @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get schemaVersion => _cindelSchemaVersion;
+
+  @override
+  int Function(Pointer<Void>, Pointer<Uint64>) get migrationVersion =>
+      _cindelMigrationVersion;
+
+  @override
+  int Function(Pointer<Void>, int) get setMigrationVersion =>
+      _cindelSetMigrationVersion;
+
+  @override
+  int Function(Pointer<Void>) get compact => _cindelCompact;
 
   // Legacy query symbols that execute one native operation at a time.
   @override
@@ -760,6 +775,16 @@ external int _cindelAllocateId(
   assetId: _assetId,
 )
 external int _cindelRegisterSchemas(
+  Pointer<Void> handle,
+  Pointer<Uint8> schemas,
+  int schemasLen,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_register_migrated_schemas',
+  assetId: _assetId,
+)
+external int _cindelRegisterMigratedSchemas(
   Pointer<Void> handle,
   Pointer<Uint8> schemas,
   int schemasLen,
@@ -1515,6 +1540,27 @@ external int _cindelSchemaVersion(
   int collectionLen,
   Pointer<Uint64> outVersion,
 );
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Uint64>)>(
+  symbol: 'cindel_migration_version',
+  assetId: _assetId,
+)
+external int _cindelMigrationVersion(
+  Pointer<Void> handle,
+  Pointer<Uint64> outVersion,
+);
+
+@Native<Int32 Function(Pointer<Void>, Uint64)>(
+  symbol: 'cindel_set_migration_version',
+  assetId: _assetId,
+)
+external int _cindelSetMigrationVersion(Pointer<Void> handle, int version);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'cindel_compact',
+  assetId: _assetId,
+)
+external int _cindelCompact(Pointer<Void> handle);
 
 // Legacy query exports.
 @Native<

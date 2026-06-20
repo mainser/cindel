@@ -129,6 +129,19 @@ export class CindelWebEngine {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    compact() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.cindelwebengine_compact(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     /**
      * @param {string} collection
      * @param {Uint8Array} ids
@@ -323,6 +336,24 @@ export class CindelWebEngine {
             var v3 = getArrayU8FromWasm0(r0, r1).slice();
             wasm.__wbindgen_export5(r0, r1 * 1, 1);
             return v3;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    migrationVersion() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.cindelwebengine_migrationVersion(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0 >>> 0;
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -673,6 +704,24 @@ export class CindelWebEngine {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * @param {Uint8Array} manifest_bytes
+     */
+    registerMigratedSchemas(manifest_bytes) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(manifest_bytes, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.cindelwebengine_registerMigratedSchemas(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     rollbackTransaction() {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
@@ -703,6 +752,22 @@ export class CindelWebEngine {
                 throw takeObject(r1);
             }
             return r0 >>> 0;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {number} version
+     */
+    setMigrationVersion(version) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.cindelwebengine_setMigrationVersion(retptr, this.__wbg_ptr, version);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -933,7 +998,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_2772(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_2792(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -1049,7 +1114,7 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 664, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2747);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2767);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0) {
@@ -1076,10 +1141,10 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_2747(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_2767(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_2747(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_2767(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -1090,8 +1155,8 @@ function __wasm_bindgen_func_elem_2747(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_2772(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_2772(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_2792(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_2792(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
 const CindelWebEngineFinalization = (typeof FinalizationRegistry === 'undefined')

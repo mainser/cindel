@@ -11,6 +11,7 @@ export class CindelWebEngine {
     beginWriteTransaction(): void;
     collectionRevision(collection: string): Uint8Array;
     commitTransaction(): void;
+    compact(): void;
     delete(collection: string, ids: Uint8Array): void;
     deleteAll(collection: string, ids: Uint8Array): void;
     deleteNativeAll(collection: string, ids: Uint8Array): boolean;
@@ -19,6 +20,7 @@ export class CindelWebEngine {
     getAll(collection: string, ids: Uint8Array): Uint8Array;
     getAllStored(collection: string, ids: Uint8Array): Uint8Array;
     getStored(collection: string, ids: Uint8Array): Uint8Array;
+    migrationVersion(): number;
     static openWithSchemas(db_name: string, manifest_bytes: Uint8Array): Promise<CindelWebEngine>;
     put(collection: string, document_batch: Uint8Array): void;
     putAll(collection: string, document_batch: Uint8Array): void;
@@ -32,8 +34,10 @@ export class CindelWebEngine {
     queryPlanIds(collection: string, plan: Uint8Array): Uint8Array;
     queryPlanProject(collection: string, plan: Uint8Array, field: string): Uint8Array;
     queryPlanUpdate(collection: string, plan: Uint8Array, updates: Uint8Array, collect_changes: boolean): Uint8Array;
+    registerMigratedSchemas(manifest_bytes: Uint8Array): void;
     rollbackTransaction(): void;
     schemaVersion(collection: string): number;
+    setMigrationVersion(version: number): void;
     storageMetadataJson(): string;
     takeChanges(): Uint8Array;
 }
@@ -54,6 +58,7 @@ export interface InitOutput {
     readonly cindel_put: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
     readonly cindel_allocate_id: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_register_schemas: (a: number, b: number, c: number) => number;
+    readonly cindel_register_migrated_schemas: (a: number, b: number, c: number) => number;
     readonly cindel_put_indexed: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => number;
     readonly cindel_put_many_indexed: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_put_many_stored: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -112,6 +117,9 @@ export interface InitOutput {
     readonly cindel_take_changes: (a: number, b: number, c: number) => number;
     readonly cindel_discard_changes: (a: number) => number;
     readonly cindel_schema_version: (a: number, b: number, c: number, d: number) => number;
+    readonly cindel_migration_version: (a: number, b: number) => number;
+    readonly cindel_set_migration_version: (a: number, b: bigint) => number;
+    readonly cindel_compact: (a: number) => number;
     readonly cindel_query_index_equal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly cindel_query_index_range: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
     readonly cindel_query_filter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
@@ -128,7 +136,11 @@ export interface InitOutput {
     readonly __wbg_cindelwebengine_free: (a: number, b: number) => void;
     readonly cindelwebengine_openWithSchemas: (a: number, b: number, c: number, d: number) => number;
     readonly cindelwebengine_schemaVersion: (a: number, b: number, c: number, d: number) => void;
+    readonly cindelwebengine_migrationVersion: (a: number, b: number) => void;
+    readonly cindelwebengine_setMigrationVersion: (a: number, b: number, c: number) => void;
+    readonly cindelwebengine_registerMigratedSchemas: (a: number, b: number, c: number, d: number) => void;
     readonly cindelwebengine_storageMetadataJson: (a: number, b: number) => void;
+    readonly cindelwebengine_compact: (a: number, b: number) => void;
     readonly cindelwebengine_beginReadTransaction: (a: number, b: number) => void;
     readonly cindelwebengine_beginWriteTransaction: (a: number, b: number) => void;
     readonly cindelwebengine_commitTransaction: (a: number, b: number) => void;
@@ -170,8 +182,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2747: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2772: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2767: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2792: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

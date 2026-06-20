@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0
+
+- Added public open-time data migration tooling with database-level migration
+  versions, ordered migration steps, before/after verification callbacks,
+  paged typed export helpers, typed/document import helpers, migrated schema
+  registration, and optional backend compaction.
+- Added native migration primitives for SQLite, MDBX, and Web SQLite/OPFS:
+  migrated schema registration, migration version persistence, and compact
+  requests through the Dart FFI/Web worker surfaces.
+- SQLite migrated schema registration now rebuilds target collection tables so
+  renamed, removed, or type-changed fields can be rewritten safely by the
+  migration callback before the app receives the final handle.
+- MDBX migrated schema registration now clears target collection documents and
+  indexes before importing rewritten target data while preserving normal
+  compatibility checks for non-migration opens.
+- Added migration coverage across SQLite native, MDBX, and the Web public
+  worker contract.
+
 ## 0.6.5
 
 - Updated package metadata so the published documentation link points to the

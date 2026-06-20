@@ -20,7 +20,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    30
+    31
 }
 
 #[no_mangle]
@@ -210,6 +210,28 @@ pub unsafe extern "C" fn cindel_register_schemas(
     };
 
     match engine.register_schemas(&manifest) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_register_migrated_schemas(
+    handle: *mut CindelEngine,
+    schemas_ptr: *const u8,
+    schemas_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
+        return -1;
+    };
+    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
+        return -1;
+    };
+
+    match engine.register_migrated_schemas(&manifest) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -1555,6 +1577,58 @@ pub unsafe extern "C" fn cindel_schema_version(
             0
         }
         Ok(None) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_migration_version(
+    handle: *mut CindelEngine,
+    out_version: *mut u64,
+) -> i32 {
+    if out_version.is_null() {
+        return -1;
+    }
+
+    *out_version = 0;
+
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+
+    match engine.migration_version() {
+        Ok(Some(version)) => {
+            *out_version = version;
+            0
+        }
+        Ok(None) => 1,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_set_migration_version(
+    handle: *mut CindelEngine,
+    version: u64,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.set_migration_version(version) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_compact(handle: *mut CindelEngine) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+
+    match engine.compact() {
+        Ok(()) => 0,
         Err(_) => -1,
     }
 }

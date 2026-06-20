@@ -42,8 +42,8 @@ packaged native or Web runtime:
 
 ```yaml
 dependencies:
-  cindel: ^0.6.4
-  cindel_flutter_libs: ^0.6.4
+  cindel: ^0.7.0
+  cindel_flutter_libs: ^0.7.0
 ```
 
 No Dart import is required from this package.
@@ -89,15 +89,17 @@ The current package declares Flutter plugin support for:
 - Web runtime assets
 - Windows
 
-Current binary locations:
+Current packaged binary locations:
 
 - Android: `android/src/main/jniLibs/<abi>/libcindel_native.so`
-- iOS: `ios/cindel.xcframework`
 - Linux: `linux/libcindel_native.so`
-- macOS: `macos/libcindel_native.dylib`
 - Web: `web/cindel_worker.js`, `web/pkg/cindel_native.js`, and
   `web/pkg/cindel_native_bg.wasm`
 - Windows: `windows/cindel_native.dll`
+
+The iOS and macOS podspecs are versioned with this package. Their vendored
+Apple binaries must be generated on macOS with Xcode before publishing Apple
+runtime support.
 
 Android ABIs currently included:
 

@@ -147,6 +147,48 @@ void main() {
     expect(querySource, isNot(contains('database.queryAll(_schema.name)')));
   });
 
+  // Scenario: Public migration tooling is added on native but Web drifts out of
+  // parity.
+  // Covers:
+  // - `Cindel.open` accepting migration plans on Web.
+  // - Web database exposing migration version, migrated schema registration,
+  //   and compact operations.
+  // - Worker operation names matching the Dart Web facade.
+  // Expected: Web keeps the same migration/export/import/compact surface as
+  // native callers.
+  test('web exposes public migration tooling contract', () async {
+    final publicSource = await _readPackageFile('package:cindel/cindel.dart');
+    final cindelSource = await _readPackageFile(
+      'package:cindel/src/web/cindel.dart',
+    );
+    final databaseSource = await _readPackageFile(
+      'package:cindel/src/web/database.dart',
+    );
+    final publicEntrypoint = await _packageFile('package:cindel/cindel.dart');
+    final workerSource = await File.fromUri(
+      publicEntrypoint.uri.resolve('../web/cindel_worker.js'),
+    ).readAsString();
+    final packagedWorkerSource = await File.fromUri(
+      publicEntrypoint.uri.resolve(
+        '../../cindel_flutter_libs/web/cindel_worker.js',
+      ),
+    ).readAsString();
+
+    expect(publicSource, contains("export 'src/migration.dart';"));
+    expect(cindelSource, contains('CindelMigrationPlan? migrationPlan'));
+    expect(databaseSource, contains('CindelMigrationPlan? migrationPlan'));
+    expect(databaseSource, contains('Future<int?> migrationVersion()'));
+    expect(databaseSource, contains('Future<void> setMigrationVersion'));
+    expect(databaseSource, contains('Future<void> registerMigratedSchemas'));
+    expect(databaseSource, contains('Future<void> compact()'));
+    for (final source in [workerSource, packagedWorkerSource]) {
+      expect(source, contains("case 'migrationVersion':"));
+      expect(source, contains("case 'setMigrationVersion':"));
+      expect(source, contains("case 'registerMigratedSchemas':"));
+      expect(source, contains("case 'compact':"));
+    }
+  });
+
   // Scenario: Web typed collections lose unique-index replacement semantics.
   // Covers:
   // - `putByUniqueIndex` and `putAllByUniqueIndex` reusing existing ids.
