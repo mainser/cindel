@@ -7,6 +7,27 @@ import 'backend_test_support.dart';
 
 void main() {
   group('Cindel public migrations', () {
+    // Scenario: Migration plan construction rejects impossible baseline and
+    // target versions before touching storage.
+    // Covers:
+    // - `targetVersion` argument validation.
+    // - `baselineVersion` argument validation.
+    // Expected: Invalid versions throw `ArgumentError` immediately.
+    test('rejects negative migration plan versions.', () {
+      expect(
+        () => CindelMigrationPlan(targetVersion: -1, steps: const []),
+        throwsArgumentError,
+      );
+      expect(
+        () => CindelMigrationPlan(
+          targetVersion: 1,
+          baselineVersion: -1,
+          steps: const [],
+        ),
+        throwsArgumentError,
+      );
+    });
+
     // Scenario: A database is opened with an old persisted schema, migrated
     // before target schema registration, and reopened with the final schema.
     // Covers:
@@ -127,7 +148,223 @@ void main() {
         );
       },
     );
+
+    // Scenario: A migration callback uses the document-level helpers instead
+    // of typed object helpers.
+    // Covers:
+    // - Baseline version fallback when schemas exist but migration marker does
+    //   not.
+    // - `exportDocuments` and `importDocuments`.
+    // - Multi-batch export/import paths.
+    // - Invalid batch-size validation from callback helpers.
+    // Expected: The callback rewrites three source documents into target
+    // documents, preserves ids, and persists version 2.
+    test('supports document helpers and batching.', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cindel_migration_helpers_${testStorageBackend.name}_',
+      );
+      addTearDown(() async {
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+      });
+
+      final original = await openTestDatabase(
+        directory: directory.path,
+        schemas: [_oldUserSchema],
+      );
+      await original.typedCollection(_oldUserSchema).putAll([
+        _OldUser(dbId: 1, name: 'Ana', birthYear: 1990),
+        _OldUser(dbId: 2, name: 'Ben', birthYear: 1985),
+        _OldUser(dbId: 3, name: 'Cam', birthYear: 2001),
+      ]);
+      expect(await original.migrationVersion(), isNull);
+      await original.close();
+
+      final plan = CindelMigrationPlan(
+        targetVersion: 2,
+        baselineVersion: 1,
+        compactOnSuccess: false,
+        steps: [
+          CindelMigrationStep(
+            fromVersion: 1,
+            toVersion: 2,
+            openSchemas: [_oldUserSchema],
+            targetSchemas: [_newUserSchema],
+            migrate: (context) async {
+              expect(context.fromVersion, 1);
+              expect(context.toVersion, 2);
+              expect(context.targetSchemasRegistered, isFalse);
+              await expectLater(
+                context.exportObjects(_oldUserSchema, batchSize: 0),
+                throwsArgumentError,
+              );
+              await expectLater(
+                context.importObjects(_newUserSchema, const [], batchSize: 0),
+                throwsArgumentError,
+              );
+
+              final documents = await context.exportDocuments(
+                _oldUserSchema,
+                batchSize: 2,
+              );
+              await context.registerTargetSchemas();
+              await context.importDocuments(_newUserSchema, [
+                for (final document in documents)
+                  {
+                    'dbId': document['dbId'],
+                    'aName': document['aName'],
+                    'cMigratedBirthYear': document['bBirthYear'],
+                  },
+              ], batchSize: 2);
+              expect(context.targetSchemasRegistered, isTrue);
+            },
+            verifyAfter: (context) {
+              expect(context.targetSchemasRegistered, isTrue);
+            },
+          ),
+        ],
+      );
+
+      final migrated = await Cindel.open(
+        directory: directory.path,
+        schemas: [_newUserSchema],
+        backend: testStorageBackend,
+        migrationPlan: plan,
+      );
+      addTearDown(migrated.close);
+
+      expect(await migrated.migrationVersion(), 2);
+      expect(await migrated.documentIds('migration_users'), [1, 2, 3]);
+    });
+
+    // Scenario: A migration callback does no manual target schema registration
+    // because no data rewrite is needed.
+    // Covers:
+    // - Automatic `registerTargetSchemas` after `migrate`.
+    // Expected: The plan registers target schemas before `verifyAfter`.
+    test(
+      'registers target schemas automatically when callback skips it.',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'cindel_migration_auto_register_${testStorageBackend.name}_',
+        );
+        addTearDown(() async {
+          if (await directory.exists()) {
+            await directory.delete(recursive: true);
+          }
+        });
+
+        final original = await openTestDatabase(
+          directory: directory.path,
+          schemas: [_oldUserSchema],
+        );
+        await original.setMigrationVersion(1);
+        await original.close();
+
+        final plan = CindelMigrationPlan(
+          targetVersion: 2,
+          compactOnSuccess: false,
+          steps: [
+            CindelMigrationStep(
+              fromVersion: 1,
+              toVersion: 2,
+              openSchemas: [_oldUserSchema],
+              migrate: (context) {
+                expect(context.targetSchemasRegistered, isFalse);
+              },
+              verifyAfter: (context) {
+                expect(context.targetSchemasRegistered, isTrue);
+              },
+            ),
+          ],
+        );
+
+        final migrated = await Cindel.open(
+          directory: directory.path,
+          schemas: [_oldUserSchema],
+          backend: testStorageBackend,
+          migrationPlan: plan,
+        );
+        addTearDown(migrated.close);
+
+        expect(await migrated.migrationVersion(), 2);
+      },
+    );
+
+    // Scenario: Invalid migration step graphs fail before mutating target data.
+    // Covers:
+    // - Missing step from current version.
+    // - Non-advancing step.
+    // - Step that exceeds the plan target.
+    // Expected: Each invalid plan throws `StateError` with a focused message.
+    test('rejects invalid migration step graphs.', () async {
+      await _expectMigrationPlanError(
+        CindelMigrationPlan(
+          targetVersion: 2,
+          steps: [_noopStep(fromVersion: 1, toVersion: 2)],
+        ),
+        contains('Missing Cindel migration step from version 0'),
+      );
+      await _expectMigrationPlanError(
+        CindelMigrationPlan(
+          targetVersion: 2,
+          steps: [_noopStep(fromVersion: 0, toVersion: 0)],
+        ),
+        contains('must advance the data version'),
+      );
+      await _expectMigrationPlanError(
+        CindelMigrationPlan(
+          targetVersion: 2,
+          steps: [_noopStep(fromVersion: 0, toVersion: 3)],
+        ),
+        contains('exceeds target version 2'),
+      );
+    });
   });
+}
+
+Future<void> _expectMigrationPlanError(
+  CindelMigrationPlan plan,
+  Matcher message,
+) async {
+  final directory = await Directory.systemTemp.createTemp(
+    'cindel_migration_error_${testStorageBackend.name}_',
+  );
+  try {
+    final database = await openTestDatabase(
+      directory: directory.path,
+      schemas: [_oldUserSchema],
+    );
+    await database.setMigrationVersion(0);
+    await database.close();
+
+    await expectLater(
+      plan.run(
+        directory: directory.path,
+        targetSchemas: [_newUserSchema],
+        backend: testStorageBackend,
+      ),
+      throwsA(
+        isA<StateError>().having((error) => error.message, 'message', message),
+      ),
+    );
+  } finally {
+    await directory.delete(recursive: true);
+  }
+}
+
+CindelMigrationStep _noopStep({
+  required int fromVersion,
+  required int toVersion,
+}) {
+  return CindelMigrationStep(
+    fromVersion: fromVersion,
+    toVersion: toVersion,
+    openSchemas: [_oldUserSchema],
+    targetSchemas: [_newUserSchema],
+    migrate: (_) {},
+  );
 }
 
 // Old fixture shape used to prove migration callbacks can read the persisted

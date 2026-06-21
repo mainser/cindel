@@ -114,6 +114,27 @@ void main() {
       expect(change.isExternal, isFalse);
     });
 
+    // Scenario: A batched local upsert reports unknown document values but no
+    // exact ids.
+    // Covers:
+    // - [CindelChangeSet.upserts] null-document branch without explicit ids.
+    // - [CindelChangeSet.mayAffectDocument] exact empty-id branch.
+    // Expected: The change records no affected ids, still marks document values
+    // as unknown, and does not claim unrelated ids may be affected.
+    test('supports batched upserts with unknown documents and no ids.', () {
+      // Act.
+      final change = CindelChangeSet.upserts('users', null);
+
+      // Assert.
+      expect(change.collection, 'users');
+      expect(change.documentIds, isEmpty);
+      expect(change.documents, isEmpty);
+      expect(change.hasUnknownDocuments, isTrue);
+      expect(change.isExternal, isFalse);
+      expect(change.revision, isNull);
+      expect(change.mayAffectDocument(1), isFalse);
+    });
+
     // Scenario: Deletion changes only need exact ids.
     // Covers:
     // - [CindelChangeSet.delete].
@@ -170,6 +191,31 @@ void main() {
         () => change.documents[13] = {'name': 'Eli'},
         throwsUnsupportedError,
       );
+    });
+
+    // Scenario: Native post-commit changes can carry only revision and ids.
+    // Covers:
+    // - [CindelChangeSet.native] default document and unknown-document options.
+    // - Native id de-duplication.
+    // Expected: Defaults represent an exact native change with no attached
+    // snapshots and no unknown document payloads.
+    test('represents native change metadata with default options.', () {
+      // Act.
+      final change = CindelChangeSet.native(
+        collection: 'users',
+        revision: 43,
+        ids: const [1, 1, 2],
+      );
+
+      // Assert.
+      expect(change.collection, 'users');
+      expect(change.documentIds, {1, 2});
+      expect(change.documents, isEmpty);
+      expect(change.hasUnknownDocuments, isFalse);
+      expect(change.isExternal, isFalse);
+      expect(change.revision, 43);
+      expect(change.mayAffectDocument(2), isTrue);
+      expect(change.mayAffectDocument(3), isFalse);
     });
   });
 }

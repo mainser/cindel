@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -57,11 +58,13 @@ void main() {
       await _seed(source);
 
       final archive = _BytesConsumer();
+      final exportProgress = <CindelBackupProgress>[];
       final exported = await CindelBackup.exportDatabase(
         database: source,
         collections: collections,
         output: archive,
         batchSize: 37,
+        onProgress: exportProgress.add,
       );
       await source.close();
 
@@ -71,6 +74,7 @@ void main() {
         backend: targetBackend,
       );
       addTearDown(restored.close);
+      final importProgress = <CindelBackupProgress>[];
       final imported = await CindelBackup.importDatabase(
         database: restored,
         collections: [
@@ -79,7 +83,8 @@ void main() {
           CindelBackupCollection<ApiProduct>(ApiProductSchema),
         ],
         input: Stream.value(archive.bytes),
-        batchSize: 29,
+        batchSize: 3,
+        onProgress: importProgress.add,
       );
 
       expect(exported.documents, 15);
@@ -87,10 +92,130 @@ void main() {
       expect(imported.checksum, exported.checksum);
       expect(exported.compression, CindelBackupCompression.gzip);
       expect(exported.archiveBytes, lessThan(exported.uncompressedBytes));
+      expect(exportProgress.map((event) => event.phase).toSet(), {
+        CindelBackupPhase.export,
+      });
+      expect(exportProgress.last.collection, ApiProductSchema.name);
+      expect(exportProgress.last.documents, 15);
+      expect(importProgress.map((event) => event.phase).toSet(), {
+        CindelBackupPhase.import,
+      });
+      expect(importProgress.last.collection, ApiProductSchema.name);
+      expect(importProgress.last.documents, 15);
       expect(await restored.migrationVersion(), 7);
       await _expectRestored(restored);
     });
 
+    // Scenario: Backup callers pass invalid public options before any archive
+    // stream is consumed.
+    // Covers:
+    // - Export `batchSize` validation.
+    // - Import `batchSize` validation.
+    // - Duplicate collection registration validation.
+    // Expected: Invalid options fail with `ArgumentError` before storage or
+    // stream work starts.
+    test('rejects invalid backup options.', () async {
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final collections = [CindelBackupCollection<User>(UserSchema)];
+
+      await expectLater(
+        CindelBackup.exportDatabase(
+          database: database,
+          collections: collections,
+          output: _BytesConsumer(),
+          batchSize: 0,
+        ),
+        throwsArgumentError,
+      );
+      await expectLater(
+        CindelBackup.importDatabase(
+          database: database,
+          collections: collections,
+          input: const Stream<List<int>>.empty(),
+          batchSize: 0,
+        ),
+        throwsArgumentError,
+      );
+      await expectLater(
+        CindelBackup.exportDatabase(
+          database: database,
+          collections: [
+            CindelBackupCollection<User>(UserSchema),
+            CindelBackupCollection<User>(UserSchema),
+          ],
+          output: _BytesConsumer(),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    // Scenario: Restore receives malformed JSONL records or archive metadata
+    // that does not match the decoded payload.
+    // Covers:
+    // - Missing, duplicate, and unsupported header records.
+    // - Unknown or duplicate schema records.
+    // - Unknown document collections and record types.
+    // - Footer document-count and checksum validation.
+    // Expected: Bad archives fail with `StateError` instead of partially
+    // restoring unchecked data.
+    test('rejects malformed and inconsistent archives.', () async {
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final collections = [CindelBackupCollection<User>(UserSchema)];
+
+      Future<void> expectRejected(Stream<List<int>> input) {
+        return expectLater(
+          CindelBackup.importDatabase(
+            database: database,
+            collections: collections,
+            input: input,
+            compression: CindelBackupCompression.none,
+          ),
+          throwsStateError,
+        );
+      }
+
+      await expectRejected(const Stream<List<int>>.empty());
+      await expectRejected(_rawJsonl(['[]']));
+      await expectRejected(_recordsJsonl([_header(format: 'wrong')]));
+      await expectRejected(_recordsJsonl([_header(), _header()]));
+      await expectRejected(
+        _recordsJsonl([
+          _header(),
+          {'type': 'schema', 'collection': 'Ghost'},
+        ]),
+      );
+      await expectRejected(_recordsJsonl([_header(), _schema(), _schema()]));
+      await expectRejected(
+        _recordsJsonl([
+          _header(),
+          {
+            'type': 'doc',
+            'collection': 'Ghost',
+            'document': <String, Object?>{},
+          },
+        ]),
+      );
+      await expectRejected(
+        _recordsJsonl([
+          _header(),
+          {'type': 'unknown'},
+        ]),
+      );
+      await expectRejected(_archiveJsonl([_header()], documents: 0));
+      await expectRejected(_archiveJsonl([_header(), _schema()], documents: 1));
+      await expectRejected(
+        _archiveJsonl([_header(), _schema()], documents: 0, checksum: -1),
+      );
+    });
+
+    // Scenario: Restore is requested for a collection that already contains
+    // local data.
+    // Covers:
+    // - Empty-target preflight before reading the archive stream.
+    // Expected: Restore fails with `StateError` before existing data can be
+    // overwritten or merged.
     test('rejects restore into non-empty target.', () async {
       final directory = await Directory.systemTemp.createTemp(
         'cindel_backup_non_empty_${testStorageBackend.name}_',
@@ -179,4 +304,61 @@ final class _BytesConsumer implements StreamConsumer<List<int>> {
 
   @override
   Future<void> close() async {}
+}
+
+Map<String, Object?> _header({String format = 'cindel.backup.jsonl'}) {
+  return {
+    'type': 'header',
+    'format': format,
+    'version': 1,
+    'migrationVersion': null,
+  };
+}
+
+Map<String, Object?> _schema() {
+  return {'type': 'schema', 'collection': UserSchema.name, 'schemaVersion': 1};
+}
+
+Stream<Uint8List> _recordsJsonl(List<Map<String, Object?>> records) {
+  return Stream.value(_jsonlBytes(records));
+}
+
+Stream<Uint8List> _archiveJsonl(
+  List<Map<String, Object?>> records, {
+  required int documents,
+  int? checksum,
+}) {
+  final footer = {
+    'type': 'footer',
+    'documents': documents,
+    'checksum': checksum ?? _recordsChecksum(records),
+  };
+  return Stream.value(_jsonlBytes([...records, footer]));
+}
+
+Stream<Uint8List> _rawJsonl(List<String> lines) {
+  return Stream.value(Uint8List.fromList(utf8.encode('${lines.join('\n')}\n')));
+}
+
+Uint8List _jsonlBytes(List<Map<String, Object?>> records) {
+  return Uint8List.fromList(
+    utf8.encode('${records.map(jsonEncode).join('\n')}\n'),
+  );
+}
+
+int _recordsChecksum(List<Map<String, Object?>> records) {
+  var hash = 0x811c9dc5;
+  for (final record in records) {
+    hash = _fnv1aFrom(hash, utf8.encode(jsonEncode(record)));
+  }
+  return hash;
+}
+
+int _fnv1aFrom(int seed, List<int> bytes) {
+  var hash = seed;
+  for (final byte in bytes) {
+    hash ^= byte;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return hash;
 }

@@ -122,6 +122,40 @@ void main() {
       expect(users.map((user) => user.name), ['Ana', 'Dee']);
     });
 
+    // Scenario: Generated where helpers target hash and word indexes.
+    // Covers:
+    // - Hash-index equality falling back to filter semantics.
+    // - Word-index exact and prefix token queries.
+    // Expected: Hash values match exactly and word tokens match normalized
+    // searchable input.
+    test('finds typed objects by hash and word indexes.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      addTearDown(database.close);
+
+      // Act.
+      final tokenUsers = await database.users
+          .where()
+          .accessTokenEqualTo('token-team')
+          .sortByDbId()
+          .findAll();
+      final exactWordUsers = await database.users
+          .where()
+          .bioWordEqualTo('DATABASE')
+          .sortByDbId()
+          .findAll();
+      final prefixWordUsers = await database.users
+          .where()
+          .bioWordStartsWith('flut')
+          .sortByDbId()
+          .findAll();
+
+      // Assert.
+      expect(tokenUsers.map((user) => user.name), ['Ana', 'Cid']);
+      expect(exactWordUsers.map((user) => user.name), ['Ana']);
+      expect(prefixWordUsers.map((user) => user.name), ['Ana', 'Dee']);
+    });
+
     // Scenario: Generated list query helpers filter by collection size.
     // Covers:
     // - Generated [UserQueryWhere.tagsIsEmpty].
@@ -723,6 +757,15 @@ void main() {
         throwsA(isA<CindelQueryError>()),
       );
       expect(
+        () => CindelQuery.stringStartsWith(
+          database: database,
+          schema: UserSchema,
+          field: 'accessToken',
+          prefix: 'token',
+        ),
+        throwsA(isA<CindelQueryError>()),
+      );
+      expect(
         () => database.users.all().anyOf(['Ana'], (query, name) {
           return query.sortByName();
         }),
@@ -839,6 +882,62 @@ void main() {
       expect(sorted.map((user) => user.name), ['Ana', 'Cid', 'Ben', 'Dee']);
       expect(offsetOnly.map((user) => user.name), ['Ben', 'Cid', 'Dee']);
       expect(beyondWindow, isEmpty);
+    });
+
+    // Scenario: Query watchers observe visible query result changes.
+    // Covers:
+    // - [CindelQuery.watch].
+    // - [CindelQuery.watchLazy].
+    // Expected: Initial snapshots are available and matching writes emit typed
+    // query results.
+    test('emits query watcher snapshots and lazy changes.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      CindelQuery<User> watchedQuery() {
+        return database.users.all().whereMatches(
+          CindelFilter.path([
+            'primaryRecipient',
+            'metadata',
+            'label',
+          ]).equalTo('watch'),
+        );
+      }
+
+      final events = <List<User>>[];
+      final lazyEvents = <void>[];
+      final subscription = watchedQuery()
+          .watch(pollInterval: const Duration(milliseconds: 5))
+          .listen(events.add);
+      final lazySubscription = watchedQuery()
+          .watchLazy(
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .listen(lazyEvents.add);
+      addTearDown(subscription.cancel);
+      addTearDown(lazySubscription.cancel);
+
+      // Act.
+      await _waitUntil(() => events.length == 1);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      final initialLazyEvents = lazyEvents.length;
+      await database.users.put(
+        _user(dbId: 1, name: 'Ana', email: 'ana@example.com', label: 'other'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      final lazyEventsAfterNonMatch = lazyEvents.length;
+      await database.users.put(
+        _user(dbId: 2, name: 'Ben', email: 'ben@example.com', label: 'watch'),
+      );
+      await _waitUntil(() => events.any((users) => users.isNotEmpty));
+      await _waitUntil(() => lazyEvents.length > lazyEventsAfterNonMatch);
+
+      // Assert.
+      expect(events.first, isEmpty);
+      expect(initialLazyEvents, 0);
+      expect(events.last.single.name, 'Ben');
+      expect(lazyEvents.length, greaterThan(lazyEventsAfterNonMatch));
     });
 
     // Scenario: A query uses a secondary sort key.
@@ -1082,6 +1181,8 @@ Future<CindelDatabase> _openSeededUsers() async {
       dbId: 1,
       name: 'Ana',
       email: 'team@example.com',
+      accessToken: 'token-team',
+      bio: 'Flutter database',
       displayName: null,
       sessionLength: const Duration(minutes: 3),
       tags: ['flutter', 'database'],
@@ -1095,6 +1196,7 @@ Future<CindelDatabase> _openSeededUsers() async {
       dbId: 3,
       name: 'Cid',
       email: 'team@example.com',
+      accessToken: 'token-team',
       active: false,
       displayName: 'same',
     ),
@@ -1104,6 +1206,8 @@ Future<CindelDatabase> _openSeededUsers() async {
       dbId: 4,
       name: 'Dee',
       email: 'team-alpha@example.com',
+      accessToken: 'token-dee',
+      bio: 'Flutter todo',
       displayName: 'same',
       tags: ['Flutter', 'todo'],
     ),
@@ -1153,20 +1257,38 @@ User _user({
   required String name,
   required String email,
   bool active = true,
+  String? accessToken,
+  String? bio,
   String? displayName,
   Duration? sessionLength,
   List<String> tags = const [],
+  String label = 'seeded',
 }) {
   return User()
     ..dbId = dbId
     ..name = name
     ..email = email
+    ..accessToken = accessToken
+    ..bio = bio
     ..displayName = displayName
     ..active = active
     ..createdAt = DateTime.utc(2024, 1, dbId)
     ..sessionLength = sessionLength
     ..primaryRecipient = (Recipient()
       ..address = email
-      ..metadata = (RecipientMetadata()..label = 'seeded'))
+      ..metadata = (RecipientMetadata()..label = label))
     ..tags = tags;
+}
+
+Future<void> _waitUntil(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for condition.');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }
