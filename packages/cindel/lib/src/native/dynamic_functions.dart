@@ -674,6 +674,87 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
             )
           >('cindel_delete_many_native_documents'),
+      replaceLinks = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+            )
+          >('cindel_replace_links'),
+      forwardLinkIds = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_forward_link_ids'),
+      backlinkSourceIds = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint64,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_backlink_source_ids'),
       collectionRevision = library
           .lookupFunction<
             Int32 Function(
@@ -1452,6 +1533,51 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   deleteManyNativeDocuments;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  replaceLinks;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  forwardLinkIds;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  backlinkSourceIds;
 
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)

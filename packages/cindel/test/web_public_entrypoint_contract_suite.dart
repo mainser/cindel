@@ -147,6 +147,31 @@ void main() {
     expect(querySource, isNot(contains('database.queryAll(_schema.name)')));
   });
 
+  // Scenario: Link/backlink support is added to native backends but Web drifts
+  // out of parity.
+  // Covers:
+  // - Web database relation helper methods.
+  // - Worker operation names for replacing forward links and loading forward
+  //   or backlink ids.
+  // Expected: SQLite Web/OPFS exposes the same relation operations as native
+  // SQLite and MDBX.
+  test('web exposes link and backlink worker contract', () async {
+    final databaseSource = await _readPackageFile(
+      'package:cindel/src/web/database.dart',
+    );
+    final publicEntrypoint = await _packageFile('package:cindel/cindel.dart');
+    final workerSource = await File.fromUri(
+      publicEntrypoint.uri.resolve('../web/cindel_worker.js'),
+    ).readAsString();
+
+    expect(databaseSource, contains('saveLinkIds'));
+    expect(databaseSource, contains('loadLinkedObjects'));
+    expect(databaseSource, contains('loadBacklinkObjects'));
+    expect(workerSource, contains("case 'replaceLinks':"));
+    expect(workerSource, contains("case 'forwardLinkIds':"));
+    expect(workerSource, contains("case 'backlinkSourceIds':"));
+  });
+
   // Scenario: Public migration tooling is added on native but Web drifts out of
   // parity.
   // Covers:

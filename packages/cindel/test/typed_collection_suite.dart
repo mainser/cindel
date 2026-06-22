@@ -432,6 +432,30 @@ void main() {
       expect(collectionEvents, hasLength(1));
     });
 
+    // Scenario: A database closes while typed watchers are still subscribed.
+    // Covers:
+    // - Database close forwarding to active watcher streams.
+    // - Watcher timer cleanup without requiring caller-side cancellation first.
+    // Expected: Active watcher streams complete when the database closes.
+    test('closes active watcher streams when database closes.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      final done = database.users
+          .watchCollection(
+            pollInterval: const Duration(milliseconds: 5),
+            fireImmediately: false,
+          )
+          .drain<void>();
+      await Future<void>.delayed(Duration.zero);
+
+      // Act.
+      await database.close();
+
+      // Assert.
+      await expectLater(done, completes);
+    });
+
     // Scenario: Typed watcher snapshots are unchanged after rewriting the same
     // object value.
     // Covers:

@@ -1,7 +1,7 @@
 use crate::engine::CindelEngine;
 use crate::storage::{
-    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
-    NativeDocumentWrite, StorageChangeSet, StorageMetadata,
+    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, LinkSave,
+    NativeDocumentValue, NativeDocumentWrite, StorageChangeSet, StorageMetadata,
 };
 use crate::wire::{
     decode_field_updates, decode_id_list, decode_index_value, decode_indexed_document_write_batch,
@@ -238,6 +238,67 @@ impl CindelWebEngine {
         self.inner
             .delete_many_native_documents(&collection, &ids)
             .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = replaceLinks)]
+    pub fn replace_links(
+        &mut self,
+        source_collection: String,
+        source_id: f64,
+        link_name: String,
+        target_collection: String,
+        target_ids: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let target_ids = decode_id_list(&target_ids).map_err(|error| JsValue::from_str(&error))?;
+        self.inner
+            .replace_links(LinkSave {
+                source_collection,
+                source_id: js_safe_id(source_id)?,
+                link_name,
+                target_collection,
+                target_ids,
+            })
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = forwardLinkIds)]
+    pub fn forward_link_ids(
+        &self,
+        source_collection: String,
+        source_id: f64,
+        link_name: String,
+        target_collection: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        let ids = self
+            .inner
+            .forward_link_ids(
+                &source_collection,
+                js_safe_id(source_id)?,
+                &link_name,
+                &target_collection,
+            )
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
+    }
+
+    #[wasm_bindgen(js_name = backlinkSourceIds)]
+    pub fn backlink_source_ids(
+        &self,
+        target_collection: String,
+        target_id: f64,
+        source_collection: String,
+        link_name: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        let ids = self
+            .inner
+            .backlink_source_ids(
+                &target_collection,
+                js_safe_id(target_id)?,
+                &source_collection,
+                &link_name,
+            )
+            .map_err(|error| JsValue::from_str(&error))?;
+        encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
     }
 
     #[wasm_bindgen(js_name = documentIds)]

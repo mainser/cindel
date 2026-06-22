@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- Added `@Backlink(to: ...)` for declaring read-only inverse relations on
+  generated Cindel link fields.
+
 ## 0.6.4
 
 - Updated package documentation for the current generated typed Cindel API and

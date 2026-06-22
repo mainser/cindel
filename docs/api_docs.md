@@ -244,6 +244,27 @@ class Account {
 Generated code still exposes `AccountSchema`, `db.accounts`,
 `usernameEqualTo(...)`, and `putByUsername(...)`.
 
+### `@Backlink`
+
+Declares a read-only inverse relation for a generated link field.
+
+```dart
+@Collection(name: 'artists')
+class Artist {
+  Id dbId = autoIncrement;
+
+  late String name;
+
+  @Backlink(to: 'featuredArtists')
+  final songs = CindelLinks<Song>();
+}
+```
+
+The `to` value is the Dart field name of the forward link on the linked
+collection. In the example above, it points to `Song.artists`, not to the
+`artists` collection name. Backlinks load from persisted forward links and
+cannot be saved directly.
+
 ### `Id` and `autoIncrement`
 
 ```dart
@@ -720,6 +741,77 @@ is public for advanced wiring.
 final todos = db.typedCollection(TodoSchema);
 await todos.put(todo);
 ```
+
+## Links And Backlinks
+
+Cindel supports typed relations with `CindelLink<T>` for to-one
+relations and `CindelLinks<T>` for to-many relations.
+
+```dart
+@Collection(name: 'artists')
+class Artist {
+  Id dbId = autoIncrement;
+
+  late String name;
+
+  @Backlink(to: 'artists')
+  final songs = CindelLinks<Song>();
+}
+
+@Collection(name: 'songs')
+class Song {
+  Id dbId = autoIncrement;
+
+  late String title;
+
+  final featuredArtists = CindelLinks<Artist>();
+
+  final primaryArtist = CindelLink<Artist>();
+}
+```
+
+Link containers must be final fields. Target types must be root Cindel
+collections; embedded objects cannot be link targets. Link fields are relation
+metadata and are not stored as document fields.
+
+Persist linked objects first, then save the relation explicitly:
+
+```dart
+final artist = Artist()
+  ..name = 'Ana';
+final song = Song()
+  ..title = 'Ship It';
+
+await db.writeTxn(() async {
+  await db.artists.put(artist);
+  await db.songs.put(song);
+
+  song.featuredArtists.add(artist);
+  song.primaryArtist.value = artist;
+  await song.featuredArtists.save();
+  await song.primaryArtist.save();
+});
+```
+
+Load links explicitly from hydrated objects:
+
+```dart
+final song = await db.songs.get(1);
+await song!.featuredArtists.load();
+await song.primaryArtist.load();
+
+final artist = await db.artists.get(1);
+await artist!.songs.load();
+```
+
+Saving a forward link replaces the persisted ids for that link. Backlinks are
+read-only and throw when `save()` is called. Saving a link validates that the
+source and target ids already exist. SQLite native, MDBX, and SQLite Web/OPFS
+share the same relation semantics.
+
+For `@Backlink(to: ...)`, pass the Dart field name of the forward link on the
+linked collection. In the example above, `Artist.songs` points to
+`Song.featuredArtists`.
 
 ## Queries
 
@@ -1463,7 +1555,6 @@ The current public API does not include:
 
 - incremental backups or merge-restore into a non-empty database,
 - embedded-field indexes,
-- relationship links/backlinks,
 - multi-tab Web coordination.
 
 MDBX remains the default native backend. SQLite native and SQLite Web are

@@ -723,6 +723,133 @@ final class CindelNativeBindings {
     _checkStatus(status, 'delete many native documents');
   }
 
+  void replaceLinks(
+    Pointer<Void> handle, {
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required Uint8List targetIds,
+  }) {
+    _checkId(sourceId);
+    final status = _withNativeUtf8Bytes(sourceCollection, (
+      sourceCollectionPointer,
+      sourceCollectionLength,
+    ) {
+      return _withNativeUtf8Bytes(linkName, (linkNamePointer, linkNameLength) {
+        return _withNativeUtf8Bytes(targetCollection, (
+          targetCollectionPointer,
+          targetCollectionLength,
+        ) {
+          return _withNativeBytes(targetIds, (
+            targetIdsPointer,
+            targetIdsLength,
+          ) {
+            return _functions.replaceLinks(
+              handle,
+              sourceCollectionPointer,
+              sourceCollectionLength,
+              sourceId,
+              linkNamePointer,
+              linkNameLength,
+              targetCollectionPointer,
+              targetCollectionLength,
+              targetIdsPointer,
+              targetIdsLength,
+            );
+          });
+        });
+      });
+    });
+    _checkStatus(status, 'replace links');
+  }
+
+  List<int> forwardLinkIds(
+    Pointer<Void> handle, {
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+  }) {
+    _checkId(sourceId);
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(sourceCollection, (
+          sourceCollectionPointer,
+          sourceCollectionLength,
+        ) {
+          return _withNativeUtf8Bytes(linkName, (
+            linkNamePointer,
+            linkNameLength,
+          ) {
+            return _withNativeUtf8Bytes(targetCollection, (
+              targetCollectionPointer,
+              targetCollectionLength,
+            ) {
+              return _functions.forwardLinkIds(
+                handle,
+                sourceCollectionPointer,
+                sourceCollectionLength,
+                sourceId,
+                linkNamePointer,
+                linkNameLength,
+                targetCollectionPointer,
+                targetCollectionLength,
+                outPointer,
+                outLength,
+              );
+            });
+          });
+        });
+      },
+      _functions.freeBuffer,
+      'forward link ids',
+    );
+  }
+
+  List<int> backlinkSourceIds(
+    Pointer<Void> handle, {
+    required String targetCollection,
+    required int targetId,
+    required String sourceCollection,
+    required String linkName,
+  }) {
+    _checkId(targetId);
+    return _queryIds(
+      (outPointer, outLength) {
+        return _withNativeUtf8Bytes(targetCollection, (
+          targetCollectionPointer,
+          targetCollectionLength,
+        ) {
+          return _withNativeUtf8Bytes(sourceCollection, (
+            sourceCollectionPointer,
+            sourceCollectionLength,
+          ) {
+            return _withNativeUtf8Bytes(linkName, (
+              linkNamePointer,
+              linkNameLength,
+            ) {
+              return _functions.backlinkSourceIds(
+                handle,
+                targetCollectionPointer,
+                targetCollectionLength,
+                targetId,
+                sourceCollectionPointer,
+                sourceCollectionLength,
+                linkNamePointer,
+                linkNameLength,
+                outPointer,
+                outLength,
+              );
+            });
+          });
+        });
+      },
+      _functions.freeBuffer,
+      'backlink source ids',
+    );
+  }
+
   /// Returns the monotonic revision for [collection].
   int collectionRevision(Pointer<Void> handle, String collection) {
     final outRevision = calloc<Uint64>();

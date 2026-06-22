@@ -161,6 +161,15 @@ pub struct StorageChangeSet {
     pub document_ids: Vec<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkSave {
+    pub source_collection: String,
+    pub source_id: u64,
+    pub link_name: String,
+    pub target_collection: String,
+    pub target_ids: Vec<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SchemaManifest {
     pub collections: Vec<CollectionSchemaManifest>,
@@ -317,6 +326,30 @@ pub trait StorageEngine {
     ) -> Result<bool, String> {
         let _ = (collection, ids);
         Ok(false)
+    }
+    fn replace_links(&mut self, links: &LinkSave) -> Result<(), String> {
+        let _ = links;
+        Err("links are not supported by this storage backend".into())
+    }
+    fn forward_link_ids(
+        &self,
+        source_collection: &str,
+        source_id: u64,
+        link_name: &str,
+        target_collection: &str,
+    ) -> Result<Vec<u64>, String> {
+        let _ = (source_collection, source_id, link_name, target_collection);
+        Err("links are not supported by this storage backend".into())
+    }
+    fn backlink_source_ids(
+        &self,
+        target_collection: &str,
+        target_id: u64,
+        source_collection: &str,
+        link_name: &str,
+    ) -> Result<Vec<u64>, String> {
+        let _ = (target_collection, target_id, source_collection, link_name);
+        Err("links are not supported by this storage backend".into())
     }
     fn query_index_equal(
         &self,
@@ -644,6 +677,56 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.delete_many_native_documents(collection, ids),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(_) => Ok(false),
+        }
+    }
+
+    fn replace_links(&mut self, links: &LinkSave) -> Result<(), String> {
+        match self {
+            Self::Sqlite(storage) => storage.replace_links(links),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.replace_links(links),
+        }
+    }
+
+    fn forward_link_ids(
+        &self,
+        source_collection: &str,
+        source_id: u64,
+        link_name: &str,
+        target_collection: &str,
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => {
+                storage.forward_link_ids(source_collection, source_id, link_name, target_collection)
+            }
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => {
+                storage.forward_link_ids(source_collection, source_id, link_name, target_collection)
+            }
+        }
+    }
+
+    fn backlink_source_ids(
+        &self,
+        target_collection: &str,
+        target_id: u64,
+        source_collection: &str,
+        link_name: &str,
+    ) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Sqlite(storage) => storage.backlink_source_ids(
+                target_collection,
+                target_id,
+                source_collection,
+                link_name,
+            ),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.backlink_source_ids(
+                target_collection,
+                target_id,
+                source_collection,
+                link_name,
+            ),
         }
     }
 

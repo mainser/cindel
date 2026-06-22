@@ -1,5 +1,5 @@
 use crate::storage::{
-    DocumentWrite, IndexEntry, IndexValue, NativeDocumentWrite, SchemaManifest,
+    DocumentWrite, IndexEntry, IndexValue, LinkSave, NativeDocumentWrite, SchemaManifest,
     SqliteNativeDocumentCursor, SqliteNativeQueryCursor, StorageBackend, StorageBackendKind,
     StorageChangeSet, StorageEngine, StorageMetadata,
 };
@@ -210,6 +210,32 @@ impl CindelEngine {
         ids: &[u64],
     ) -> Result<bool, String> {
         self.storage.delete_many_native_documents(collection, ids)
+    }
+
+    pub fn replace_links(&mut self, links: LinkSave) -> Result<(), String> {
+        self.storage.replace_links(&links)
+    }
+
+    pub fn forward_link_ids(
+        &self,
+        source_collection: &str,
+        source_id: u64,
+        link_name: &str,
+        target_collection: &str,
+    ) -> Result<Vec<u64>, String> {
+        self.storage
+            .forward_link_ids(source_collection, source_id, link_name, target_collection)
+    }
+
+    pub fn backlink_source_ids(
+        &self,
+        target_collection: &str,
+        target_id: u64,
+        source_collection: &str,
+        link_name: &str,
+    ) -> Result<Vec<u64>, String> {
+        self.storage
+            .backlink_source_ids(target_collection, target_id, source_collection, link_name)
     }
 
     pub fn query_index_equal(

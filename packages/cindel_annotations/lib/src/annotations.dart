@@ -16,6 +16,15 @@ class Collection {
 /// Marks a Dart class as a Cindel collection.
 const collection = Collection();
 
+/// Marks a generated link as the read-only inverse of a forward link.
+class Backlink {
+  /// Creates a backlink annotation pointing to the forward link [to].
+  const Backlink({required this.to});
+
+  /// Dart field name of the forward link on the linked collection.
+  final String to;
+}
+
 /// Overrides the persisted name for a collection, field, or embedded field.
 class Name {
   /// Creates a persisted-name annotation.

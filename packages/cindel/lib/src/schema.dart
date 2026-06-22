@@ -33,6 +33,10 @@ typedef CindelReadNativeDocument<T> =
 /// Assigns a generated id to a typed object before it is persisted.
 typedef CindelSetId<T> = void Function(T object, int id);
 
+/// Binds generated link fields to the database handle that hydrated [object].
+typedef CindelBindLinks<T> =
+    void Function(Object database, CindelCollectionSchema<T> schema, T object);
+
 /// Writer used by generated typed serializers for native binary documents.
 abstract interface class CindelNativeDocumentWriter {
   /// Writes a null value to [fieldIndex].
@@ -307,6 +311,7 @@ final class CindelCollectionSchema<T> {
     required this.dartName,
     required this.idField,
     required Iterable<CindelFieldSchema> fields,
+    Iterable<CindelLinkSchema> links = const [],
     Iterable<CindelCompositeIndexSchema> compositeIndexes = const [],
     required this.toDocument,
     required this.fromDocument,
@@ -316,7 +321,9 @@ final class CindelCollectionSchema<T> {
     this.writeNativeDocument,
     this.readNativeDocument,
     this.setId,
+    this.bindLinks,
   }) : fields = List.unmodifiable(fields),
+       links = List.unmodifiable(links),
        compositeIndexes = List.unmodifiable(compositeIndexes);
 
   /// The storage collection name.
@@ -330,6 +337,9 @@ final class CindelCollectionSchema<T> {
 
   /// Generated metadata for fields persisted by this schema.
   final List<CindelFieldSchema> fields;
+
+  /// Generated metadata for links declared by this schema.
+  final List<CindelLinkSchema> links;
 
   /// Generated metadata for composite indexes persisted by this schema.
   final List<CindelCompositeIndexSchema> compositeIndexes;
@@ -357,6 +367,9 @@ final class CindelCollectionSchema<T> {
 
   /// Assigns native auto-increment ids to typed objects.
   final CindelSetId<T>? setId;
+
+  /// Binds generated link fields after an object is hydrated or opened.
+  final CindelBindLinks<T>? bindLinks;
 }
 
 /// Generated metadata for a persisted field.
@@ -400,6 +413,37 @@ final class CindelFieldSchema {
 
   /// Storage strategy used for this index.
   final CindelIndexType indexType;
+}
+
+/// Generated metadata for a link or backlink.
+final class CindelLinkSchema {
+  /// Creates generated metadata for a generated link field.
+  const CindelLinkSchema({
+    required this.name,
+    required this.dartName,
+    required this.targetCollection,
+    required this.isToMany,
+    required this.isBacklink,
+    this.backlinkTo,
+  });
+
+  /// The persisted relation name.
+  final String name;
+
+  /// The Dart field name.
+  final String dartName;
+
+  /// Collection loaded by this link.
+  final String targetCollection;
+
+  /// Whether this is a to-many link.
+  final bool isToMany;
+
+  /// Whether this metadata describes a backlink.
+  final bool isBacklink;
+
+  /// Dart field name of the forward link used by backlinks.
+  final String? backlinkTo;
 }
 
 /// Generated metadata for a collection-level composite index.

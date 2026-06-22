@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- Added `CindelLink<T>` and `CindelLinks<T>` relation containers
+  with explicit `load`, `save`, and `reset` operations.
+- Added persisted forward links and read-only backlinks across SQLite native,
+  MDBX, and SQLite Web/OPFS, including relation validation, source-collection
+  watcher notifications, and native ABI/Web worker bindings.
+- Added generated link schema metadata and runtime binding hooks so hydrated
+  objects can load and save relations through the typed API.
+
 ## 0.7.0
 
 - Added public open-time data migration tooling with database-level migration
@@ -83,7 +93,7 @@
   identifiers can differ from the stored schema names.
 - Added unique replace indexes with `@Index(unique: true, replace: true)` and
   `CompositeIndex(..., unique: true, replace: true)`.
-- Generated Isar-style `putBy...` and `putAllBy...` helpers for unique replace
+- Generated `putBy...` and `putAllBy...` helpers for unique replace
   indexes so typed objects can upsert by natural keys without a manual query.
 - Updated SQLite, MDBX, schema metadata, and wire schema encoding to preserve
   replace-index metadata and delete conflicting documents during replace
@@ -104,7 +114,7 @@
   `CindelQuery.allOf` dynamic query modifiers for conditional and repeated
   filter composition.
 - Added list-length and list-empty filter predicates, plus generated
-  Isar-style list helpers such as `tagsIsEmpty`, `tagsLengthGreaterThan`, and
+  list helpers such as `tagsIsEmpty`, `tagsLengthGreaterThan`, and
   `tagsLengthBetween`.
 - Added generated nested filter support for fields inside embedded object list
   elements, such as `recipientsElement((recipient) => ...)`.

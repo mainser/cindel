@@ -73,9 +73,11 @@ void main() {
     test('exposes embedded, ignore, enum, and id helpers.', () {
       const byName = Enumerated(CindelEnumType.name);
       const byValue = Enumerated(CindelEnumType.value, valueField: 'code');
+      final backlink = Backlink(to: 'songs');
 
       expect(embedded, isA<Embedded>());
       expect(ignore, isA<Ignore>());
+      expect(backlink.to, 'songs');
       expect(byName.type, CindelEnumType.name);
       expect(byName.valueField, isNull);
       expect(byValue.type, CindelEnumType.value);

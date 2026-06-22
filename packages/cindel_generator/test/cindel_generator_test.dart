@@ -52,6 +52,47 @@ void main() {
       },
     );
 
+    // Scenario: Models declare forward links and backlinks.
+    // Covers:
+    // - Generated link metadata for to-one and to-many relations.
+    // - Generated backlink metadata using the forward link Dart field name.
+    // - Generated runtime link binding hooks.
+    // Expected: Link fields are excluded from persisted fields and bound by
+    //   generated schema callbacks after hydration.
+    test('generates link and backlink metadata and binders.', () async {
+      final generated = await _generate(_linkModelSource);
+
+      _expectAll(generated, [
+        'final AuthorSchema = CindelCollectionSchema<Author>(',
+        'links: <CindelLinkSchema>[',
+        'name: "books"',
+        'dartName: "books"',
+        'targetCollection: "books"',
+        'isToMany: true',
+        'isBacklink: true',
+        'backlinkTo: "contributors"',
+        'bindLinks: _\$AuthorBindCindelLinks',
+        'void _\$AuthorBindCindelLinks(',
+        'object.books.bind(',
+        'final BookSchema = CindelCollectionSchema<Book>(',
+        'name: "contributors"',
+        'dartName: "contributors"',
+        'targetCollection: "authors"',
+        'isToMany: true',
+        'isBacklink: false',
+        'name: "primaryAuthor"',
+        'dartName: "primaryAuthor"',
+        'isToMany: false',
+        'bindLinks: _\$BookBindCindelLinks',
+        'object.contributors.bind(',
+        'object.primaryAuthor.bind(',
+        'targetCollection: "editors"',
+        'object.editors.bind(',
+      ]);
+      expect(generated, isNot(contains('dartType: "CindelLinks')));
+      expect(generated, isNot(contains('dartType: "CindelLink')));
+    });
+
     // Scenario: Generated query helpers are emitted for every supported indexed
     // and filtered field shape in the rich model.
     // Covers:
@@ -526,6 +567,40 @@ void main() {
       );
     });
 
+    // Scenario: Link fields declare targets the runtime cannot bind safely.
+    // Covers:
+    // - Link fields must be final relation containers.
+    // - Link targets must be collection classes.
+    // - Embedded and unannotated classes cannot be link targets.
+    // - Persisted link names cannot collide with persisted field names.
+    // Expected: The build fails before emitting unusable relation metadata.
+    test('rejects invalid link declarations.', () async {
+      await _expectBuildError(
+        _nonFinalLinkSource,
+        'Link field `authors` must be final.',
+      );
+      await _expectBuildError(
+        _voidLinkTargetSource,
+        'Link field `authors` must target a collection type.',
+      );
+      await _expectBuildError(
+        _enumLinkTargetSource,
+        'Link field `status` must target a class.',
+      );
+      await _expectBuildError(
+        _embeddedLinkTargetSource,
+        'Link field `embedded` cannot target an embedded object.',
+      );
+      await _expectBuildError(
+        _plainClassLinkTargetSource,
+        'Link field `plain` must target a @collection class.',
+      );
+      await _expectBuildError(
+        _linkNameConflictSource,
+        'Persisted link name `author` conflicts with another field.',
+      );
+    });
+
     // Scenario: Enum annotations refer to unsupported targets or value fields.
     // Covers:
     // - `@Enumerated` on non-enum fields.
@@ -680,6 +755,43 @@ enum UserPlan {
   const UserPlan(this.code);
 
   final String code;
+}
+''';
+
+const _linkModelSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@Collection(name: 'authors')
+class Author {
+  Id dbId = autoIncrement;
+
+  late String name;
+
+  @Backlink(to: 'contributors')
+  final books = CindelLinks<Book>();
+}
+
+@Collection(name: 'books')
+class Book {
+  Id dbId = autoIncrement;
+
+  late String title;
+
+  final contributors = CindelLinks<Author>();
+
+  final primaryAuthor = CindelLink<Author>();
+
+  final editors = CindelLinks<Editor>();
+}
+
+@Name('editors')
+@collection
+class Editor {
+  Id dbId = autoIncrement;
+
+  late String name;
 }
 ''';
 
@@ -1179,6 +1291,108 @@ class BadEmbedded {
   BadEmbedded(this.name);
 
   String name;
+}
+''';
+
+const _nonFinalLinkSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  CindelLinks<Author> authors = CindelLinks<Author>();
+}
+
+@collection
+class Author {
+  Id dbId = autoIncrement;
+}
+''';
+
+const _voidLinkTargetSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  final authors = CindelLinks<void>();
+}
+''';
+
+const _enumLinkTargetSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  final status = CindelLink<BookStatus>();
+}
+
+enum BookStatus { draft }
+''';
+
+const _embeddedLinkTargetSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  final embedded = CindelLink<EmbeddedAuthor>();
+}
+
+@embedded
+class EmbeddedAuthor {
+  String name = '';
+}
+''';
+
+const _plainClassLinkTargetSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  final plain = CindelLink<PlainAuthor>();
+}
+
+class PlainAuthor {
+  Id dbId = autoIncrement;
+}
+''';
+
+const _linkNameConflictSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class Book {
+  Id dbId = autoIncrement;
+
+  late String author;
+
+  @Name('author')
+  final contributor = CindelLink<Author>();
+}
+
+@collection
+class Author {
+  Id dbId = autoIncrement;
 }
 ''';
 

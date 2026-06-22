@@ -47,6 +47,7 @@ internally to that same app code.
 - Experimental SQLite Web/OPFS backend for Flutter Web.
 - Auto-increment ids.
 - Typed CRUD and bulk operations.
+- Typed links and backlinks.
 - Generated `where()` and `filter()` query helpers.
 - Sorting, pagination, distinct, projections, and aggregates.
 - Read and write transactions.
@@ -561,6 +562,54 @@ final users = await db.readTxn(() {
 ```
 
 If a write transaction throws, Cindel rolls back the pending writes.
+
+## Links And Backlinks
+
+Use `CindelLink<T>` for to-one relations, `CindelLinks<T>` for to-many
+relations, and `@Backlink(to: ...)` for read-only inverse relations:
+
+```dart
+@Collection(name: 'artists')
+class Artist {
+  Id dbId = autoIncrement;
+  late String name;
+
+  @Backlink(to: 'featuredArtists')
+  final songs = CindelLinks<Song>();
+}
+
+@Collection(name: 'songs')
+class Song {
+  Id dbId = autoIncrement;
+  late String title;
+
+  final featuredArtists = CindelLinks<Artist>();
+  final primaryArtist = CindelLink<Artist>();
+}
+```
+
+Persist linked objects first, then save the relation explicitly:
+
+```dart
+await db.writeTxn(() async {
+  await db.artists.put(artist);
+  await db.songs.put(song);
+
+  song.featuredArtists.add(artist);
+  song.primaryArtist.value = artist;
+  await song.featuredArtists.save();
+  await song.primaryArtist.save();
+});
+
+final storedSong = await db.songs.get(song.dbId);
+await storedSong!.featuredArtists.load();
+await storedSong.primaryArtist.load();
+```
+
+Forward link saves replace the persisted ids for that link. Backlinks load from
+the forward relation and are read-only. In `@Backlink(to: ...)`, pass the Dart
+field name of the forward link on the linked collection; in the example above,
+`Artist.songs` points to `Song.featuredArtists`.
 
 ## Watchers
 

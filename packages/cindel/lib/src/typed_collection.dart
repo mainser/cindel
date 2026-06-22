@@ -57,7 +57,8 @@ final class CindelTypedCollection<T> {
   /// back through the generated id setter before persistence.
   Future<void> put(T object) async {
     if (_usesSqliteNativeDocuments && schema.getId != null) {
-      return _putAllBinaryObjects([object]);
+      await _putAllBinaryObjects([object]);
+      return;
     }
     if (schema.getId == null) {
       _throwMissingGeneratedId();
@@ -69,11 +70,13 @@ final class CindelTypedCollection<T> {
       setId(object, id);
     }
     if (_usesBinaryDocuments) {
-      return database.putBinaryDocument(
+      await database.putBinaryDocument(
         schema.name,
         id,
         schema.toBinaryDocument!(object),
       );
+      _bindLinks(object);
+      return;
     }
     _throwMissingTypedStorage();
   }
@@ -162,15 +165,22 @@ final class CindelTypedCollection<T> {
     }
 
     if (useNativeWriter) {
-      return database.putAllNativeBinaryDocuments(
+      await database.putAllNativeBinaryDocuments(
         schema.name,
         ids,
         objects,
         nativeFieldTypes,
         nativeWriter,
       );
+      for (final object in objects) {
+        _bindLinks(object);
+      }
+      return;
     }
-    return database.putAllBinaryDocuments(schema.name, binaryValues!);
+    await database.putAllBinaryDocuments(schema.name, binaryValues!);
+    for (final object in objects) {
+      _bindLinks(object);
+    }
   }
 
   /// Stores many objects atomically.
@@ -257,12 +267,16 @@ final class CindelTypedCollection<T> {
       final nativeReader = schema.readNativeDocument;
       final nativeFieldTypes = _nativeFieldTypes();
       if (nativeReader != null && nativeFieldTypes != null) {
-        return database.getAllNativeBinaryDocuments(
+        final objects = await database.getAllNativeBinaryDocuments(
           schema.name,
           idList,
           nativeFieldTypes,
           nativeReader,
         );
+        return [
+          for (final object in objects)
+            if (object == null) null else _bindLinks(object),
+        ];
       }
       final documents = await database.getAllBinaryDocuments(
         schema.name,
@@ -505,6 +519,11 @@ final class CindelTypedCollection<T> {
   T _objectFromBinaryDocument(Uint8List bytes, int id) {
     final object = schema.fromBinaryDocument!(bytes);
     schema.setId?.call(object, id);
+    return _bindLinks(object);
+  }
+
+  T _bindLinks(T object) {
+    schema.bindLinks?.call(database, schema, object);
     return object;
   }
 

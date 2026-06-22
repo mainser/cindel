@@ -553,6 +553,171 @@ class CindelDatabase {
     );
   }
 
+  /// Returns the generated id for [object] in [collection].
+  int cindelObjectId(String collection, Object object) {
+    final schema = _schemas[collection];
+    final dynamic dynamicSchema = schema;
+    if (schema == null || dynamicSchema.getId == null) {
+      throw CindelSchemaError(
+        'Collection `$collection` has no generated id accessor.',
+      );
+    }
+    final id = dynamicSchema.getId(object) as int;
+    _checkId(id);
+    if (id == autoIncrement) {
+      throw StateError('Linked objects must be persisted before save().');
+    }
+    return id;
+  }
+
+  /// Replaces persisted relation ids for one forward link.
+  Future<void> saveLinkIds({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required Iterable<int> targetIds,
+  }) async {
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkCollection(sourceCollection);
+    _checkCollection(targetCollection);
+    _checkId(sourceId);
+    final ids = targetIds.toSet().toList(growable: false)..sort();
+    for (final id in ids) {
+      _checkId(id);
+    }
+    _bindings.replaceLinks(
+      handle,
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: _encodeIds(ids),
+    );
+    _markNativeCollectionChanged(
+      sourceCollection,
+      () => CindelChangeSet.upsert(sourceCollection, sourceId, null),
+    );
+  }
+
+  /// Loads objects reached by a forward link.
+  Future<List<T>> loadLinkedObjects<T>({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+  }) async {
+    final handle = _checkOpen();
+    _checkCollection(sourceCollection);
+    _checkCollection(targetCollection);
+    _checkId(sourceId);
+    final ids = _bindings.forwardLinkIds(
+      handle,
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+    );
+    return _loadTypedObjectsByIds<T>(targetCollection, ids);
+  }
+
+  /// Loads objects reached by a backlink.
+  Future<List<T>> loadBacklinkObjects<T>({
+    required String ownerCollection,
+    required int ownerId,
+    required String sourceCollection,
+    required String sourceLinkName,
+  }) async {
+    final handle = _checkOpen();
+    _checkCollection(ownerCollection);
+    _checkCollection(sourceCollection);
+    _checkId(ownerId);
+    final ids = _bindings.backlinkSourceIds(
+      handle,
+      targetCollection: ownerCollection,
+      targetId: ownerId,
+      sourceCollection: sourceCollection,
+      linkName: sourceLinkName,
+    );
+    return _loadTypedObjectsByIds<T>(sourceCollection, ids);
+  }
+
+  Future<List<T>> _loadTypedObjectsByIds<T>(
+    String collection,
+    List<int> ids,
+  ) async {
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw CindelSchemaError(
+        'Collection `$collection` has no registered Cindel schema.',
+      );
+    }
+    final objects = usesSqliteNativeDocuments
+        ? await _loadNativeObjectsByIds<T>(schema, ids)
+        : await _loadBinaryObjectsByIds<T>(schema, ids);
+    return [
+      for (final object in objects)
+        if (object != null) object,
+    ];
+  }
+
+  Future<List<T?>> _loadBinaryObjectsByIds<T>(
+    CindelCollectionSchema<dynamic> schema,
+    List<int> ids,
+  ) async {
+    final documents = await getAllBinaryDocuments(schema.name, ids);
+    return [
+      for (var i = 0; i < documents.length; i += 1)
+        if (documents[i] == null)
+          null
+        else
+          _bindLoadedObject<T>(
+            schema,
+            schema.fromBinaryDocument!(documents[i]!),
+            ids[i],
+          ),
+    ];
+  }
+
+  Future<List<T?>> _loadNativeObjectsByIds<T>(
+    CindelCollectionSchema<dynamic> schema,
+    List<int> ids,
+  ) {
+    final nativeReader = schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes(schema);
+    if (nativeReader == null || fieldTypes == null) {
+      return _loadBinaryObjectsByIds<T>(schema, ids);
+    }
+    return getAllNativeBinaryDocuments<dynamic>(
+      schema.name,
+      ids,
+      fieldTypes,
+      nativeReader,
+    ).then((objects) {
+      return [
+        for (final object in objects)
+          if (object == null)
+            null
+          else
+            _bindLoadedObject<T>(schema, object, null),
+      ];
+    });
+  }
+
+  T _bindLoadedObject<T>(
+    CindelCollectionSchema<dynamic> schema,
+    Object object,
+    int? id,
+  ) {
+    final dynamicSchema = schema as dynamic;
+    if (id != null) {
+      dynamicSchema.setId?.call(object, id);
+    }
+    dynamicSchema.bindLinks?.call(this, schema, object);
+    return object as T;
+  }
+
   // Deletes.
 
   /// Deletes the document stored in [collection] under [id], if it exists.

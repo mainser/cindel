@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+
+- Generated `CindelLink<T>`, `CindelLinks<T>`, and `@Backlink(to: ...)`
+  metadata while excluding relation containers from persisted document fields.
+- Generated link binding callbacks so typed objects hydrate with database-bound
+  relation containers.
+
 ## 0.6.4
 
 - Updated package documentation for the current generated typed Cindel API and
@@ -19,7 +26,7 @@
 
 - Generated query filter wrappers now expose `optional`, `anyOf`, and `allOf`
   dynamic modifiers for typed filter helper composition.
-- Generated Isar-style list filter helpers for element equality, empty/non-empty
+- Generated list filter helpers for element equality, empty/non-empty
   lists, exact length, inclusive/exclusive length bounds, and length ranges.
 - Generated nested filter helpers for fields inside embedded object list
   elements, such as `contactsElement((contact) => ...)`.

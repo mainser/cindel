@@ -3,7 +3,6 @@
 
 import 'dart:ffi';
 import 'dart:mirrors';
-import 'dart:typed_data';
 
 import 'package:cindel/src/native/bindings.dart';
 import 'package:ffi/ffi.dart';

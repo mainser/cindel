@@ -408,6 +408,51 @@ final class _NativeAssetCindelNativeFunctions
   get deleteManyNativeDocuments => _cindelDeleteManyNativeDocuments;
 
   @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get replaceLinks => _cindelReplaceLinks;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get forwardLinkIds => _cindelForwardLinkIds;
+
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get backlinkSourceIds => _cindelBacklinkSourceIds;
+
+  @override
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision => _cindelCollectionRevision;
 
@@ -1537,6 +1582,87 @@ external int _cindelDeleteManyNativeDocuments(
   int collectionLen,
   Pointer<Uint8> ids,
   int idsLen,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Uint64,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+  )
+>(symbol: 'cindel_replace_links', assetId: _assetId)
+external int _cindelReplaceLinks(
+  Pointer<Void> handle,
+  Pointer<Uint8> sourceCollection,
+  int sourceCollectionLen,
+  int sourceId,
+  Pointer<Uint8> linkName,
+  int linkNameLen,
+  Pointer<Uint8> targetCollection,
+  int targetCollectionLen,
+  Pointer<Uint8> targetIds,
+  int targetIdsLen,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Uint64,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_forward_link_ids', assetId: _assetId)
+external int _cindelForwardLinkIds(
+  Pointer<Void> handle,
+  Pointer<Uint8> sourceCollection,
+  int sourceCollectionLen,
+  int sourceId,
+  Pointer<Uint8> linkName,
+  int linkNameLen,
+  Pointer<Uint8> targetCollection,
+  int targetCollectionLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Uint64,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_backlink_source_ids', assetId: _assetId)
+external int _cindelBacklinkSourceIds(
+  Pointer<Void> handle,
+  Pointer<Uint8> targetCollection,
+  int targetCollectionLen,
+  int targetId,
+  Pointer<Uint8> sourceCollection,
+  int sourceCollectionLen,
+  Pointer<Uint8> linkName,
+  int linkNameLen,
+  Pointer<Pointer<Uint8>> outPointer,
+  Pointer<Size> outLength,
 );
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Pointer<Uint64>)>(

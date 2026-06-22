@@ -22,8 +22,8 @@ use crate::wire::{
 
 use super::{
     decode_schema_record, encode_schema_record, CollectionSchemaManifest, DocumentWrite,
-    FieldSchemaManifest, IndexEntry, IndexValue, NativeDocumentValue, NativeDocumentWrite,
-    SchemaManifest, StorageChangeSet, StorageEngine,
+    FieldSchemaManifest, IndexEntry, IndexValue, LinkSave, NativeDocumentValue,
+    NativeDocumentWrite, SchemaManifest, StorageChangeSet, StorageEngine,
 };
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
@@ -602,6 +602,7 @@ impl SqliteStorage {
                 SchemaMetadataVersion::BinaryV1,
             )?;
         }
+        ensure_relation_tables(&self.connection)?;
 
         if let Some(manifest) = manifest {
             for collection in &manifest.collections {
@@ -1192,6 +1193,98 @@ impl StorageEngine for SqliteStorage {
             self.record_change(collection, revision, deleted_ids);
         }
         Ok(true)
+    }
+
+    fn replace_links(&mut self, links: &LinkSave) -> Result<(), String> {
+        self.ensure_can_write()?;
+        let target_ids = dedupe_sorted_ids(&links.target_ids);
+        if self.active_transaction.is_some() {
+            replace_links_sqlite(&self.connection, links, &target_ids)?;
+            let revision = if self.collection_schema(&links.source_collection).is_some() {
+                self.bump_collection_revision_in_memory(&links.source_collection)
+            } else {
+                bump_collection_revision(&self.connection, &links.source_collection)?
+            };
+            self.record_change(&links.source_collection, revision, [links.source_id]);
+            return Ok(());
+        }
+
+        self.last_change_sets.clear();
+        let has_source_schema = self.collection_schema(&links.source_collection).is_some();
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        replace_links_sqlite(&transaction, links, &target_ids)?;
+        let revision = if has_source_schema {
+            None
+        } else {
+            Some(bump_collection_revision(
+                &transaction,
+                &links.source_collection,
+            )?)
+        };
+        transaction.commit().map_err(|error| error.to_string())?;
+        let revision = revision
+            .unwrap_or_else(|| self.bump_collection_revision_in_memory(&links.source_collection));
+        self.record_change(&links.source_collection, revision, [links.source_id]);
+        Ok(())
+    }
+
+    fn forward_link_ids(
+        &self,
+        source_collection: &str,
+        source_id: u64,
+        link_name: &str,
+        target_collection: &str,
+    ) -> Result<Vec<u64>, String> {
+        ensure_relation_tables(&self.connection)?;
+        query_ids(
+            &self.connection,
+            r#"
+            SELECT target_id
+            FROM cindel_relations
+            WHERE source_collection = ?1
+              AND source_id = ?2
+              AND link_name = ?3
+              AND target_collection = ?4
+            ORDER BY target_id
+            "#,
+            params![
+                source_collection,
+                sqlite_id(source_id)?,
+                link_name,
+                target_collection
+            ],
+        )
+    }
+
+    fn backlink_source_ids(
+        &self,
+        target_collection: &str,
+        target_id: u64,
+        source_collection: &str,
+        link_name: &str,
+    ) -> Result<Vec<u64>, String> {
+        ensure_relation_tables(&self.connection)?;
+        query_ids(
+            &self.connection,
+            r#"
+            SELECT source_id
+            FROM cindel_relations
+            WHERE target_collection = ?1
+              AND target_id = ?2
+              AND source_collection = ?3
+              AND link_name = ?4
+            ORDER BY source_id
+            "#,
+            params![
+                target_collection,
+                sqlite_id(target_id)?,
+                source_collection,
+                link_name
+            ],
+        )
     }
 
     fn query_index_equal(
@@ -3608,6 +3701,148 @@ fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|error| error.to_string())
+}
+
+fn ensure_relation_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS cindel_relations (
+                source_collection TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                link_name TEXT NOT NULL,
+                target_collection TEXT NOT NULL,
+                target_id INTEGER NOT NULL,
+                PRIMARY KEY (
+                    source_collection,
+                    source_id,
+                    link_name,
+                    target_collection,
+                    target_id
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS cindel_relations_backlink_idx
+            ON cindel_relations (
+                target_collection,
+                target_id,
+                source_collection,
+                link_name,
+                source_id
+            );
+            "#,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn replace_links_sqlite(
+    connection: &Connection,
+    links: &LinkSave,
+    target_ids: &[u64],
+) -> Result<(), String> {
+    ensure_relation_tables(connection)?;
+    ensure_sqlite_document_exists(connection, &links.source_collection, links.source_id).map_err(
+        |_| {
+            format!(
+                "cannot save link `{}`: source `{}.{}` does not exist",
+                links.link_name, links.source_collection, links.source_id
+            )
+        },
+    )?;
+    for target_id in target_ids {
+        ensure_sqlite_document_exists(connection, &links.target_collection, *target_id).map_err(
+            |_| {
+                format!(
+                    "cannot save link `{}`: target `{}.{}` does not exist",
+                    links.link_name, links.target_collection, target_id
+                )
+            },
+        )?;
+    }
+
+    connection
+        .execute(
+            r#"
+            DELETE FROM cindel_relations
+            WHERE source_collection = ?1
+              AND source_id = ?2
+              AND link_name = ?3
+              AND target_collection = ?4
+            "#,
+            params![
+                links.source_collection,
+                sqlite_id(links.source_id)?,
+                links.link_name,
+                links.target_collection
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            INSERT INTO cindel_relations (
+                source_collection,
+                source_id,
+                link_name,
+                target_collection,
+                target_id
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+        )
+        .map_err(|error| error.to_string())?;
+    for target_id in target_ids {
+        statement
+            .execute(params![
+                links.source_collection,
+                sqlite_id(links.source_id)?,
+                links.link_name,
+                links.target_collection,
+                sqlite_id(*target_id)?
+            ])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn ensure_sqlite_document_exists(
+    connection: &Connection,
+    collection: &str,
+    id: u64,
+) -> Result<(), String> {
+    let id = sqlite_id(id)?;
+    let generic_exists = table_exists(connection, "documents")?
+        && connection
+            .query_row(
+                "SELECT 1 FROM documents WHERE collection = ?1 AND id = ?2",
+                params![collection, id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some();
+    if generic_exists {
+        return Ok(());
+    }
+    if table_exists(connection, collection)? {
+        let sql = format!("SELECT 1 FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
+        if connection
+            .query_row(&sql, params![id], |_| Ok(()))
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    Err("missing document".into())
+}
+
+fn dedupe_sorted_ids(ids: &[u64]) -> Vec<u64> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn ensure_generic_document_tables(connection: &Connection) -> Result<(), String> {

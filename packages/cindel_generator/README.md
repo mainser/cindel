@@ -256,7 +256,7 @@ final names = await db.users
     .findAll();
 ```
 
-List fields generate Isar-style element and length helpers:
+List fields generate element and length helpers:
 
 ```dart
 final tagged = await db.users

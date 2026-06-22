@@ -297,6 +297,48 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint8>, int)
   get deleteManyNativeDocuments;
 
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+  )
+  get replaceLinks;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get forwardLinkIds;
+
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get backlinkSourceIds;
+
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get collectionRevision;
 

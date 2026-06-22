@@ -4,8 +4,9 @@ use crate::document_format::{
 };
 use crate::engine::CindelEngine;
 use crate::storage::{
-    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, NativeDocumentValue,
-    NativeDocumentWrite, SqliteNativeDocumentCursor, SqliteNativeQueryCursor, StorageBackendKind,
+    schema_manifest_from_wire, DocumentWrite, IndexEntry, IndexValue, LinkSave,
+    NativeDocumentValue, NativeDocumentWrite, SqliteNativeDocumentCursor, SqliteNativeQueryCursor,
+    StorageBackendKind,
 };
 #[cfg(feature = "mdbx")]
 use crate::storage::{MdbxCursorDocumentReader, MdbxQueryDocumentReader};
@@ -20,7 +21,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    32
+    33
 }
 
 #[no_mangle]
@@ -1503,6 +1504,121 @@ pub unsafe extern "C" fn cindel_delete_many_native_documents(
     match engine.delete_many_native_documents(collection, &ids) {
         Ok(true) => 0,
         Ok(false) | Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_replace_links(
+    handle: *mut CindelEngine,
+    source_collection_ptr: *const u8,
+    source_collection_len: usize,
+    source_id: u64,
+    link_name_ptr: *const u8,
+    link_name_len: usize,
+    target_collection_ptr: *const u8,
+    target_collection_len: usize,
+    target_ids_ptr: *const u8,
+    target_ids_len: usize,
+) -> i32 {
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
+        return -1;
+    };
+    let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
+        return -1;
+    };
+    let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
+        return -1;
+    };
+    let Some(target_ids) = read_wire_ids(target_ids_ptr, target_ids_len) else {
+        return -1;
+    };
+
+    match engine.replace_links(LinkSave {
+        source_collection: source_collection.to_string(),
+        source_id,
+        link_name: link_name.to_string(),
+        target_collection: target_collection.to_string(),
+        target_ids,
+    }) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_forward_link_ids(
+    handle: *mut CindelEngine,
+    source_collection_ptr: *const u8,
+    source_collection_len: usize,
+    source_id: u64,
+    link_name_ptr: *const u8,
+    link_name_len: usize,
+    target_collection_ptr: *const u8,
+    target_collection_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
+        return -1;
+    };
+    let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
+        return -1;
+    };
+    let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
+        return -1;
+    };
+
+    match engine.forward_link_ids(source_collection, source_id, link_name, target_collection) {
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_backlink_source_ids(
+    handle: *mut CindelEngine,
+    target_collection_ptr: *const u8,
+    target_collection_len: usize,
+    target_id: u64,
+    source_collection_ptr: *const u8,
+    source_collection_len: usize,
+    link_name_ptr: *const u8,
+    link_name_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return -1;
+    }
+    *out_ptr = std::ptr::null_mut();
+    *out_len = 0;
+    let Some(engine) = handle.as_ref() else {
+        return -1;
+    };
+    let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
+        return -1;
+    };
+    let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
+        return -1;
+    };
+    let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
+        return -1;
+    };
+
+    match engine.backlink_source_ids(target_collection, target_id, source_collection, link_name) {
+        Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
+        Err(_) => -1,
     }
 }
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
-    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
+    CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue, LinkSave,
     SchemaManifest, StorageEngine,
 };
 use super::{
@@ -37,6 +37,7 @@ pub(super) fn run_storage_engine_contract<S>(
     exposes_storage_metadata(backend, &open);
     rebuilds_indexes_with_supplied_entries(backend, &open);
     verifies_storage_after_index_rebuild(backend, &open);
+    stores_loads_and_validates_links(backend, &open);
 }
 
 pub(super) fn run_storage_transaction_contract<S>(
@@ -776,6 +777,72 @@ where
         )
         .unwrap_err()
         .contains("expected [1]"));
+}
+
+fn stores_loads_and_validates_links<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    // Scenario: A storage backend stores relation ids outside document payloads.
+    // Covers:
+    // - Forward link replacement with sorted id de-duplication.
+    // - Backlink reads from the reverse relation index.
+    // - Atomic validation when a target id is missing.
+    // - Relation persistence after reopening a database directory.
+    // Expected: All storage engines expose the same relation contract and a
+    // failed replacement leaves the previous relation set intact.
+    let directory = TemporaryDirectory::new(backend, "links");
+    {
+        let mut storage = open(directory.path()).unwrap();
+        storage.put("playlists", 1, &generic_document()).unwrap();
+        storage.put("songs", 10, &generic_document()).unwrap();
+        storage.put("songs", 20, &generic_document()).unwrap();
+        storage
+            .replace_links(&LinkSave {
+                source_collection: "playlists".into(),
+                source_id: 1,
+                link_name: "songs".into(),
+                target_collection: "songs".into(),
+                target_ids: vec![20, 10, 10],
+            })
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .forward_link_ids("playlists", 1, "songs", "songs")
+                .unwrap(),
+            vec![10, 20]
+        );
+        assert_eq!(
+            storage
+                .backlink_source_ids("songs", 10, "playlists", "songs")
+                .unwrap(),
+            vec![1]
+        );
+
+        let missing = storage.replace_links(&LinkSave {
+            source_collection: "playlists".into(),
+            source_id: 1,
+            link_name: "songs".into(),
+            target_collection: "songs".into(),
+            target_ids: vec![404],
+        });
+        assert!(missing.unwrap_err().contains("target `songs.404`"));
+        assert_eq!(
+            storage
+                .forward_link_ids("playlists", 1, "songs", "songs")
+                .unwrap(),
+            vec![10, 20]
+        );
+    }
+
+    let storage = open(directory.path()).unwrap();
+    assert_eq!(
+        storage
+            .forward_link_ids("playlists", 1, "songs", "songs")
+            .unwrap(),
+        vec![10, 20]
+    );
 }
 
 fn commits_explicit_write_transactions<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)

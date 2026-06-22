@@ -442,6 +442,126 @@ class CindelDatabase {
     });
   }
 
+  /// Returns the generated id for [object] in [collection].
+  int cindelObjectId(String collection, Object object) {
+    final schema = _schemas[collection];
+    final dynamic dynamicSchema = schema;
+    if (schema == null || dynamicSchema.getId == null) {
+      throw CindelSchemaError(
+        'Collection `$collection` has no generated id accessor.',
+      );
+    }
+    final id = dynamicSchema.getId(object) as int;
+    _checkId(id);
+    if (id == autoIncrement) {
+      throw StateError('Linked objects must be persisted before save().');
+    }
+    return id;
+  }
+
+  /// Replaces persisted relation ids for one forward link.
+  Future<void> saveLinkIds({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required Iterable<int> targetIds,
+  }) async {
+    _checkOpen();
+    _checkCanWrite();
+    _checkCollection(sourceCollection);
+    _checkCollection(targetCollection);
+    _checkId(sourceId);
+    final ids = targetIds.toSet().toList(growable: false)..sort();
+    for (final id in ids) {
+      _checkId(id);
+    }
+    await _sendVoid('replaceLinks', {
+      'sourceCollection': sourceCollection,
+      'sourceId': sourceId,
+      'linkName': linkName,
+      'targetCollection': targetCollection,
+      'targetIds': encodeIdList(ids),
+    });
+    await _markNativeCollectionChanged(
+      sourceCollection,
+      () => CindelChangeSet.upsert(sourceCollection, sourceId, null),
+    );
+  }
+
+  /// Loads objects reached by a forward link.
+  Future<List<T>> loadLinkedObjects<T>({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+  }) async {
+    _checkOpen();
+    _checkCollection(sourceCollection);
+    _checkCollection(targetCollection);
+    _checkId(sourceId);
+    final ids = await _sendIds('forwardLinkIds', {
+      'sourceCollection': sourceCollection,
+      'sourceId': sourceId,
+      'linkName': linkName,
+      'targetCollection': targetCollection,
+    });
+    return _loadTypedObjectsByIds<T>(targetCollection, ids);
+  }
+
+  /// Loads objects reached by a backlink.
+  Future<List<T>> loadBacklinkObjects<T>({
+    required String ownerCollection,
+    required int ownerId,
+    required String sourceCollection,
+    required String sourceLinkName,
+  }) async {
+    _checkOpen();
+    _checkCollection(ownerCollection);
+    _checkCollection(sourceCollection);
+    _checkId(ownerId);
+    final ids = await _sendIds('backlinkSourceIds', {
+      'targetCollection': ownerCollection,
+      'targetId': ownerId,
+      'sourceCollection': sourceCollection,
+      'linkName': sourceLinkName,
+    });
+    return _loadTypedObjectsByIds<T>(sourceCollection, ids);
+  }
+
+  Future<List<T>> _loadTypedObjectsByIds<T>(
+    String collection,
+    List<int> ids,
+  ) async {
+    final schema = _schemas[collection];
+    final nativeReader = schema?.readNativeDocument;
+    final fieldTypes = schema == null ? null : _nativeFieldTypes(schema);
+    if (schema == null || nativeReader == null || fieldTypes == null) {
+      throw CindelSchemaError(
+        'Collection `$collection` has no generated native reader.',
+      );
+    }
+    final objects = await getAllNativeBinaryDocuments<dynamic>(
+      collection,
+      ids,
+      fieldTypes,
+      nativeReader,
+    );
+    return [
+      for (final object in objects)
+        if (object != null) _bindLoadedObject<T>(schema, object),
+    ];
+  }
+
+  T _bindLoadedObject<T>(
+    CindelCollectionSchema<dynamic> schema,
+    Object object,
+  ) {
+    final dynamicSchema = schema as dynamic;
+    dynamicSchema.bindLinks?.call(this, schema, object);
+    return object as T;
+  }
+
   /// Returns ids whose indexed [field] equals [value].
   Future<List<int>> queryEqualIds(
     String collection,
@@ -801,6 +921,14 @@ class CindelDatabase {
           change ?? CindelChangeSet.external(collection),
       areSnapshotsEqual: null,
     );
+  }
+
+  void _checkCanWrite() {
+    if (_activeTransaction == _TransactionMode.read) {
+      throw CindelTransactionError(
+        'Cannot write inside a Cindel read transaction.',
+      );
+    }
   }
 
   Future<T> _runTransaction<T>(

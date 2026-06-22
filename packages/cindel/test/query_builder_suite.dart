@@ -165,7 +165,7 @@ void main() {
     // - Generated [UserQueryWhere.tagsLengthGreaterThan].
     // - Generated [UserQueryWhere.tagsLengthBetween].
     // Expected: Empty, non-empty, exact, inclusive, and exclusive length
-    // filters match Isar-style list query semantics.
+    // filters match list query semantics.
     test('finds typed objects by list length helpers.', () async {
       // Arrange.
       final database = await _openSeededUsers();

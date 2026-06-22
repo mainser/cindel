@@ -35,7 +35,7 @@ use super::mdbx_key::{
 use super::{
     decode_index_entry_metadata, decode_schema_record, encode_index_entry_metadata,
     encode_schema_record, CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry,
-    IndexValue, SchemaManifest, StorageChangeSet, StorageEngine,
+    IndexValue, LinkSave, SchemaManifest, StorageChangeSet, StorageEngine,
 };
 use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, StorageMetadata};
 
@@ -44,6 +44,8 @@ mod ids;
 const IN_MEMORY_DIRECTORY: &str = ":memory:";
 const MDBX_FILE_NAME: &str = "cindel.mdbx";
 const DOCUMENT_INDEXES_TABLE: &str = "__v2_document_indexes";
+const RELATIONS_FORWARD_TABLE: &str = "__relations_forward";
+const RELATIONS_BACKLINK_TABLE: &str = "__relations_backlink";
 const MDBX_MIN_SIZE: isize = 1 << 20;
 const MDBX_DEFAULT_MAX_SIZE: isize = 1 << 30;
 const MDBX_GROWTH_STEP: isize = 5 << 20;
@@ -440,6 +442,9 @@ enum MdbxWriteOperation {
         collection: String,
         ids: Vec<u64>,
     },
+    ReplaceLinks {
+        links: LinkSave,
+    },
     RegisterSchemas {
         manifest: SchemaManifest,
         mode: SchemaRegistrationMode,
@@ -484,7 +489,8 @@ impl MdbxWriteTransaction {
                 | MdbxWriteOperation::PutIndexed { .. }
                 | MdbxWriteOperation::PutManyIndexed { .. }
                 | MdbxWriteOperation::Delete { .. }
-                | MdbxWriteOperation::DeleteMany { .. } => {}
+                | MdbxWriteOperation::DeleteMany { .. }
+                | MdbxWriteOperation::ReplaceLinks { .. } => {}
             }
         }
         None
@@ -527,7 +533,8 @@ impl MdbxWriteTransaction {
                 | MdbxWriteOperation::PutIndexed { .. }
                 | MdbxWriteOperation::PutManyIndexed { .. }
                 | MdbxWriteOperation::Delete { .. }
-                | MdbxWriteOperation::DeleteMany { .. } => {}
+                | MdbxWriteOperation::DeleteMany { .. }
+                | MdbxWriteOperation::ReplaceLinks { .. } => {}
             }
         }
         let mut ids = ids.into_iter().collect::<Vec<_>>();
@@ -582,7 +589,8 @@ impl MdbxWriteTransaction {
                 | MdbxWriteOperation::PutIndexed { .. }
                 | MdbxWriteOperation::PutManyIndexed { .. }
                 | MdbxWriteOperation::Delete { .. }
-                | MdbxWriteOperation::DeleteMany { .. } => {}
+                | MdbxWriteOperation::DeleteMany { .. }
+                | MdbxWriteOperation::ReplaceLinks { .. } => {}
             }
         }
         if changes.is_empty() {
@@ -1876,6 +1884,20 @@ impl MdbxStorage {
                         }
                         registered_manifests.push(manifest);
                     }
+                    MdbxWriteOperation::ReplaceLinks { links } => {
+                        replace_links_mdbx(transaction, &tables, &links)?;
+                        let revision = bump_collection_revision(
+                            transaction,
+                            &tables,
+                            &links.source_collection,
+                        )?;
+                        merge_change_set(
+                            &mut change_sets,
+                            &links.source_collection,
+                            revision,
+                            [links.source_id],
+                        );
+                    }
                 }
             }
             for (collection, next_id) in &counter_updates {
@@ -2362,6 +2384,75 @@ impl StorageEngine for MdbxStorage {
         })?;
         self.last_change_sets = change_sets;
         Ok(())
+    }
+
+    fn replace_links(&mut self, links: &LinkSave) -> Result<(), String> {
+        self.ensure_can_write()?;
+        if let Some(transaction) = self.active_write_mut() {
+            transaction
+                .operations
+                .push(MdbxWriteOperation::ReplaceLinks {
+                    links: LinkSave {
+                        target_ids: dedupe_sorted_ids(&links.target_ids),
+                        ..links.clone()
+                    },
+                });
+            return Ok(());
+        }
+
+        let mut change_sets = Vec::new();
+        self.with_write_transaction(|transaction, tables| {
+            replace_links_mdbx(transaction, &tables, links)?;
+            let revision =
+                bump_collection_revision(transaction, &tables, &links.source_collection)?;
+            merge_change_set(
+                &mut change_sets,
+                &links.source_collection,
+                revision,
+                [links.source_id],
+            );
+            Ok(())
+        })?;
+        self.last_change_sets = change_sets;
+        Ok(())
+    }
+
+    fn forward_link_ids(
+        &self,
+        source_collection: &str,
+        source_id: u64,
+        link_name: &str,
+        target_collection: &str,
+    ) -> Result<Vec<u64>, String> {
+        self.with_read_transaction(|transaction, tables| {
+            forward_link_ids_mdbx(
+                transaction,
+                &tables,
+                source_collection,
+                source_id,
+                link_name,
+                target_collection,
+            )
+        })
+    }
+
+    fn backlink_source_ids(
+        &self,
+        target_collection: &str,
+        target_id: u64,
+        source_collection: &str,
+        link_name: &str,
+    ) -> Result<Vec<u64>, String> {
+        self.with_read_transaction(|transaction, tables| {
+            backlink_source_ids_mdbx(
+                transaction,
+                &tables,
+                target_collection,
+                target_id,
+                source_collection,
+                link_name,
+            )
+        })
     }
 
     fn query_index_equal(
@@ -2869,6 +2960,8 @@ impl StorageEngine for MdbxStorage {
 
 struct MdbxTables<'txn> {
     document_indexes: Table<'txn>,
+    relations_forward: Table<'txn>,
+    relations_backlink: Table<'txn>,
     id_counters: Table<'txn>,
     collection_revisions: Table<'txn>,
     schema_collections: Table<'txn>,
@@ -2878,6 +2971,12 @@ struct MdbxTables<'txn> {
 fn create_tables<'txn>(transaction: &'txn Transaction<'_, RW, NoWriteMap>) -> Result<(), String> {
     transaction
         .create_table(Some(DOCUMENT_INDEXES_TABLE), TableFlags::default())
+        .map_err(|error| error.to_string())?;
+    transaction
+        .create_table(Some(RELATIONS_FORWARD_TABLE), TableFlags::default())
+        .map_err(|error| error.to_string())?;
+    transaction
+        .create_table(Some(RELATIONS_BACKLINK_TABLE), TableFlags::default())
         .map_err(|error| error.to_string())?;
     transaction
         .create_table(Some(ID_COUNTERS_TABLE), TableFlags::default())
@@ -2903,6 +3002,12 @@ where
     Ok(MdbxTables {
         document_indexes: transaction
             .open_table(Some(DOCUMENT_INDEXES_TABLE))
+            .map_err(|error| error.to_string())?,
+        relations_forward: transaction
+            .open_table(Some(RELATIONS_FORWARD_TABLE))
+            .map_err(|error| error.to_string())?,
+        relations_backlink: transaction
+            .open_table(Some(RELATIONS_BACKLINK_TABLE))
             .map_err(|error| error.to_string())?,
         id_counters: transaction
             .open_table(Some(ID_COUNTERS_TABLE))
@@ -5088,6 +5193,217 @@ fn delete_many_documents(
     drop(index_cursors);
     drop(documents_cursor);
     Ok(deleted_ids)
+}
+
+fn replace_links_mdbx(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    links: &LinkSave,
+) -> Result<(), String> {
+    ensure_link_document_exists(transaction, &links.source_collection, links.source_id).map_err(
+        |_| {
+            format!(
+                "cannot save link `{}`: source `{}.{}` does not exist",
+                links.link_name, links.source_collection, links.source_id
+            )
+        },
+    )?;
+    let target_ids = dedupe_sorted_ids(&links.target_ids);
+    for target_id in &target_ids {
+        ensure_link_document_exists(transaction, &links.target_collection, *target_id).map_err(
+            |_| {
+                format!(
+                    "cannot save link `{}`: target `{}.{}` does not exist",
+                    links.link_name, links.target_collection, target_id
+                )
+            },
+        )?;
+    }
+
+    let forward_prefix = relation_forward_prefix(
+        &links.source_collection,
+        links.source_id,
+        &links.link_name,
+        &links.target_collection,
+    );
+    let old_forward_keys =
+        scan_keys_by_prefix(transaction, &tables.relations_forward, &forward_prefix)?;
+    for key in old_forward_keys {
+        let target_id = decode_relation_key_id(&key)?;
+        ignore_not_found(transaction.del(&tables.relations_forward, &key, None))?;
+        let backlink_key = relation_backlink_key(
+            &links.target_collection,
+            target_id,
+            &links.source_collection,
+            &links.link_name,
+            links.source_id,
+        );
+        ignore_not_found(transaction.del(&tables.relations_backlink, backlink_key, None))?;
+    }
+
+    for target_id in target_ids {
+        transaction
+            .put(
+                &tables.relations_forward,
+                relation_forward_key(
+                    &links.source_collection,
+                    links.source_id,
+                    &links.link_name,
+                    &links.target_collection,
+                    target_id,
+                ),
+                [],
+                WriteFlags::UPSERT,
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .put(
+                &tables.relations_backlink,
+                relation_backlink_key(
+                    &links.target_collection,
+                    target_id,
+                    &links.source_collection,
+                    &links.link_name,
+                    links.source_id,
+                ),
+                [],
+                WriteFlags::UPSERT,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn forward_link_ids_mdbx<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    source_collection: &str,
+    source_id: u64,
+    link_name: &str,
+    target_collection: &str,
+) -> Result<Vec<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let prefix =
+        relation_forward_prefix(source_collection, source_id, link_name, target_collection);
+    let keys = scan_keys_by_prefix(transaction, &tables.relations_forward, &prefix)?;
+    keys.into_iter()
+        .map(|key| decode_relation_key_id(&key))
+        .collect()
+}
+
+fn backlink_source_ids_mdbx<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    target_collection: &str,
+    target_id: u64,
+    source_collection: &str,
+    link_name: &str,
+) -> Result<Vec<u64>, String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let prefix =
+        relation_backlink_prefix(target_collection, target_id, source_collection, link_name);
+    let keys = scan_keys_by_prefix(transaction, &tables.relations_backlink, &prefix)?;
+    keys.into_iter()
+        .map(|key| decode_relation_key_id(&key))
+        .collect()
+}
+
+fn ensure_link_document_exists<K>(
+    transaction: &Transaction<'_, K, NoWriteMap>,
+    collection: &str,
+    id: u64,
+) -> Result<(), String>
+where
+    K: libmdbx::TransactionKind,
+{
+    let documents_table = open_documents_table(transaction, collection)?;
+    if ignore_not_found(transaction.get::<Vec<u8>>(&documents_table, &document_table_key(id)))?
+        .is_some()
+    {
+        Ok(())
+    } else {
+        Err("missing document".into())
+    }
+}
+
+fn relation_forward_prefix(
+    source_collection: &str,
+    source_id: u64,
+    link_name: &str,
+    target_collection: &str,
+) -> Vec<u8> {
+    let mut key = Vec::new();
+    push_relation_segment(&mut key, source_collection);
+    key.extend_from_slice(&source_id.to_be_bytes());
+    push_relation_segment(&mut key, link_name);
+    push_relation_segment(&mut key, target_collection);
+    key
+}
+
+fn relation_forward_key(
+    source_collection: &str,
+    source_id: u64,
+    link_name: &str,
+    target_collection: &str,
+    target_id: u64,
+) -> Vec<u8> {
+    let mut key =
+        relation_forward_prefix(source_collection, source_id, link_name, target_collection);
+    key.extend_from_slice(&target_id.to_be_bytes());
+    key
+}
+
+fn relation_backlink_prefix(
+    target_collection: &str,
+    target_id: u64,
+    source_collection: &str,
+    link_name: &str,
+) -> Vec<u8> {
+    let mut key = Vec::new();
+    push_relation_segment(&mut key, target_collection);
+    key.extend_from_slice(&target_id.to_be_bytes());
+    push_relation_segment(&mut key, source_collection);
+    push_relation_segment(&mut key, link_name);
+    key
+}
+
+fn relation_backlink_key(
+    target_collection: &str,
+    target_id: u64,
+    source_collection: &str,
+    link_name: &str,
+    source_id: u64,
+) -> Vec<u8> {
+    let mut key =
+        relation_backlink_prefix(target_collection, target_id, source_collection, link_name);
+    key.extend_from_slice(&source_id.to_be_bytes());
+    key
+}
+
+fn push_relation_segment(key: &mut Vec<u8>, value: &str) {
+    key.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    key.extend_from_slice(value.as_bytes());
+}
+
+fn decode_relation_key_id(key: &[u8]) -> Result<u64, String> {
+    let bytes = key
+        .get(key.len().saturating_sub(8)..)
+        .ok_or_else(|| "relation key is too short".to_string())?;
+    let bytes = bytes
+        .try_into()
+        .map_err(|_| "relation id must be 8 bytes".to_string())?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+fn dedupe_sorted_ids(ids: &[u64]) -> Vec<u64> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 struct DirectBoolDeleteIndex {

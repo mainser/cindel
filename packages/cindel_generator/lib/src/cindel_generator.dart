@@ -12,6 +12,11 @@ const _indexChecker = TypeChecker.typeNamed(
   inPackage: 'cindel_annotations',
 );
 
+const _collectionChecker = TypeChecker.typeNamed(
+  Collection,
+  inPackage: 'cindel_annotations',
+);
+
 const _ignoreChecker = TypeChecker.typeNamed(
   Ignore,
   inPackage: 'cindel_annotations',
@@ -29,6 +34,11 @@ const _embeddedChecker = TypeChecker.typeNamed(
 
 const _nameChecker = TypeChecker.typeNamed(
   Name,
+  inPackage: 'cindel_annotations',
+);
+
+const _backlinkChecker = TypeChecker.typeNamed(
+  Backlink,
   inPackage: 'cindel_annotations',
 );
 
@@ -96,6 +106,26 @@ String _emitCollection(_CollectionInfo collection) {
 
   buffer
     ..writeln('  ],')
+    ..writeln('  links: <CindelLinkSchema>[');
+
+  for (final link in collection.links) {
+    buffer
+      ..writeln('    CindelLinkSchema(')
+      ..writeln('      name: ${_stringLiteral(link.name)},')
+      ..writeln('      dartName: ${_stringLiteral(link.dartName)},')
+      ..writeln(
+        '      targetCollection: ${_stringLiteral(link.targetCollection)},',
+      )
+      ..writeln('      isToMany: ${link.isToMany},')
+      ..writeln('      isBacklink: ${link.isBacklink},')
+      ..writeln(
+        '      backlinkTo: ${link.backlinkTo == null ? 'null' : _stringLiteral(link.backlinkTo!)},',
+      )
+      ..writeln('    ),');
+  }
+
+  buffer
+    ..writeln('  ],')
     ..writeln('  compositeIndexes: <CindelCompositeIndexSchema>[');
 
   for (final index in collection.compositeIndexes) {
@@ -140,9 +170,13 @@ String _emitCollection(_CollectionInfo collection) {
   if (collection.canSetId) {
     buffer.writeln('  setId: _\$${collection.dartName}SetCindelId,');
   }
+  if (collection.links.isNotEmpty) {
+    buffer.writeln('  bindLinks: _\$${collection.dartName}BindCindelLinks,');
+  }
   buffer
     ..writeln(');')
     ..writeln()
+    ..write(_emitBindLinks(collection))
     ..writeln(
       'extension ${collection.dartName}CindelCollectionAccess '
       'on CindelDatabase {',
@@ -409,6 +443,37 @@ String _emitCollection(_CollectionInfo collection) {
   return buffer.toString();
 }
 
+String _emitBindLinks(_CollectionInfo collection) {
+  if (collection.links.isEmpty) {
+    return '';
+  }
+  final buffer = StringBuffer()
+    ..writeln(
+      'void _\$${collection.dartName}BindCindelLinks('
+      'Object database, '
+      'CindelCollectionSchema<${collection.dartName}> schema, '
+      '${collection.dartName} object,'
+      ') {',
+    )
+    ..writeln('  final cindelDatabase = database as CindelDatabase;')
+    ..writeln('  final ownerSchema = schema as dynamic;');
+  for (final link in collection.links) {
+    buffer
+      ..writeln('  object.${link.dartName}.bind(')
+      ..writeln('    cindelDatabase,')
+      ..writeln('    ownerSchema,')
+      ..writeln('    object,')
+      ..writeln(
+        '    schema.links.firstWhere((link) => link.dartName == ${_stringLiteral(link.dartName)}),',
+      )
+      ..writeln('  );');
+  }
+  buffer
+    ..writeln('}')
+    ..writeln();
+  return buffer.toString();
+}
+
 void _emitObjectHydration(
   StringBuffer buffer,
   _CollectionInfo collection,
@@ -627,6 +692,11 @@ void _emitQueryModifierMethods(
 
 String _stringLiteral(String value) => jsonEncode(value);
 
+ConstantReader? _collectionAnnotation(ClassElement element) {
+  final annotation = _collectionChecker.firstAnnotationOf(element);
+  return annotation == null ? null : ConstantReader(annotation);
+}
+
 final class _CollectionInfo {
   _CollectionInfo({
     required this.dartName,
@@ -635,6 +705,7 @@ final class _CollectionInfo {
     required this.schemaName,
     required this.idField,
     required this.fields,
+    required this.links,
     required this.compositeIndexes,
     required this.embeddedTypes,
     required this.constructor,
@@ -652,8 +723,16 @@ final class _CollectionInfo {
         ? _factoryBackedFields(element)
         : fields;
 
+    final linkInfos = persistedFields
+        .where((field) => field.isCandidate)
+        .map(_LinkInfo.from)
+        .whereType<_LinkInfo>()
+        .toList(growable: false);
+    final linkDartNames = linkInfos.map((link) => link.dartName).toSet();
+
     final fieldInfos = persistedFields
         .where((field) => field.isCandidate)
+        .where((field) => !linkDartNames.contains(field.dartName))
         .map(_FieldInfo.from)
         .whereType<_FieldInfo>()
         .toList(growable: false);
@@ -677,6 +756,14 @@ final class _CollectionInfo {
       if (!persistedFieldNames.add(field.name)) {
         throw InvalidGenerationSourceError(
           'Persisted field name `${field.name}` is declared more than once.',
+          element: element,
+        );
+      }
+    }
+    for (final link in linkInfos) {
+      if (!persistedFieldNames.add(link.name)) {
+        throw InvalidGenerationSourceError(
+          'Persisted link name `${link.name}` conflicts with another field.',
           element: element,
         );
       }
@@ -727,6 +814,7 @@ final class _CollectionInfo {
       schemaName: '${dartName}Schema',
       idField: idFields.single,
       fields: fieldInfos,
+      links: linkInfos,
       compositeIndexes: compositeIndexes,
       embeddedTypes: _collectEmbeddedTypes(fieldInfos),
       constructor:
@@ -744,6 +832,7 @@ final class _CollectionInfo {
   final String schemaName;
   final _FieldInfo idField;
   final List<_FieldInfo> fields;
+  final List<_LinkInfo> links;
   final List<_CompositeIndexInfo> compositeIndexes;
   final List<_EmbeddedInfo> embeddedTypes;
   final _ConstructorInfo? constructor;
@@ -1392,6 +1481,90 @@ final class _PersistedFieldSource {
   final bool isAssignable;
   final bool isIgnored;
   final bool isCandidate;
+}
+
+final class _LinkInfo {
+  const _LinkInfo({
+    required this.name,
+    required this.dartName,
+    required this.targetCollection,
+    required this.isToMany,
+    required this.isBacklink,
+    required this.backlinkTo,
+  });
+
+  static _LinkInfo? from(_PersistedFieldSource source) {
+    if (source.isIgnored || source.type is! InterfaceType) {
+      return null;
+    }
+    final type = source.type as InterfaceType;
+    final typeName = type.element.name ?? type.element.displayName;
+    final isToOne = typeName == 'CindelLink';
+    final isToMany = typeName == 'CindelLinks';
+    if (!isToOne && !isToMany) {
+      return null;
+    }
+    if (source.element is FieldElement) {
+      final field = source.element as FieldElement;
+      if (!field.isFinal) {
+        throw InvalidGenerationSourceError(
+          'Link field `${source.dartName}` must be final.',
+          element: source.element,
+        );
+      }
+    }
+    if (type.typeArguments.length != 1 ||
+        type.typeArguments.single is! InterfaceType) {
+      throw InvalidGenerationSourceError(
+        'Link field `${source.dartName}` must target a collection type.',
+        element: source.element,
+      );
+    }
+    final targetType = type.typeArguments.single as InterfaceType;
+    final targetElement = targetType.element;
+    if (targetElement is! ClassElement) {
+      throw InvalidGenerationSourceError(
+        'Link field `${source.dartName}` must target a class.',
+        element: source.element,
+      );
+    }
+    if (_embeddedChecker.hasAnnotationOf(targetElement)) {
+      throw InvalidGenerationSourceError(
+        'Link field `${source.dartName}` cannot target an embedded object.',
+        element: source.element,
+      );
+    }
+    final collectionAnnotation = _collectionAnnotation(targetElement);
+    if (collectionAnnotation == null) {
+      throw InvalidGenerationSourceError(
+        'Link field `${source.dartName}` must target a @collection class.',
+        element: source.element,
+      );
+    }
+    final configuredName = collectionAnnotation.peek('name')?.stringValue;
+    final targetName = configuredName != null && configuredName.isNotEmpty
+        ? configuredName
+        : _persistedName(targetElement, '').isNotEmpty
+        ? _persistedName(targetElement, '')
+        : _lowerFirst(targetElement.name ?? targetElement.displayName);
+    final backlink = _backlinkChecker.firstAnnotationOf(source.element);
+    final backlinkTo = backlink?.getField('to')?.toStringValue();
+    return _LinkInfo(
+      name: source.persistedName,
+      dartName: source.dartName,
+      targetCollection: targetName,
+      isToMany: isToMany,
+      isBacklink: backlinkTo != null,
+      backlinkTo: backlinkTo,
+    );
+  }
+
+  final String name;
+  final String dartName;
+  final String targetCollection;
+  final bool isToMany;
+  final bool isBacklink;
+  final String? backlinkTo;
 }
 
 final class _FieldInfo {
