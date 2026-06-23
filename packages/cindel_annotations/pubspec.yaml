@@ -1,6 +1,6 @@
 name: cindel_annotations
 description: Public annotations and schema metadata types for the Cindel NoSQL local database.
-version: 0.8.0
+version: 0.9.1
 homepage: https://github.com/mainser/cindel
 repository: https://github.com/mainser/cindel
 issue_tracker: https://github.com/mainser/cindel/issues

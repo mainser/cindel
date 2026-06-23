@@ -46,22 +46,40 @@ jobs:
             exit 1
           fi
 
+          matching_package_count=0
           for pubspec in \
+            packages/cindel_annotations/pubspec.yaml \
+            packages/cindel_generator/pubspec.yaml \
             packages/cindel/pubspec.yaml \
             packages/cindel_flutter_libs/pubspec.yaml; do
             package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${pubspec}" | head -n 1)"
             package_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${pubspec}" | head -n 1)"
-            if [ "${package_version}" != "${version}" ]; then
-              echo "::error::${package_name} is ${package_version}, but release tag is ${version}. cindel and cindel_flutter_libs must match the release tag."
-              exit 1
+            if [ "${package_version}" = "${version}" ]; then
+              matching_package_count=$((matching_package_count + 1))
+              echo "Release includes ${package_name} ${package_version}."
+            else
+              echo "Release skips ${package_name} ${package_version}; tag is ${version}."
             fi
           done
 
+          if [ "${matching_package_count}" -eq 0 ]; then
+            echo "::error::No publishable Cindel package matches release tag ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  ci:
+    name: Run CI checks
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
 
   build_android:
     name: Build Android binaries
-    needs: validate
+    needs:
+      - validate
+      - ci
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -111,7 +129,9 @@ jobs:
 
   build_linux:
     name: Build Linux binary
-    needs: validate
+    needs:
+      - validate
+      - ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -144,7 +164,9 @@ jobs:
 
   build_windows:
     name: Build Windows binary
-    needs: validate
+    needs:
+      - validate
+      - ci
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -183,7 +205,9 @@ jobs:
 
   build_apple:
     name: Build Apple binaries
-    needs: validate
+    needs:
+      - validate
+      - ci
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -221,7 +245,9 @@ jobs:
 
   build_web:
     name: Build Web runtime
-    needs: validate
+    needs:
+      - validate
+      - ci
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -373,8 +399,65 @@ jobs:
             package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
             package_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
 
+            package_version_published_by_name "${package_name}" "${package_version}"
+          }
+
+          package_version_published_by_name() {
+            local package_name="$1"
+            local package_version="$2"
+
             curl -fsS "https://pub.dev/api/packages/${package_name}" |
               grep -q "\"version\":\"${package_version}\""
+          }
+
+          internal_package_dir() {
+            case "$1" in
+              cindel) echo "packages/cindel" ;;
+              cindel_annotations) echo "packages/cindel_annotations" ;;
+              cindel_flutter_libs) echo "packages/cindel_flutter_libs" ;;
+              cindel_generator) echo "packages/cindel_generator" ;;
+              *) return 1 ;;
+            esac
+          }
+
+          internal_dependency_version() {
+            local package_dir="$1"
+            local dependency_name="$2"
+
+            sed -nE "s/^[[:space:]]*${dependency_name}:[[:space:]]*\\^([^[:space:]]+).*/\\1/p" \
+              "${package_dir}/pubspec.yaml" | head -n 1
+          }
+
+          ensure_internal_dependencies_available() {
+            local package_dir="$1"
+            local package_name
+            local dependency_name
+            local dependency_dir
+            local dependency_required_version
+            local dependency_local_version
+
+            package_name="$(sed -nE 's/^name:[[:space:]]*([^[:space:]]+).*/\1/p' "${package_dir}/pubspec.yaml" | head -n 1)"
+
+            for dependency_name in cindel_annotations cindel_generator cindel_flutter_libs cindel; do
+              dependency_required_version="$(internal_dependency_version "${package_dir}" "${dependency_name}")"
+              if [ -z "${dependency_required_version}" ]; then
+                continue
+              fi
+
+              dependency_dir="$(internal_package_dir "${dependency_name}")"
+              dependency_local_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' "${dependency_dir}/pubspec.yaml" | head -n 1)"
+
+              if [ "${dependency_local_version}" = "${RELEASE_VERSION}" ]; then
+                continue
+              fi
+
+              if package_version_published_by_name "${dependency_name}" "${dependency_required_version}"; then
+                continue
+              fi
+
+              echo "::error::${package_name} depends on ${dependency_name} ^${dependency_required_version}, but ${dependency_name} ${dependency_required_version} is not published and ${dependency_name} is not part of release ${RELEASE_VERSION}."
+              exit 1
+            done
           }
 
           run_pub() {
@@ -387,6 +470,7 @@ jobs:
           dry_run_package() {
             local package_dir="$1"
             matching_release_package "${package_dir}" || return 0
+            ensure_internal_dependencies_available "${package_dir}"
 
             if package_version_published "${package_dir}"; then
               echo "Skipping dry-run for already published ${package_dir}."
@@ -413,17 +497,14 @@ jobs:
           }
 
           release_packages=(
-            packages/cindel_flutter_libs
-            packages/cindel
             packages/cindel_annotations
             packages/cindel_generator
+            packages/cindel_flutter_libs
+            packages/cindel
           )
 
           for package_dir in "${release_packages[@]}"; do
             dry_run_package "${package_dir}"
-          done
-
-          for package_dir in "${release_packages[@]}"; do
             publish_package "${package_dir}"
           done
 

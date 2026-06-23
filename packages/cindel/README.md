@@ -73,12 +73,12 @@ Flutter apps should depend on `cindel` and `cindel_flutter_libs`:
 
 ```yaml
 dependencies:
-  cindel: ^0.9.0
-  cindel_flutter_libs: ^0.9.0
+  cindel: ^0.9.1
+  cindel_flutter_libs: ^0.9.1
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.8.0
+  cindel_generator: ^0.9.1
 ```
 
 Pure Dart tools can depend on `cindel` directly and provide a native library
@@ -771,8 +771,8 @@ Keep both packages in the app:
 
 ```yaml
 dependencies:
-  cindel: ^0.9.0
-  cindel_flutter_libs: ^0.9.0
+  cindel: ^0.9.1
+  cindel_flutter_libs: ^0.9.1
 ```
 
 Current Web behavior:

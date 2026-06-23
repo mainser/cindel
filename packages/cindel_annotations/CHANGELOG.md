@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Published in lockstep with the 0.9.1 Cindel release line so downstream
+  packages resolve on pub.dev outside the workspace.
+
 ## 0.8.0
 
 - Added `@Backlink(to: ...)` for declaring read-only inverse relations on

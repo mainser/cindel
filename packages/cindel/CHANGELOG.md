@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1
+
+- Published in lockstep with `cindel_annotations`, `cindel_generator`, and
+  `cindel_flutter_libs` 0.9.1 so pub.dev can resolve the sync-enabled release
+  outside the workspace.
+- Updated internal package constraints to require the matching 0.9.1 release
+  line.
+
 ## 0.9.0
 
 - Added experimental Sync, enabled only when opening the database with

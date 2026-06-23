@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Published in lockstep with the 0.9.1 Cindel release line and updated the
+  annotations dependency constraint to `^0.9.1`.
+
 ## 0.8.0
 
 - Generated `CindelLink<T>`, `CindelLinks<T>`, and `@Backlink(to: ...)`

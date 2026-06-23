@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Released in lockstep with all Cindel packages on the 0.9.1 line so the
+  release workflow publishes a fully resolvable package set.
+
 ## 0.9.0
 
 - Released in lockstep with `cindel` 0.9.0 so Flutter apps resolve matching
