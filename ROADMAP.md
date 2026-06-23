@@ -18,13 +18,13 @@ and SQLite Web/OPFS as the browser backend.
 
 The current development line is focused on a typed-only public contract:
 application code should use generated collections, generated queries, typed
-transactions, and typed watchers. MDBX, SQLite native, and SQLite Web must
-adapt internally to that same public app surface.
+transactions, typed watchers, and open-time sync configuration. MDBX, SQLite
+native, and SQLite Web must adapt internally to that same public app surface.
 
 Current package roles:
 
 - `cindel`: runtime API, typed collections, typed queries, watchers,
-  transactions, and backend loading.
+  transactions, sync, and backend loading.
 - `cindel_annotations`: public annotations and shared schema metadata.
 - `cindel_generator`: build-time source generator for annotated models.
 - `cindel_flutter_libs`: prebuilt native libraries and Web runtime assets for
@@ -47,12 +47,16 @@ Current public API policy:
   `db.users.where()...findAll()`, typed transactions, and typed watchers.
 - Untyped collection-level document APIs are not part of the public direction.
 - Backend-specific implementation details must not leak into app code.
+- Sync is configured only at open time through
+  `Cindel.open(..., sync: CindelSyncConfig(...))`. There must be no public
+  `db.sync` command surface.
 
 ## Delivered
 
 ### Typed Dart API
 
 - `Cindel.open` and `Cindel.openInMemory`.
+- Open-time sync opt-in with `CindelSyncConfig`.
 - Generated typed collections.
 - Native auto-increment ids with `Id` and `autoIncrement`.
 - Typed `put`, `putAll`, `putMany`, `get`, `getAll`, `delete`, and
@@ -196,16 +200,49 @@ Current public API policy:
   verification, native gzip compression, empty-target restore, and cross-backend
   SQLite/MDBX coverage.
 
+### Sync
+
+- Experimental local-first Sync configured only when opening a database.
+- Backend-neutral `CindelSyncAdapter` push/pull contract.
+- Durable internal outbox storage in the same database as app data.
+- Checkpoint persistence and stable client sequence tracking across reopen.
+- Automatic background scheduler with status/error callbacks.
+- Typed puts, bulk puts, unique-index puts, deletes, query deletes, and link
+  replacements captured as internal sync mutations.
+- Remote upserts, deletes, and link replacements applied through guarded
+  internal writes so watchers update without re-enqueueing outgoing mutations.
+- Backend corrections applied locally through `CindelPushResult`.
+- Multi-collection sync mutation and remote change flow.
+- SQLite native, MDBX, and SQLite Web implementation paths.
+- Query updates explicitly rejected while sync is enabled.
+- Internal HTTP-backed validation covers offline writes, reopen, backend
+  correction, second-client pull, remote update, and replicated delete across
+  SQLite and MDBX.
+
 ## Current Focus
 
 ### Release Line
 
-- Keep accumulating confirmed fixes in the `0.7.0` line until the next publish
-  decision.
+- Prepare the coordinated `0.9.0` release line for `cindel` and
+  `cindel_flutter_libs`.
 - Android, iOS, Linux, macOS, Windows, and Web runtime assets must be generated
   from the current native ABI before benchmarking or release validation.
 - Keep root and package READMEs aligned with the actual package roles.
 - Keep package changelogs current.
+- Keep package versions aligned where binary/Web assets need to be rebuilt for
+  the release.
+
+### Sync Hardening
+
+- Keep the public surface restricted to open-time configuration and callbacks.
+- Keep all sync actions internal: outbox, retry, checkpoint, remote apply, and
+  scheduler.
+- Expand real-app sync labs before expanding the public API.
+- Validate sync behavior across SQLite native, MDBX, and Web SQLite.
+- Keep unsupported sync operations explicit, especially query updates.
+- Keep backend requirements documented: idempotent mutation ids, stable
+  checkpoints, backend-owned auth, validation, conflict policy, and correction
+  rules.
 
 ### Typed Backend Parity
 
@@ -243,17 +280,34 @@ Current public API policy:
 - Establish Web benchmark CSVs for the same typed app workloads used by native
   backend comparisons before starting optimization work.
 - Keep single-tab behavior correct before evaluating multi-tab coordination.
+- Keep Web Sync scoped to single-tab behavior for the current preview.
 
 ## Next
 
 ### Release Hardening
 
 - Run package analysis and tests from a clean release state.
-- Run `dart pub publish --dry-run` for publishable packages.
+- Run `dart pub publish --dry-run` or `flutter pub publish --dry-run` for
+  publishable packages.
 - Validate Flutter Android, iOS, Linux, macOS, Windows, and Web consumers with
   current prebuilts/assets.
 - Confirm package archives include the expected native and Web files.
 - Keep example and package snippets on the correct version line.
+- Confirm `cindel` and `cindel_flutter_libs` are published on the same release
+  line when the binary assets are regenerated.
+
+### Sync Validation
+
+- Add broader sync tests for multi-collection writes, backend corrections,
+  reopen with pending outbox, replicated deletes, and remote apply watcher
+  notifications.
+- Add Web sync coverage beyond static contract tests before calling Web Sync
+  preview-ready.
+- Validate sync with generated code from app-style models, not only hand-written
+  schemas and test fixtures.
+- Keep private console or integration validation against a local HTTP sync
+  server before each sync release.
+- Document any adapter contract changes before they are exposed in a release.
 
 ### Typed API Coverage
 
@@ -288,6 +342,8 @@ Current public API policy:
 - Keep package READMEs concise and user-facing.
 - Document public typed API usage directly.
 - Document public limitations directly.
+- Keep Sync docs beginner-friendly and explicit that users provide their own
+  backend adapter/server.
 - Keep Freezed support documented as classic classes and single primary
   factories only; union/sealed multi-constructor models remain out of scope.
 - Add focused examples for annotations, generator usage, runtime API, Flutter
@@ -326,11 +382,22 @@ Current public API policy:
 
 ### Relationships
 
-- Keep embedded objects as the primary relationship model for now.
-- Explore links only after embedded objects, migrations, and storage stability
-  are mature.
-- Consider one-to-one, one-to-many, many-to-many, backlinks, and lazy link
-  loading later.
+- Keep embedded objects as the primary value-object model.
+- Keep links/backlinks focused on explicit `load`/`save` operations.
+- Add richer relationship ergonomics only after sync, Web, and release
+  packaging stabilize.
+
+### Sync Expansion
+
+- Evaluate query update sync only after a reliable per-document mutation design
+  exists.
+- Evaluate public manual sync controls only if a real application needs them;
+  do not add `db.sync` by default.
+- Evaluate realtime signals only as "wake up and pull"; checkpointed pull must
+  remain the source of truth.
+- Evaluate Web multi-tab sync only after single-tab Web Sync is stable.
+- Consider conflict-resolution helpers only if backend-owned correction is not
+  sufficient for real apps.
 
 ## Quality
 
@@ -341,6 +408,7 @@ Near-term quality goals:
 - Keep package-level tests passing.
 - Keep typed backend parity tests passing.
 - Keep watcher behavior covered.
+- Keep sync outbox, retry, checkpoint, and remote-apply behavior covered.
 - Keep Web build and packaged asset checks passing.
 - Keep package docs synchronized with the real typed API.
 

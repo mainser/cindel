@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0
+
+- Added experimental Sync, enabled only when opening the database with
+  `Cindel.open(..., sync: CindelSyncConfig(...))`.
+- Added backend-neutral `CindelSyncAdapter` push/pull contracts, sync status
+  callbacks, durable internal outbox storage, checkpoint persistence, and
+  automatic background scheduling without exposing public sync commands.
+- Sync now captures typed puts, bulk puts, unique-index puts, deletes, query
+  deletes, and link replacements across SQLite native, MDBX, and SQLite Web.
+- Remote changes apply through internal guarded writes so watchers update while
+  remote apply does not re-enqueue outgoing mutations.
+- Query update operations now throw while sync is enabled because they do not
+  yet produce canonical per-document mutations.
+
 ## 0.8.0
 
 - Added `CindelLink<T>` and `CindelLinks<T>` relation containers

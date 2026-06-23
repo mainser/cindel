@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- Released in lockstep with `cindel` 0.9.0 so Flutter apps resolve matching
+  runtime and bundled binary/Web assets for the sync-enabled release.
+
 ## 0.7.0
 
 - Released in lockstep with `cindel` 0.7.0 for the native ABI 32 migration and

@@ -27,6 +27,7 @@ export 'src/links.dart';
 export 'src/migration.dart';
 export 'src/query.dart' if (dart.library.js_interop) 'src/web/query.dart';
 export 'src/schema.dart';
+export 'src/sync.dart';
 export 'src/text.dart';
 export 'src/typed_collection.dart'
     if (dart.library.js_interop) 'src/web/typed_collection.dart';

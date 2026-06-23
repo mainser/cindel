@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:cindel_annotations/cindel_annotations.dart';
 
+import 'binary_document.dart';
 import 'cindel_error.dart';
 import 'migration.dart';
 import 'native/bindings.dart';
 import 'native/wire.dart';
 import 'schema.dart';
+import 'sync.dart';
 
 part 'database/native_query_plan.dart';
 part 'database/document_codecs.dart';
@@ -23,6 +26,12 @@ typedef CindelDocument = Map<String, Object?>;
 const _maximumSqliteId = 0x7FFFFFFFFFFFFFFF;
 const _inMemoryDirectory = ':memory:';
 const _nativeAggregateOperations = {'count', 'min', 'max', 'sum', 'average'};
+
+// Reserved internal collections used only by the sync sidecar. They are added
+// to the schema manifest when sync is enabled, but never become part of the
+// generated app-facing typed API.
+const _syncOutboxCollection = '__cindel_sync_outbox';
+const _syncStateCollection = '__cindel_sync_state';
 
 enum _TransactionMode { read, write }
 
@@ -63,10 +72,14 @@ class CindelDatabase {
     required Map<String, CindelCollectionSchema<dynamic>> schemas,
     required this.backend,
     required bool schemasWereRegisteredOnOpen,
+    required CindelSyncConfig? syncConfig,
   }) : _bindings = bindings,
        _handle = handle,
        _schemas = Map.of(schemas),
-       _schemasWereRegisteredOnOpen = schemasWereRegisteredOnOpen;
+       _schemasWereRegisteredOnOpen = schemasWereRegisteredOnOpen,
+       _syncSession = syncConfig == null
+           ? null
+           : _CindelSyncSession(syncConfig);
 
   /// The directory where the database files are stored.
   final String directory;
@@ -79,8 +92,15 @@ class CindelDatabase {
   bool _schemasWereRegisteredOnOpen;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
+  final _CindelSyncSession? _syncSession;
   Pointer<Void>? _handle;
   _TransactionMode? _activeTransaction;
+
+  // Sync writes its own outbox/state rows through the same storage paths as app
+  // data. These flags prevent those internal writes and remote apply writes
+  // from recursively creating new outgoing sync mutations.
+  bool _syncInternalWrite = false;
+  bool _syncRemoteApply = false;
 
   /// Whether SQLite can use generated native document readers for this handle.
   bool get usesSqliteNativeDocuments =>
@@ -100,6 +120,7 @@ class CindelDatabase {
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
     CindelMigrationPlan? migrationPlan,
+    CindelSyncConfig? sync,
   }) async {
     _checkDirectory(directory);
     final usePersistedSchemaMetadata = migrationPlan != null;
@@ -115,6 +136,7 @@ class CindelDatabase {
       schemas: schemas,
       backend: backend,
       persistSchemaMetadata: usePersistedSchemaMetadata,
+      sync: sync,
     );
   }
 
@@ -124,11 +146,13 @@ class CindelDatabase {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelSyncConfig? sync,
   }) {
     return _openUnchecked(
       directory: _inMemoryDirectory,
       schemas: schemas,
       backend: backend,
+      sync: sync,
     );
   }
 
@@ -140,6 +164,7 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelSyncConfig? sync,
   }) {
     _checkDirectory(directory);
     return _openUnchecked(
@@ -147,6 +172,7 @@ class CindelDatabase {
       schemas: schemas,
       backend: backend,
       persistSchemaMetadata: true,
+      sync: sync,
     );
   }
 
@@ -155,8 +181,11 @@ class CindelDatabase {
     required Iterable<CindelCollectionSchema<dynamic>> schemas,
     required CindelStorageBackend backend,
     bool persistSchemaMetadata = false,
+    CindelSyncConfig? sync,
   }) async {
-    final schemasByCollection = _schemasByCollection(schemas);
+    final schemasByCollection = _schemasByCollection(
+      sync == null ? schemas : [...schemas, ..._syncInternalSchemas],
+    );
     final schemaManifest = schemasByCollection.isEmpty
         ? null
         : _encodeSchemaManifest(schemasByCollection.values);
@@ -172,6 +201,7 @@ class CindelDatabase {
       schemasByCollection: schemasByCollection,
       backend: backend,
       schemaManifest: schemaManifestForOpen,
+      sync: sync,
     );
     if (schemaManifest != null && !database._schemasWereRegisteredOnOpen) {
       try {
@@ -189,6 +219,7 @@ class CindelDatabase {
         rethrow;
       }
     }
+    await database._syncSession?.start(database);
     return database;
   }
 
@@ -210,6 +241,7 @@ class CindelDatabase {
     required Map<String, CindelCollectionSchema<dynamic>> schemasByCollection,
     required CindelStorageBackend backend,
     required Uint8List? schemaManifest,
+    required CindelSyncConfig? sync,
   }) async {
     final bindings = CindelNativeBindings();
     var schemasWereRegisteredOnOpen = false;
@@ -235,6 +267,7 @@ class CindelDatabase {
       handle: handle,
       schemas: schemasByCollection,
       schemasWereRegisteredOnOpen: schemasWereRegisteredOnOpen,
+      syncConfig: sync,
     );
   }
 
@@ -246,6 +279,7 @@ class CindelDatabase {
     if (handle == null) {
       return;
     }
+    await _syncSession?.close();
     if (_activeTransaction != null) {
       _bindings.rollbackTransaction(handle);
       _activeTransaction = null;
@@ -289,13 +323,20 @@ class CindelDatabase {
     Uint8List bytes, {
     CindelDocument? document,
   }) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(
+        () => putBinaryDocument(collection, id, bytes, document: document),
+      );
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkBinaryBackend();
     _checkCollection(collection);
     _checkId(id);
+    _syncCheckCanonicalUpsert(collection, id, document);
 
     _bindings.putIndexed(handle, collection, id, bytes, Uint8List(0));
+    await _syncRecordUpsert(collection, id, document);
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upsert(collection, id, document),
@@ -312,6 +353,11 @@ class CindelDatabase {
     Map<int, Uint8List> values, {
     Map<int, CindelDocument>? documents,
   }) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(
+        () => putAllBinaryDocuments(collection, values, documents: documents),
+      );
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkBinaryBackend();
@@ -321,6 +367,7 @@ class CindelDatabase {
     }
     for (final id in values.keys) {
       _checkId(id);
+      _syncCheckCanonicalUpsert(collection, id, documents?[id]);
     }
 
     _bindings.putManyStored(
@@ -328,6 +375,9 @@ class CindelDatabase {
       collection,
       _encodeBinaryBatchPutEntries(values),
     );
+    for (final id in values.keys) {
+      await _syncRecordUpsert(collection, id, documents?[id]);
+    }
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upserts(collection, documents, ids: values.keys),
@@ -347,6 +397,18 @@ class CindelDatabase {
     CindelWriteNativeDocument<T> writeDocument, {
     Map<int, CindelDocument>? Function()? documents,
   }) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(
+        () => putAllNativeBinaryDocuments(
+          collection,
+          ids,
+          objects,
+          fieldTypes,
+          writeDocument,
+          documents: documents,
+        ),
+      );
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
@@ -377,6 +439,7 @@ class CindelDatabase {
       trackChanges,
       backend == CindelStorageBackend.sqlite,
     );
+    await _syncRecordNativeUpserts(collection, ids, objects, documents);
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upserts(collection, documents?.call(), ids: ids),
@@ -394,6 +457,17 @@ class CindelDatabase {
     CindelGetId<T> getId,
     CindelWriteNativeDocument<T> writeDocument,
   ) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(
+        () => putAllNativeBinaryObjects(
+          collection,
+          objects,
+          fieldTypes,
+          getId,
+          writeDocument,
+        ),
+      );
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
@@ -413,6 +487,12 @@ class CindelDatabase {
       writeDocument,
       trackChanges,
       backend == CindelStorageBackend.sqlite,
+    );
+    await _syncRecordNativeUpserts(
+      collection,
+      [for (final object in objects) getId(object)],
+      objects,
+      null,
     );
     _markNativeCollectionChanged(
       collection,
@@ -578,6 +658,17 @@ class CindelDatabase {
     required String targetCollection,
     required Iterable<int> targetIds,
   }) async {
+    if (_syncShouldWrapLocalWrite(sourceCollection)) {
+      return writeTxn(
+        () => saveLinkIds(
+          sourceCollection: sourceCollection,
+          sourceId: sourceId,
+          linkName: linkName,
+          targetCollection: targetCollection,
+          targetIds: targetIds,
+        ),
+      );
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(sourceCollection);
@@ -594,6 +685,13 @@ class CindelDatabase {
       linkName: linkName,
       targetCollection: targetCollection,
       targetIds: _encodeIds(ids),
+    );
+    await _syncRecordReplaceLinks(
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: ids,
     );
     _markNativeCollectionChanged(
       sourceCollection,
@@ -726,12 +824,16 @@ class CindelDatabase {
   /// [CindelDatabaseClosedError] when this database is already closed or a
   /// [CindelNativeError] when the native delete fails.
   Future<void> delete(String collection, int id) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => delete(collection, id));
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
     _checkId(id);
 
     _bindings.delete(handle, collection, id);
+    await _syncRecordDelete(collection, id);
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.delete(collection, id),
@@ -742,6 +844,9 @@ class CindelDatabase {
   ///
   /// Empty [ids] is a no-op.
   Future<void> deleteAll(String collection, Iterable<int> ids) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => deleteAll(collection, ids));
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
@@ -754,6 +859,9 @@ class CindelDatabase {
     }
 
     _bindings.deleteMany(handle, collection, _encodeIds(idList));
+    for (final id in idList) {
+      await _syncRecordDelete(collection, id);
+    }
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.deletes(collection, idList),
@@ -768,6 +876,9 @@ class CindelDatabase {
     String collection,
     Iterable<int> ids,
   ) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => deleteAllNativeDocuments(collection, ids));
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkCollection(collection);
@@ -780,6 +891,9 @@ class CindelDatabase {
     }
 
     _bindings.deleteManyNativeDocuments(handle, collection, _encodeIds(idList));
+    for (final id in idList) {
+      await _syncRecordDelete(collection, id);
+    }
     _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.deletes(collection, idList),
@@ -1070,6 +1184,9 @@ class CindelDatabase {
     String collection,
     CindelNativeQueryPlan plan,
   ) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => deleteNativePlan(collection, plan));
+    }
     final handle = _checkOpen();
     _checkCanWrite();
     _checkNativeQueryBackend();
@@ -1080,6 +1197,9 @@ class CindelDatabase {
       _encodeNativeQueryPlan(collection, plan),
     );
     if (ids.isNotEmpty) {
+      for (final id in ids) {
+        await _syncRecordDelete(collection, id);
+      }
       _markNativeCollectionChanged(
         collection,
         () => CindelChangeSet.deletes(collection, ids),
@@ -1097,6 +1217,7 @@ class CindelDatabase {
     CindelNativeQueryPlan plan,
     Map<String, WireValue> updates,
   ) async {
+    _syncCheckQueryUpdate(collection);
     final handle = _checkOpen();
     _checkCanWrite();
     _checkNativeQueryBackend();
@@ -1157,7 +1278,9 @@ class CindelDatabase {
   Future<void> registerMigratedSchemas(
     Iterable<CindelCollectionSchema<dynamic>> schemas,
   ) async {
-    final schemasByCollection = _schemasByCollection(schemas);
+    final schemasByCollection = _schemasByCollection(
+      _syncSession == null ? schemas : [...schemas, ..._syncInternalSchemas],
+    );
     final handle = _checkOpen();
     _checkCanWrite();
     _bindings.registerMigratedSchemas(
@@ -1178,6 +1301,400 @@ class CindelDatabase {
     final handle = _checkOpen();
     _checkCanWrite();
     _bindings.compact(handle);
+  }
+
+  bool _syncShouldWrapLocalWrite(String collection) {
+    // A local write outside an explicit writeTxn must be wrapped so the app
+    // mutation and its outbox row commit atomically.
+    return _syncSession != null &&
+        !_syncInternalWrite &&
+        !_syncRemoteApply &&
+        !_isSyncInternalCollection(collection) &&
+        _activeTransaction == null;
+  }
+
+  void _syncCheckCanonicalUpsert(
+    String collection,
+    int id,
+    CindelDocument? document,
+  ) {
+    // Sync sends complete document snapshots for upserts. Generated typed paths
+    // provide that canonical map; raw low-level writes must opt in by passing
+    // one explicitly or Cindel cannot produce a safe backend mutation.
+    if (_syncSession == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(collection)) {
+      return;
+    }
+    if (document == null) {
+      throw UnsupportedError(
+        'Cindel sync requires a canonical document for raw writes to '
+        '`$collection.$id`.',
+      );
+    }
+  }
+
+  void _syncCheckQueryUpdate(String collection) {
+    // Query updates can affect many rows but currently do not produce
+    // per-document snapshots. Reject them while sync is enabled instead of
+    // silently sending incomplete mutations.
+    if (_syncSession == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(collection)) {
+      return;
+    }
+    throw UnsupportedError(
+      'Cindel sync does not support query update operations yet. Rewrite '
+      'matching objects and call putAll, or open the database without sync.',
+    );
+  }
+
+  Future<void> _syncRecordUpsert(
+    String collection,
+    int id,
+    CindelDocument? document,
+  ) async {
+    // Called from write paths after the storage mutation has been accepted by
+    // the backend bridge but before the surrounding write transaction commits.
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(collection)) {
+      return;
+    }
+    _syncCheckCanonicalUpsert(collection, id, document);
+    await session.recordUpsert(collection, id, document!);
+  }
+
+  Future<void> _syncRecordNativeUpserts<T>(
+    String collection,
+    List<int> ids,
+    List<T> objects,
+    Map<int, CindelDocument>? Function()? documents,
+  ) async {
+    // Native typed writes may receive document snapshots from the generated
+    // collection path. When they do not, rebuild the snapshot from the schema so
+    // the adapter still sees a collection-agnostic mutation.
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(collection)) {
+      return;
+    }
+    final provided = documents?.call();
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw CindelSchemaError('Collection `$collection` has no schema.');
+    }
+    if (ids.length != objects.length) {
+      throw ArgumentError.value(ids.length, 'ids');
+    }
+    for (var i = 0; i < ids.length; i += 1) {
+      final id = ids[i];
+      final document =
+          provided?[id] ?? _syncDocumentFromObject(schema, objects[i], id);
+      await session.recordUpsert(collection, id, document);
+    }
+  }
+
+  Future<void> _syncRecordDelete(String collection, int id) async {
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(collection)) {
+      return;
+    }
+    await session.recordDelete(collection, id);
+  }
+
+  Future<void> _syncRecordReplaceLinks({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required List<int> targetIds,
+  }) async {
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isSyncInternalCollection(sourceCollection)) {
+      return;
+    }
+    await session.recordReplaceLinks(
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIds,
+    );
+  }
+
+  CindelDocument _syncDocumentFromObject(
+    CindelCollectionSchema<dynamic> schema,
+    Object? object,
+    int id,
+  ) {
+    final dynamic dynamicSchema = schema;
+    final document = Map<String, Object?>.from(
+      dynamicSchema.toDocument(object) as Map,
+    );
+    document[schema.idField] = id;
+    return document;
+  }
+
+  Future<void> _syncPersistMutation(_CindelSyncOutboxRecord record) async {
+    // SQLite uses native row storage for the internal outbox. MDBX keeps these
+    // records as binary documents because its app-data path is binary-first.
+    await _syncRunInternalWrite(() async {
+      if (backend == CindelStorageBackend.mdbx) {
+        await putAllBinaryDocuments(
+          _syncOutboxCollection,
+          {record.dbId: _encodeSyncOutboxRecord(record)},
+          documents: {record.dbId: _syncOutboxSchema.toDocument(record)},
+        );
+        return;
+      }
+      final fieldTypes = _nativeFieldTypes(_syncOutboxSchema)!;
+      await putAllNativeBinaryDocuments<_CindelSyncOutboxRecord>(
+        _syncOutboxCollection,
+        [record.dbId],
+        [record],
+        fieldTypes,
+        _writeSyncOutboxRecord,
+      );
+    });
+  }
+
+  Future<void> _syncPersistState(String key, String? value) async {
+    // State is kept in a separate internal collection so accepted outbox rows
+    // can be deleted without losing client/checkpoint metadata.
+    await _syncRunInternalWrite(() async {
+      final record = _CindelSyncStateRecord(_syncStateId(key), key, value);
+      if (backend == CindelStorageBackend.mdbx) {
+        await putAllBinaryDocuments(
+          _syncStateCollection,
+          {record.dbId: _encodeSyncStateRecord(record)},
+          documents: {record.dbId: _syncStateSchema.toDocument(record)},
+        );
+        return;
+      }
+      final fieldTypes = _nativeFieldTypes(_syncStateSchema)!;
+      await putAllNativeBinaryDocuments<_CindelSyncStateRecord>(
+        _syncStateCollection,
+        [record.dbId],
+        [record],
+        fieldTypes,
+        _writeSyncStateRecord,
+      );
+    });
+  }
+
+  Future<String?> _syncReadState(String key) async {
+    if (backend == CindelStorageBackend.mdbx) {
+      final bytes = (await getAllBinaryDocuments(_syncStateCollection, [
+        _syncStateId(key),
+      ])).single;
+      return bytes == null ? null : _decodeSyncStateRecord(bytes).value;
+    }
+    final fieldTypes = _nativeFieldTypes(_syncStateSchema)!;
+    final record = (await getAllNativeBinaryDocuments<_CindelSyncStateRecord>(
+      _syncStateCollection,
+      [_syncStateId(key)],
+      fieldTypes,
+      _readSyncStateRecord,
+    )).single;
+    return record?.value;
+  }
+
+  Future<List<_CindelSyncOutboxRecord>> _syncReadOutbox({
+    required int limit,
+  }) async {
+    // Read by id page first so both MDBX binary rows and SQLite native rows use
+    // the same scheduling order and batch-size behavior.
+    final ids = await documentIdsPage(_syncOutboxCollection, limit: limit);
+    if (ids.isEmpty) {
+      return const [];
+    }
+    if (backend == CindelStorageBackend.mdbx) {
+      final documents = await getAllBinaryDocuments(_syncOutboxCollection, ids);
+      return [
+        for (var i = 0; i < documents.length; i += 1)
+          if (documents[i] != null)
+            _decodeSyncOutboxRecord(ids[i], documents[i]!),
+      ]..sort((left, right) => left.sequence.compareTo(right.sequence));
+    }
+    final fieldTypes = _nativeFieldTypes(_syncOutboxSchema)!;
+    final records = await getAllNativeBinaryDocuments<_CindelSyncOutboxRecord>(
+      _syncOutboxCollection,
+      ids,
+      fieldTypes,
+      _readSyncOutboxRecord,
+    );
+    return [
+      for (final record in records)
+        if (record != null) record,
+    ]..sort((left, right) => left.sequence.compareTo(right.sequence));
+  }
+
+  Future<int> _syncNextOutboxSequence() async {
+    // Reopen must never reuse a mutation id while pending rows remain. The
+    // persisted nextSequence state is the normal source, and this outbox scan is
+    // the defensive fallback that caught the duplicate-id regression.
+    var nextSequence = 1;
+    int? afterId;
+    while (true) {
+      final ids = await documentIdsPage(
+        _syncOutboxCollection,
+        afterId: afterId,
+      );
+      if (ids.isEmpty) {
+        return nextSequence;
+      }
+      nextSequence = ids.last + 1;
+      afterId = ids.last;
+    }
+  }
+
+  Future<void> _syncDeleteOutboxIds(Iterable<int> ids) async {
+    // Accepted mutations are removed only after the adapter confirms their
+    // mutation ids. Rejected or unknown ids stay pending for retry.
+    final idList = ids.toList(growable: false);
+    if (idList.isEmpty) {
+      return;
+    }
+    await _syncRunInternalWrite(() {
+      return backend == CindelStorageBackend.mdbx
+          ? deleteAll(_syncOutboxCollection, idList)
+          : deleteAllNativeDocuments(_syncOutboxCollection, idList);
+    });
+  }
+
+  Future<Map<String, int>> _syncSchemaVersions() async {
+    // Adapters should see only application collections. Internal sync
+    // collections are implementation detail and must not leak into backend
+    // collection lists.
+    final versions = <String, int>{};
+    for (final collection in _schemas.keys) {
+      if (_isSyncInternalCollection(collection)) {
+        continue;
+      }
+      versions[collection] = await schemaVersion(collection) ?? 1;
+    }
+    return versions;
+  }
+
+  Future<void> _syncApplyRemoteChanges(
+    List<CindelRemoteChange> changes, {
+    String? checkpoint,
+  }) async {
+    // Remote apply is still a normal write transaction so watchers update and
+    // local storage stays atomic. The remote guard prevents echoing those
+    // writes back into the outbox.
+    if (changes.isEmpty && checkpoint == null) {
+      return;
+    }
+    await writeTxn(() async {
+      _syncRemoteApply = true;
+      try {
+        for (final change in changes) {
+          await _syncApplyRemoteChange(change);
+        }
+        if (checkpoint != null) {
+          await _syncPersistState('checkpoint', checkpoint);
+        }
+      } finally {
+        _syncRemoteApply = false;
+      }
+    });
+  }
+
+  Future<void> _syncApplyRemoteChange(CindelRemoteChange change) async {
+    switch (change) {
+      case CindelRemoteUpsert(:final collection, :final id, :final document):
+        final schema = _schemas[collection];
+        if (schema == null) {
+          throw CindelSchemaError(
+            'Remote sync collection `$collection` is not registered.',
+          );
+        }
+        final dynamic dynamicSchema = schema;
+        final object = dynamicSchema.fromDocument({
+          ...document,
+          schema.idField: id,
+        });
+        final fieldTypes = _nativeFieldTypes(schema);
+        final nativeWriter = dynamicSchema.writeNativeDocument as Function?;
+        // SQLite prefers generated native row writes when available so remote
+        // apply uses the same indexed storage shape as local typed puts.
+        if (usesSqliteNativeDocuments &&
+            nativeWriter != null &&
+            fieldTypes != null) {
+          await putAllNativeBinaryDocuments(
+            collection,
+            [id],
+            [object],
+            fieldTypes,
+            (writer, value) => Function.apply(nativeWriter, [writer, value]),
+            documents: () => {
+              id: {...document, schema.idField: id},
+            },
+          );
+          return;
+        }
+        final binaryWriter = dynamicSchema.toBinaryDocument as Function?;
+        // MDBX and non-native typed paths write the generated binary document
+        // body and keep the id outside the payload, matching local typed puts.
+        if (binaryWriter != null) {
+          await putBinaryDocument(
+            collection,
+            id,
+            Function.apply(binaryWriter, [object]) as Uint8List,
+            document: {...document, schema.idField: id},
+          );
+          return;
+        }
+        throw CindelSchemaError(
+          'Remote sync collection `$collection` cannot be written.',
+        );
+      case CindelRemoteDelete(:final collection, :final id):
+        if (usesSqliteNativeDocuments) {
+          await deleteAllNativeDocuments(collection, [id]);
+        } else {
+          await delete(collection, id);
+        }
+      case CindelRemoteReplaceLinks(
+        :final collection,
+        :final id,
+        :final linkName,
+        :final targetCollection,
+        :final targetIds,
+      ):
+        await saveLinkIds(
+          sourceCollection: collection,
+          sourceId: id,
+          linkName: linkName,
+          targetCollection: targetCollection,
+          targetIds: targetIds,
+        );
+    }
+  }
+
+  Future<T> _syncRunInternalWrite<T>(Future<T> Function() action) async {
+    // This is deliberately scoped and restorable because sync can write state
+    // while already inside a remote-apply transaction.
+    final previous = _syncInternalWrite;
+    _syncInternalWrite = true;
+    try {
+      return await action();
+    } finally {
+      _syncInternalWrite = previous;
+    }
   }
 
   // State and transaction guards.
@@ -1238,6 +1755,7 @@ class CindelDatabase {
         for (final change in changes) {
           _notifyWatchers(change);
         }
+        _syncSession?._wake();
       }
       return result;
     } catch (_) {
@@ -1821,4 +2339,651 @@ class CindelDatabase {
     _watchersByCollection.clear();
     await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
   }
+}
+
+// Internal sidecar that owns scheduling and adapter calls for one open
+// database handle. It is intentionally not exposed from CindelDatabase: app code
+// opts in at open time, then continues using typed collections.
+final class _CindelSyncSession {
+  _CindelSyncSession(this.config);
+
+  final CindelSyncConfig config;
+  CindelDatabase? _database;
+  Timer? _timer;
+  bool _closed = false;
+  bool _syncing = false;
+  String? _clientId;
+  String? _checkpoint;
+  int _nextSequence = 1;
+  DateTime? _lastSyncAt;
+
+  Future<void> start(CindelDatabase database) async {
+    _database = database;
+    // The client id may be supplied by the app for backend identity. If it is
+    // omitted, persist a generated id so mutation ids remain stable after
+    // closing and reopening the same local database.
+    _clientId = config.clientId ?? await database._syncReadState('clientId');
+    if (_clientId == null) {
+      _clientId = 'cindel-${DateTime.now().microsecondsSinceEpoch}';
+      await database.writeTxn(
+        () => database._syncPersistState('clientId', _clientId),
+      );
+    }
+    _checkpoint = await database._syncReadState('checkpoint');
+    final persistedNextSequence =
+        int.tryParse(await database._syncReadState('nextSequence') ?? '') ?? 1;
+    final outboxNextSequence = await database._syncNextOutboxSequence();
+    // Use the greater value so pending outbox rows can never collide with
+    // newly-created mutation ids, even if the auxiliary state row is stale.
+    _nextSequence = persistedNextSequence > outboxNextSequence
+        ? persistedNextSequence
+        : outboxNextSequence;
+    await _emit(CindelSyncPhase.idle);
+    if (config.autoStart) {
+      _timer = Timer.periodic(config.interval, (_) => _wake());
+      _wake();
+    }
+  }
+
+  Future<void> close() async {
+    // Closing waits for an in-flight sync cycle so the adapter cannot keep
+    // writing into a handle that is about to close.
+    _closed = true;
+    _timer?.cancel();
+    while (_syncing) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+  }
+
+  Future<void> recordUpsert(
+    String collection,
+    int id,
+    CindelDocument document,
+  ) {
+    return _record(
+      collection: collection,
+      documentId: id,
+      operation: CindelSyncOperation.upsert,
+      document: document,
+    );
+  }
+
+  Future<void> recordDelete(String collection, int id) {
+    return _record(
+      collection: collection,
+      documentId: id,
+      operation: CindelSyncOperation.delete,
+    );
+  }
+
+  Future<void> recordReplaceLinks({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required List<int> targetIds,
+  }) {
+    return _record(
+      collection: sourceCollection,
+      documentId: sourceId,
+      operation: CindelSyncOperation.replaceLinks,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIds,
+    );
+  }
+
+  Future<void> _record({
+    required String collection,
+    required int documentId,
+    required CindelSyncOperation operation,
+    CindelDocument? document,
+    String? linkName,
+    String? targetCollection,
+    List<int> targetIds = const [],
+  }) async {
+    final database = _database!;
+    if (!database.isInWriteTransaction) {
+      throw StateError('Cindel sync mutations must be recorded in writeTxn.');
+    }
+    // The sequence is both the outbox row id and the suffix of mutationId.
+    // Keeping those aligned makes deduplication and pending-row cleanup simple.
+    final sequence = _nextSequence++;
+    final clientId = _clientId!;
+    final record = _CindelSyncOutboxRecord(
+      dbId: sequence,
+      mutationId: '$clientId:$sequence',
+      clientId: clientId,
+      sequence: sequence,
+      collection: collection,
+      documentId: documentId,
+      operation: operation.name,
+      documentJson: document == null ? null : jsonEncode(document),
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIdsJson: targetIds.isEmpty ? null : jsonEncode(targetIds),
+      baseCheckpoint: _checkpoint,
+      createdAtMicros: DateTime.now().toUtc().microsecondsSinceEpoch,
+      attemptCount: 0,
+      lastError: null,
+      state: 'pending',
+    );
+    await database._syncPersistMutation(record);
+    await database._syncPersistState('nextSequence', '$_nextSequence');
+  }
+
+  void _wake() {
+    if (_closed || _syncing) {
+      return;
+    }
+    unawaited(_syncOnce());
+  }
+
+  Future<void> _syncOnce() async {
+    if (_closed || _syncing) {
+      return;
+    }
+    final database = _database;
+    if (database == null) {
+      return;
+    }
+    _syncing = true;
+    try {
+      await _emit(CindelSyncPhase.syncing);
+      final schemaVersions = await database._syncSchemaVersions();
+      final pending = await database._syncReadOutbox(limit: config.batchSize);
+      if (pending.isNotEmpty) {
+        // Push drains only adapter-accepted ids. Unaccepted rows remain in the
+        // durable outbox and will be retried by a later scheduler tick.
+        final result = await config.adapter.push(
+          CindelPushRequest(
+            clientId: _clientId!,
+            lastPulledCheckpoint: _checkpoint,
+            schemaVersionByCollection: schemaVersions,
+            mutations: [for (final record in pending) record.toMutation()],
+          ),
+        );
+        final acceptedIds = <int>[
+          for (final record in pending)
+            if (result.acceptedMutationIds.contains(record.mutationId))
+              record.dbId,
+        ];
+        await database.writeTxn(() async {
+          await database._syncDeleteOutboxIds(acceptedIds);
+          if (result.checkpoint != null) {
+            _checkpoint = result.checkpoint;
+            await database._syncPersistState('checkpoint', _checkpoint);
+          }
+        });
+        if (result.correctedChanges.isNotEmpty) {
+          // Corrections are backend truth for optimistic writes. Apply them
+          // after deleting accepted outbox rows so the local view converges.
+          await database._syncApplyRemoteChanges(result.correctedChanges);
+        }
+      }
+
+      // Pull always runs after push so this client observes remote changes and
+      // backend-side effects after its accepted mutations.
+      final pull = await config.adapter.pull(
+        CindelPullRequest(
+          clientId: _clientId!,
+          checkpoint: _checkpoint,
+          schemaVersionByCollection: schemaVersions,
+          collections: schemaVersions.keys.toSet(),
+        ),
+      );
+      _checkpoint = pull.checkpoint;
+      await database._syncApplyRemoteChanges(
+        pull.changes,
+        checkpoint: pull.checkpoint,
+      );
+      _lastSyncAt = DateTime.now().toUtc();
+      await _emit(CindelSyncPhase.idle);
+    } catch (error, stackTrace) {
+      final phase = error.toString().toLowerCase().contains('offline')
+          ? CindelSyncPhase.offline
+          : CindelSyncPhase.error;
+      await _emit(phase, error);
+      config.onError?.call(error, stackTrace);
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  Future<void> _emit(CindelSyncPhase phase, [Object? error]) async {
+    // Status is informational only. It reports pending count by reading the
+    // internal outbox rather than trusting in-memory state.
+    final database = _database;
+    final pending = database == null
+        ? 0
+        : (await database._syncReadOutbox(limit: config.batchSize)).length;
+    config.onStatusChanged?.call(
+      CindelSyncStatus(
+        phase: phase,
+        pendingCount: pending,
+        lastSyncAt: _lastSyncAt,
+        lastError: error,
+      ),
+    );
+  }
+}
+
+// Durable outgoing mutation row. The public CindelSyncMutation is derived from
+// this record when the scheduler calls the adapter.
+final class _CindelSyncOutboxRecord {
+  const _CindelSyncOutboxRecord({
+    required this.dbId,
+    required this.mutationId,
+    required this.clientId,
+    required this.sequence,
+    required this.collection,
+    required this.documentId,
+    required this.operation,
+    required this.documentJson,
+    required this.linkName,
+    required this.targetCollection,
+    required this.targetIdsJson,
+    required this.baseCheckpoint,
+    required this.createdAtMicros,
+    required this.attemptCount,
+    required this.lastError,
+    required this.state,
+  });
+
+  final int dbId;
+  final String mutationId;
+  final String clientId;
+  final int sequence;
+  final String collection;
+  final int documentId;
+  final String operation;
+  final String? documentJson;
+  final String? linkName;
+  final String? targetCollection;
+  final String? targetIdsJson;
+  final String? baseCheckpoint;
+  final int createdAtMicros;
+  final int attemptCount;
+  final String? lastError;
+  final String state;
+
+  CindelSyncMutation toMutation() {
+    return CindelSyncMutation(
+      mutationId: mutationId,
+      clientId: clientId,
+      sequence: sequence,
+      collection: collection,
+      operation: CindelSyncOperation.values.byName(operation),
+      documentId: documentId,
+      document: documentJson == null
+          ? null
+          : Map<String, Object?>.from(jsonDecode(documentJson!) as Map),
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIdsJson == null
+          ? const []
+          : [
+              for (final id in jsonDecode(targetIdsJson!) as List<Object?>)
+                id as int,
+            ],
+      baseCheckpoint: baseCheckpoint,
+    );
+  }
+}
+
+// Small key/value store for sync metadata that should survive outbox drains.
+final class _CindelSyncStateRecord {
+  const _CindelSyncStateRecord(this.dbId, this.key, this.value);
+
+  final int dbId;
+  final String key;
+  final String? value;
+}
+
+bool _isSyncInternalCollection(String collection) {
+  return collection == _syncOutboxCollection ||
+      collection == _syncStateCollection;
+}
+
+int _syncStateId(String key) {
+  return switch (key) {
+    'clientId' => 1,
+    'checkpoint' => 2,
+    'nextSequence' => 3,
+    _ => throw ArgumentError.value(key, 'key', 'Unknown sync state key.'),
+  };
+}
+
+CindelFieldSchema _syncSchemaField({
+  required String name,
+  required String dartType,
+  required String binaryType,
+  bool isId = false,
+}) {
+  return CindelFieldSchema(
+    name: name,
+    dartType: dartType,
+    binaryType: binaryType,
+    isId: isId,
+    isIndexed: false,
+  );
+}
+
+// Internal schemas are appended to the user schema set only when sync is
+// enabled. They use normal Cindel storage so migrations, transactions, and
+// watcher behavior stay on the same backend primitives.
+final _syncInternalSchemas = <CindelCollectionSchema<dynamic>>[
+  _syncOutboxSchema,
+  _syncStateSchema,
+];
+
+// Schema for durable outgoing mutations. Field order must stay aligned with
+// _writeSyncOutboxRecord, _readSyncOutboxRecord, and the MDBX binary fallback
+// below.
+final _syncOutboxSchema = CindelCollectionSchema<_CindelSyncOutboxRecord>(
+  name: _syncOutboxCollection,
+  dartName: '_CindelSyncOutboxRecord',
+  idField: 'dbId',
+  fields: [
+    _syncSchemaField(
+      name: 'dbId',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: true,
+    ),
+    _syncSchemaField(
+      name: 'baseCheckpoint',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'clientId',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'collection',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'createdAtMicros',
+      dartType: 'int',
+      binaryType: 'int',
+    ),
+    _syncSchemaField(name: 'documentId', dartType: 'int', binaryType: 'int'),
+    _syncSchemaField(
+      name: 'documentJson',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'lastError',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'linkName',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'mutationId',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'operation',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(name: 'sequence', dartType: 'int', binaryType: 'int'),
+    _syncSchemaField(name: 'state', dartType: 'String', binaryType: 'string'),
+    _syncSchemaField(
+      name: 'targetCollection',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(
+      name: 'targetIdsJson',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _syncSchemaField(name: 'attemptCount', dartType: 'int', binaryType: 'int'),
+  ],
+  toDocument: (record) => {
+    'dbId': record.dbId,
+    'baseCheckpoint': record.baseCheckpoint,
+    'clientId': record.clientId,
+    'collection': record.collection,
+    'createdAtMicros': record.createdAtMicros,
+    'documentId': record.documentId,
+    'documentJson': record.documentJson,
+    'lastError': record.lastError,
+    'linkName': record.linkName,
+    'mutationId': record.mutationId,
+    'operation': record.operation,
+    'sequence': record.sequence,
+    'state': record.state,
+    'targetCollection': record.targetCollection,
+    'targetIdsJson': record.targetIdsJson,
+    'attemptCount': record.attemptCount,
+  },
+  fromDocument: (document) => _CindelSyncOutboxRecord(
+    dbId: document['dbId'] as int,
+    baseCheckpoint: document['baseCheckpoint'] as String?,
+    clientId: document['clientId'] as String,
+    collection: document['collection'] as String,
+    createdAtMicros: document['createdAtMicros'] as int,
+    documentId: document['documentId'] as int,
+    documentJson: document['documentJson'] as String?,
+    lastError: document['lastError'] as String?,
+    linkName: document['linkName'] as String?,
+    mutationId: document['mutationId'] as String,
+    operation: document['operation'] as String,
+    sequence: document['sequence'] as int,
+    state: document['state'] as String,
+    targetCollection: document['targetCollection'] as String?,
+    targetIdsJson: document['targetIdsJson'] as String?,
+    attemptCount: document['attemptCount'] as int,
+  ),
+  getId: (record) => record.dbId,
+  setId: null,
+  writeNativeDocument: _writeSyncOutboxRecord,
+  readNativeDocument: _readSyncOutboxRecord,
+);
+
+// Schema for compact sync key/value metadata.
+final _syncStateSchema = CindelCollectionSchema<_CindelSyncStateRecord>(
+  name: _syncStateCollection,
+  dartName: '_CindelSyncStateRecord',
+  idField: 'dbId',
+  fields: [
+    _syncSchemaField(
+      name: 'dbId',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: true,
+    ),
+    _syncSchemaField(name: 'key', dartType: 'String', binaryType: 'string'),
+    _syncSchemaField(name: 'value', dartType: 'String?', binaryType: 'string'),
+  ],
+  toDocument: (record) => {
+    'dbId': record.dbId,
+    'key': record.key,
+    'value': record.value,
+  },
+  fromDocument: (document) => _CindelSyncStateRecord(
+    document['dbId'] as int,
+    document['key'] as String,
+    document['value'] as String?,
+  ),
+  getId: (record) => record.dbId,
+  setId: null,
+  writeNativeDocument: _writeSyncStateRecord,
+  readNativeDocument: _readSyncStateRecord,
+);
+
+void _writeSyncOutboxRecord(
+  CindelNativeDocumentWriter writer,
+  _CindelSyncOutboxRecord record,
+) {
+  writer.writeInt(0, record.attemptCount);
+  _writeNullableString(writer, 1, record.baseCheckpoint);
+  writer.writeString(2, record.clientId);
+  writer.writeString(3, record.collection);
+  writer.writeInt(4, record.createdAtMicros);
+  writer.writeInt(5, record.documentId);
+  _writeNullableString(writer, 6, record.documentJson);
+  _writeNullableString(writer, 7, record.lastError);
+  _writeNullableString(writer, 8, record.linkName);
+  writer.writeString(9, record.mutationId);
+  writer.writeString(10, record.operation);
+  writer.writeInt(11, record.sequence);
+  writer.writeString(12, record.state);
+  _writeNullableString(writer, 13, record.targetCollection);
+  _writeNullableString(writer, 14, record.targetIdsJson);
+}
+
+_CindelSyncOutboxRecord _readSyncOutboxRecord(
+  CindelNativeDocumentReader reader,
+  int index,
+) {
+  return _CindelSyncOutboxRecord(
+    dbId: reader.readId(index),
+    attemptCount: reader.readInt(index, 0)!,
+    baseCheckpoint: reader.readString(index, 1),
+    clientId: reader.readString(index, 2)!,
+    collection: reader.readString(index, 3)!,
+    createdAtMicros: reader.readInt(index, 4)!,
+    documentId: reader.readInt(index, 5)!,
+    documentJson: reader.readString(index, 6),
+    lastError: reader.readString(index, 7),
+    linkName: reader.readString(index, 8),
+    mutationId: reader.readString(index, 9)!,
+    operation: reader.readString(index, 10)!,
+    sequence: reader.readInt(index, 11)!,
+    state: reader.readString(index, 12)!,
+    targetCollection: reader.readString(index, 13),
+    targetIdsJson: reader.readString(index, 14),
+  );
+}
+
+void _writeSyncStateRecord(
+  CindelNativeDocumentWriter writer,
+  _CindelSyncStateRecord record,
+) {
+  writer.writeString(0, record.key);
+  _writeNullableString(writer, 1, record.value);
+}
+
+_CindelSyncStateRecord _readSyncStateRecord(
+  CindelNativeDocumentReader reader,
+  int index,
+) {
+  return _CindelSyncStateRecord(
+    reader.readId(index),
+    reader.readString(index, 0)!,
+    reader.readString(index, 1),
+  );
+}
+
+void _writeNullableString(
+  CindelNativeDocumentWriter writer,
+  int fieldIndex,
+  String? value,
+) {
+  if (value == null) {
+    writer.writeNull(fieldIndex);
+  } else {
+    writer.writeString(fieldIndex, value);
+  }
+}
+
+// MDBX internal sync rows are encoded as schema binary documents. Keep this
+// order exactly in sync with _encodeSyncOutboxRecord and
+// _decodeSyncOutboxRecord.
+final _syncOutboxBinaryTypes = <CindelBinaryFieldType>[
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.intValue,
+  CindelBinaryFieldType.intValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.intValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.intValue,
+];
+
+Uint8List _encodeSyncOutboxRecord(_CindelSyncOutboxRecord record) {
+  return cindelEncodeSchemaBinaryDocument([
+    record.baseCheckpoint,
+    record.clientId,
+    record.collection,
+    record.createdAtMicros,
+    record.documentId,
+    record.documentJson,
+    record.lastError,
+    record.linkName,
+    record.mutationId,
+    record.operation,
+    record.sequence,
+    record.state,
+    record.targetCollection,
+    record.targetIdsJson,
+    record.attemptCount,
+  ], _syncOutboxBinaryTypes);
+}
+
+_CindelSyncOutboxRecord _decodeSyncOutboxRecord(int id, Uint8List bytes) {
+  final values = cindelDecodeSchemaBinaryDocument(
+    bytes,
+    _syncOutboxBinaryTypes,
+  );
+  return _CindelSyncOutboxRecord(
+    dbId: id,
+    baseCheckpoint: values[0] as String?,
+    clientId: values[1] as String,
+    collection: values[2] as String,
+    createdAtMicros: values[3] as int,
+    documentId: values[4] as int,
+    documentJson: values[5] as String?,
+    lastError: values[6] as String?,
+    linkName: values[7] as String?,
+    mutationId: values[8] as String,
+    operation: values[9] as String,
+    sequence: values[10] as int,
+    state: values[11] as String,
+    targetCollection: values[12] as String?,
+    targetIdsJson: values[13] as String?,
+    attemptCount: values[14] as int,
+  );
+}
+
+// Binary shape for MDBX sync state rows.
+final _syncStateBinaryTypes = <CindelBinaryFieldType>[
+  CindelBinaryFieldType.stringValue,
+  CindelBinaryFieldType.stringValue,
+];
+
+Uint8List _encodeSyncStateRecord(_CindelSyncStateRecord record) {
+  return cindelEncodeSchemaBinaryDocument([
+    record.key,
+    record.value,
+  ], _syncStateBinaryTypes);
+}
+
+_CindelSyncStateRecord _decodeSyncStateRecord(Uint8List bytes) {
+  final values = cindelDecodeSchemaBinaryDocument(bytes, _syncStateBinaryTypes);
+  return _CindelSyncStateRecord(
+    autoIncrement,
+    values[0] as String,
+    values[1] as String?,
+  );
 }

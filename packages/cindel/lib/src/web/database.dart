@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
@@ -8,6 +9,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 import '../cindel_error.dart';
 import '../migration.dart';
 import '../schema.dart';
+import '../sync.dart';
 import 'native_document_reader.dart';
 import 'schema_manifest.dart';
 import 'wire.dart';
@@ -15,6 +17,12 @@ import 'worker_bridge.dart';
 
 /// Internal map-shaped document representation used by Cindel runtime bridges.
 typedef CindelDocument = Map<String, Object?>;
+
+// Reserved internal collections used only by the sync sidecar. They are
+// registered with the Web schema manifest when sync is enabled and remain
+// hidden from application collection APIs.
+const _syncOutboxCollection = '__cindel_sync_outbox';
+const _syncStateCollection = '__cindel_sync_state';
 
 /// A collection change observed by Web Cindel watchers.
 ///
@@ -180,9 +188,13 @@ class CindelDatabase {
     required this.directory,
     required Map<String, CindelCollectionSchema<dynamic>> schemas,
     required CindelWebWorkerBridge bridge,
+    required CindelSyncConfig? syncConfig,
   }) : backend = CindelStorageBackend.sqlite,
        _schemas = Map.of(schemas),
-       _bridge = bridge;
+       _bridge = bridge,
+       _syncSession = syncConfig == null
+           ? null
+           : _CindelWebSyncSession(syncConfig);
 
   /// Browser database name used by the Web SQLite runtime.
   final String directory;
@@ -192,10 +204,17 @@ class CindelDatabase {
 
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final CindelWebWorkerBridge _bridge;
+  final _CindelWebSyncSession? _syncSession;
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   bool _closed = false;
   _TransactionMode? _activeTransaction;
+
+  // Sync persists outbox/state through normal Worker storage operations. These
+  // flags distinguish internal writes and remote apply from user mutations so
+  // those writes do not recursively enqueue more sync work.
+  bool _syncInternalWrite = false;
+  bool _syncRemoteApply = false;
 
   /// Whether SQLite can use generated native document readers for this handle.
   bool get usesSqliteNativeDocuments => true;
@@ -211,6 +230,7 @@ class CindelDatabase {
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
     CindelMigrationPlan? migrationPlan,
+    CindelSyncConfig? sync,
   }) async {
     _checkDirectory(directory);
     if (migrationPlan != null) {
@@ -220,7 +240,9 @@ class CindelDatabase {
         backend: backend,
       );
     }
-    final schemasByCollection = _schemasByCollection(schemas);
+    final schemasByCollection = _schemasByCollection(
+      sync == null ? schemas : [...schemas, ..._syncWebInternalSchemas],
+    );
     final bridge = CindelWebWorkerBridge(_defaultWorkerUrl);
     try {
       await bridge.init();
@@ -231,11 +253,14 @@ class CindelDatabase {
         operation: 'open',
         payload: _payload({'dbName': directory, 'manifest': manifest}),
       );
-      return CindelDatabase._(
+      final database = CindelDatabase._(
         directory: directory,
         schemas: schemasByCollection,
         bridge: bridge,
+        syncConfig: sync,
       );
+      await database._syncSession?.start(database);
+      return database;
     } catch (_) {
       unawaited(bridge.close());
       throw CindelOpenError(backend: CindelStorageBackend.sqlite.name);
@@ -250,11 +275,13 @@ class CindelDatabase {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelSyncConfig? sync,
   }) {
     return open(
       directory: 'cindel-memory-${DateTime.now().microsecondsSinceEpoch}',
       schemas: schemas,
       backend: backend,
+      sync: sync,
     );
   }
 
@@ -266,8 +293,14 @@ class CindelDatabase {
     required String directory,
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelSyncConfig? sync,
   }) {
-    return open(directory: directory, schemas: schemas, backend: backend);
+    return open(
+      directory: directory,
+      schemas: schemas,
+      backend: backend,
+      sync: sync,
+    );
   }
 
   /// Closes this database.
@@ -279,6 +312,7 @@ class CindelDatabase {
       return;
     }
     _closed = true;
+    await _syncSession?.close();
     await _closeWatchers();
     await _bridge.close();
   }
@@ -319,6 +353,18 @@ class CindelDatabase {
     CindelWriteNativeDocument<T> writeDocument, {
     Map<int, CindelDocument>? Function()? documents,
   }) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(
+        () => putAllNativeBinaryDocuments(
+          collection,
+          ids,
+          objects,
+          fieldTypes,
+          writeDocument,
+          documents: documents,
+        ),
+      );
+    }
     _checkOpen();
     _checkCollection(collection);
     if (ids.length != objects.length) {
@@ -341,6 +387,7 @@ class CindelDatabase {
       'collection': collection,
       'documents': bytes,
     });
+    await _syncRecordNativeUpserts(collection, ids, objects, documents);
     await _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.upserts(collection, documents?.call(), ids: ids),
@@ -467,6 +514,17 @@ class CindelDatabase {
     required String targetCollection,
     required Iterable<int> targetIds,
   }) async {
+    if (_syncShouldWrapLocalWrite(sourceCollection)) {
+      return writeTxn(
+        () => saveLinkIds(
+          sourceCollection: sourceCollection,
+          sourceId: sourceId,
+          linkName: linkName,
+          targetCollection: targetCollection,
+          targetIds: targetIds,
+        ),
+      );
+    }
     _checkOpen();
     _checkCanWrite();
     _checkCollection(sourceCollection);
@@ -483,6 +541,13 @@ class CindelDatabase {
       'targetCollection': targetCollection,
       'targetIds': encodeIdList(ids),
     });
+    await _syncRecordReplaceLinks(
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: ids,
+    );
     await _markNativeCollectionChanged(
       sourceCollection,
       () => CindelChangeSet.upsert(sourceCollection, sourceId, null),
@@ -718,6 +783,9 @@ class CindelDatabase {
     String collection,
     Iterable<int> ids,
   ) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => deleteAllNativeDocuments(collection, ids));
+    }
     _checkOpen();
     _checkCollection(collection);
     final idList = ids.toList(growable: false);
@@ -731,6 +799,9 @@ class CindelDatabase {
       'collection': collection,
       'ids': encodeIdList(idList),
     });
+    for (final id in idList) {
+      await _syncRecordDelete(collection, id);
+    }
     await _markNativeCollectionChanged(
       collection,
       () => CindelChangeSet.deletes(collection, idList),
@@ -799,11 +870,17 @@ class CindelDatabase {
     String collection,
     WireQueryPlan plan,
   ) async {
+    if (_syncShouldWrapLocalWrite(collection)) {
+      return writeTxn(() => deleteNativePlan(collection, plan));
+    }
     final ids = await _sendIds('queryPlanDelete', {
       'collection': collection,
       'plan': encodeQueryPlan(plan),
     });
     if (ids.isNotEmpty) {
+      for (final id in ids) {
+        await _syncRecordDelete(collection, id);
+      }
       await _markNativeCollectionChanged(
         collection,
         () => CindelChangeSet.deletes(collection, ids),
@@ -818,6 +895,7 @@ class CindelDatabase {
     WireQueryPlan plan,
     Map<String, WireValue> updates,
   ) async {
+    _syncCheckQueryUpdate(collection);
     final scalar = decodeScalar(
       await _sendBytes('queryPlanUpdate', {
         'collection': collection,
@@ -834,6 +912,309 @@ class CindelDatabase {
       );
     }
     return count;
+  }
+
+  bool _syncShouldWrapLocalWrite(String collection) {
+    // Web writes outside explicit writeTxn are wrapped so the app write and
+    // the outbox row cross the Worker boundary as one transaction.
+    return _syncSession != null &&
+        !_syncInternalWrite &&
+        !_syncRemoteApply &&
+        !_isWebSyncInternalCollection(collection) &&
+        _activeTransaction == null;
+  }
+
+  void _syncCheckQueryUpdate(String collection) {
+    // Query updates do not currently yield complete per-document snapshots for
+    // sync. Keep them explicitly unsupported until the mutation shape is clear.
+    if (_syncSession == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isWebSyncInternalCollection(collection)) {
+      return;
+    }
+    throw UnsupportedError(
+      'Cindel sync does not support query update operations yet. Rewrite '
+      'matching objects and call putAll, or open the database without sync.',
+    );
+  }
+
+  Future<void> _syncRecordNativeUpserts<T>(
+    String collection,
+    List<int> ids,
+    List<T> objects,
+    Map<int, CindelDocument>? Function()? documents,
+  ) async {
+    // Web typed writes always use native schema rows. Build the canonical
+    // document snapshot here so the adapter contract stays backend-neutral.
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isWebSyncInternalCollection(collection)) {
+      return;
+    }
+    final provided = documents?.call();
+    final schema = _schemas[collection];
+    if (schema == null) {
+      throw CindelSchemaError('Collection `$collection` has no schema.');
+    }
+    for (var i = 0; i < ids.length; i += 1) {
+      final id = ids[i];
+      final document =
+          provided?[id] ?? _syncDocumentFromObject(schema, objects[i], id);
+      await session.recordUpsert(collection, id, document);
+    }
+  }
+
+  Future<void> _syncRecordDelete(String collection, int id) async {
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isWebSyncInternalCollection(collection)) {
+      return;
+    }
+    await session.recordDelete(collection, id);
+  }
+
+  Future<void> _syncRecordReplaceLinks({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required List<int> targetIds,
+  }) async {
+    final session = _syncSession;
+    if (session == null ||
+        _syncInternalWrite ||
+        _syncRemoteApply ||
+        _isWebSyncInternalCollection(sourceCollection)) {
+      return;
+    }
+    await session.recordReplaceLinks(
+      sourceCollection: sourceCollection,
+      sourceId: sourceId,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIds,
+    );
+  }
+
+  CindelDocument _syncDocumentFromObject(
+    CindelCollectionSchema<dynamic> schema,
+    Object? object,
+    int id,
+  ) {
+    final dynamic dynamicSchema = schema;
+    final document = Map<String, Object?>.from(
+      dynamicSchema.toDocument(object) as Map,
+    );
+    document[schema.idField] = id;
+    return document;
+  }
+
+  Future<void> _syncPersistMutation(_CindelWebSyncOutboxRecord record) async {
+    // The Web outbox is stored as generated native rows because all app data is
+    // already routed through the SQLite/Wasm Worker row path.
+    await _syncRunInternalWrite(() async {
+      final fieldTypes = _nativeFieldTypes(_syncWebOutboxSchema)!;
+      await putAllNativeBinaryDocuments<_CindelWebSyncOutboxRecord>(
+        _syncOutboxCollection,
+        [record.dbId],
+        [record],
+        fieldTypes,
+        _writeWebSyncOutboxRecord,
+      );
+    });
+  }
+
+  Future<void> _syncPersistState(String key, String? value) async {
+    // State lives separately from the outbox so draining accepted mutations
+    // cannot remove the persisted client id, checkpoint, or sequence counter.
+    await _syncRunInternalWrite(() async {
+      final record = _CindelWebSyncStateRecord(
+        _webSyncStateId(key),
+        key,
+        value,
+      );
+      final fieldTypes = _nativeFieldTypes(_syncWebStateSchema)!;
+      await putAllNativeBinaryDocuments<_CindelWebSyncStateRecord>(
+        _syncStateCollection,
+        [record.dbId],
+        [record],
+        fieldTypes,
+        _writeWebSyncStateRecord,
+      );
+    });
+  }
+
+  Future<String?> _syncReadState(String key) async {
+    final fieldTypes = _nativeFieldTypes(_syncWebStateSchema)!;
+    final record =
+        (await getAllNativeBinaryDocuments<_CindelWebSyncStateRecord>(
+          _syncStateCollection,
+          [_webSyncStateId(key)],
+          fieldTypes,
+          _readWebSyncStateRecord,
+        )).single;
+    return record?.value;
+  }
+
+  Future<List<_CindelWebSyncOutboxRecord>> _syncReadOutbox({
+    required int limit,
+  }) async {
+    // Use document id paging to keep scheduler batching identical to native
+    // backends and avoid loading the whole internal outbox.
+    final ids = await documentIdsPage(_syncOutboxCollection, limit: limit);
+    if (ids.isEmpty) {
+      return const [];
+    }
+    final fieldTypes = _nativeFieldTypes(_syncWebOutboxSchema)!;
+    final records =
+        await getAllNativeBinaryDocuments<_CindelWebSyncOutboxRecord>(
+          _syncOutboxCollection,
+          ids,
+          fieldTypes,
+          _readWebSyncOutboxRecord,
+        );
+    return [
+      for (final record in records)
+        if (record != null) record,
+    ]..sort((left, right) => left.sequence.compareTo(right.sequence));
+  }
+
+  Future<int> _syncNextOutboxSequence() async {
+    // On reopen, never reuse a mutation id while pending rows exist. This scan
+    // complements the persisted nextSequence state and protects adapter
+    // idempotency.
+    var nextSequence = 1;
+    int? afterId;
+    while (true) {
+      final ids = await documentIdsPage(
+        _syncOutboxCollection,
+        afterId: afterId,
+      );
+      if (ids.isEmpty) {
+        return nextSequence;
+      }
+      nextSequence = ids.last + 1;
+      afterId = ids.last;
+    }
+  }
+
+  Future<void> _syncDeleteOutboxIds(Iterable<int> ids) async {
+    // Only mutations accepted by the adapter are deleted. Everything else stays
+    // pending so the scheduler can retry.
+    final idList = ids.toList(growable: false);
+    if (idList.isEmpty) {
+      return;
+    }
+    await _syncRunInternalWrite(
+      () => deleteAllNativeDocuments(_syncOutboxCollection, idList),
+    );
+  }
+
+  Future<Map<String, int>> _syncSchemaVersions() async {
+    // Adapters receive only user collections. Internal Web sync collections are
+    // storage details and must not appear in pull collection filters.
+    final versions = <String, int>{};
+    for (final collection in _schemas.keys) {
+      if (_isWebSyncInternalCollection(collection)) {
+        continue;
+      }
+      versions[collection] = await schemaVersion(collection) ?? 1;
+    }
+    return versions;
+  }
+
+  Future<void> _syncApplyRemoteChanges(
+    List<CindelRemoteChange> changes, {
+    String? checkpoint,
+  }) async {
+    // Remote apply goes through normal writeTxn so Web watchers observe the
+    // change, but the remote guard prevents the apply from producing another
+    // outgoing mutation.
+    if (changes.isEmpty && checkpoint == null) {
+      return;
+    }
+    await writeTxn(() async {
+      _syncRemoteApply = true;
+      try {
+        for (final change in changes) {
+          await _syncApplyRemoteChange(change);
+        }
+        if (checkpoint != null) {
+          await _syncPersistState('checkpoint', checkpoint);
+        }
+      } finally {
+        _syncRemoteApply = false;
+      }
+    });
+  }
+
+  Future<void> _syncApplyRemoteChange(CindelRemoteChange change) async {
+    switch (change) {
+      case CindelRemoteUpsert(:final collection, :final id, :final document):
+        final schema = _schemas[collection];
+        if (schema == null) {
+          throw CindelSchemaError(
+            'Remote sync collection `$collection` is not registered.',
+          );
+        }
+        final dynamic dynamicSchema = schema;
+        final object = dynamicSchema.fromDocument({
+          ...document,
+          schema.idField: id,
+        });
+        final fieldTypes = _nativeFieldTypes(schema);
+        final nativeWriter = dynamicSchema.writeNativeDocument as Function?;
+        if (nativeWriter == null || fieldTypes == null) {
+          throw CindelSchemaError(
+            'Remote sync collection `$collection` cannot be written.',
+          );
+        }
+        // Web remote upserts must use the generated native writer because the
+        // Worker stores typed app data as SQLite rows, not MDBX-style blobs.
+        await putAllNativeBinaryDocuments(
+          collection,
+          [id],
+          [object],
+          fieldTypes,
+          (writer, value) => Function.apply(nativeWriter, [writer, value]),
+          documents: () => {
+            id: {...document, schema.idField: id},
+          },
+        );
+      case CindelRemoteDelete(:final collection, :final id):
+        await deleteAllNativeDocuments(collection, [id]);
+      case CindelRemoteReplaceLinks(
+        :final collection,
+        :final id,
+        :final linkName,
+        :final targetCollection,
+        :final targetIds,
+      ):
+        await saveLinkIds(
+          sourceCollection: collection,
+          sourceId: id,
+          linkName: linkName,
+          targetCollection: targetCollection,
+          targetIds: targetIds,
+        );
+    }
+  }
+
+  Future<T> _syncRunInternalWrite<T>(Future<T> Function() action) async {
+    // Keep the guard scoped because sync state writes can happen inside an
+    // outer remote-apply transaction.
+    final previous = _syncInternalWrite;
+    _syncInternalWrite = true;
+    try {
+      return await action();
+    } finally {
+      _syncInternalWrite = previous;
+    }
   }
 
   /// Returns the persisted schema version for [collection], or `null`.
@@ -877,7 +1258,9 @@ class CindelDatabase {
     Iterable<CindelCollectionSchema<dynamic>> schemas,
   ) async {
     _checkOpen();
-    final schemasByCollection = _schemasByCollection(schemas);
+    final schemasByCollection = _schemasByCollection(
+      _syncSession == null ? schemas : [...schemas, ..._syncWebInternalSchemas],
+    );
     await _bridge.send(
       operation: 'registerMigratedSchemas',
       payload: _payload({
@@ -966,6 +1349,7 @@ class CindelDatabase {
         for (final change in changes) {
           _notifyWatchers(change);
         }
+        _syncSession?._wake();
       }
       return result;
     } catch (_) {
@@ -1368,14 +1752,540 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   }
 }
 
+// Web sidecar equivalent of the native sync session. It stays private so Web
+// apps get the same open-time-only sync contract as native apps.
+final class _CindelWebSyncSession {
+  _CindelWebSyncSession(this.config);
+
+  final CindelSyncConfig config;
+  CindelDatabase? _database;
+  Timer? _timer;
+  bool _closed = false;
+  bool _syncing = false;
+  String? _clientId;
+  String? _checkpoint;
+  int _nextSequence = 1;
+  DateTime? _lastSyncAt;
+
+  Future<void> start(CindelDatabase database) async {
+    _database = database;
+    // Persist a generated client id when the app does not provide one. The id
+    // is part of every mutation id, so changing it on reopen would break
+    // backend idempotency.
+    _clientId = config.clientId ?? await database._syncReadState('clientId');
+    if (_clientId == null) {
+      _clientId = 'cindel-${DateTime.now().microsecondsSinceEpoch}';
+      await database.writeTxn(
+        () => database._syncPersistState('clientId', _clientId),
+      );
+    }
+    _checkpoint = await database._syncReadState('checkpoint');
+    final persistedNextSequence =
+        int.tryParse(await database._syncReadState('nextSequence') ?? '') ?? 1;
+    final outboxNextSequence = await database._syncNextOutboxSequence();
+    // Use the outbox as a defensive source of truth so pending rows never share
+    // a mutation id with newly-created local changes after reopen.
+    _nextSequence = persistedNextSequence > outboxNextSequence
+        ? persistedNextSequence
+        : outboxNextSequence;
+    await _emit(CindelSyncPhase.idle);
+    if (config.autoStart) {
+      _timer = Timer.periodic(config.interval, (_) => _wake());
+      _wake();
+    }
+  }
+
+  Future<void> close() async {
+    // Avoid closing the Web handle while an adapter cycle can still apply
+    // changes through the Worker.
+    _closed = true;
+    _timer?.cancel();
+    while (_syncing) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+  }
+
+  Future<void> recordUpsert(
+    String collection,
+    int id,
+    CindelDocument document,
+  ) {
+    return _record(
+      collection: collection,
+      documentId: id,
+      operation: CindelSyncOperation.upsert,
+      document: document,
+    );
+  }
+
+  Future<void> recordDelete(String collection, int id) {
+    return _record(
+      collection: collection,
+      documentId: id,
+      operation: CindelSyncOperation.delete,
+    );
+  }
+
+  Future<void> recordReplaceLinks({
+    required String sourceCollection,
+    required int sourceId,
+    required String linkName,
+    required String targetCollection,
+    required List<int> targetIds,
+  }) {
+    return _record(
+      collection: sourceCollection,
+      documentId: sourceId,
+      operation: CindelSyncOperation.replaceLinks,
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIds,
+    );
+  }
+
+  Future<void> _record({
+    required String collection,
+    required int documentId,
+    required CindelSyncOperation operation,
+    CindelDocument? document,
+    String? linkName,
+    String? targetCollection,
+    List<int> targetIds = const [],
+  }) async {
+    final database = _database!;
+    if (!database.isInWriteTransaction) {
+      throw StateError('Cindel sync mutations must be recorded in writeTxn.');
+    }
+    // The sequence doubles as outbox row id and mutation id suffix. That keeps
+    // retry deduplication stable across persisted Web storage.
+    final sequence = _nextSequence++;
+    final clientId = _clientId!;
+    await database._syncPersistMutation(
+      _CindelWebSyncOutboxRecord(
+        dbId: sequence,
+        mutationId: '$clientId:$sequence',
+        clientId: clientId,
+        sequence: sequence,
+        collection: collection,
+        documentId: documentId,
+        operation: operation.name,
+        documentJson: document == null ? null : jsonEncode(document),
+        linkName: linkName,
+        targetCollection: targetCollection,
+        targetIdsJson: targetIds.isEmpty ? null : jsonEncode(targetIds),
+        baseCheckpoint: _checkpoint,
+      ),
+    );
+    await database._syncPersistState('nextSequence', '$_nextSequence');
+  }
+
+  void _wake() {
+    if (_closed || _syncing) {
+      return;
+    }
+    unawaited(_syncOnce());
+  }
+
+  Future<void> _syncOnce() async {
+    if (_closed || _syncing) {
+      return;
+    }
+    final database = _database;
+    if (database == null) {
+      return;
+    }
+    _syncing = true;
+    try {
+      await _emit(CindelSyncPhase.syncing);
+      final schemaVersions = await database._syncSchemaVersions();
+      final pending = await database._syncReadOutbox(limit: config.batchSize);
+      if (pending.isNotEmpty) {
+        // Push is idempotent at the adapter boundary. Only accepted rows are
+        // removed; unaccepted rows remain durable and will retry.
+        final result = await config.adapter.push(
+          CindelPushRequest(
+            clientId: _clientId!,
+            lastPulledCheckpoint: _checkpoint,
+            schemaVersionByCollection: schemaVersions,
+            mutations: [for (final record in pending) record.toMutation()],
+          ),
+        );
+        await database.writeTxn(() async {
+          await database._syncDeleteOutboxIds([
+            for (final record in pending)
+              if (result.acceptedMutationIds.contains(record.mutationId))
+                record.dbId,
+          ]);
+          if (result.checkpoint != null) {
+            _checkpoint = result.checkpoint;
+            await database._syncPersistState('checkpoint', _checkpoint);
+          }
+        });
+        if (result.correctedChanges.isNotEmpty) {
+          // Backend corrections are applied as guarded remote writes so Web
+          // watchers update but no new outgoing mutation is created.
+          await database._syncApplyRemoteChanges(result.correctedChanges);
+        }
+      }
+      // Pull after push so the client observes remote state that includes any
+      // accepted local mutations and backend-side corrections.
+      final pull = await config.adapter.pull(
+        CindelPullRequest(
+          clientId: _clientId!,
+          checkpoint: _checkpoint,
+          schemaVersionByCollection: schemaVersions,
+          collections: schemaVersions.keys.toSet(),
+        ),
+      );
+      _checkpoint = pull.checkpoint;
+      await database._syncApplyRemoteChanges(
+        pull.changes,
+        checkpoint: pull.checkpoint,
+      );
+      _lastSyncAt = DateTime.now().toUtc();
+      await _emit(CindelSyncPhase.idle);
+    } catch (error, stackTrace) {
+      final phase = error.toString().toLowerCase().contains('offline')
+          ? CindelSyncPhase.offline
+          : CindelSyncPhase.error;
+      await _emit(phase, error);
+      config.onError?.call(error, stackTrace);
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  Future<void> _emit(CindelSyncPhase phase, [Object? error]) async {
+    // Status is derived from persisted outbox rows so UI callbacks survive
+    // reopen and do not depend on transient in-memory counters.
+    final database = _database;
+    final pending = database == null
+        ? 0
+        : (await database._syncReadOutbox(limit: config.batchSize)).length;
+    config.onStatusChanged?.call(
+      CindelSyncStatus(
+        phase: phase,
+        pendingCount: pending,
+        lastSyncAt: _lastSyncAt,
+        lastError: error,
+      ),
+    );
+  }
+}
+
+// Durable outgoing mutation row for Web SQLite storage.
+final class _CindelWebSyncOutboxRecord {
+  const _CindelWebSyncOutboxRecord({
+    required this.dbId,
+    required this.mutationId,
+    required this.clientId,
+    required this.sequence,
+    required this.collection,
+    required this.documentId,
+    required this.operation,
+    required this.documentJson,
+    required this.linkName,
+    required this.targetCollection,
+    required this.targetIdsJson,
+    required this.baseCheckpoint,
+  });
+
+  final int dbId;
+  final String mutationId;
+  final String clientId;
+  final int sequence;
+  final String collection;
+  final int documentId;
+  final String operation;
+  final String? documentJson;
+  final String? linkName;
+  final String? targetCollection;
+  final String? targetIdsJson;
+  final String? baseCheckpoint;
+
+  CindelSyncMutation toMutation() {
+    return CindelSyncMutation(
+      mutationId: mutationId,
+      clientId: clientId,
+      sequence: sequence,
+      collection: collection,
+      operation: CindelSyncOperation.values.byName(operation),
+      documentId: documentId,
+      document: documentJson == null
+          ? null
+          : Map<String, Object?>.from(jsonDecode(documentJson!) as Map),
+      linkName: linkName,
+      targetCollection: targetCollection,
+      targetIds: targetIdsJson == null
+          ? const []
+          : [
+              for (final id in jsonDecode(targetIdsJson!) as List<Object?>)
+                id as int,
+            ],
+      baseCheckpoint: baseCheckpoint,
+    );
+  }
+}
+
+// Key/value sync metadata that must not be deleted when accepted outbox rows
+// are drained.
+final class _CindelWebSyncStateRecord {
+  const _CindelWebSyncStateRecord(this.dbId, this.key, this.value);
+
+  final int dbId;
+  final String key;
+  final String? value;
+}
+
 Map<String, CindelCollectionSchema<dynamic>> _schemasByCollection(
   Iterable<CindelCollectionSchema<dynamic>> schemas,
 ) {
   final byCollection = <String, CindelCollectionSchema<dynamic>>{};
   for (final schema in schemas) {
+    if (byCollection.containsKey(schema.name)) {
+      throw ArgumentError.value(
+        schema.name,
+        'schemas',
+        'Collection schemas must be unique by name.',
+      );
+    }
     byCollection[schema.name] = schema;
   }
-  return byCollection;
+  return Map.unmodifiable(byCollection);
+}
+
+bool _isWebSyncInternalCollection(String collection) {
+  return collection == _syncOutboxCollection ||
+      collection == _syncStateCollection;
+}
+
+int _webSyncStateId(String key) {
+  return switch (key) {
+    'clientId' => 1,
+    'checkpoint' => 2,
+    'nextSequence' => 3,
+    _ => throw ArgumentError.value(key, 'key', 'Unknown sync state key.'),
+  };
+}
+
+CindelFieldSchema _webSyncSchemaField({
+  required String name,
+  required String dartType,
+  required String binaryType,
+  bool isId = false,
+}) {
+  return CindelFieldSchema(
+    name: name,
+    dartType: dartType,
+    binaryType: binaryType,
+    isId: isId,
+    isIndexed: false,
+  );
+}
+
+// Web internal schemas are included in the Worker schema manifest only when
+// sync is enabled. They are hidden implementation details, not app collections.
+final _syncWebInternalSchemas = <CindelCollectionSchema<dynamic>>[
+  _syncWebOutboxSchema,
+  _syncWebStateSchema,
+];
+
+// Schema for durable outgoing Web sync mutations. Field order must stay aligned
+// with _writeWebSyncOutboxRecord and _readWebSyncOutboxRecord.
+final _syncWebOutboxSchema = CindelCollectionSchema<_CindelWebSyncOutboxRecord>(
+  name: _syncOutboxCollection,
+  dartName: '_CindelWebSyncOutboxRecord',
+  idField: 'dbId',
+  fields: [
+    _webSyncSchemaField(
+      name: 'dbId',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: true,
+    ),
+    _webSyncSchemaField(
+      name: 'baseCheckpoint',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'clientId',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'collection',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(name: 'documentId', dartType: 'int', binaryType: 'int'),
+    _webSyncSchemaField(
+      name: 'documentJson',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'linkName',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'mutationId',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'operation',
+      dartType: 'String',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(name: 'sequence', dartType: 'int', binaryType: 'int'),
+    _webSyncSchemaField(
+      name: 'targetCollection',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+    _webSyncSchemaField(
+      name: 'targetIdsJson',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+  ],
+  toDocument: (record) => {
+    'dbId': record.dbId,
+    'baseCheckpoint': record.baseCheckpoint,
+    'clientId': record.clientId,
+    'collection': record.collection,
+    'documentId': record.documentId,
+    'documentJson': record.documentJson,
+    'linkName': record.linkName,
+    'mutationId': record.mutationId,
+    'operation': record.operation,
+    'sequence': record.sequence,
+    'targetCollection': record.targetCollection,
+    'targetIdsJson': record.targetIdsJson,
+  },
+  fromDocument: (document) => _CindelWebSyncOutboxRecord(
+    dbId: document['dbId'] as int,
+    baseCheckpoint: document['baseCheckpoint'] as String?,
+    clientId: document['clientId'] as String,
+    collection: document['collection'] as String,
+    documentId: document['documentId'] as int,
+    documentJson: document['documentJson'] as String?,
+    linkName: document['linkName'] as String?,
+    mutationId: document['mutationId'] as String,
+    operation: document['operation'] as String,
+    sequence: document['sequence'] as int,
+    targetCollection: document['targetCollection'] as String?,
+    targetIdsJson: document['targetIdsJson'] as String?,
+  ),
+  getId: (record) => record.dbId,
+  setId: null,
+  writeNativeDocument: _writeWebSyncOutboxRecord,
+  readNativeDocument: _readWebSyncOutboxRecord,
+);
+
+// Schema for compact Web sync key/value metadata.
+final _syncWebStateSchema = CindelCollectionSchema<_CindelWebSyncStateRecord>(
+  name: _syncStateCollection,
+  dartName: '_CindelWebSyncStateRecord',
+  idField: 'dbId',
+  fields: [
+    _webSyncSchemaField(
+      name: 'dbId',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: true,
+    ),
+    _webSyncSchemaField(name: 'key', dartType: 'String', binaryType: 'string'),
+    _webSyncSchemaField(
+      name: 'value',
+      dartType: 'String?',
+      binaryType: 'string',
+    ),
+  ],
+  toDocument: (record) => {
+    'dbId': record.dbId,
+    'key': record.key,
+    'value': record.value,
+  },
+  fromDocument: (document) => _CindelWebSyncStateRecord(
+    document['dbId'] as int,
+    document['key'] as String,
+    document['value'] as String?,
+  ),
+  getId: (record) => record.dbId,
+  setId: null,
+  writeNativeDocument: _writeWebSyncStateRecord,
+  readNativeDocument: _readWebSyncStateRecord,
+);
+
+void _writeWebSyncOutboxRecord(
+  CindelNativeDocumentWriter writer,
+  _CindelWebSyncOutboxRecord record,
+) {
+  _writeWebNullableString(writer, 0, record.baseCheckpoint);
+  writer.writeString(1, record.clientId);
+  writer.writeString(2, record.collection);
+  writer.writeInt(3, record.documentId);
+  _writeWebNullableString(writer, 4, record.documentJson);
+  _writeWebNullableString(writer, 5, record.linkName);
+  writer.writeString(6, record.mutationId);
+  writer.writeString(7, record.operation);
+  writer.writeInt(8, record.sequence);
+  _writeWebNullableString(writer, 9, record.targetCollection);
+  _writeWebNullableString(writer, 10, record.targetIdsJson);
+}
+
+_CindelWebSyncOutboxRecord _readWebSyncOutboxRecord(
+  CindelNativeDocumentReader reader,
+  int index,
+) {
+  return _CindelWebSyncOutboxRecord(
+    dbId: reader.readId(index),
+    baseCheckpoint: reader.readString(index, 0),
+    clientId: reader.readString(index, 1)!,
+    collection: reader.readString(index, 2)!,
+    documentId: reader.readInt(index, 3)!,
+    documentJson: reader.readString(index, 4),
+    linkName: reader.readString(index, 5),
+    mutationId: reader.readString(index, 6)!,
+    operation: reader.readString(index, 7)!,
+    sequence: reader.readInt(index, 8)!,
+    targetCollection: reader.readString(index, 9),
+    targetIdsJson: reader.readString(index, 10),
+  );
+}
+
+void _writeWebSyncStateRecord(
+  CindelNativeDocumentWriter writer,
+  _CindelWebSyncStateRecord record,
+) {
+  writer.writeString(0, record.key);
+  _writeWebNullableString(writer, 1, record.value);
+}
+
+_CindelWebSyncStateRecord _readWebSyncStateRecord(
+  CindelNativeDocumentReader reader,
+  int index,
+) {
+  return _CindelWebSyncStateRecord(
+    reader.readId(index),
+    reader.readString(index, 0)!,
+    reader.readString(index, 1),
+  );
+}
+
+void _writeWebNullableString(
+  CindelNativeDocumentWriter writer,
+  int fieldIndex,
+  String? value,
+) {
+  if (value == null) {
+    writer.writeNull(fieldIndex);
+  } else {
+    writer.writeString(fieldIndex, value);
+  }
 }
 
 WireIndexValue _indexValueForField(Object value, CindelFieldSchema field) {

@@ -74,6 +74,7 @@ final class CindelTypedCollection<T> {
         schema.name,
         id,
         schema.toBinaryDocument!(object),
+        document: _documentWithId(object, id),
       );
       _bindLinks(object);
       return;
@@ -125,7 +126,17 @@ final class CindelTypedCollection<T> {
     }
 
     if (binaryValues != null) {
-      return database.putAllBinaryDocuments(schema.name, binaryValues);
+      return database.putAllBinaryDocuments(
+        schema.name,
+        binaryValues,
+        documents: {
+          for (final object in objectList)
+            _idFromObject(object): _documentWithId(
+              object,
+              _idFromObject(object),
+            ),
+        },
+      );
     }
     _throwMissingTypedStorage();
   }
@@ -177,7 +188,14 @@ final class CindelTypedCollection<T> {
       }
       return;
     }
-    await database.putAllBinaryDocuments(schema.name, binaryValues!);
+    await database.putAllBinaryDocuments(
+      schema.name,
+      binaryValues!,
+      documents: {
+        for (final object in objects)
+          getId(object): _documentWithId(object, getId(object)),
+      },
+    );
     for (final object in objects) {
       _bindLinks(object);
     }
@@ -525,6 +543,13 @@ final class CindelTypedCollection<T> {
   T _bindLinks(T object) {
     schema.bindLinks?.call(database, schema, object);
     return object;
+  }
+
+  // Generated typed writes pass this canonical document snapshot to the
+  // database layer. Watchers use it for precise payloads, and sync uses it to
+  // create backend-neutral upsert mutations without re-reading the object.
+  CindelDocument _documentWithId(T object, int id) {
+    return {schema.idField: id, ...schema.toDocument(object)};
   }
 
   // Reads the id through the generated accessor when available, otherwise from

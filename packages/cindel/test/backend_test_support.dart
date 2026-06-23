@@ -12,20 +12,24 @@ Future<CindelDatabase> openTestDatabase({
   required String directory,
   Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
   CindelStorageBackend? backend,
+  CindelSyncConfig? sync,
 }) {
   return Cindel.open(
     directory: directory,
     schemas: schemas,
     backend: backend ?? testStorageBackend,
+    sync: sync,
   );
 }
 
 Future<CindelDatabase> openTestDatabaseInMemory({
   Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
   CindelStorageBackend? backend,
+  CindelSyncConfig? sync,
 }) {
   return Cindel.openInMemory(
     schemas: schemas,
     backend: backend ?? testStorageBackend,
+    sync: sync,
   );
 }

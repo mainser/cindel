@@ -1,4 +1,5 @@
 import '../schema.dart';
+import '../sync.dart';
 import '../text.dart';
 import 'database.dart';
 import '../migration.dart';
@@ -23,12 +24,14 @@ abstract final class Cindel {
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
     CindelMigrationPlan? migrationPlan,
+    CindelSyncConfig? sync,
   }) {
     return CindelDatabase.open(
       directory: directory,
       schemas: schemas,
       backend: backend,
       migrationPlan: migrationPlan,
+      sync: sync,
     );
   }
 
@@ -40,8 +43,13 @@ abstract final class Cindel {
   static Future<CindelDatabase> openInMemory({
     Iterable<CindelCollectionSchema<dynamic>> schemas = const [],
     CindelStorageBackend backend = defaultCindelStorageBackend,
+    CindelSyncConfig? sync,
   }) {
-    return CindelDatabase.openInMemory(schemas: schemas, backend: backend);
+    return CindelDatabase.openInMemory(
+      schemas: schemas,
+      backend: backend,
+      sync: sync,
+    );
   }
 
   /// Splits text the same way Cindel word indexes do.

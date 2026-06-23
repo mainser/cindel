@@ -29,6 +29,7 @@
   <a href="#queries">Queries</a> &middot;
   <a href="#transactions">Transactions</a> &middot;
   <a href="#watchers">Watchers</a> &middot;
+  <a href="#sync">Sync</a> &middot;
   <a href="#web">Web</a> &middot;
   <a href="#testing">Testing</a>
 </p>
@@ -59,6 +60,8 @@ internally to that same app code.
 - Full typed backup/export/import streams with JSONL archives, checksum
   verification, native gzip compression, and Web-compatible uncompressed
   fallback.
+- Experimental local-first sync configured at open time with an internal
+  durable outbox and backend-neutral adapter contract.
 - Embedded objects and embedded object lists.
 - Freezed classic class and primary factory support.
 
@@ -70,12 +73,12 @@ Flutter apps should depend on `cindel` and `cindel_flutter_libs`:
 
 ```yaml
 dependencies:
-  cindel: ^0.7.0
-  cindel_flutter_libs: ^0.7.0
+  cindel: ^0.9.0
+  cindel_flutter_libs: ^0.9.0
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.6.4
+  cindel_generator: ^0.8.0
 ```
 
 Pure Dart tools can depend on `cindel` directly and provide a native library
@@ -650,6 +653,53 @@ final sub = db.users.watchCollectionLazy().listen((_) {
 });
 ```
 
+## Sync
+
+Sync is experimental and configured only when opening the database. App code
+keeps using the same typed collections, queries, transactions, and watchers;
+Cindel records local mutations in an internal durable outbox and runs an
+internal scheduler against your adapter.
+
+```dart
+final db = await Cindel.open(
+  directory: dir.path,
+  schemas: [UserSchema],
+  sync: CindelSyncConfig(
+    adapter: AppSyncAdapter(),
+    onStatusChanged: (status) {
+      // Show offline/syncing/pending state in your UI.
+    },
+    onError: (error, stackTrace) {
+      // Report background sync failures.
+    },
+  ),
+);
+```
+
+The adapter supplies backend-specific push/pull behavior:
+
+```dart
+final class AppSyncAdapter implements CindelSyncAdapter {
+  @override
+  Future<CindelPushResult> push(CindelPushRequest request) async {
+    // Send request.mutations to your backend idempotently.
+    return CindelPushResult(acceptedMutationIds: {
+      for (final mutation in request.mutations) mutation.mutationId,
+    });
+  }
+
+  @override
+  Future<CindelPullResult> pull(CindelPullRequest request) async {
+    // Return backend changes after request.checkpoint.
+    return const CindelPullResult(checkpoint: '0', changes: []);
+  }
+}
+```
+
+Supported initial sync mutations are typed document upserts, deletes, query
+deletes, and link replacements. Query updates are rejected while sync is enabled
+because they do not yet produce canonical per-document mutations.
+
 ## Embedded Objects
 
 Use `@embedded` for values stored inside a parent collection object:
@@ -715,8 +765,8 @@ Keep both packages in the app:
 
 ```yaml
 dependencies:
-  cindel: ^0.7.0
-  cindel_flutter_libs: ^0.7.0
+  cindel: ^0.9.0
+  cindel_flutter_libs: ^0.9.0
 ```
 
 Current Web behavior:
