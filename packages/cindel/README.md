@@ -660,6 +660,12 @@ keeps using the same typed collections, queries, transactions, and watchers;
 Cindel records local mutations in an internal durable outbox and runs an
 internal scheduler against your adapter.
 
+> [!WARNING]
+> This is an early integration API, not a complete production conflict-resolution
+> layer. Before using it for critical data, validate your backend's idempotency,
+> checkpoint, rejection, reset, and conflict policies with your own app flows.
+> The sync API may change before it is marked stable.
+
 ```dart
 final db = await Cindel.open(
   directory: dir.path,
