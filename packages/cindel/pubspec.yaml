@@ -1,10 +1,12 @@
 name: cindel
-description: Generated typed local database for Flutter and Dart apps with MDBX, SQLite, and SQLite Web/OPFS backends.
+description: Extremely fast, easy to use, fully async typed local database for Flutter and Dart, with MDBX and SQLite Web/OPFS backends.
 version: 0.9.1
 homepage: https://github.com/mainser/cindel
 repository: https://github.com/mainser/cindel
 issue_tracker: https://github.com/mainser/cindel/issues
-documentation: https://github.com/mainser/cindel/blob/main/docs/api_docs.md
+documentation: https://cindel.dev
+funding:
+  - https://github.com/sponsors/mainser
 topics:
   - database
   - nosql

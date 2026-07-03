@@ -223,8 +223,6 @@ Current public API policy:
 
 ### Release Line
 
-- Prepare the coordinated `0.9.0` release line for `cindel` and
-  `cindel_flutter_libs`.
 - Android, iOS, Linux, macOS, Windows, and Web runtime assets must be generated
   from the current native ABI before benchmarking or release validation.
 - Keep root and package READMEs aligned with the actual package roles.
