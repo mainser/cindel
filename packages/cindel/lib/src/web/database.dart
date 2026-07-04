@@ -778,13 +778,21 @@ class CindelDatabase {
     ];
   }
 
+  /// Deletes every object stored under [ids] atomically.
+  ///
+  /// Web stores generated typed objects as SQLite-native rows, so this public
+  /// cross-platform API delegates to the Web native-row delete path.
+  Future<void> deleteAll(String collection, Iterable<int> ids) {
+    return _deleteSqliteNativeRows(collection, ids);
+  }
+
   /// Deletes generated native rows from [collection].
-  Future<void> deleteAllNativeDocuments(
+  Future<void> _deleteSqliteNativeRows(
     String collection,
     Iterable<int> ids,
   ) async {
     if (_syncShouldWrapLocalWrite(collection)) {
-      return writeTxn(() => deleteAllNativeDocuments(collection, ids));
+      return writeTxn(() => _deleteSqliteNativeRows(collection, ids));
     }
     _checkOpen();
     _checkCollection(collection);
@@ -1111,7 +1119,7 @@ class CindelDatabase {
       return;
     }
     await _syncRunInternalWrite(
-      () => deleteAllNativeDocuments(_syncOutboxCollection, idList),
+      () => _deleteSqliteNativeRows(_syncOutboxCollection, idList),
     );
   }
 
@@ -1187,7 +1195,7 @@ class CindelDatabase {
           },
         );
       case CindelRemoteDelete(:final collection, :final id):
-        await deleteAllNativeDocuments(collection, [id]);
+        await _deleteSqliteNativeRows(collection, [id]);
       case CindelRemoteReplaceLinks(
         :final collection,
         :final id,

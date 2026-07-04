@@ -116,6 +116,10 @@ void main() {
           'CindelQuery<RichUser> bioWordEqualTo(String word)',
           'CindelQuery<RichUser> bioWordStartsWith(String prefix)',
           'CindelQuery<RichUser> bioWordsContain(String word)',
+          'Future<void> putByEmail(RichUser object)',
+          'Future<void> putAllByEmail(Iterable<RichUser> objects)',
+          'indexName: "email"',
+          'isComposite: false',
           'final class RichUserQueryFilter',
           'CindelQuery<RichUser> optional(',
           'CindelQuery<RichUser> anyOf<E>(',
@@ -695,7 +699,7 @@ part 'model.g.dart';
 class RichUser {
   Id dbId = autoIncrement;
 
-  @Index(unique: true)
+  @Index(unique: true, replace: true)
   late String email;
 
   @Index(caseSensitive: false)

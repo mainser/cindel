@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2
+
+- Fixed the Web database facade so `CindelDatabase.deleteAll(collection, ids)`
+  is exposed like native backends while still using the SQLite-native typed row
+  delete path.
+
 ## 0.9.1
 
 - Published in lockstep with `cindel_annotations`, `cindel_generator`, and

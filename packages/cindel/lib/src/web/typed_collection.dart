@@ -199,12 +199,12 @@ final class CindelTypedCollection<T> {
 
   /// Deletes the object stored under [id], if it exists.
   Future<void> delete(int id) {
-    return database.deleteAllNativeDocuments(schema.name, [id]);
+    return database.deleteAll(schema.name, [id]);
   }
 
   /// Deletes every object stored under [ids] atomically.
   Future<void> deleteAll(Iterable<int> ids) {
-    return database.deleteAllNativeDocuments(schema.name, ids);
+    return database.deleteAll(schema.name, ids);
   }
 
   /// Watches the typed object stored under [id].

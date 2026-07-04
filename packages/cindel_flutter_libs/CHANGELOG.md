@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Released in lockstep with `cindel` 0.9.2 so Flutter apps resolve matching
+  runtime and bundled Web assets for the Web `deleteAll` facade fix.
+
 ## 0.9.1
 
 - Released in lockstep with all Cindel packages on the 0.9.1 line so the

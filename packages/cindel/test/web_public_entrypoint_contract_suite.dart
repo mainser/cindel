@@ -132,17 +132,19 @@ void main() {
     expect(databaseSource, isNot(contains('watchCollection(')));
     expect(databaseSource, isNot(contains('cindelEncodeGenericDocument')));
     expect(databaseSource, isNot(contains('cindelDecodeGenericDocument')));
+    expect(databaseSource, contains('Future<void> deleteAll('));
+    expect(databaseSource, isNot(contains('deleteAllNativeDocuments')));
 
     expect(typedCollectionSource, contains('getAllNativeBinaryDocuments'));
-    expect(typedCollectionSource, contains('deleteAllNativeDocuments'));
     expect(typedCollectionSource, contains('watchCollectionChanges'));
     expect(typedCollectionSource, isNot(contains('database.putAll(')));
     expect(typedCollectionSource, isNot(contains('database.getAll(')));
-    expect(typedCollectionSource, isNot(contains('database.deleteAll(')));
+    expect(typedCollectionSource, contains('database.deleteAll('));
     expect(typedCollectionSource, isNot(contains('database.watchDocument(')));
     expect(typedCollectionSource, isNot(contains('database.watchCollection(')));
 
     expect(querySource, contains('queryNativePlanObjects'));
+    expect(querySource, contains('_database.deleteAll('));
     expect(querySource, isNot(contains('database.documentsByIds')));
     expect(querySource, isNot(contains('database.queryAll(_schema.name)')));
   });

@@ -544,7 +544,7 @@ final class CindelQuery<T> {
 
   Future<void> _deleteIds(List<int> ids) {
     if (_usesNativeDocuments()) {
-      return _database.deleteAllNativeDocuments(_schema.name, ids);
+      return _database.deleteAll(_schema.name, ids);
     }
     throw UnsupportedError(
       'Cindel Web typed deletes require SQLite-native document support.',

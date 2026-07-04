@@ -73,11 +73,9 @@ void main() {
     test('exposes embedded, ignore, enum, and id helpers.', () {
       const byName = Enumerated(CindelEnumType.name);
       const byValue = Enumerated(CindelEnumType.value, valueField: 'code');
-      final backlink = Backlink(to: 'songs');
 
       expect(embedded, isA<Embedded>());
       expect(ignore, isA<Ignore>());
-      expect(backlink.to, 'songs');
       expect(byName.type, CindelEnumType.name);
       expect(byName.valueField, isNull);
       expect(byValue.type, CindelEnumType.value);
@@ -90,6 +88,16 @@ void main() {
       expect(autoIncrement, -1);
       const Id explicitId = 42;
       expect(explicitId, 42);
+    });
+
+    // Scenario: Application models declare read-only inverse relations.
+    // Covers:
+    // - `Backlink` constructor and forward-link target metadata.
+    // Expected: Generator-facing backlink metadata stores the target field.
+    test('exposes backlink annotation target.', () {
+      final backlink = Backlink(to: 'songs');
+
+      expect(backlink.to, 'songs');
     });
   });
 }
