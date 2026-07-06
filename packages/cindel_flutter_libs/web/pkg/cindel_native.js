@@ -66,6 +66,37 @@ export class CindelWebEngine {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * @param {string} target_collection
+     * @param {number} target_id
+     * @param {string} source_collection
+     * @param {string} link_name
+     * @returns {Uint8Array}
+     */
+    backlinkSourceIds(target_collection, target_id, source_collection, link_name) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(target_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(source_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(link_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.cindelwebengine_backlinkSourceIds(retptr, this.__wbg_ptr, ptr0, len0, target_id, ptr1, len1, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v4 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export5(r0, r1 * 1, 1);
+            return v4;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     beginReadTransaction() {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
@@ -228,6 +259,64 @@ export class CindelWebEngine {
             var v2 = getArrayU8FromWasm0(r0, r1).slice();
             wasm.__wbindgen_export5(r0, r1 * 1, 1);
             return v2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {string} collection
+     * @param {number} after_id
+     * @param {boolean} has_after_id
+     * @param {number} limit
+     * @returns {Uint8Array}
+     */
+    documentIdsPage(collection, after_id, has_after_id, limit) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.cindelwebengine_documentIdsPage(retptr, this.__wbg_ptr, ptr0, len0, after_id, has_after_id, limit);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v2 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export5(r0, r1 * 1, 1);
+            return v2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {string} source_collection
+     * @param {number} source_id
+     * @param {string} link_name
+     * @param {string} target_collection
+     * @returns {Uint8Array}
+     */
+    forwardLinkIds(source_collection, source_id, link_name, target_collection) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(source_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(link_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(target_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.cindelwebengine_forwardLinkIds(retptr, this.__wbg_ptr, ptr0, len0, source_id, ptr1, len1, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v4 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export5(r0, r1 * 1, 1);
+            return v4;
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -722,6 +811,34 @@ export class CindelWebEngine {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * @param {string} source_collection
+     * @param {number} source_id
+     * @param {string} link_name
+     * @param {string} target_collection
+     * @param {Uint8Array} target_ids
+     */
+    replaceLinks(source_collection, source_id, link_name, target_collection, target_ids) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(source_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(link_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(target_collection, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            const ptr3 = passArray8ToWasm0(target_ids, wasm.__wbindgen_export);
+            const len3 = WASM_VECTOR_LEN;
+            wasm.cindelwebengine_replaceLinks(retptr, this.__wbg_ptr, ptr0, len0, source_id, ptr1, len1, ptr2, len2, ptr3, len3);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     rollbackTransaction() {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
@@ -998,7 +1115,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_2792(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_2820(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -1113,8 +1230,8 @@ function __wbg_get_imports() {
             return ret;
         }, arguments); },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 664, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2767);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 665, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2795);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0) {
@@ -1141,10 +1258,10 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_2767(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_2795(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_2767(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_2795(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -1155,8 +1272,8 @@ function __wasm_bindgen_func_elem_2767(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_2792(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_2792(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_2820(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_2820(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
 const CindelWebEngineFinalization = (typeof FinalizationRegistry === 'undefined')

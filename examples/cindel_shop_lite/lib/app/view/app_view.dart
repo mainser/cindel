@@ -3,6 +3,7 @@ import 'package:cindel_shop_lite/core/router/app_router.dart';
 import 'package:cindel_shop_lite/core/theme/app_theme.dart';
 import 'package:cindel_shop_lite/features/catalog/presentation/providers/catalog_providers.dart';
 import 'package:cindel_shop_lite/l10n/l10n.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -32,7 +33,7 @@ class AppView extends ConsumerWidget {
       light: AppTheme.lightTheme,
       dark: AppTheme.darkTheme,
       initial: AdaptiveThemeMode.dark,
-      debugShowFloatingThemeButton: true,
+      debugShowFloatingThemeButton: !kIsWeb,
       builder: (light, dark) => MaterialApp.router(
         theme: light,
         darkTheme: dark,

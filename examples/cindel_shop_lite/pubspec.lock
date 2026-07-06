@@ -127,7 +127,7 @@ packages:
       path: "../../packages/cindel"
       relative: true
     source: path
-    version: "0.9.1"
+    version: "0.9.2"
   cindel_annotations:
     dependency: "direct overridden"
     description:
@@ -138,11 +138,10 @@ packages:
   cindel_flutter_libs:
     dependency: "direct main"
     description:
-      name: cindel_flutter_libs
-      sha256: cbba60d59828f08a358d91214dafe8e872a2944d5a2a5cb5ae0779c1dadf8b2b
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.0"
+      path: "../../packages/cindel_flutter_libs"
+      relative: true
+    source: path
+    version: "0.9.2"
   cindel_generator:
     dependency: "direct dev"
     description:

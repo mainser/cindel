@@ -7,6 +7,7 @@ export class CindelWebEngine {
     [Symbol.dispose](): void;
     allocateId(collection: string): Uint8Array;
     allocateIds(collection: string, count: number): Uint8Array;
+    backlinkSourceIds(target_collection: string, target_id: number, source_collection: string, link_name: string): Uint8Array;
     beginReadTransaction(): void;
     beginWriteTransaction(): void;
     collectionRevision(collection: string): Uint8Array;
@@ -16,6 +17,8 @@ export class CindelWebEngine {
     deleteAll(collection: string, ids: Uint8Array): void;
     deleteNativeAll(collection: string, ids: Uint8Array): boolean;
     documentIds(collection: string): Uint8Array;
+    documentIdsPage(collection: string, after_id: number, has_after_id: boolean, limit: number): Uint8Array;
+    forwardLinkIds(source_collection: string, source_id: number, link_name: string, target_collection: string): Uint8Array;
     get(collection: string, ids: Uint8Array): Uint8Array;
     getAll(collection: string, ids: Uint8Array): Uint8Array;
     getAllStored(collection: string, ids: Uint8Array): Uint8Array;
@@ -35,6 +38,7 @@ export class CindelWebEngine {
     queryPlanProject(collection: string, plan: Uint8Array, field: string): Uint8Array;
     queryPlanUpdate(collection: string, plan: Uint8Array, updates: Uint8Array, collect_changes: boolean): Uint8Array;
     registerMigratedSchemas(manifest_bytes: Uint8Array): void;
+    replaceLinks(source_collection: string, source_id: number, link_name: string, target_collection: string, target_ids: Uint8Array): void;
     rollbackTransaction(): void;
     schemaVersion(collection: string): number;
     setMigrationVersion(version: number): void;
@@ -110,9 +114,13 @@ export interface InitOutput {
     readonly cindel_get_many: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly cindel_get_many_stored: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly cindel_document_ids: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly cindel_document_ids_page: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => number;
     readonly cindel_delete: (a: number, b: number, c: number, d: bigint) => number;
     readonly cindel_delete_many: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_delete_many_native_documents: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly cindel_replace_links: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+    readonly cindel_forward_link_ids: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+    readonly cindel_backlink_source_ids: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number, i: number, j: number) => number;
     readonly cindel_collection_revision: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_take_changes: (a: number, b: number, c: number) => number;
     readonly cindel_discard_changes: (a: number) => number;
@@ -157,7 +165,11 @@ export interface InitOutput {
     readonly cindelwebengine_delete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly cindelwebengine_deleteAll: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly cindelwebengine_deleteNativeAll: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly cindelwebengine_replaceLinks: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly cindelwebengine_forwardLinkIds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly cindelwebengine_backlinkSourceIds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly cindelwebengine_documentIds: (a: number, b: number, c: number, d: number) => void;
+    readonly cindelwebengine_documentIdsPage: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly cindelwebengine_collectionRevision: (a: number, b: number, c: number, d: number) => void;
     readonly cindelwebengine_takeChanges: (a: number, b: number) => void;
     readonly cindelwebengine_queryIndexEqual: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
@@ -182,8 +194,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2767: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2792: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2795: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2820: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

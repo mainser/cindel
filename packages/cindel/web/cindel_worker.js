@@ -46,11 +46,15 @@ function failure(requestId, code, message) {
 }
 
 async function ensureWasm(payload) {
-  initPromise ??= init(
-    new URL(payload?.wasmUrl || './pkg/cindel_native_bg.wasm', import.meta.url),
-  );
+  initPromise ??= init({
+    module_or_path: new URL(
+      payload?.wasmUrl || './pkg/cindel_native_bg.wasm',
+      import.meta.url,
+    ),
+  });
   await initPromise;
 }
+
 
 function requireEngine() {
   if (!engine) {

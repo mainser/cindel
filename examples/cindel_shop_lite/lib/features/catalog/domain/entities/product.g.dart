@@ -20,6 +20,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: true,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -30,6 +31,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: true,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -40,6 +42,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -50,6 +53,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -60,6 +64,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: false,
       indexType: CindelIndexType.words,
     ),
@@ -70,6 +75,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -80,6 +86,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -90,6 +97,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -100,6 +108,7 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: false,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: true,
       indexType: CindelIndexType.value,
     ),
@@ -110,10 +119,12 @@ final ProductSchema = CindelCollectionSchema<Product>(
       isId: false,
       isIndexed: true,
       isIndexUnique: false,
+      isIndexReplace: false,
       indexCaseSensitive: false,
       indexType: CindelIndexType.multiEntry,
     ),
   ],
+  links: <CindelLinkSchema>[],
   compositeIndexes: <CindelCompositeIndexSchema>[],
   toDocument: _$ProductToCindelDocument,
   fromDocument: _$ProductFromCindelDocument,
@@ -427,177 +438,6 @@ extension ProductCindelQueryModifierAccess on CindelQuery<Product> {
   }
 }
 
-final class ProductQueryWhere {
-  const ProductQueryWhere(this._collection);
-
-  final CindelTypedCollection<Product> _collection;
-
-  CindelQuery<Product> skuEqualTo(String value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "sku",
-      value: value,
-    );
-  }
-
-  CindelQuery<Product> skuStartsWith(String prefix) {
-    return CindelQuery.stringStartsWith(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "sku",
-      prefix: prefix,
-    );
-  }
-
-  CindelQuery<Product> skuBetween(String? lower, String? upper) {
-    return CindelQuery.range(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "sku",
-      lower: lower,
-      upper: upper,
-    );
-  }
-
-  CindelQuery<Product> nameEqualTo(String value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "name",
-      value: value,
-    );
-  }
-
-  CindelQuery<Product> nameStartsWith(String prefix) {
-    return CindelQuery.stringStartsWith(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "name",
-      prefix: prefix,
-    );
-  }
-
-  CindelQuery<Product> nameBetween(String? lower, String? upper) {
-    return CindelQuery.range(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "name",
-      lower: lower,
-      upper: upper,
-    );
-  }
-
-  CindelQuery<Product> searchTextEqualTo(String word) {
-    return searchTextWordEqualTo(word);
-  }
-
-  CindelQuery<Product> searchTextStartsWith(String prefix) {
-    return searchTextWordStartsWith(prefix);
-  }
-
-  CindelQuery<Product> searchTextWordEqualTo(String word) {
-    return CindelQuery.wordsContain(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "searchText",
-      word: word,
-    );
-  }
-
-  CindelQuery<Product> searchTextWordStartsWith(String prefix) {
-    return CindelQuery.wordsStartWith(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "searchText",
-      prefix: prefix,
-    );
-  }
-
-  CindelQuery<Product> searchTextWordsContain(String word) {
-    return searchTextWordEqualTo(word);
-  }
-
-  CindelQuery<Product> searchTextWordsStartWith(String prefix) {
-    return searchTextWordStartsWith(prefix);
-  }
-
-  CindelQuery<Product> categoryEqualTo(String value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "category",
-      value: value,
-    );
-  }
-
-  CindelQuery<Product> categoryStartsWith(String prefix) {
-    return CindelQuery.stringStartsWith(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "category",
-      prefix: prefix,
-    );
-  }
-
-  CindelQuery<Product> categoryBetween(String? lower, String? upper) {
-    return CindelQuery.range(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "category",
-      lower: lower,
-      upper: upper,
-    );
-  }
-
-  CindelQuery<Product> priceCentsEqualTo(int value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "priceCents",
-      value: value,
-    );
-  }
-
-  CindelQuery<Product> priceCentsBetween(int? lower, int? upper) {
-    return CindelQuery.range(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "priceCents",
-      lower: lower,
-      upper: upper,
-    );
-  }
-
-  CindelQuery<Product> stockEqualTo(int value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "stock",
-      value: value,
-    );
-  }
-
-  CindelQuery<Product> stockBetween(int? lower, int? upper) {
-    return CindelQuery.range(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "stock",
-      lower: lower,
-      upper: upper,
-    );
-  }
-
-  CindelQuery<Product> tagsContains(String value) {
-    return CindelQuery.equal(
-      database: _collection.database,
-      schema: ProductSchema,
-      field: "tags",
-      value: value,
-    );
-  }
-}
-
 final class ProductQueryFilter {
   const ProductQueryFilter(this._query);
 
@@ -821,6 +661,252 @@ final class ProductQueryFilter {
 
   CindelQuery<Product> tagsElementEqualTo(String value) {
     return _query.whereMatches(CindelFilter.field("tags").contains(value));
+  }
+
+  CindelQuery<Product> tagsIsEmpty() {
+    return _query.whereMatches(CindelFilter.field("tags").isEmpty());
+  }
+
+  CindelQuery<Product> tagsIsNotEmpty() {
+    return _query.whereMatches(CindelFilter.field("tags").isNotEmpty());
+  }
+
+  CindelQuery<Product> tagsLengthEqualTo(int length) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthEqualTo(length),
+    );
+  }
+
+  CindelQuery<Product> tagsLengthLessThan(int length, {bool include = false}) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthLessThan(length, include: include),
+    );
+  }
+
+  CindelQuery<Product> tagsLengthGreaterThan(
+    int length, {
+    bool include = false,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthGreaterThan(length, include: include),
+    );
+  }
+
+  CindelQuery<Product> tagsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return _query.whereMatches(
+      CindelFilter.field("tags").lengthBetween(
+        lower,
+        upper,
+        includeLower: includeLower,
+        includeUpper: includeUpper,
+      ),
+    );
+  }
+
+  CindelQuery<Product> optional(
+    bool enabled,
+    CindelQuery<Product> Function(ProductQueryFilter q) option,
+  ) {
+    return _query.optional(
+      enabled,
+      (query) => option(ProductQueryFilter(query)),
+    );
+  }
+
+  CindelQuery<Product> anyOf<E>(
+    Iterable<E> items,
+    CindelQuery<Product> Function(ProductQueryFilter q, E item) option,
+  ) {
+    return _query.anyOf(
+      items,
+      (query, item) => option(ProductQueryFilter(query), item),
+    );
+  }
+
+  CindelQuery<Product> allOf<E>(
+    Iterable<E> items,
+    CindelQuery<Product> Function(ProductQueryFilter q, E item) option,
+  ) {
+    return _query.allOf(
+      items,
+      (query, item) => option(ProductQueryFilter(query), item),
+    );
+  }
+}
+
+final class ProductQueryWhere {
+  const ProductQueryWhere(this._collection);
+
+  final CindelTypedCollection<Product> _collection;
+
+  CindelQuery<Product> skuEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "sku",
+      value: value,
+    );
+  }
+
+  CindelQuery<Product> skuStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "sku",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<Product> skuBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "sku",
+      lower: lower,
+      upper: upper,
+    );
+  }
+
+  CindelQuery<Product> nameEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "name",
+      value: value,
+    );
+  }
+
+  CindelQuery<Product> nameStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "name",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<Product> nameBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "name",
+      lower: lower,
+      upper: upper,
+    );
+  }
+
+  CindelQuery<Product> searchTextEqualTo(String word) {
+    return searchTextWordEqualTo(word);
+  }
+
+  CindelQuery<Product> searchTextStartsWith(String prefix) {
+    return searchTextWordStartsWith(prefix);
+  }
+
+  CindelQuery<Product> searchTextWordEqualTo(String word) {
+    return CindelQuery.wordsContain(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "searchText",
+      word: word,
+    );
+  }
+
+  CindelQuery<Product> searchTextWordStartsWith(String prefix) {
+    return CindelQuery.wordsStartWith(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "searchText",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<Product> searchTextWordsContain(String word) {
+    return searchTextWordEqualTo(word);
+  }
+
+  CindelQuery<Product> searchTextWordsStartWith(String prefix) {
+    return searchTextWordStartsWith(prefix);
+  }
+
+  CindelQuery<Product> categoryEqualTo(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "category",
+      value: value,
+    );
+  }
+
+  CindelQuery<Product> categoryStartsWith(String prefix) {
+    return CindelQuery.stringStartsWith(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "category",
+      prefix: prefix,
+    );
+  }
+
+  CindelQuery<Product> categoryBetween(String? lower, String? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "category",
+      lower: lower,
+      upper: upper,
+    );
+  }
+
+  CindelQuery<Product> priceCentsEqualTo(int value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "priceCents",
+      value: value,
+    );
+  }
+
+  CindelQuery<Product> priceCentsBetween(int? lower, int? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "priceCents",
+      lower: lower,
+      upper: upper,
+    );
+  }
+
+  CindelQuery<Product> stockEqualTo(int value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "stock",
+      value: value,
+    );
+  }
+
+  CindelQuery<Product> stockBetween(int? lower, int? upper) {
+    return CindelQuery.range(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "stock",
+      lower: lower,
+      upper: upper,
+    );
+  }
+
+  CindelQuery<Product> tagsContains(String value) {
+    return CindelQuery.equal(
+      database: _collection.database,
+      schema: ProductSchema,
+      field: "tags",
+      value: value,
+    );
   }
 }
 

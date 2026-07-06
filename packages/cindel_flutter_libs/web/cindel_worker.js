@@ -46,11 +46,15 @@ function failure(requestId, code, message) {
 }
 
 async function ensureWasm(payload) {
-  initPromise ??= init(
-    new URL(payload?.wasmUrl || './pkg/cindel_native_bg.wasm', import.meta.url),
-  );
+  initPromise ??= init({
+    module_or_path: new URL(
+      payload?.wasmUrl || './pkg/cindel_native_bg.wasm',
+      import.meta.url,
+    ),
+  });
   await initPromise;
 }
+
 
 function requireEngine() {
   if (!engine) {
@@ -203,6 +207,38 @@ async function execute(message) {
         response(
           message.requestId,
           requireEngine().deleteNativeAll(payload.collection, bytes(payload.ids)),
+        );
+        return;
+      case 'replaceLinks':
+        requireEngine().replaceLinks(
+          payload.sourceCollection,
+          Number(payload.sourceId),
+          payload.linkName,
+          payload.targetCollection,
+          bytes(payload.targetIds),
+        );
+        response(message.requestId, null);
+        return;
+      case 'forwardLinkIds':
+        response(
+          message.requestId,
+          requireEngine().forwardLinkIds(
+            payload.sourceCollection,
+            Number(payload.sourceId),
+            payload.linkName,
+            payload.targetCollection,
+          ),
+        );
+        return;
+      case 'backlinkSourceIds':
+        response(
+          message.requestId,
+          requireEngine().backlinkSourceIds(
+            payload.targetCollection,
+            Number(payload.targetId),
+            payload.sourceCollection,
+            payload.linkName,
+          ),
         );
         return;
       case 'documentIds':
