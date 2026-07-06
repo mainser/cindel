@@ -23,6 +23,16 @@ for (final token in tokens) {
 }
 ```
 
+For the example above, the result is:
+
+```dart
+['ship', 'the', 'docs']
+```
+
+Punctuation and whitespace act as separators. Repeated words are returned only
+once, keeping the order in which they first appeared. By default, tokens are
+lowercased so they match the default case-insensitive word index behavior.
+
 Use this helper when working with `CindelIndexType.words`:
 
 ```dart

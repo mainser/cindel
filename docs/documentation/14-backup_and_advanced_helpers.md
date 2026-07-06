@@ -205,6 +205,39 @@ or maintenance tasks where reading every id at once may be too large.
 
 SQLite native, MDBX, and Web SQLite expose the same API.
 
+## Maintenance Metadata
+
+Cindel stores a small amount of database metadata for schemas and migrations.
+Most applications do not need to read it during normal use, but it can help in
+maintenance tools, diagnostics, and migration checks.
+
+### `migrationVersion`
+
+`migrationVersion` returns the data migration version stored for the database.
+This is separate from each collection's schema version.
+
+```dart
+final version = await db.migrationVersion();
+```
+
+Migration plans update this value after a successful migration. Application
+screens usually should not depend on it.
+
+### `compact`
+
+`compact` asks the storage backend to reclaim space after maintenance work such
+as a completed migration.
+
+```dart
+await db.writeTxn(() async {
+  await db.compact();
+});
+```
+
+Most apps should let `CindelMigrationPlan` handle compaction through its
+`compactOnSuccess` option. Call `compact` directly only from maintenance code
+that already controls when cleanup is safe.
+
 ## Practical Guidance
 
 Use generated typed collections for normal app features:

@@ -1,14 +1,16 @@
 # Projections And Aggregates
 
-Projection queries read selected fields instead of hydrating full objects.
-Aggregate queries calculate values such as counts, minimums, maximums, sums,
-and averages from projected fields.
+Most queries return full typed objects. That is the right choice when the app
+needs to display, edit, or write those objects back.
 
-Use projections when a screen or report only needs a small part of each object.
-Use aggregates when you need a summary value rather than the full matching
-records.
+Projection queries are different: they read selected fields instead of
+hydrating full objects. Aggregate queries calculate summary values such as
+counts, minimums, maximums, sums, and averages.
 
-## Single Property
+Use projections when a screen only needs a small part of each object. Use
+aggregates when the app needs a summary value rather than the matching records.
+
+## Single-Property Projections
 
 Generated property helpers project one persisted field.
 
@@ -56,11 +58,11 @@ final titles = await db.todos
     .findAll();
 ```
 
-Prefer generated property helpers when the field is known at compile time. Use
+Prefer generated property helpers when the field is known in code. Use
 `property<T>('fieldName')` for dynamic code that already works with persisted
 field names.
 
-## Multiple Properties
+## Multi-Property Projections
 
 Use `properties(...)` to project several persisted fields at once.
 
@@ -77,7 +79,7 @@ Rows are returned as `CindelDocument` values:
 typedef CindelDocument = Map<String, Object?>;
 ```
 
-Example:
+That means each row is map-shaped:
 
 ```dart
 for (final row in rows) {
@@ -88,11 +90,13 @@ for (final row in rows) {
 }
 ```
 
-Use multiple-property projections when you need lightweight rows for a table,
+Use multi-property projections when you need lightweight rows for a table,
 autocomplete list, export preview, or summary screen.
 
 The field names passed to `properties(...)` are persisted field names. If a
 model uses `@Name`, the persisted name can differ from the Dart field name.
+Generated single-property helpers avoid that naming issue when the field is
+known at compile time.
 
 ## Aggregates
 
@@ -153,12 +157,12 @@ final openEstimate = await db.todos
     .sum();
 ```
 
-Use a property aggregate when you need a summary of matching data without
+Use property aggregates when you need a summary of matching data without
 reading every full object into application code.
 
-## Use Cases
+## Common Use Cases
 
-### Lightweight lists
+### Lightweight Lists
 
 Use a projection when a list only needs ids and labels:
 
@@ -182,9 +186,9 @@ final titles = await db.todos
     .findAll();
 ```
 
-### Dashboard counts
+### Dashboard Counts
 
-Use query `count()` or property `count()` depending on what you need to count:
+Use query `count()` when you need to count matching objects:
 
 ```dart
 final openTodos = await db.todos
@@ -193,7 +197,17 @@ final openTodos = await db.todos
     .count();
 ```
 
-### Numeric totals
+Use property `count()` when you need to count non-null values for a projected
+field:
+
+```dart
+final todosWithCreatedAt = await db.todos
+    .all()
+    .createdAtProperty()
+    .count();
+```
+
+### Numeric Totals
 
 Use numeric property aggregates for totals:
 
@@ -205,9 +219,9 @@ final totalCents = await db.orders
     .sum();
 ```
 
-### Date ranges
+### Date Ranges
 
-Use min/max over date-like properties:
+Use min and max over date-like properties:
 
 ```dart
 final oldest = await db.todos
@@ -221,27 +235,27 @@ final newest = await db.todos
     .max();
 ```
 
-## Practical Guidance
+## Choosing The Right Query
 
-Use full object queries when the application needs to display, edit, or write
-the object back:
+Use full object queries when the app needs to display, edit, or write the
+object back:
 
 ```dart
 final todos = await db.todos.all().findAll();
 ```
 
-Use projections when the application only needs selected fields:
+Use projections when the app only needs selected fields:
 
 ```dart
 final titles = await db.todos.all().titleProperty().findAll();
 ```
 
-Use aggregates when the application only needs a summary value:
+Use aggregates when the app only needs a summary value:
 
 ```dart
 final count = await db.todos.filter().completedEqualTo(false).count();
 ```
 
-Remember that `CindelDocument` is a map-shaped representation for projection
-and generated conversion helpers. Most application code should prefer typed
+`CindelDocument` is a map-shaped representation used for multi-field
+projections and generated conversion helpers. Most app code should prefer typed
 objects and generated helpers unless a projection is intentionally being used.

@@ -16,7 +16,7 @@ final db = await Cindel.open(
 ```
 
 On Web, `directory` is a logical browser database name. It is not a filesystem
-path.
+path, and users will not see a folder with that name on their device.
 
 Use a stable name for persistent app data:
 
@@ -50,8 +50,8 @@ Flutter Web apps should depend on both `cindel` and `cindel_flutter_libs`.
 
 ```yaml
 dependencies:
-  cindel: ^0.9.1
-  cindel_flutter_libs: ^0.9.1
+  cindel: ^0.9.2
+  cindel_flutter_libs: ^0.9.2
 ```
 
 The app also needs generated schemas, so normal projects should use
@@ -63,11 +63,20 @@ dev_dependencies:
   cindel_generator: ^0.9.1
 ```
 
+`cindel` provides the Dart API. `cindel_flutter_libs` packages the Web worker,
+JavaScript glue, and Wasm runtime that Cindel needs in the browser. A Web app
+should include both dependencies even when your Dart code imports only
+`package:cindel/cindel.dart`.
+
 Serve the Flutter Web app from a browser context that supports:
 
 - Workers,
 - Wasm,
 - OPFS.
+
+OPFS is the browser storage area used by the Web SQLite runtime. If a browser,
+privacy mode, or embedded WebView blocks those features, opening the database
+can fail.
 
 MDBX is not used in browsers. Do not select MDBX as a Web backend.
 

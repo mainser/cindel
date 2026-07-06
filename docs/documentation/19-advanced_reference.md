@@ -12,6 +12,16 @@ Application code should normally prefer:
 - backup APIs,
 - migration APIs.
 
+Import advanced helpers from the public package entrypoint:
+
+```dart
+import 'package:cindel/cindel.dart';
+```
+
+Do not import files from `package:cindel/src/...`. Those files are
+implementation details and can change without being part of the application
+contract.
+
 ## Generator-Oriented Exports
 
 Generator-oriented exports are public because generated code needs stable

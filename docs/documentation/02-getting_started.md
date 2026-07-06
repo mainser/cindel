@@ -1,56 +1,57 @@
 # Getting Started
 
-This guide covers the first operational steps after you have a Cindel model and
-generated code available: opening a database, registering schemas, using the
-generated collection API, and recognizing the most common startup errors.
+This guide shows the first operational steps for using Cindel in an app:
+opening a database, registering generated schemas, choosing the right backend
+shape, using the generated collection API, and recognizing common startup
+errors.
 
-It does not cover data modeling, advanced queries, migrations, sync, or backup
-flows in depth. Those topics should live in their own documentation pages.
+It assumes you already have at least one annotated model and generated code. If
+you are still deciding how to model data, start with the Data Modeling guide
+first.
 
-## Opening A Database
+## Before You Open A Database
 
-Cindel databases are opened through the `Cindel` entry point. Most applications
-use `Cindel.open` for persistent data. Tests, examples, and short-lived tasks
-can use `Cindel.openInMemory`.
+A Cindel database is opened with generated schemas. That means these pieces
+should already exist:
 
-The database handle returned by either method is what you use to access
-generated collections:
+- a model annotated with `@Collection` or `@collection`,
+- a `part` directive for the generated file,
+- generated code from `build_runner`,
+- a generated schema constant such as `UserSchema`.
 
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema],
-);
-
-final users = await db.users.all().findAll();
-```
-
-The important requirement is that every collection you want to use must have
-its generated schema registered when the database opens.
-
-### `Cindel.open`
-
-Use `Cindel.open` when the data should persist between app launches.
+For example:
 
 ```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema, ProjectSchema],
-);
+import 'package:cindel/cindel.dart';
+
+part 'user.g.dart';
+
+@Collection(name: 'users')
+class User {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true)
+  late String email;
+
+  late String name;
+
+  bool active = true;
+}
 ```
 
-`Cindel.open` receives:
+After generation, the app can register `UserSchema` and use `db.users`.
 
-- `directory`: where the database is stored. On native platforms this is a
-  filesystem directory. On Web this is the logical browser database name.
-- `schemas`: the generated collection schemas that this database handle should
-  register and use.
-- `backend`: an optional native backend selector.
-- `migrationPlan`: an optional migration plan for controlled schema/data
-  changes.
-- `sync`: an optional sync configuration enabled when the database opens.
+If symbols such as `UserSchema` or `db.users` do not exist yet, run generation
+before opening the database:
 
-A minimal native app usually opens the database with a real app-data directory:
+```sh
+dart run build_runner build --delete-conflicting-outputs
+```
+
+## Opening Persistent Data
+
+Use `Cindel.open` when the data should stay available after the app closes and
+opens again.
 
 ```dart
 final db = await Cindel.open(
@@ -59,15 +60,41 @@ final db = await Cindel.open(
 );
 ```
 
-A database handle should generally be owned by a clear part of your app, such
-as an application service, repository container, or test fixture. Open it once
-for that owner, pass it to the code that needs it, and close it when the owner
-is disposed.
+The two required values are:
 
-### `Cindel.openInMemory`
+- `directory`: where this database is stored.
+- `schemas`: the generated collection schemas this database handle can use.
 
-Use `Cindel.openInMemory` for tests, examples, and temporary work where the
-data does not need to persist.
+On native platforms, `directory` is a filesystem directory. Use a stable
+application-data directory, not a temporary path, for real user data.
+
+On Web, `directory` is the logical browser database name:
+
+```dart
+final db = await Cindel.open(
+  directory: 'shop-lite',
+  schemas: [ProductSchema, CartItemSchema],
+);
+```
+
+Use a stable name on Web as well. Changing the name means opening a different
+browser database.
+
+The database handle is what application code uses to reach generated
+collections:
+
+```dart
+final users = await db.users.all().findAll();
+```
+
+Open the database once for the owner that needs it, such as an app service,
+repository container, widget test fixture, or command. Pass that handle to the
+code that needs database access.
+
+## Temporary Databases
+
+Use `Cindel.openInMemory` for tests, examples, and short-lived work where data
+does not need to persist.
 
 ```dart
 final db = await Cindel.openInMemory(
@@ -75,7 +102,7 @@ final db = await Cindel.openInMemory(
 );
 ```
 
-This is the usual choice for unit tests:
+This is the usual shape for a small test:
 
 ```dart
 test('stores a user', () async {
@@ -92,52 +119,50 @@ test('stores a user', () async {
 });
 ```
 
-On native platforms, this opens a temporary runtime database. On Web, it uses a
-unique browser database name for temporary use.
+On native platforms this opens a temporary runtime database. On Web it creates
+a unique browser database name for temporary use.
 
-### Available Backends
+## Choosing A Backend
 
-Cindel exposes the native backend selector through `CindelStorageBackend`:
-
-```dart
-enum CindelStorageBackend {
-  sqlite,
-  mdbx,
-}
-```
-
-MDBX is the default native backend:
-
-```dart
-const defaultCindelStorageBackend = CindelStorageBackend.mdbx;
-```
-
-Most native applications can omit the `backend` parameter:
+Most native Flutter apps can omit the `backend` parameter. MDBX is the default
+native backend:
 
 ```dart
 final db = await Cindel.open(
-  directory: directory.path,
+  directory: appDataDirectory.path,
   schemas: [UserSchema],
 );
 ```
 
-Select SQLite explicitly when your application should use the native SQLite
+Select SQLite explicitly only when your app should use the native SQLite
 backend:
 
 ```dart
 final db = await Cindel.open(
-  directory: directory.path,
+  directory: appDataDirectory.path,
   schemas: [UserSchema],
   backend: CindelStorageBackend.sqlite,
 );
 ```
 
-Backend selection is only needed when opening a persistent native database.
-The generated model, schema, collection, and query APIs remain the same.
+The backend choice should not change your application-level Cindel code.
+Generated schemas, collection getters, CRUD operations, and queries keep the
+same shape.
 
-### Web Usage
+Flutter Web does not use MDBX. Web callers keep the same `Cindel.open` API,
+and Cindel uses the packaged SQLite Web/OPFS Worker/Wasm runtime.
 
-Flutter Web uses the same `Cindel.open` shape as native applications:
+## Flutter Web Setup
+
+Flutter Web apps should depend on both `cindel` and `cindel_flutter_libs`:
+
+```yaml
+dependencies:
+  cindel: ^0.9.2
+  cindel_flutter_libs: ^0.9.2
+```
+
+Open the database with a logical browser database name:
 
 ```dart
 final db = await Cindel.open(
@@ -146,30 +171,13 @@ final db = await Cindel.open(
 );
 ```
 
-On Web, `directory` is a logical browser database name, not a filesystem path.
-Use a stable name for persistent app data:
+The browser context must support Workers, Wasm, and OPFS. Web support is still
+experimental, so keep Web validation in your app focused on startup, asset
+loading, persistence after reopen, queries, transactions, and watcher behavior.
 
-```dart
-final db = await Cindel.open(
-  directory: 'shop-lite',
-  schemas: [ProductSchema, CartItemSchema],
-);
-```
+## Closing A Database
 
-Web applications should depend on both `cindel` and `cindel_flutter_libs`:
-
-```yaml
-dependencies:
-  cindel: ^0.9.1
-  cindel_flutter_libs: ^0.9.1
-```
-
-The browser context must support Workers, Wasm, and OPFS. MDBX is not a browser
-backend, so the native `backend` selector is not used for Web storage.
-
-### Closing A Database
-
-Close the database when the owner of the handle is done with it:
+Close the database when its owner is disposed or when a test finishes:
 
 ```dart
 await db.close();
@@ -183,8 +191,7 @@ await db.close();
 ```
 
 Closing also rolls back an active transaction and closes active watcher
-streams. In tests, register close as teardown so each test cleans up its own
-database handle:
+streams. In tests, register the close call as teardown:
 
 ```dart
 final db = await Cindel.openInMemory(schemas: [UserSchema]);
@@ -193,44 +200,12 @@ addTearDown(db.close);
 
 ## Registering Schemas
 
-Generated schemas are passed to `Cindel.open` or `Cindel.openInMemory` through
-the `schemas` list.
+Every collection you want to read or write through a database handle must be
+registered when the database opens.
 
 ```dart
 final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema, AccountSchema, ProjectSchema],
-);
-```
-
-Each schema corresponds to a generated Cindel collection. For example, this
-model:
-
-```dart
-@Collection(name: 'users')
-class User {
-  Id dbId = autoIncrement;
-  late String email;
-}
-```
-
-generates a schema constant such as `UserSchema`. Registering that schema makes
-the `users` collection available to the database handle:
-
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema],
-);
-
-await db.users.put(user);
-```
-
-Register all collections that the opened database needs to read or write:
-
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
+  directory: appDataDirectory.path,
   schemas: [
     UserSchema,
     ProjectSchema,
@@ -239,27 +214,55 @@ final db = await Cindel.open(
 );
 ```
 
-If a feature uses several collections together, open the database with all of
-those schemas. For example, a project screen that writes projects and tasks
-should register both:
+Each schema comes from generated code. A model like this:
+
+```dart
+@Collection(name: 'users')
+class User {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true)
+  late String email;
+
+  late String name;
+
+  bool active = true;
+}
+```
+
+generates a schema constant such as `UserSchema`. Registering that schema makes
+the generated collection available:
+
+```dart
+await db.users.put(user);
+```
+
+Register schemas by the data the opened app version expects to use. If a
+screen or feature works with projects and tasks together, register both
+schemas:
 
 ```dart
 final db = await Cindel.open(
-  directory: directory.path,
+  directory: appDataDirectory.path,
   schemas: [ProjectSchema, TaskSchema],
 );
 ```
 
-The `schemas` list should describe the collections expected by the current
-application version. If stored metadata and registered schemas are
-incompatible, opening the database fails with a schema error instead of letting
-the app continue with an unsafe database handle.
+If stored metadata and the registered schemas do not match safely, opening the
+database fails with a schema error. That is intentional: the app should not
+continue with a database handle whose stored data does not match the generated
+API.
+
+Use a migration plan when an existing persisted database needs to move through
+an incompatible model change.
 
 ## Using Generated Collections
 
-Typed collections are usually accessed through generated extension getters on
-the database handle. A collection named `users` is used as `db.users`; a
-collection named `projects` is used as `db.projects`.
+Generated collection getters are the normal way to read and write data. A
+collection named `users` is used as `db.users`; a collection named `projects`
+is used as `db.projects`.
+
+Create and save an object:
 
 ```dart
 final user = User()
@@ -269,36 +272,36 @@ final user = User()
 await db.users.put(user);
 ```
 
-Generated collections expose common CRUD operations.
-
-Write one object:
-
-```dart
-await db.users.put(user);
-```
-
-Write several objects:
+If the id field uses `autoIncrement`, `put` assigns the id and writes it back
+to the object:
 
 ```dart
-await db.users.putAll([ada, grace, linus]);
+print(user.dbId);
 ```
 
 Read one object by id:
 
 ```dart
-final user = await db.users.get(userId);
+final saved = await db.users.get(user.dbId);
 ```
 
-Read several objects by id:
+Read several ids in one call:
 
 ```dart
 final users = await db.users.getAll([firstUserId, secondUserId]);
 ```
 
-Read the full collection:
+Read the whole collection:
 
 ```dart
-final users = await db.users.all().findAll();
+final allUsers = await db.users.all().findAll();
+```
+
+Write or delete several objects:
+
+```dart
+await db.users.putAll([ada, grace, linus]);
+await db.users.deleteAll([ada.dbId, grace.dbId]);
 ```
 
 Delete one object:
@@ -307,50 +310,28 @@ Delete one object:
 await db.users.delete(userId);
 ```
 
-Delete several objects:
-
-```dart
-await db.users.deleteAll([firstUserId, secondUserId]);
-```
-
-If the model id is `autoIncrement`, `put` allocates an id and writes it back to
-the object:
-
-```dart
-final user = User()
-  ..email = 'ada@example.com'
-  ..name = 'Ada Lovelace';
-
-await db.users.put(user);
-
-print(user.dbId);
-```
-
-Generated collections also expose query entry points. Use `where()` for
-indexed fields:
+For filtered reads, use generated query entry points:
 
 ```dart
 final user = await db.users
     .where()
     .emailEqualTo('ada@example.com')
     .findFirst();
-```
 
-Use `filter()` for general persisted fields:
-
-```dart
 final activeUsers = await db.users
     .filter()
     .activeEqualTo(true)
     .findAll();
 ```
 
-The exact generated method names depend on your model fields and indexes.
+The exact generated method names depend on your model fields and indexes. The
+Generated Typed API and Queries guides cover the full collection and query
+surface.
 
 ## Common Startup Errors
 
-Startup errors usually happen while opening the database, before application
-code starts reading and writing collections.
+Startup errors usually happen while opening the database, before normal reads
+and writes begin.
 
 ### Empty `directory`
 
@@ -363,54 +344,56 @@ await Cindel.open(
 );
 ```
 
-This fails with `ArgumentError`. Use a real filesystem directory on native
-platforms or a stable logical database name on Web.
+This fails with `ArgumentError`.
 
-### Backend Open Failure
+Use a real filesystem directory on native platforms or a stable logical
+database name on Web.
 
-If the selected backend cannot be opened, Cindel throws `CindelOpenError`.
+### `CindelOpenError`
 
-Common things to check:
+`CindelOpenError` means the selected backend could not be opened.
 
-- the native app is using a valid writable directory,
-- the app has permission to access that directory,
-- the selected native backend is available for the target platform,
-- the Web app is served from a browser context that supports Workers, Wasm, and
-  OPFS.
+Check the practical causes first:
+
+- the native directory exists or can be created,
+- the app can write to that directory,
+- the selected backend is available for the target platform,
+- the Web app is served from a browser context with Workers, Wasm, and OPFS,
+- Web runtime assets from `cindel_flutter_libs` are available to the app.
 
 Example:
 
 ```dart
 try {
   final db = await Cindel.open(
-    directory: directory.path,
+    directory: appDataDirectory.path,
     schemas: [UserSchema],
   );
   // Use db.
 } on CindelOpenError catch (error) {
-  // Report or log that the database could not be opened.
+  // Log or show that local storage could not be opened.
 }
 ```
 
-### Missing Or Incompatible Schemas
+### `CindelSchemaError`
 
-If registered schemas are missing or incompatible with stored metadata,
-opening the database fails with `CindelSchemaError`.
+`CindelSchemaError` means the generated schemas registered at open time are
+missing or incompatible with stored metadata.
 
-This can happen when:
+Common causes:
 
-- the database is opened without a schema for a collection the app expects,
-- the app uses a changed model against existing stored metadata without the
-  required migration path,
-- the app opens the same persisted database with a different schema set than
-  the one expected for that data.
+- a collection schema was left out of the `schemas` list,
+- generated code is stale after a model change,
+- existing stored data needs a migration plan,
+- the same persisted database is opened by app versions with different schema
+  expectations.
 
 Example:
 
 ```dart
 try {
   final db = await Cindel.open(
-    directory: directory.path,
+    directory: appDataDirectory.path,
     schemas: [UserSchema],
   );
   // Use db.users.
@@ -419,16 +402,15 @@ try {
 }
 ```
 
-The fix is to open the database with the generated schemas for the current app
-version, and to provide a migration plan when stored data needs to move between
-incompatible schema versions.
+The fix is usually to open with the current generated schemas and add a
+migration plan when stored data must move between incompatible model versions.
 
 ### Generated Code Is Missing
 
-If your Dart code references generated symbols such as `UserSchema` or
-`db.users` and they do not exist, the Cindel generator has not produced the
-needed `*.g.dart` file yet, or the source file is missing the correct `part`
-directive.
+Missing generated symbols are different from runtime startup errors. If Dart
+cannot find `UserSchema`, `db.users`, or another generated helper, the database
+has not opened yet. The source code is missing generated output or the model
+file is missing the correct `part` directive.
 
 The model file should include:
 
@@ -436,12 +418,12 @@ The model file should include:
 part 'user.g.dart';
 ```
 
-After defining or changing models, run code generation:
+Then run generation:
 
 ```sh
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-Generated-code errors happen at Dart analysis or compile time, before the
-database opens. Startup errors such as `CindelOpenError` and
-`CindelSchemaError` happen at runtime while opening the database.
+Generated-code problems appear during analysis or compilation. `ArgumentError`,
+`CindelOpenError`, and `CindelSchemaError` happen at runtime while opening the
+database.

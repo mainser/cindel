@@ -4,10 +4,15 @@ Cindel-specific errors extend `StateError`. Catch specific Cindel errors when
 the application can recover or show a targeted message. Let unexpected errors
 surface to your normal logging and error-reporting path.
 
+All Cindel-specific runtime errors also share the `CindelError` base class.
+Use that base class only when you intentionally want to handle every Cindel
+runtime failure the same way.
+
 ## Error Overview
 
 Public Cindel errors include:
 
+- `CindelError`
 - `CindelOpenError`
 - `CindelDatabaseClosedError`
 - `CindelTransactionError`
@@ -25,6 +30,10 @@ try {
   // Show a duplicate username message.
 }
 ```
+
+Cindel can also throw normal Dart errors such as `ArgumentError` when a caller
+passes an invalid value, for example an empty directory, an empty collection
+name, a negative id, or an invalid page limit.
 
 ## `CindelOpenError`
 

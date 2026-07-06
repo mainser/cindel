@@ -1,15 +1,22 @@
 # Relationships
 
-Cindel supports typed relationships between root collections. Use
-`CindelLink<T>` for a to-one relationship, `CindelLinks<T>` for a to-many
-relationship, and `@Backlink(to: ...)` for a read-only inverse relationship.
+Cindel relationships connect objects from root collections. They are useful
+when one stored object should point to another stored object by id, while each
+object still keeps its own collection, lifecycle, and typed API.
 
-Relationships connect persisted objects by id. The related objects must be
-stored first, and the relationship must be saved explicitly.
+Use:
+
+- `CindelLink<T>` for a to-one relationship,
+- `CindelLinks<T>` for a to-many relationship,
+- `@Backlink(to: ...)` for a read-only inverse relationship.
+
+Relationships are explicit. Store the related objects first, update the link
+container in memory, call `save()` on the forward link, and later call `load()`
+when you want to read the related objects.
 
 ## Model Example
 
-The examples in this page use artists and songs:
+The examples in this page use artists and songs.
 
 ```dart
 import 'package:cindel/cindel.dart';
@@ -38,19 +45,20 @@ class Song {
 }
 ```
 
-This model defines:
+This defines three relationship fields:
 
-- `Song.primaryArtist`: a to-one relationship from one song to one artist.
-- `Song.featuredArtists`: a to-many relationship from one song to many artists.
-- `Artist.songs`: a read-only backlink that loads songs whose
-  `featuredArtists` relationship contains that artist.
+- `Song.primaryArtist`: one song points to one artist.
+- `Song.featuredArtists`: one song points to many artists.
+- `Artist.songs`: one artist can load songs whose `featuredArtists` link
+  includes that artist.
 
 Link containers must be `final` fields. The target type must be another root
 Cindel collection. Embedded objects cannot be relationship targets.
 
-## `CindelLink`
+## To-One Links
 
-`CindelLink<T>` represents a to-one relationship.
+Use `CindelLink<T>` when an object points to zero or one object of another
+collection.
 
 ```dart
 @Collection(name: 'songs')
@@ -63,30 +71,26 @@ class Song {
 }
 ```
 
-Use the `value` property to set or read the in-memory linked object:
+Set the in-memory value through `value`:
 
 ```dart
 song.primaryArtist.value = artist;
-
-final primary = song.primaryArtist.value;
 ```
 
-Setting `value` changes the in-memory relationship. Call `save()` to persist
-that relationship:
+Then save the relationship:
 
 ```dart
-song.primaryArtist.value = artist;
 await song.primaryArtist.save();
 ```
 
-Set `value` to `null` and save when the to-one relationship should be cleared:
+To clear a to-one relationship, set the value to `null` and save:
 
 ```dart
 song.primaryArtist.value = null;
 await song.primaryArtist.save();
 ```
 
-Load the stored linked object with `load()`:
+To read the stored relationship later, load it from a hydrated object:
 
 ```dart
 final song = await db.songs.get(songId);
@@ -96,19 +100,20 @@ await song!.primaryArtist.load();
 final artist = song.primaryArtist.value;
 ```
 
-`CindelLink<T>` also supports `reset()`, which clears the in-memory value
-without deleting the persisted relationship:
+`reset()` clears the currently loaded in-memory value without changing the
+stored relationship:
 
 ```dart
 await song.primaryArtist.reset();
 ```
 
-Use `reset()` when you want to discard currently loaded relation state and load
-it again later.
+Use `reset()` when you want to discard loaded relation state and load it again
+later.
 
-## `CindelLinks`
+## To-Many Links
 
-`CindelLinks<T>` represents a to-many relationship.
+Use `CindelLinks<T>` when an object points to a set of objects in another
+collection.
 
 ```dart
 @Collection(name: 'songs')
@@ -121,46 +126,45 @@ class Song {
 }
 ```
 
-Add objects to the in-memory set with `add`:
+Add and remove objects in memory:
 
 ```dart
-song.featuredArtists.add(artist);
+song.featuredArtists.add(firstArtist);
+song.featuredArtists.add(secondArtist);
+song.featuredArtists.remove(firstArtist);
 ```
 
-Remove objects from the in-memory set with `remove`:
+Then save the current set:
 
 ```dart
-song.featuredArtists.remove(artist);
-```
-
-`CindelLinks<T>` is iterable, so loaded values can be used like a normal
-collection:
-
-```dart
-for (final artist in song.featuredArtists) {
-  print(artist.name);
-}
-```
-
-Call `save()` to persist the current set of linked objects:
-
-```dart
-song.featuredArtists.add(artist);
 await song.featuredArtists.save();
 ```
 
-Load the stored linked objects with `load()`:
+`save()` replaces the stored ids for that link with the current contents of the
+`CindelLinks<T>` container. If the container has two artists when you save, the
+stored relationship has those two artists. If you remove one and save again,
+the stored relationship is updated to match.
+
+Load a to-many relationship explicitly:
 
 ```dart
 final song = await db.songs.get(songId);
 
 await song!.featuredArtists.load();
 
+for (final artist in song.featuredArtists) {
+  print(artist.name);
+}
+```
+
+`CindelLinks<T>` is iterable after values are loaded. You can also turn it into
+a list:
+
+```dart
 final artists = song.featuredArtists.toList();
 ```
 
-`CindelLinks<T>` also supports `reset()`, which clears the in-memory set
-without deleting the persisted relationship:
+`reset()` clears the in-memory set without changing the stored relationship:
 
 ```dart
 await song.featuredArtists.reset();
@@ -168,8 +172,8 @@ await song.featuredArtists.reset();
 
 ## Backlinks
 
-A backlink is a read-only inverse relationship. It lets one collection load
-objects that point to it through a forward link.
+A backlink is the read-only inverse of a forward relationship. It lets an
+object load other objects that point to it.
 
 ```dart
 @Collection(name: 'artists')
@@ -183,8 +187,8 @@ class Artist {
 }
 ```
 
-The `to` value must be the Dart field name of the forward link on the linked
-collection. In the example above, `Artist.songs` points to
+The `to` value is the Dart field name of the forward link on the other
+collection. In this example, `Artist.songs` points to
 `Song.featuredArtists`.
 
 This is the forward link:
@@ -200,7 +204,7 @@ class Song {
 }
 ```
 
-Load a backlink the same way you load a normal to-many relationship:
+Load a backlink the same way you load a to-many link:
 
 ```dart
 final artist = await db.artists.get(artistId);
@@ -218,8 +222,7 @@ Backlinks are read-only. Do not call `save()` on a backlink:
 await artist.songs.save(); // Throws.
 ```
 
-To change what appears in a backlink, modify and save the forward relationship
-instead:
+To change what appears in a backlink, change and save the forward link instead:
 
 ```dart
 song.featuredArtists.add(artist);
@@ -228,7 +231,7 @@ await song.featuredArtists.save();
 
 ## Saving Relationships
 
-Save related objects before saving the relationship between them.
+Save the source and target objects before saving the relationship between them.
 
 ```dart
 final artist = Artist()
@@ -249,41 +252,21 @@ await db.writeTxn(() async {
 });
 ```
 
-The write order matters:
+The normal write order is:
 
 1. Store the target object.
 2. Store the source object.
 3. Update the link container in memory.
 4. Call `save()` on the forward link.
 
-Saving a forward link replaces the persisted ids for that link. For a to-one
-link, the saved value is either one linked object or no linked object. For a
-to-many link, the saved value is the current set of linked objects in the
-`CindelLinks<T>` container.
-
-For example, this replaces the full featured artist set for the song:
-
-```dart
-song.featuredArtists
-  ..add(firstArtist)
-  ..add(secondArtist);
-
-await song.featuredArtists.save();
-```
-
-If you later remove one artist and save again, the persisted relationship is
-updated to match the in-memory set:
-
-```dart
-song.featuredArtists.remove(firstArtist);
-
-await song.featuredArtists.save();
-```
+Saving validates that the source id and target ids exist. If either side has
+not been stored yet, saving the relationship fails instead of creating a
+relation to missing data.
 
 ## Loading Relationships
 
-Cindel does not automatically hydrate relationship values when an object is
-read. Load each relationship explicitly from the hydrated object.
+Reading an object does not automatically load its relationships. Load each
+relationship explicitly from the object you read.
 
 ```dart
 final song = await db.songs.get(songId);
@@ -309,13 +292,12 @@ await artist!.songs.load();
 final songs = artist.songs.toList();
 ```
 
-When loading relationships, the owner object must come from a database-backed
-read or have been stored so Cindel can identify it. A newly constructed object
-that has never been stored is not enough to load persisted relationships.
+The owner object must be database-backed. A newly constructed object that has
+never been stored is not enough to load persisted relationships.
 
-## Limitations And Common Errors
+## Common Mistakes
 
-### Link fields must be final
+### Link Fields Must Be Final
 
 Declare link containers as `final` fields:
 
@@ -324,9 +306,9 @@ final featuredArtists = CindelLinks<Artist>();
 final primaryArtist = CindelLink<Artist>();
 ```
 
-Do not replace the link container object itself. Modify its contents instead.
+Do not replace the container object itself. Modify its contents instead.
 
-### Targets must be root collections
+### Targets Must Be Root Collections
 
 Relationship targets must be root Cindel collections.
 
@@ -337,10 +319,10 @@ final primaryArtist = CindelLink<Artist>();
 Embedded objects cannot be link targets. If a value needs to be linked from
 another collection, model it as a root collection.
 
-### Save objects before saving links
+### Save Objects Before Links
 
 Saving a relationship validates that the source and target ids already exist.
-This fails when the objects have not been persisted yet.
+This fails when the objects have not been stored yet.
 
 ```dart
 final artist = Artist()..name = 'Ana';
@@ -348,10 +330,10 @@ final song = Song()..title = 'Ship It';
 
 song.featuredArtists.add(artist);
 
-await song.featuredArtists.save(); // Fails: objects were not stored first.
+await song.featuredArtists.save(); // Fails.
 ```
 
-Store the objects first:
+Store the objects first, then save the forward relationship:
 
 ```dart
 await db.artists.put(artist);
@@ -361,7 +343,7 @@ song.featuredArtists.add(artist);
 await song.featuredArtists.save();
 ```
 
-### Save forward links, not backlinks
+### Save Forward Links, Not Backlinks
 
 Backlinks are read-only and throw when `save()` is called.
 
@@ -376,7 +358,7 @@ song.featuredArtists.add(artist);
 await song.featuredArtists.save();
 ```
 
-### Use the Dart field name in `@Backlink(to: ...)`
+### Use The Dart Field Name In `@Backlink(to: ...)`
 
 The `to` value is not the collection name. It is the Dart field name of the
 forward link.
@@ -395,7 +377,7 @@ Incorrect:
 final songs = CindelLinks<Song>();
 ```
 
-### Load relationships explicitly
+### Load Relationships Explicitly
 
 Reading an object does not automatically load its link values.
 
@@ -406,20 +388,23 @@ await song!.featuredArtists.load();
 await song.primaryArtist.load();
 ```
 
-If a relationship appears empty in memory, check whether it has been loaded and
+If a relationship looks empty in memory, check whether it has been loaded and
 whether the forward relationship was saved after being changed.
 
-### Link fields are not normal persisted fields
+### Link Fields Are Not Normal Stored Fields
 
 Link fields describe relationships. They are not regular document fields like
 `title`, `name`, or `createdAt`.
 
-Use normal collection fields for data that belongs directly to the object. Use
-`CindelLink<T>` and `CindelLinks<T>` only when the value is a relationship to
-another root collection object.
+Use normal collection fields for values that belong directly to the object. Use
+`CindelLink<T>` and `CindelLinks<T>` only for relationships to other root
+collection objects.
 
-### Backend behavior is consistent
+## Backend Behavior
 
-SQLite native, MDBX, and SQLite Web/OPFS share the same relationship semantics:
-save objects first, save forward relationships explicitly, load relationships
-explicitly, and treat backlinks as read-only.
+SQLite native, MDBX, and SQLite Web/OPFS share the same relationship behavior:
+
+- save objects first,
+- save forward relationships explicitly,
+- load relationships explicitly,
+- treat backlinks as read-only.

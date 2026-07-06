@@ -1,19 +1,18 @@
 # Data Modeling
 
-Cindel data modeling starts with Dart classes. A root model becomes a persisted
-collection, fields become persisted values, and generated schemas connect those
-classes to the database API.
+Cindel models are Dart classes that describe the data your app wants to store.
+A root model becomes a collection, its fields become stored values, and code
+generation creates the schema and typed API used by the rest of the app.
 
-This guide covers model structure only: collections, ids, field types, ignored
-fields, enums, embedded objects, and supported Freezed model shapes.
+This guide focuses on model shape: collections, ids, field names, supported
+field types, ignored fields, enums, embedded objects, and Freezed models. It
+does not try to document every generated collection or query method.
 
 ## Collections
 
-A collection is a root persisted type. Each collection gets its own generated
-schema and typed collection API.
-
-Use a collection for data that should be stored and queried independently, such
-as users, projects, tasks, products, orders, or settings.
+Use a collection for data that has its own identity and lifecycle in your app:
+users, projects, tasks, products, orders, settings, cached records, and similar
+root data.
 
 ```dart
 import 'package:cindel/cindel.dart';
@@ -24,59 +23,47 @@ part 'user.g.dart';
 class User {
   Id dbId = autoIncrement;
 
+  @Index(unique: true)
   late String email;
+
   late String name;
   bool active = true;
 }
 ```
 
-After generation, the model above provides a schema such as `UserSchema` and a
-typed collection getter such as `db.users`.
+After generation, this model gives the app:
+
+- a schema constant such as `UserSchema`,
+- a generated collection getter such as `db.users`,
+- typed reads and writes for `User`,
+- generated query helpers based on the fields and indexes.
 
 ### `@Collection`
 
-Use `@Collection(...)` when you want to configure the collection.
+Use `@Collection(...)` when you want to configure the stored collection.
 
 ```dart
 @Collection(name: 'users')
 class User {
   Id dbId = autoIncrement;
   late String email;
-  late String name;
 }
 ```
 
-The `name` is the persisted collection name. It is the name stored in database
-metadata and used when opening the database with generated schemas.
+The `name` is the persisted collection name. It is stored with the database and
+is the name Cindel uses whenever that collection is opened, migrated, backed
+up, restored, or synced.
 
-```dart
-final db = await Cindel.open(
-  directory: directory.path,
-  schemas: [UserSchema],
-);
+Keep persisted names stable once real data exists. Renaming a Dart class is
+ordinary refactoring; changing the stored collection name changes the database
+format your app expects.
 
-await db.users.put(user);
-```
-
-A collection should represent a root entity. If a type only exists as part of
-another object, model it as an embedded object instead.
-
-Collections must have one persisted id field named `dbId`:
-
-```dart
-@Collection(name: 'projects')
-class Project {
-  Id dbId = autoIncrement;
-  late String title;
-}
-```
-
-Mutable models commonly use a no-argument constructor and assign fields before
-writing. Immutable models can use constructor parameters for persisted fields.
+Use a collection when the object should be saved, loaded, queried, deleted, or
+linked independently.
 
 ### `@collection`
 
-`@collection` is the shorthand for `@Collection()` when defaults are enough.
+`@collection` is shorthand for `@Collection()` when defaults are enough.
 
 ```dart
 @collection
@@ -86,16 +73,13 @@ class Project {
 }
 ```
 
-When no collection name is provided, the generator derives the persisted
-collection name from the Dart class name.
-
-Use `@collection` for simple models where the derived name is acceptable. Use
-`@Collection(name: ...)` when you want the stored collection name to be
-explicit.
+When no name is provided, the generator derives the collection name from the
+Dart class name. This is convenient for simple apps and tests. Use
+`@Collection(name: ...)` when you want the stored name to be explicit.
 
 ### `@Name`
 
-Use `@Name` when the persisted name should differ from the Dart name.
+Use `@Name` when the stored name should differ from the Dart name.
 
 ```dart
 @Name('accounts')
@@ -104,25 +88,22 @@ class Account {
   Id dbId = autoIncrement;
 
   @Name('user_name')
+  @Index(unique: true, replace: true)
   late String username;
 }
 ```
 
-In this example:
+In Dart, the app still works with `Account`, `AccountSchema`, `db.accounts`,
+and `username`. In storage, the collection is named `accounts` and the field is
+named `user_name`.
 
-- the Dart class remains `Account`,
-- the generated schema remains `AccountSchema`,
-- application code keeps using the Dart field `username`,
-- the persisted collection name is `accounts`,
-- the persisted field name is `user_name`.
-
-`@Name` is useful when a stored schema name must stay stable while Dart code is
-renamed, or when the database format must use a different naming convention
-from the Dart API.
+`@Name` is useful when you want to keep a stored format stable while improving
+Dart naming, or when the stored format must follow a naming convention that is
+different from the Dart API.
 
 ## IDs
 
-Every root collection needs exactly one persisted id field named `dbId`.
+Every root collection needs one persisted id field named `dbId`.
 
 ```dart
 @collection
@@ -132,17 +113,13 @@ class Task {
 }
 ```
 
-The id uniquely identifies one object inside its collection. Generated CRUD
-helpers use ids for methods such as `get`, `getAll`, `delete`, and `deleteAll`.
-
-```dart
-final task = await db.tasks.get(taskId);
-await db.tasks.delete(taskId);
-```
+The id identifies one object inside its collection. Generated collection
+methods use ids for operations such as `get`, `getAll`, `delete`, and
+`deleteAll`.
 
 ### `Id`
 
-`Id` is the public id type used by Cindel models and generated schemas.
+Use `Id` for the persisted `dbId` field.
 
 ```dart
 class Task {
@@ -150,12 +127,13 @@ class Task {
 }
 ```
 
-Use `Id` for the persisted `dbId` field instead of using an unrelated Dart type
-for collection identity.
+Do not replace it with an unrelated Dart type for collection identity. The
+generated schema and collection API expect Cindel's `Id` type.
 
 ### `autoIncrement`
 
-Use `autoIncrement` when Cindel should assign the next id during insertion.
+Use `autoIncrement` when Cindel should assign the id when the object is first
+stored.
 
 ```dart
 final task = Task()
@@ -166,22 +144,12 @@ await db.tasks.put(task);
 print(task.dbId);
 ```
 
-When `put` stores an object whose id is `autoIncrement`, Cindel allocates an id
-and writes it back through the generated id setter.
-
-This is the usual choice for mutable model classes:
-
-```dart
-@collection
-class Note {
-  Id dbId = autoIncrement;
-  late String body;
-}
-```
+After `put`, the generated id setter writes the allocated id back to the
+object. This is the usual style for mutable model classes.
 
 ### Explicit IDs
 
-Use an explicit id when your application already owns the id value.
+Use an explicit id when your app already owns the id value.
 
 ```dart
 @collection
@@ -196,12 +164,15 @@ final category = Category(dbId: 42, name: 'Books');
 await db.categories.put(category);
 ```
 
-Explicit ids are useful when ids come from imported data, deterministic test
-fixtures, or another part of the application.
+Explicit ids are useful for imported data, deterministic fixtures, or app
+domains where another layer already assigns stable local ids.
 
-## Supported Field Types
+## Persisted Fields
 
-Cindel persists these field shapes:
+Cindel persists fields whose types are supported and are not marked with
+`@ignore`.
+
+Supported field shapes are:
 
 - `bool`
 - `int`
@@ -231,7 +202,7 @@ class Task {
 }
 ```
 
-Nullable fields are supported when the underlying value type is supported:
+Nullable fields are fine when the underlying value type is supported:
 
 ```dart
 @collection
@@ -243,7 +214,7 @@ class Profile {
 }
 ```
 
-Lists can contain supported non-list values:
+Lists can contain supported values:
 
 ```dart
 @collection
@@ -267,11 +238,12 @@ class Matrix {
 }
 ```
 
-For structured child values, use embedded objects.
+For structured child values, use embedded objects. For independently stored
+objects, use another root collection.
 
 ## Ignored Fields
 
-Use `@ignore` for fields that should exist in Dart but should not be persisted.
+Use `@ignore` for fields that should exist in Dart but should not be stored.
 
 ```dart
 @collection
@@ -285,17 +257,20 @@ class User {
 }
 ```
 
-Ignored fields are excluded from generated persistence. They are useful for
-view state, temporary labels, derived values, caches, or other runtime-only
-data.
+Ignored fields are useful for:
 
-Do not use `@ignore` for data that must survive database close/reopen. If the
-value belongs to stored application state, make it a supported persisted field
-instead.
+- UI-only labels,
+- temporary selection state,
+- derived values that can be recomputed,
+- caches that do not need to survive close and reopen,
+- fields used only while building a screen or command.
+
+Do not mark real app data as ignored. If a value must be available after the
+database is reopened, model it as a supported persisted field.
 
 ## Enums
 
-Cindel supports enum fields. Use `@Enumerated` to control how enum values are
+Cindel can persist enum fields. Use `@Enumerated` to choose how the enum is
 stored.
 
 ```dart
@@ -319,7 +294,7 @@ Available strategies are:
 - `CindelEnumType.ordinal`
 - `CindelEnumType.value`
 
-### Name-based enums
+### Name-Based Enums
 
 Use `CindelEnumType.name` to store the enum case name.
 
@@ -339,7 +314,10 @@ class User {
 }
 ```
 
-### Ordinal enums
+This is usually the easiest strategy to read and debug. Treat enum case names
+as stored data once the app has persisted records.
+
+### Ordinal Enums
 
 Use `CindelEnumType.ordinal` to store the enum index.
 
@@ -360,11 +338,11 @@ class Task {
 ```
 
 Ordinal storage is compact, but enum order becomes part of the stored data
-contract. Use it only when the enum order is stable.
+contract. Only use it when you can keep that order stable.
 
-### Value-based enums
+### Value-Based Enums
 
-Use `CindelEnumType.value` when each enum case has a stable field value.
+Use `CindelEnumType.value` when every enum case has a stable field value.
 
 ```dart
 enum AccountStatus {
@@ -384,15 +362,14 @@ class Account {
 }
 ```
 
-Value-based enum storage is useful when your application already has stable
-external codes for enum values.
+Value-based enum storage is useful when your app already has durable external
+codes, such as server values, import formats, or business identifiers.
 
 ## Embedded Objects
 
-Embedded objects are values stored inside a parent collection object. Use them
-for structured data that does not need its own collection API.
-
-For example, an email can have a sender and a list of recipients:
+Embedded objects are value objects stored inside a parent collection object.
+They are useful for structured data that belongs to its parent and is normally
+read or written with that parent.
 
 ```dart
 @collection
@@ -417,8 +394,8 @@ class RecipientMetadata {
 }
 ```
 
-The `Email` is the root collection. `Recipient` and `RecipientMetadata` are
-stored as part of each email document.
+`Email` is the root collection. `Recipient` and `RecipientMetadata` are stored
+inside each email record.
 
 ### Defining Embedded Objects
 
@@ -453,8 +430,8 @@ class Contact {
 }
 ```
 
-Use embedded objects when the value belongs to its parent and is normally read
-or written with that parent.
+Use an embedded object when the value does not need its own id, direct CRUD
+methods, or independent collection-level queries.
 
 ### Embedded Filters
 
@@ -498,7 +475,7 @@ final sentToMary = await db.emails
 Whole embedded object equality and embedded-list element equality compare the
 stored values structurally.
 
-### Limitations
+### Embedded Object Limits
 
 Embedded objects have these current limits:
 
@@ -514,14 +491,18 @@ or its own collection-level queries, model it as a root collection instead.
 
 ## Freezed Models
 
-Cindel supports Freezed classic classes and single primary-factory models.
-Freezed union/sealed multi-constructor models are not supported as Cindel
+Cindel supports two Freezed shapes:
+
+- classic classes with concrete final fields,
+- single primary-factory models.
+
+Freezed union or sealed multi-constructor models are not supported as Cindel
 collections.
 
 ### Primary Factory
 
-For common Freezed primary-factory models, place Cindel annotations on the
-factory constructor parameters.
+For a Freezed primary-factory model, place Cindel annotations on the factory
+constructor parameters.
 
 ```dart
 import 'package:cindel/cindel.dart';
@@ -535,16 +516,16 @@ part 'product.g.dart';
 abstract class Product with _$Product {
   const factory Product({
     required Id dbId,
-    required String sku,
-    required String name,
+    @Index(unique: true) required String sku,
+    @Index() required String name,
     @Default(true) bool active,
     @ignore String? runtimeLabel,
   }) = _Product;
 }
 ```
 
-Annotations such as `@Enumerated` and `@ignore` can be placed on factory
-parameters:
+Annotations such as `@Index`, `@Enumerated`, and `@ignore` can be placed on
+factory parameters:
 
 ```dart
 enum ProductState {
@@ -564,8 +545,7 @@ abstract class Product with _$Product {
 }
 ```
 
-Use this style when the Freezed model is primarily defined by its main factory
-constructor.
+Use this style when the model is primarily defined by one Freezed factory.
 
 ### Classic Class
 
@@ -591,6 +571,7 @@ class User with _$User {
   final Id dbId;
 
   @override
+  @Index(unique: true)
   final String email;
 
   @override
@@ -598,9 +579,23 @@ class User with _$User {
 }
 ```
 
-Use the classic class style when you want explicit final fields on the class
+Use the classic class style when you want explicit final fields in the class
 body.
 
-Freezed models still follow the same collection rules as regular Cindel
-models: they need a persisted `dbId`, supported persisted field types, and a
-generated schema registered when the database opens.
+Freezed models follow the same collection rules as regular Cindel models: they
+need one persisted `dbId`, supported persisted field types, generated code, and
+a generated schema registered when the database opens.
+
+## Modeling Checklist
+
+Before generating code, check the model from the app's point of view:
+
+- Is this a root thing the app saves independently? Use a collection.
+- Is this a value that only belongs to a parent object? Use an embedded object.
+- Does the collection have exactly one persisted `dbId`?
+- Should Cindel assign ids, or does the app provide explicit ids?
+- Are all persisted fields supported by Cindel?
+- Are runtime-only fields marked with `@ignore`?
+- Are enum storage choices stable enough for persisted data?
+- Are stored names stable if real users already have data?
+- Are Freezed models limited to supported single-shape models?

@@ -1,23 +1,34 @@
 # Queries
 
-Cindel queries are the normal way to read, count, update, and delete groups of
-typed objects. Generated query builders let application code start from a
-collection, add indexed lookups or filters, optionally sort and page the result,
-and then execute the query with a result method.
+Cindel queries let an app read, count, update, or delete groups of typed
+objects. A query starts from a generated collection, adds conditions or result
+options, and then runs with a result method such as `findAll()`,
+`findFirst()`, or `count()`.
 
-This guide covers the core query flow: `where`, `filter`, result methods,
-sorting, pagination, distinct results, dynamic query modifiers, query deletes,
-query updates, and common examples.
+This guide covers the core query flow: `all`, `where`, `filter`, result
+methods, sorting, pagination, distinct results, dynamic query modifiers, query
+deletes, query updates, and common examples. Detailed predicate behavior lives
+in the Filters guide.
 
-## Query Overview
+## Query Flow
 
-Queries usually start from a typed collection:
+Most queries follow the same shape:
+
+1. Start from `all()`, `where()`, or `filter()`.
+2. Add conditions.
+3. Add sorting, offset, limit, or distinct if needed.
+4. Execute the query.
+
+For example:
 
 ```dart
-final todos = await db.todos.all().findAll();
+final openTodos = await db.todos
+    .filter()
+    .completedEqualTo(false)
+    .findAll();
 ```
 
-For a model like this:
+Given this model:
 
 ```dart
 @Collection(name: 'todos')
@@ -40,11 +51,6 @@ class Todo {
 the generated API can expose queries such as:
 
 ```dart
-final open = await db.todos
-    .filter()
-    .completedEqualTo(false)
-    .findAll();
-
 final exact = await db.todos
     .where()
     .titleEqualTo('Ship docs')
@@ -54,17 +60,44 @@ final recent = await db.todos
     .where()
     .createdAtBetween(start, end)
     .findAll();
+
+final urgentOpen = await db.todos
+    .where()
+    .tagsContains('urgent')
+    .filter()
+    .completedEqualTo(false)
+    .findAll();
 ```
 
-The usual query shape is:
+The method names come from your model fields and indexes. If a helper does not
+exist, check whether the field is persisted, whether it is indexed when using
+`where()`, and whether generated code is up to date.
 
-1. Start from `all()`, `where()`, or `filter()`.
-2. Add conditions.
-3. Add sorting, offset, limit, or distinct if needed.
-4. Execute with `findAll()`, `findFirst()`, `count()`, `deleteFirst()`,
-   `deleteAll()`, `updateFirst(...)`, or `updateAll(...)`.
+## Starting From `all`
 
-## `where`
+Use `all()` when the query should start with the whole collection.
+
+```dart
+final todos = await db.todos.all().findAll();
+```
+
+`all()` is useful for full lists, counts, sorted pages, maintenance screens,
+and operations that should consider every object.
+
+```dart
+final total = await db.todos.all().count();
+
+final newest = await db.todos
+    .all()
+    .sortByCreatedAt(order: CindelSortOrder.descending)
+    .limit(20)
+    .findAll();
+```
+
+For large collections, avoid loading everything unless that is really what the
+screen or command needs. Add sorting and pagination when you only need a page.
+
+## Starting From `where`
 
 Use `where()` for indexed fields and composite indexes.
 
@@ -75,7 +108,7 @@ final todo = await db.todos
     .findFirst();
 ```
 
-Generated `where()` helpers depend on the indexes declared in your model.
+Generated `where()` helpers depend on indexes declared in the model.
 
 An indexed string field can support equality:
 
@@ -104,12 +137,13 @@ final urgent = await db.todos
     .findAll();
 ```
 
-Use `where()` when the model has an index for the lookup you need. This keeps
-the query aligned with the indexed access paths generated for the collection.
+Use `where()` when the lookup is part of how you expect to find records often:
+by id-like fields, natural keys, dates, tags, categories, slugs, or other
+indexed values.
 
-## `filter`
+## Starting From `filter`
 
-Use `filter()` for general predicates over persisted fields.
+Use `filter()` for predicates over persisted fields.
 
 ```dart
 final open = await db.todos
@@ -118,7 +152,7 @@ final open = await db.todos
     .findAll();
 ```
 
-Filters can be used without an indexed lookup:
+Filters can be used on their own:
 
 ```dart
 final done = await db.todos
@@ -127,7 +161,7 @@ final done = await db.todos
     .findAll();
 ```
 
-Filters can also be added after a `where()` query:
+Filters can also be added after `where()`:
 
 ```dart
 final urgentOpen = await db.todos
@@ -138,15 +172,16 @@ final urgentOpen = await db.todos
     .findAll();
 ```
 
-In that example, the indexed tag lookup narrows the candidate set first, and
-the filter adds the non-indexed condition.
+In that example, the indexed tag lookup chooses the candidate set and the
+filter adds another condition.
 
-Use `filter()` when you need predicates that are not necessarily backed by a
-field index, or when you want to combine additional conditions after `where()`.
+Use the Filters guide for field predicates, nested embedded paths, and boolean
+composition.
 
 ## Result Methods
 
-Result methods execute the query.
+Result methods execute the query. Until you call one, you are still building
+the query.
 
 ```dart
 final all = await query.findAll();
@@ -165,7 +200,7 @@ final todos = await db.todos
     .findAll();
 ```
 
-Use `findAll()` when the application needs the actual objects:
+Use `findAll()` when the app needs the objects themselves:
 
 ```dart
 for (final todo in todos) {
@@ -173,7 +208,7 @@ for (final todo in todos) {
 }
 ```
 
-For large collections, combine `findAll()` with sorting and pagination.
+For large result sets, combine it with sorting and pagination.
 
 ### `findFirst`
 
@@ -191,7 +226,7 @@ if (todo == null) {
 }
 ```
 
-Use `findFirst()` for single-result lookups or screens that only need one
+Use `findFirst()` for single-result lookups and screens that only need one
 matching object.
 
 ### `count`
@@ -205,7 +240,7 @@ final openCount = await db.todos
     .count();
 ```
 
-Use `count()` when you need a number rather than the objects themselves:
+Use `count()` when the app needs a number, not the objects:
 
 ```dart
 final hasOpenWork = openCount > 0;
@@ -243,9 +278,8 @@ final sorted = await db.todos
     .findAll();
 ```
 
-Use generated sort helpers when available because they are easier to rename
-with Dart fields. Use field-name sorting for advanced or dynamic code that
-already works with persisted field names.
+Prefer generated sort helpers when the field is known in code. Use field-name
+sorting for dynamic code that already works with persisted field names.
 
 ## Offset And Limit
 
@@ -261,9 +295,9 @@ final page = await db.todos
 ```
 
 `offset` skips matching results after filtering, sorting, and distinct.
-`limit` caps the number of returned results after the offset.
+`limit` caps how many results are returned after the offset.
 
-Example helper:
+Example:
 
 ```dart
 Future<List<Todo>> loadTodoPage({
@@ -283,8 +317,8 @@ Offsets and limits must not be negative.
 
 ## Distinct
 
-Use `distinct` when a query should keep only the first result for each distinct
-field value or field tuple.
+Use `distinct` when the query should keep only the first result for each
+distinct field value or field tuple.
 
 Generated distinct helpers are available for persisted fields:
 
@@ -295,7 +329,7 @@ final distinctTitles = await db.todos
     .findAll();
 ```
 
-Use `distinctByFields` when distinctness is based on multiple persisted fields:
+Use `distinctByFields` when distinctness depends on multiple persisted fields:
 
 ```dart
 final distinctPairs = await db.todos
@@ -318,11 +352,11 @@ final latestByTitle = await db.todos
 ## Dynamic Query Modifiers
 
 Dynamic query modifiers help build queries from optional user input without
-splitting code into many branches.
+duplicating the whole query in several branches.
 
 ### `optional`
 
-Use `optional` when a filter should only be applied when a condition is true.
+Use `optional` when a condition should only be applied sometimes.
 
 ```dart
 final filtered = await db.todos
@@ -335,11 +369,11 @@ This is useful for search boxes:
 
 ```dart
 Future<List<Todo>> searchTodos(String search) {
+  final text = search.trim();
+
   return db.todos
       .filter()
-      .optional(search.trim().isNotEmpty, (q) {
-        return q.titleContains(search.trim());
-      })
+      .optional(text.isNotEmpty, (q) => q.titleContains(text))
       .findAll();
 }
 ```
@@ -349,15 +383,6 @@ When the first argument is `false`, `optional` returns the query unchanged.
 ### `anyOf`
 
 Use `anyOf` for OR-style repeated filters.
-
-```dart
-final withAnyTag = await db.todos
-    .filter()
-    .anyOf(selectedTags, (q, tag) => q.tagsElementEqualTo(tag))
-    .findAll();
-```
-
-This matches todos that have at least one of the selected tags.
 
 ```dart
 final selectedTags = ['docs', 'urgent'];
@@ -370,20 +395,12 @@ final todos = await db.todos
     .findAll();
 ```
 
-Empty `anyOf` matches nothing.
+This matches todos that have at least one of the selected tags. Empty `anyOf`
+matches nothing.
 
 ### `allOf`
 
 Use `allOf` for AND-style repeated filters.
-
-```dart
-final withAllWords = await db.todos
-    .filter()
-    .allOf(requiredWords, (q, word) => q.titleContains(word))
-    .findAll();
-```
-
-This matches todos where every generated condition is true.
 
 ```dart
 final requiredWords = ['api', 'docs'];
@@ -396,15 +413,16 @@ final todos = await db.todos
     .findAll();
 ```
 
-Empty `allOf` is a no-op.
+This matches todos where every generated condition is true. Empty `allOf` is a
+no-op.
 
-The callback passed to `anyOf` or `allOf` should add filters. Do not use it to
-change sorting, distinct, pagination, projection, or the query source.
+The callback passed to `anyOf` or `allOf` should only add filters. Do not use
+it to change sorting, distinct, pagination, projection, or the query source.
 
 ## Query Deletes
 
-Use query deletes when objects should be removed by a query condition instead
-of by known ids.
+Use query deletes when objects should be removed by a condition instead of by
+known ids.
 
 Delete the first matching object:
 
@@ -441,12 +459,12 @@ final removed = await db.todos
 ```
 
 Use collection `delete` or `deleteAll` when you already have ids. Use query
-deletes when the removal condition is expressed as a query.
+deletes when the removal is based on a query condition.
 
 ## Query Updates
 
-Use query updates when matching objects should be updated by a persisted-field
-map.
+Use query updates when matching objects should be updated by persisted field
+names.
 
 Update the first matching object:
 
@@ -504,7 +522,7 @@ await db.todos.putAll(todos);
 
 ## Common Query Examples
 
-### Find one object by indexed field
+### Find One Object By Indexed Field
 
 ```dart
 final todo = await db.todos
@@ -513,7 +531,7 @@ final todo = await db.todos
     .findFirst();
 ```
 
-### Find open todos
+### Find Open Todos
 
 ```dart
 final openTodos = await db.todos
@@ -522,7 +540,7 @@ final openTodos = await db.todos
     .findAll();
 ```
 
-### Find urgent open todos
+### Find Urgent Open Todos
 
 ```dart
 final urgentOpen = await db.todos
@@ -533,7 +551,7 @@ final urgentOpen = await db.todos
     .findAll();
 ```
 
-### Load the newest page
+### Load The Newest Page
 
 ```dart
 final newest = await db.todos
@@ -543,16 +561,18 @@ final newest = await db.todos
     .findAll();
 ```
 
-### Search only when input is present
+### Search Only When Input Is Present
 
 ```dart
+final text = search.trim();
+
 final results = await db.todos
     .filter()
-    .optional(search.isNotEmpty, (q) => q.titleContains(search))
+    .optional(text.isNotEmpty, (q) => q.titleContains(text))
     .findAll();
 ```
 
-### Count completed todos
+### Count Completed Todos
 
 ```dart
 final completedCount = await db.todos
@@ -561,7 +581,7 @@ final completedCount = await db.todos
     .count();
 ```
 
-### Mark a matching todo as completed
+### Mark A Matching Todo As Completed
 
 ```dart
 final updated = await db.todos
@@ -570,7 +590,7 @@ final updated = await db.todos
     .updateFirst({'completed': true});
 ```
 
-### Delete completed todos
+### Delete Completed Todos
 
 ```dart
 final deleted = await db.todos

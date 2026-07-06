@@ -253,6 +253,12 @@ Return `CindelPushResult` from `push`.
 ```dart
 return CindelPushResult(
   acceptedMutationIds: {'device-a:1', 'device-a:2'},
+  rejectedMutations: [
+    CindelSyncRejectedMutation(
+      mutationId: 'device-a:3',
+      reason: 'product_not_available',
+    ),
+  ],
   correctedChanges: [
     CindelRemoteUpsert(
       collection: 'orderLines',
@@ -272,6 +278,11 @@ return CindelPushResult(
 ```
 
 `acceptedMutationIds` tells Cindel which pending mutations can be removed.
+
+`rejectedMutations` is for mutations the backend will never accept. Include a
+short reason that your application can log or inspect while debugging. A
+rejection should be reserved for permanent business failures, not temporary
+network errors.
 
 `correctedChanges` lets the backend return final truth immediately, such as a
 corrected quantity or server-normalized document.
@@ -315,6 +326,10 @@ return CindelPullResult(
   ],
 );
 ```
+
+Set `resetRequired: true` only when the backend cannot safely continue from the
+client checkpoint. For normal incremental sync, leave it as the default
+`false`.
 
 Remote changes are applied inside Cindel. They update the database and notify
 watchers, but they are not recorded again as local pending mutations.

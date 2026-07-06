@@ -1,8 +1,8 @@
 # Watchers
 
-Cindel watchers emit after committed changes. They are useful when application
-state or UI should react to database writes without manually reloading every
-screen.
+Cindel watchers are streams that emit after committed database changes. They
+are useful when app state or UI should react to local database writes without
+manually reloading every screen.
 
 Local writes notify watchers directly. External changes can still be detected
 through polling.
@@ -11,53 +11,58 @@ through polling.
 const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 ```
 
-## Watcher Overview
+Most app code should use typed watchers:
 
-Watchers are streams. Subscribe with `listen`, update application state from
-the emitted value, and cancel the subscription when the owner is disposed.
+- object watchers for detail screens,
+- collection watchers for small full-collection screens,
+- query watchers for filtered, sorted, or paginated lists,
+- lazy watchers when the app only needs an invalidation signal.
+
+## Watcher Basics
+
+Watchers are Dart streams. Subscribe with `listen`, update app state from the
+emitted value, and cancel the subscription when the owner is disposed.
 
 ```dart
 final sub = db.todos.watchCollection().listen((todos) {
-  // Update application state from the latest todos.
+  // Update app state from the latest todos.
 });
 
 await sub.cancel();
 ```
 
-Most application code should prefer typed watchers:
-
-- object watchers when one object is displayed,
-- collection watchers when a whole collection is displayed,
-- query watchers when a filtered or sorted result is displayed,
-- lazy watchers when the caller only needs to know that something changed.
-
-Watcher options commonly include:
+Common options include:
 
 - `pollInterval`: how often polling checks for changes that were not delivered
   directly,
-- `fireImmediately`: whether the stream should emit the current value when the
+- `fireImmediately`: whether the stream emits the current value when the
   watcher starts.
+
+Create watchers at the same lifecycle level as the state they update. For
+example, a screen-level watcher should be cancelled when that screen is
+disposed.
 
 ## Object Watchers
 
 Use `watchObject` to watch one typed object by id.
 
 ```dart
-final sub = db.todos.watchObject(1).listen((todo) {
+final sub = db.todos.watchObject(todoId).listen((todo) {
   // todo is Todo?
 });
 ```
 
-The emitted value is nullable. It is `null` when the object does not exist:
+The emitted value is nullable. It is `null` when the object does not exist or
+has been deleted:
 
 ```dart
 final sub = db.todos.watchObject(todoId).listen((todo) {
   if (todo == null) {
-    // The object was deleted or does not exist.
+    detailState = null;
     return;
   }
 
-  print(todo.title);
+  detailState = todo;
 });
 ```
 
@@ -79,7 +84,7 @@ Use `watchObjectLazy` when you only need to know that an object may have
 changed.
 
 ```dart
-final sub = db.todos.watchObjectLazy(1).listen((_) {
+final sub = db.todos.watchObjectLazy(todoId).listen((_) {
   // Object may have changed.
 });
 ```
@@ -93,8 +98,8 @@ final sub = db.todos.watchObjectLazy(todoId).listen((_) {
 });
 ```
 
-Use `watchObject` when you need the latest object value. Use `watchObjectLazy`
-when another layer will decide whether and when to reload the object.
+Use `watchObject` when the listener needs the latest object value. Use
+`watchObjectLazy` when another layer will decide whether and when to reload.
 
 ## Collection Watchers
 
@@ -115,8 +120,8 @@ final sub = db.settings.watchCollection().listen((settings) {
 });
 ```
 
-For large collections, prefer query watchers with sorting, filtering, and
-pagination so the UI observes only the result it needs.
+For large collections, prefer query watchers with filtering, sorting, and
+limits so the UI observes only the result it needs.
 
 ## Lazy Collection Watchers
 
@@ -137,8 +142,8 @@ final sub = db.todos.watchCollectionLazy().listen((_) {
 });
 ```
 
-Use the typed collection watcher when you want the latest list emitted by the
-stream. Use the lazy watcher when you only need a signal.
+Use `watchCollection` when you want the latest list emitted by the stream. Use
+`watchCollectionLazy` when you only need a signal.
 
 ## Query Watchers
 
@@ -150,12 +155,12 @@ final sub = db.todos
     .completedEqualTo(false)
     .watch()
     .listen((todos) {
-      // Matching typed snapshot.
+      openTodos = todos;
     });
 ```
 
-Query watchers are the best fit for UI lists that already have filters,
-sorting, or limits:
+Query watchers are usually the best fit for UI lists because screens often
+show a subset of data:
 
 ```dart
 final sub = db.todos
@@ -170,11 +175,11 @@ final sub = db.todos
 ```
 
 Use query watchers instead of watching the whole collection when a screen only
-shows one subset of the data.
+shows filtered, sorted, or paginated data.
 
 ## Lazy Query Watchers
 
-Use query `watchLazy()` when a matching query may have changed but the caller
+Use query `watchLazy()` when a matching query may have changed but the listener
 does not need the typed result from the stream.
 
 ```dart
@@ -238,9 +243,9 @@ final sub = db.watchCollectionChanges('todos').listen((change) {
 });
 ```
 
-Most applications should prefer typed object, collection, and query watchers.
-Use change-set watchers when you need to integrate with a custom cache or
-debugging tool.
+Most apps should prefer typed object, collection, and query watchers. Use
+change-set watchers when you need to integrate with a custom cache, diagnostic
+tool, or advanced invalidation layer.
 
 ## UI Usage Patterns
 
@@ -261,7 +266,7 @@ Future<void> dispose() async {
 }
 ```
 
-Prefer query watchers for screens:
+Prefer query watchers for list screens:
 
 ```dart
 final sub = db.todos
@@ -274,7 +279,7 @@ final sub = db.todos
     });
 ```
 
-Prefer object watchers for details:
+Prefer object watchers for detail screens:
 
 ```dart
 final sub = db.todos.watchObject(todoId).listen((todo) {
@@ -290,6 +295,6 @@ final sub = db.todos.watchCollectionLazy().listen((_) {
 });
 ```
 
-Keep watcher callbacks small. Derive UI state from the emitted data, and avoid
+Keep watcher callbacks small. Derive state from the emitted data, and avoid
 long-running work inside the listener. If a listener starts asynchronous work,
 make sure the owning UI state can ignore stale results after disposal.

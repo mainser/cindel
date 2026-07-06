@@ -47,6 +47,7 @@ Important fields include:
 - `dartName`
 - `idField`
 - `fields`
+- `links`
 - `compositeIndexes`
 - `toDocument`
 - `fromDocument`
@@ -73,6 +74,14 @@ for (final field in UserSchema.fields) {
 }
 ```
 
+Use `links` to inspect relationship metadata:
+
+```dart
+for (final link in UserSchema.links) {
+  print('${link.dartName} -> ${link.targetCollection}');
+}
+```
+
 Use `toDocument` and `fromDocument` only when you intentionally need the
 map-shaped stored representation:
 
@@ -92,6 +101,7 @@ Important fields include:
 
 - `name`
 - `dartType`
+- `binaryType`
 - `isId`
 - `isIndexed`
 - `isIndexUnique`
@@ -117,6 +127,39 @@ Use field metadata for tooling such as:
 
 Remember that `name` is the persisted field name. If a model uses `@Name`, the
 persisted field name can differ from the Dart property name.
+
+`binaryType` is the generated storage type used by Cindel's binary document
+path. Most application code does not need it, but diagnostics or schema
+inspection tools can display it.
+
+## `CindelLinkSchema`
+
+`CindelLinkSchema` describes one generated link or backlink field.
+
+Important fields include:
+
+- `name`
+- `dartName`
+- `targetCollection`
+- `isToMany`
+- `isBacklink`
+- `backlinkTo`
+
+Example:
+
+```dart
+for (final link in AlbumSchema.links) {
+  print('${link.dartName}: ${link.targetCollection}');
+}
+```
+
+`name` is the persisted relation name. `dartName` is the Dart field name.
+`targetCollection` is the collection loaded by the link.
+
+For backlinks, `isBacklink` is `true` and `backlinkTo` names the forward link
+field that owns the stored relationship. This metadata is useful for schema
+inspection tools, but normal application code should load links through the
+generated `CindelLink` and `CindelLinks` fields on the model.
 
 ## `CindelCompositeIndexSchema`
 

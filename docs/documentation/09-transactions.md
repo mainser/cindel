@@ -1,12 +1,21 @@
 # Transactions
 
-Transactions group database work into a single consistent operation. Use
-`readTxn` when a group of reads should run inside a read transaction. Use
-`writeTxn` when several writes must commit together or roll back together.
+Transactions group database work into one consistent operation. Use them when
+several reads or writes belong together and should see a consistent state or
+commit as one local change.
 
-## `readTxn`
+Use:
 
-`readTxn` runs a callback inside a native read transaction.
+- `readTxn` for grouped reads,
+- `writeTxn` for writes that must commit together or roll back together.
+
+Single collection calls such as one `put` or one `delete` do not usually need
+an explicit transaction. Reach for transactions when a local workflow has more
+than one database step that must stay consistent.
+
+## Read Transactions
+
+`readTxn` runs a callback inside a read transaction.
 
 ```dart
 final openTodos = await db.readTxn(() {
@@ -35,7 +44,8 @@ final summary = await db.readTxn(() async {
 });
 ```
 
-Do not write inside `readTxn`. Writes inside a read transaction throw:
+Do not write inside `readTxn`. Writes inside a read transaction throw
+`CindelTransactionError`.
 
 ```dart
 await db.readTxn(() async {
@@ -45,7 +55,7 @@ await db.readTxn(() async {
 
 Use `readTxn` for grouped reads, not for changes.
 
-## `writeTxn`
+## Write Transactions
 
 `writeTxn` runs writes atomically.
 
@@ -82,7 +92,7 @@ await db.writeTxn(() async {
 });
 ```
 
-Use it when writing relation data after storing related objects:
+Use it when writing relationship data after storing related objects:
 
 ```dart
 await db.writeTxn(() async {
@@ -115,12 +125,8 @@ When a write transaction rolls back:
 - watcher notifications for those rolled-back writes are not emitted,
 - the error from the callback is returned to the caller.
 
-Use normal Dart error handling to decide whether the caller should retry,
-surface an error message, or abandon the operation.
-
-Keep transaction callbacks focused. Do the database work that must be atomic
-inside the callback, and avoid unrelated UI, logging, or network work inside
-the transaction.
+Use normal Dart error handling to decide whether the caller should retry, show
+an error message, or abandon the operation.
 
 ## Checkout-Style Example
 
@@ -141,9 +147,8 @@ await db.writeTxn(() async {
 });
 ```
 
-The transaction is useful because the read and write belong to the same
-business operation. If the stock check fails, the callback throws and no write
-is committed.
+The read and write belong to the same business operation. If the stock check
+fails, the callback throws and no write is committed.
 
 A checkout flow can also write an order and order lines in the same
 transaction:
@@ -167,9 +172,9 @@ await db.writeTxn(() async {
 
 Use one transaction for the complete local change that must remain consistent.
 
-## Common Errors
+## Common Mistakes
 
-### Writing inside `readTxn`
+### Writing Inside `readTxn`
 
 `readTxn` is for reads only.
 
@@ -181,7 +186,7 @@ await db.readTxn(() async {
 
 Use `writeTxn` when the callback writes.
 
-### Nested explicit transactions
+### Nesting Explicit Transactions
 
 Nested explicit transactions are rejected.
 
@@ -193,11 +198,11 @@ await db.writeTxn(() async {
 });
 ```
 
-Keep transaction boundaries at the caller level. If a helper may be called from
+Keep transaction boundaries at the caller level. If a helper can be called from
 inside an existing transaction, let the caller own the transaction and keep the
-helper focused on the actual reads or writes.
+helper focused on the reads or writes.
 
-### Swallowing errors inside a transaction
+### Swallowing Errors Inside A Transaction
 
 Rollback depends on the callback throwing. If you catch an error inside the
 callback and do not rethrow, Cindel treats the callback as successful.
@@ -226,7 +231,7 @@ await db.writeTxn(() async {
 });
 ```
 
-### Doing unrelated work inside a transaction
+### Doing Unrelated Work Inside A Transaction
 
 Keep transactions short and scoped to database work. Avoid waiting on unrelated
 network calls, UI prompts, or long-running non-database tasks inside the

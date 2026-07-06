@@ -11,6 +11,7 @@ The current public API does not include:
 - incremental backups,
 - merge-restore into a non-empty database,
 - embedded-field indexes,
+- nested lists,
 - bundled hosted sync servers,
 - public manual sync control commands,
 - multi-tab Web coordination.
@@ -38,6 +39,22 @@ await CindelBackup.exportDatabase(
 ```
 
 Restore into an empty database opened with matching schemas.
+
+## Modeling Limitations
+
+Current modeling limits:
+
+- indexes inside embedded classes are not supported,
+- nested lists are not supported,
+- Freezed union or sealed multi-constructor models are not supported.
+
+Embedded objects are still useful for value-shaped data that belongs to a root
+document, such as an address or a small settings object. Put indexes on root
+collection fields when the app needs optimized lookups.
+
+Freezed classic classes and single primary-factory models are supported. If a
+model needs several union cases, keep that union outside the persisted Cindel
+collection model or persist an explicit field such as `type` instead.
 
 ## Web Limitations
 

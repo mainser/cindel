@@ -4,6 +4,10 @@ Use `Cindel.openInMemory` for package tests, widget tests, and small examples.
 It gives each test a temporary database while keeping the same generated typed
 API used by application code.
 
+On native platforms this is a temporary runtime database. On Web, Cindel uses a
+unique browser database name for temporary work, so tests should still close the
+database when they finish.
+
 ## Tests With `openInMemory`
 
 Open an in-memory database with the schemas needed by the test:
@@ -196,8 +200,8 @@ mostly use in-memory databases.
 
 ```yaml
 dependencies:
-  cindel: ^0.9.1
-  cindel_flutter_libs: ^0.9.1
+  cindel: ^0.9.2
+  cindel_flutter_libs: ^0.9.2
 ```
 
 This keeps integration tests and platform builds on the same package graph as
