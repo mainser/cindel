@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cindel/src/binary_document.dart' as binary_document;
+import 'package:cindel/src/web/binary_document.dart' as web_binary_document;
+import 'package:cindel/src/web/native_document_reader.dart';
 import 'package:cindel/src/web/wire.dart' as web_wire;
 import 'package:test/test.dart';
 
@@ -104,6 +107,124 @@ void main() {
           ),
         ),
         throwsFormatException,
+      );
+    });
+
+    // Scenario: Generated Web code imports the native binary-document symbols.
+    // Covers:
+    // - Web schema-binary document placeholder construction.
+    // - Unsupported schema-binary reader methods.
+    // - Unsupported schema-binary top-level encode/decode helpers.
+    // Expected: Web keeps the symbols analyzable while routing generated
+    // storage through SQLite native rows instead.
+    test('keeps schema-binary document APIs unsupported on web.', () {
+      // Arrange.
+      final reader = web_binary_document.CindelSchemaBinaryDocumentReader(
+        _bytes([]),
+        staticSize: 0,
+      );
+
+      // Act / Assert.
+      expect(() => reader.readId(0), throwsUnsupportedError);
+      expect(() => reader.readBool(0, 0), throwsUnsupportedError);
+      expect(() => reader.readInt(0, 0), throwsUnsupportedError);
+      expect(() => reader.readDouble(0, 0), throwsUnsupportedError);
+      expect(() => reader.readString(0, 0), throwsUnsupportedError);
+      expect(() => reader.readStringList(0, 0), throwsUnsupportedError);
+      expect(() => reader.readList(0, 0), throwsUnsupportedError);
+      expect(() => reader.readObject(0, 0), throwsUnsupportedError);
+      expect(
+        () => web_binary_document.cindelEncodeSchemaBinaryDocument(
+          const [],
+          const [],
+        ),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => web_binary_document.cindelDecodeSchemaBinaryDocument(_bytes([])),
+        throwsUnsupportedError,
+      );
+    });
+
+    // Scenario: Web native embedded payloads use the shared binary value shape.
+    // Covers:
+    // - Web embedded object/list binary encode and decode helpers.
+    // - Primitive, temporal, nested, null, and invalid embedded values.
+    // Expected: Embedded payloads round-trip before being handed to generated
+    // native Web readers.
+    test('round-trips web embedded binary values.', () {
+      // Arrange.
+      final timestamp = DateTime.fromMicrosecondsSinceEpoch(123456);
+      const duration = Duration(microseconds: 9876);
+      final object = <String, Object?>{
+        'active': false,
+        'createdAt': timestamp,
+        'duration': duration,
+        'score': 4.5,
+        'items': [
+          'vip',
+          null,
+          {'nested': true},
+        ],
+      };
+      final list = <Object?>[
+        null,
+        true,
+        -7,
+        2.25,
+        'Ana',
+        object,
+      ];
+
+      // Act / Assert.
+      expect(
+        web_binary_document.cindelDecodeBinaryObject(
+          web_binary_document.cindelEncodeBinaryObject(object),
+        ),
+        {
+          'active': false,
+          'createdAt': timestamp.microsecondsSinceEpoch,
+          'duration': duration.inMicroseconds,
+          'score': 4.5,
+          'items': [
+            'vip',
+            null,
+            {'nested': true},
+          ],
+        },
+      );
+      expect(
+        web_binary_document.cindelDecodeBinaryList(
+          web_binary_document.cindelEncodeBinaryList(list),
+        ),
+        [
+          null,
+          true,
+          -7,
+          2.25,
+          'Ana',
+          {
+            'active': false,
+            'createdAt': timestamp.microsecondsSinceEpoch,
+            'duration': duration.inMicroseconds,
+            'score': 4.5,
+            'items': [
+              'vip',
+              null,
+              {'nested': true},
+            ],
+          },
+        ],
+      );
+      expect(
+        () => web_binary_document.cindelEncodeBinaryList([Object()]),
+        throwsArgumentError,
+      );
+      expect(
+        () => web_binary_document.cindelEncodeBinaryList(
+          const [0x20000000000000],
+        ),
+        throwsUnsupportedError,
       );
     });
 
@@ -242,7 +363,7 @@ void main() {
           web_wire.encodeNativeDocumentWriteBatchDirect<String>(
             ids: const [2],
             objects: const ['Ana'],
-            fieldCount: 7,
+            fieldCount: 9,
             writeDocument: (writer, object) {
               writer.writeNull(0);
               writer.writeBool(1, true);
@@ -263,6 +384,18 @@ void main() {
                 '東京',
                 '😀',
               ]);
+              writer.writeObject(7, const {
+                'label': 'primary',
+                'metadata': {
+                  'priority': 3,
+                  'tags': ['vip', 'web'],
+                },
+              });
+              writer.writeObjectList(8, const [
+                {'line': 'first'},
+                null,
+                {'line': 'second'},
+              ]);
             },
           ),
         );
@@ -279,7 +412,7 @@ void main() {
           web_wire.WireNativeDocumentValue.bytes(_bytes([1, 2])),
         ]);
         final jsonListValue =
-            direct.single.values.last as web_wire.WireNativeDocumentBytes;
+            direct.single.values[6] as web_wire.WireNativeDocumentBytes;
         expect(json.decode(utf8.decode(jsonListValue.value)), [
           '"',
           '\\',
@@ -293,6 +426,28 @@ void main() {
           '東京',
           '😀',
         ]);
+        final objectValue =
+            direct.single.values[7] as web_wire.WireNativeDocumentBytes;
+        final objectListValue =
+            direct.single.values[8] as web_wire.WireNativeDocumentBytes;
+        expect(
+          web_binary_document.cindelDecodeBinaryObject(objectValue.value),
+          {
+            'label': 'primary',
+            'metadata': {
+              'priority': 3,
+              'tags': ['vip', 'web'],
+            },
+          },
+        );
+        expect(
+          web_binary_document.cindelDecodeBinaryList(objectListValue.value),
+          [
+            {'line': 'first'},
+            null,
+            {'line': 'second'},
+          ],
+        );
 
         expect(
           () => web_wire.encodeNativeDocumentWriteBatchDirect<String>(
@@ -340,17 +495,119 @@ void main() {
           ),
           throwsFormatException,
         );
-        expect(
-          () => web_wire.encodeNativeDocumentWriteBatchDirect<String>(
-            ids: const [1],
-            objects: const ['a'],
-            fieldCount: 1,
-            writeDocument: (writer, object) => writer.writeObject(0, const {}),
-          ),
-          throwsUnsupportedError,
-        );
       },
     );
+
+    // Scenario: Web native readers hydrate generated primitive fields.
+    // Covers:
+    // - [CindelWebNativeDocumentReader.length].
+    // - [CindelWebNativeDocumentReader.isPresent].
+    // - [CindelWebNativeDocumentReader.readId].
+    // - Primitive bool, int, double, string, and string-list reads.
+    // Expected: Generated Web readers consume compact native rows with the
+    // same primitive field metadata sent through the Worker boundary.
+    test('reads web native primitive payloads.', () {
+      // Arrange.
+      final document = binary_document.cindelEncodeSchemaBinaryDocument(
+        [true, -42, 2.5, 'Ana'],
+        [
+          binary_document.CindelBinaryFieldType.boolValue,
+          binary_document.CindelBinaryFieldType.intValue,
+          binary_document.CindelBinaryFieldType.doubleValue,
+          binary_document.CindelBinaryFieldType.stringValue,
+        ],
+      );
+      final nullDocument = binary_document.cindelEncodeSchemaBinaryDocument(
+        [null, null, null, null],
+        [
+          binary_document.CindelBinaryFieldType.boolValue,
+          binary_document.CindelBinaryFieldType.intValue,
+          binary_document.CindelBinaryFieldType.doubleValue,
+          binary_document.CindelBinaryFieldType.stringValue,
+        ],
+      );
+      final stringListDocument =
+          binary_document.cindelEncodeSchemaBinaryDocument(
+            [jsonEncode(['vip', 'web'])],
+            [binary_document.CindelBinaryFieldType.stringValue],
+          );
+      final nullStringListDocument =
+          binary_document.cindelEncodeSchemaBinaryDocument(
+            [null],
+            [binary_document.CindelBinaryFieldType.stringValue],
+          );
+      final reader = CindelWebNativeDocumentReader(
+        ids: const [7, 8, 9],
+        documents: [document, nullDocument, null],
+        fieldTypes: _bytes([0, 1, 2, 3]),
+      );
+      final listReader = CindelWebNativeDocumentReader(
+        ids: const [10, 11],
+        documents: [stringListDocument, nullStringListDocument],
+        fieldTypes: _bytes([4]),
+      );
+
+      // Act / Assert.
+      expect(reader.length, 3);
+      expect(reader.isPresent(0), isTrue);
+      expect(reader.isPresent(2), isFalse);
+      expect(reader.readId(0), 7);
+      expect(reader.readBool(0, 0), isTrue);
+      expect(reader.readInt(0, 1), -42);
+      expect(reader.readDouble(0, 2), 2.5);
+      expect(reader.readString(0, 3), 'Ana');
+      expect(reader.readBool(1, 0), isNull);
+      expect(reader.readInt(1, 1), isNull);
+      expect(reader.readDouble(1, 2), isNull);
+      expect(reader.readString(1, 3), isNull);
+      expect(listReader.readStringList(0, 0), ['vip', 'web']);
+      expect(listReader.readStringList(1, 0), isNull);
+      expect(() => reader.readList(0, 0), throwsUnsupportedError);
+      reader.release();
+    });
+
+    // Scenario: Web native readers hydrate embedded binary payloads.
+    // Covers:
+    // - [CindelWebNativeDocumentReader.readObject].
+    // - [CindelWebNativeDocumentReader.readObjectList].
+    // Expected: Embedded object and object-list fields decode from stored
+    // binary payloads using the same public generated-reader contract.
+    test('reads web native embedded object payloads.', () {
+      // Arrange.
+      final document = binary_document.cindelEncodeSchemaBinaryDocument(
+        [
+          {
+            'name': 'Ana',
+            'flags': ['vip'],
+          },
+          [
+            {'line': 'one'},
+            null,
+            {'line': 'two'},
+          ],
+        ],
+        [
+          binary_document.CindelBinaryFieldType.objectValue,
+          binary_document.CindelBinaryFieldType.listValue,
+        ],
+      );
+      final reader = CindelWebNativeDocumentReader(
+        ids: const [7],
+        documents: [document],
+        fieldTypes: _bytes([5, 4]),
+      );
+
+      // Act / Assert.
+      expect(reader.readObject(0, 0), {
+        'name': 'Ana',
+        'flags': ['vip'],
+      });
+      expect(reader.readObjectList(0, 1), [
+        {'line': 'one'},
+        null,
+        {'line': 'two'},
+      ]);
+    });
 
     // Scenario: Web query plans and change sets cross the Worker boundary.
     // Covers:

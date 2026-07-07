@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cindel_annotations/cindel_annotations.dart';
+
 import '../cindel_error.dart';
 import '../schema.dart';
 import 'database.dart';
@@ -192,6 +194,7 @@ final class CindelQuery<T> {
     required CindelDatabase database,
     required CindelCollectionSchema<T> schema,
     _CindelDocumentFilter? sourceFilter,
+    WireQuerySource nativeSource = const WireQuerySource.all(dedupe: false),
     CindelFilterPredicate? filter,
     List<_SortKey> sortKeys = const [],
     List<String> distinctFields = const [],
@@ -200,6 +203,7 @@ final class CindelQuery<T> {
   }) : _database = database,
        _schema = schema,
        _sourceFilter = sourceFilter,
+       _nativeSource = nativeSource,
        _filter = filter,
        _nativeFilter = _nativeFilterBytes(filter),
        _sortKeys = sortKeys,
@@ -222,10 +226,32 @@ final class CindelQuery<T> {
     required String field,
     required Object value,
   }) {
-    return CindelQuery.all(
+    final schemaField = _schemaField(schema, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      return CindelQuery.all(
+        database: database,
+        schema: schema,
+      ).whereMatches(CindelFilter.field(field).equalTo(value));
+    }
+    if (_requiresDartIndexedEquality(schemaField, value)) {
+      return CindelQuery._(
+        database: database,
+        schema: schema,
+        sourceFilter: _caseInsensitiveStringEqualityFilter(
+          schemaField,
+          value as String,
+        ),
+      );
+    }
+    return CindelQuery._(
       database: database,
       schema: schema,
-    ).whereMatches(CindelFilter.field(field).equalTo(value));
+      nativeSource: WireQuerySource.indexEqual(
+        indexName: field,
+        value: webIndexValueForField(value, schemaField),
+        dedupe: schemaField.indexType == CindelIndexType.words,
+      ),
+    );
   }
 
   /// Creates a typed equality query for a composite index.
@@ -306,6 +332,7 @@ final class CindelQuery<T> {
   final CindelDatabase _database;
   final CindelCollectionSchema<T> _schema;
   final _CindelDocumentFilter? _sourceFilter;
+  final WireQuerySource _nativeSource;
   final CindelFilterPredicate? _filter;
   final Uint8List? _nativeFilter;
   final List<_SortKey> _sortKeys;
@@ -315,6 +342,10 @@ final class CindelQuery<T> {
 
   /// Returns a new query that filters the current query result by [predicate].
   CindelQuery<T> whereMatches(CindelFilterPredicate predicate) {
+    final indexedEqualityQuery = _indexedEqualityQuery(predicate);
+    if (indexedEqualityQuery != null) {
+      return indexedEqualityQuery;
+    }
     final existing = _filter;
     return _copyWith(
       filter: existing == null
@@ -340,10 +371,7 @@ final class CindelQuery<T> {
     return whereMatches(
       CindelFilter.any([
         for (final item in itemList)
-          option(
-            CindelQuery.all(database: _database, schema: _schema),
-            item,
-          )._filter!,
+          option(_modifierBaseQuery(), item)._filter!,
       ]),
     );
   }
@@ -354,13 +382,16 @@ final class CindelQuery<T> {
     CindelQueryRepeatOption<T, E> option,
   ) {
     final filters = [
-      for (final item in items)
-        option(
-          CindelQuery.all(database: _database, schema: _schema),
-          item,
-        )._filter!,
+      for (final item in items) option(_modifierBaseQuery(), item)._filter!,
     ];
     return filters.isEmpty ? this : whereMatches(CindelFilter.all(filters));
+  }
+
+  CindelQuery<T> _modifierBaseQuery() {
+    return CindelQuery.all(
+      database: _database,
+      schema: _schema,
+    ).whereMatches(CindelFilter.all(const []));
   }
 
   /// Sorts this query by [field].
@@ -564,7 +595,7 @@ final class CindelQuery<T> {
         current < override ? current : override,
     };
     return WireQueryPlan(
-      source: const WireQuerySource.all(dedupe: false),
+      source: _nativeSource,
       filter: nativeFilter,
       sorts: [
         for (final sortKey in _sortKeys)
@@ -957,6 +988,7 @@ final class CindelQuery<T> {
       database: _database,
       schema: _schema,
       sourceFilter: _sourceFilter,
+      nativeSource: _nativeSource,
       filter: filter ?? _filter,
       sortKeys: sortKeys ?? _sortKeys,
       distinctFields: distinctFields ?? _distinctFields,
@@ -964,6 +996,83 @@ final class CindelQuery<T> {
       limit: limit ?? _limit,
     );
   }
+
+  CindelQuery<T>? _indexedEqualityQuery(CindelFilterPredicate predicate) {
+    if (_filter != null ||
+        _sourceFilter != null ||
+        _nativeSource is! WireQueryAllSource ||
+        predicate is! _FieldFilterPredicate ||
+        predicate.path.length != 1 ||
+        predicate.operation != _FilterOperation.equalTo ||
+        predicate.expected == null) {
+      return null;
+    }
+
+    final field = _indexedEqualityField(predicate);
+    if (field == null) {
+      return null;
+    }
+    final value = predicate.expected!;
+    if (_requiresDartIndexedEquality(field, value)) {
+      return CindelQuery._(
+        database: _database,
+        schema: _schema,
+        sourceFilter: _caseInsensitiveStringEqualityFilter(
+          field,
+          value as String,
+        ),
+        sortKeys: _sortKeys,
+        distinctFields: _distinctFields,
+        offset: _offset,
+        limit: _limit,
+      );
+    }
+    return CindelQuery._(
+      database: _database,
+      schema: _schema,
+      nativeSource: WireQuerySource.indexEqual(
+        indexName: field.name,
+        value: webIndexValueForField(value, field),
+        dedupe: false,
+      ),
+      sortKeys: _sortKeys,
+      distinctFields: _distinctFields,
+      offset: _offset,
+      limit: _limit,
+    );
+  }
+
+  CindelFieldSchema? _indexedEqualityField(_FieldFilterPredicate predicate) {
+    for (final field in _schema.fields) {
+      if (field.name != predicate.path.single || !field.isIndexed) {
+        continue;
+      }
+      if (field.indexType == CindelIndexType.multiEntry ||
+          field.indexType == CindelIndexType.words ||
+          field.indexType == CindelIndexType.hash) {
+        return null;
+      }
+      return field;
+    }
+    return null;
+  }
+}
+
+bool _requiresDartIndexedEquality(CindelFieldSchema field, Object value) {
+  return !field.indexCaseSensitive &&
+      field.binaryType == 'string' &&
+      value is String;
+}
+
+_CindelDocumentFilter _caseInsensitiveStringEqualityFilter(
+  CindelFieldSchema field,
+  String expected,
+) {
+  final normalizedExpected = expected.toLowerCase();
+  return (document) {
+    final actual = document[field.name];
+    return actual is String && actual.toLowerCase() == normalizedExpected;
+  };
 }
 
 Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
@@ -1314,9 +1423,17 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
 
   @override
   bool matches(CindelDocument document) {
-    final actual = document[path.first];
+    for (final actual in _valuesAtPath(document, 0)) {
+      if (_matchesValue(actual)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _matchesValue(Object? actual) {
     return switch (operation) {
-      _FilterOperation.equalTo => actual == expected,
+      _FilterOperation.equalTo => _deepEquals(actual, expected),
       _FilterOperation.greaterThan => _compare(actual, expected) > 0,
       _FilterOperation.greaterThanOrEqualTo => _compare(actual, expected) >= 0,
       _FilterOperation.lessThan => _compare(actual, expected) < 0,
@@ -1324,7 +1441,8 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
       _FilterOperation.contains =>
         actual is String
             ? actual.contains(expected.toString())
-            : actual is Iterable && actual.contains(expected),
+            : actual is Iterable &&
+                  actual.any((value) => _deepEquals(value, expected)),
       _FilterOperation.isEmpty => actual is Iterable && actual.isEmpty,
       _FilterOperation.isNotEmpty => actual is Iterable && actual.isNotEmpty,
       _FilterOperation.lengthEqualTo => _length(actual) == expected,
@@ -1340,6 +1458,62 @@ final class _FieldFilterPredicate implements CindelFilterPredicate {
         actual is String && actual.endsWith(expected.toString()),
     };
   }
+
+  Iterable<Object?> _valuesAtPath(Object? current, int pathIndex) sync* {
+    if (pathIndex == path.length) {
+      yield current;
+      return;
+    }
+    if (current is Map<Object?, Object?>) {
+      final part = path[pathIndex];
+      if (!current.containsKey(part)) {
+        return;
+      }
+      yield* _valuesAtPath(current[part], pathIndex + 1);
+      return;
+    }
+    if (current is Iterable<Object?>) {
+      for (final value in current) {
+        yield* _valuesAtPath(value, pathIndex);
+      }
+    }
+  }
+}
+
+bool _deepEquals(Object? left, Object? right) {
+  if (identical(left, right) || left == right) {
+    return true;
+  }
+  if (left is Map<Object?, Object?> && right is Map<Object?, Object?>) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key) ||
+          !_deepEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is Iterable<Object?> && right is Iterable<Object?>) {
+    final leftIterator = left.iterator;
+    final rightIterator = right.iterator;
+    while (true) {
+      final leftHasNext = leftIterator.moveNext();
+      final rightHasNext = rightIterator.moveNext();
+      if (leftHasNext != rightHasNext) {
+        return false;
+      }
+      if (!leftHasNext) {
+        return true;
+      }
+      if (!_deepEquals(leftIterator.current, rightIterator.current)) {
+        return false;
+      }
+    }
+  }
+  return false;
 }
 
 final class _CompositeFilterPredicate implements CindelFilterPredicate {

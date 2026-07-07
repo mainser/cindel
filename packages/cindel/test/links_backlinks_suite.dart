@@ -39,6 +39,8 @@ void main() {
       final playlist = Playlist()
         ..dbId = 20
         ..name = 'Release';
+      final backlink = Backlink(to: 'featuredArtists');
+      expect(backlink.to, ArtistSchema.links.single.backlinkTo);
 
       await database.writeTxn<void>(() async {
         await database.typedCollection(ArtistSchema).put(artist);

@@ -118,12 +118,12 @@ Flutter apps normally depend on `cindel` and `cindel_flutter_libs`, and use
 
 ```yaml
 dependencies:
-  cindel: ^0.9.2
-  cindel_flutter_libs: ^0.9.2
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.9.1
+  cindel_generator: ^x.y.z
 ```
 
 Use the public Cindel import in models and application code:

@@ -50,8 +50,8 @@ Flutter Web apps should depend on both `cindel` and `cindel_flutter_libs`.
 
 ```yaml
 dependencies:
-  cindel: ^0.9.2
-  cindel_flutter_libs: ^0.9.2
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 ```
 
 The app also needs generated schemas, so normal projects should use
@@ -60,7 +60,7 @@ The app also needs generated schemas, so normal projects should use
 ```yaml
 dev_dependencies:
   build_runner: ^2.15.0
-  cindel_generator: ^0.9.1
+  cindel_generator: ^x.y.z
 ```
 
 `cindel` provides the Dart API. `cindel_flutter_libs` packages the Web worker,

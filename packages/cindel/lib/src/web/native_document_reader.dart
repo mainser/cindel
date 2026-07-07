@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../schema.dart';
+import 'binary_document.dart';
 
 const _nativeBoolNull = 0xff;
 const _nativeIntNullBytes = [0, 0, 0, 0, 0, 0, 0, 0x80];
@@ -92,9 +93,9 @@ final class CindelWebNativeDocumentReader
 
   @override
   Map<String, Object?>? readObject(int documentIndex, int fieldIndex) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object reads are not available yet.',
-    );
+    _checkFieldType(fieldIndex, 5);
+    final payload = _dynamicPayload(documentIndex, fieldIndex);
+    return payload == null ? null : cindelDecodeBinaryObject(payload);
   }
 
   @override
@@ -102,9 +103,18 @@ final class CindelWebNativeDocumentReader
     int documentIndex,
     int fieldIndex,
   ) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object-list reads are not available yet.',
-    );
+    _checkFieldType(fieldIndex, 4);
+    final payload = _dynamicPayload(documentIndex, fieldIndex);
+    if (payload == null) {
+      return null;
+    }
+    final values = cindelDecodeBinaryList(payload);
+    return values
+        .map(
+          (value) =>
+              value == null ? null : (value as Map).cast<String, Object?>(),
+        )
+        .toList(growable: false);
   }
 
   @override

@@ -1791,8 +1791,8 @@ Requirements:
 
 ```yaml
 dependencies:
-  cindel: ^0.9.0
-  cindel_flutter_libs: ^0.9.0
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 ```
 
 Supported Web app APIs:

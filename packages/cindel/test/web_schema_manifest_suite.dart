@@ -34,6 +34,15 @@ void main() {
             isIndexed: true,
           ),
         ],
+        compositeIndexes: [
+          CindelCompositeIndexSchema(
+            name: 'email_id',
+            fields: const ['email', 'id'],
+            isUnique: true,
+            isReplace: true,
+            caseSensitive: false,
+          ),
+        ],
         toDocument: (object) => object,
         fromDocument: (document) => document,
       ),
@@ -51,6 +60,12 @@ void main() {
       'id',
     ]);
     expect(manifest.collections.single.fields.first.binaryType, 'string');
+    expect(manifest.collections.single.indexes, hasLength(1));
+    expect(manifest.collections.single.indexes.single.name, 'email_id');
+    expect(manifest.collections.single.indexes.single.fields, ['email', 'id']);
+    expect(manifest.collections.single.indexes.single.isUnique, isTrue);
+    expect(manifest.collections.single.indexes.single.isReplace, isTrue);
+    expect(manifest.collections.single.indexes.single.caseSensitive, isFalse);
   });
 
   // Scenario: Dart Web generated code uses the direct native row encoder.

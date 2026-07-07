@@ -42,8 +42,8 @@ packaged native or Web runtime:
 
 ```yaml
 dependencies:
-  cindel: ^0.9.1
-  cindel_flutter_libs: ^0.9.1
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 ```
 
 No Dart import is required from this package.

@@ -9,6 +9,9 @@
 - Fixed MDBX `CindelQuery.watch()` for native-planned queries so typed document
   snapshots are materialized correctly instead of reporting a missing generated
   native reader.
+- Fixed SQLite Web native generated rows for embedded object and embedded
+  object-list fields, case-insensitive unique replace lookups, indexed equality
+  fallbacks, nested embedded filters, and `anyOf`/`allOf` modifier queries.
 - Bumped the native ABI to 34 for the typed native writer symbols that preserve
   dynamic value kinds for string, list, and object payloads.
 

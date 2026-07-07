@@ -1061,7 +1061,9 @@ impl<'a> Reader<'a> {
                     Err("native document double values must be finite".into())
                 }
             }
-            TAG_STRING => Ok(WireNativeDocumentValue::Bytes(self.read_bytes()?.to_vec())),
+            TAG_STRING | TAG_LIST | TAG_OBJECT => {
+                Ok(WireNativeDocumentValue::Bytes(self.read_bytes()?.to_vec()))
+            }
             other => Err(format!("unknown native document value tag `{other}`")),
         }
     }
@@ -1454,6 +1456,36 @@ mod tests {
             )
             .unwrap(),
             documents
+        );
+    }
+
+    // Scenario: Web direct generated writers send embedded payloads with their
+    // native dynamic value tags.
+    // Covers:
+    // - Native document list and object tags.
+    // Expected: The worker decodes list/object payload tags as native bytes.
+    #[test]
+    fn decodes_native_document_dynamic_payload_tags_as_bytes() {
+        // Arrange.
+        let mut writer = Writer::new();
+        writer.write_len(1).unwrap();
+        writer.write_u64(7);
+        writer.write_len(2).unwrap();
+        writer.write_u8(TAG_LIST);
+        writer.write_bytes(b"list").unwrap();
+        writer.write_u8(TAG_OBJECT);
+        writer.write_bytes(b"object").unwrap();
+
+        // Act / Assert.
+        assert_eq!(
+            decode_native_document_write_batch(&writer.finish()).unwrap(),
+            vec![WireNativeDocumentWrite {
+                id: 7,
+                values: vec![
+                    WireNativeDocumentValue::Bytes(b"list".to_vec()),
+                    WireNativeDocumentValue::Bytes(b"object".to_vec()),
+                ],
+            }]
         );
     }
 

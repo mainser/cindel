@@ -158,8 +158,8 @@ Flutter Web apps should depend on both `cindel` and `cindel_flutter_libs`:
 
 ```yaml
 dependencies:
-  cindel: ^0.9.2
-  cindel_flutter_libs: ^0.9.2
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 ```
 
 Open the database with a logical browser database name:

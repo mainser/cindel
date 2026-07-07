@@ -716,7 +716,7 @@ class CindelDatabase {
     }
     return WireIndexValue.list([
       for (var index = 0; index < values.length; index += 1)
-        _indexValueForField(
+        webIndexValueForField(
           values[index],
           _fieldWithCaseSensitivity(
             _requireSchemaField(schema, composite.fields[index]),
@@ -740,7 +740,7 @@ class CindelDatabase {
       WireQueryPlan(
         source: WireQuerySource.indexEqual(
           indexName: field,
-          value: _indexValueForField(value, schemaField),
+          value: webIndexValueForField(value, schemaField),
           dedupe: schemaField.indexType == CindelIndexType.words,
         ),
         filter: null,
@@ -757,9 +757,10 @@ class CindelDatabase {
     CindelFieldSchema field,
   ) {
     final schema = _schemas[collection];
+    final dynamic dynamicSchema = schema;
     if (schema == null ||
-        schema.writeNativeDocument == null ||
-        schema.readNativeDocument == null ||
+        dynamicSchema.writeNativeDocument == null ||
+        dynamicSchema.readNativeDocument == null ||
         _nativeFieldTypes(schema) == null) {
       return false;
     }
@@ -2296,7 +2297,7 @@ void _writeWebNullableString(
   }
 }
 
-WireIndexValue _indexValueForField(Object value, CindelFieldSchema field) {
+WireIndexValue webIndexValueForField(Object value, CindelFieldSchema field) {
   final normalizedType = _nonNullableDartType(field.dartType);
   final wireValue = switch ((normalizedType, value)) {
     ('bool', final bool value) => WireIndexValue.bool(value),

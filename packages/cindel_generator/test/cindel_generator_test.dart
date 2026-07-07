@@ -120,6 +120,11 @@ void main() {
           'Future<void> putAllByEmail(Iterable<RichUser> objects)',
           'indexName: "email"',
           'isComposite: false',
+          'Future<void> putByEmailActive(RichUser object)',
+          'Future<void> putAllByEmailActive(Iterable<RichUser> objects)',
+          'indexName: "email_active"',
+          'values: <Object?>[object.email, object.active]',
+          'isComposite: true',
           'final class RichUserQueryFilter',
           'CindelQuery<RichUser> optional(',
           'CindelQuery<RichUser> anyOf<E>(',
@@ -533,6 +538,7 @@ void main() {
     // - Unknown fields.
     // - List fields in composite indexes.
     // - Duplicate composite index names.
+    // - Replace composite indexes that are not unique.
     // Expected: Each invalid composite declaration fails with a specific
     // diagnostic before code generation.
     test('rejects invalid composite indexes.', () async {
@@ -551,6 +557,10 @@ void main() {
       await _expectBuildError(
         _duplicateCompositeIndexSource,
         'Composite index `email_active` is duplicated.',
+      );
+      await _expectBuildError(
+        _replaceNonUniqueCompositeIndexSource,
+        'Composite index `email_active` uses replace: true',
       );
     });
 
@@ -642,6 +652,24 @@ void main() {
         '@ignore cannot be used on required Freezed factory parameter `name`.',
       );
     });
+
+    // Scenario: Public persisted-name and replace-index annotations are
+    // malformed.
+    // Covers:
+    // - Duplicate persisted field names through @Name.
+    // - Field-level replace indexes that are not unique.
+    // Expected: The build fails with diagnostics for invalid public
+    // annotations.
+    test('rejects invalid persisted names and replace indexes.', () async {
+      await _expectBuildError(
+        _duplicatePersistedFieldNameSource,
+        'Persisted field name `email` is declared more than once.',
+      );
+      await _expectBuildError(
+        _replaceNonUniqueFieldIndexSource,
+        'Field `email` uses replace: true',
+      );
+    });
   });
 }
 
@@ -693,7 +721,12 @@ part 'model.g.dart';
 @Collection(
   name: 'richUsers',
   indexes: [
-    CompositeIndex(['email', 'active'], unique: true, caseSensitive: false),
+    CompositeIndex(
+      ['email', 'active'],
+      unique: true,
+      replace: true,
+      caseSensitive: false,
+    ),
   ],
 )
 class RichUser {
@@ -1262,6 +1295,23 @@ class BadModel {
 }
 ''';
 
+const _replaceNonUniqueCompositeIndexSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@Collection(
+  indexes: [
+    CompositeIndex(['email', 'active'], replace: true),
+  ],
+)
+class BadModel {
+  Id dbId = autoIncrement;
+  String email = '';
+  bool active = false;
+}
+''';
+
 const _abstractEmbeddedSource = r'''
 import 'package:cindel/cindel.dart';
 
@@ -1492,6 +1542,36 @@ abstract class BadModel {
     required Id dbId,
     @ignore required String name,
   });
+}
+''';
+
+const _duplicatePersistedFieldNameSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class BadModel {
+  Id dbId = autoIncrement;
+
+  String email = '';
+
+  @Name('email')
+  String backupEmail = '';
+}
+''';
+
+const _replaceNonUniqueFieldIndexSource = r'''
+import 'package:cindel/cindel.dart';
+
+part 'model.g.dart';
+
+@collection
+class BadModel {
+  Id dbId = autoIncrement;
+
+  @Index(replace: true)
+  String email = '';
 }
 ''';
 

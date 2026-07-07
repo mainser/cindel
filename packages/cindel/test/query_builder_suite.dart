@@ -149,11 +149,17 @@ void main() {
           .bioWordStartsWith('flut')
           .sortByDbId()
           .findAll();
+      final hashWhereMatchesUsers = await database.users
+          .all()
+          .whereMatches(CindelFilter.field('accessToken').equalTo('token-team'))
+          .sortByDbId()
+          .findAll();
 
       // Assert.
       expect(tokenUsers.map((user) => user.name), ['Ana', 'Cid']);
       expect(exactWordUsers.map((user) => user.name), ['Ana']);
       expect(prefixWordUsers.map((user) => user.name), ['Ana', 'Dee']);
+      expect(hashWhereMatchesUsers.map((user) => user.name), ['Ana', 'Cid']);
     });
 
     // Scenario: Generated list query helpers filter by collection size.
@@ -877,11 +883,29 @@ void main() {
           .sortByName()
           .offset(10)
           .findAll();
+      final caseInsensitiveIndexFilter = await database.users
+          .all()
+          .whereMatches(CindelFilter.field('displayName').equalTo('same'))
+          .sortByDbId()
+          .findAll();
+      final deletedMissing = await dartPlannedQuery()
+          .whereMatches(CindelFilter.field('name').equalTo('Missing'))
+          .deleteFirst();
+      final deletedMissingCount = await dartPlannedQuery()
+          .whereMatches(CindelFilter.field('name').equalTo('Missing'))
+          .deleteAll();
 
       // Assert.
       expect(sorted.map((user) => user.name), ['Ana', 'Cid', 'Ben', 'Dee']);
       expect(offsetOnly.map((user) => user.name), ['Ben', 'Cid', 'Dee']);
       expect(beyondWindow, isEmpty);
+      expect(caseInsensitiveIndexFilter.map((user) => user.name), [
+        'Ben',
+        'Cid',
+        'Dee',
+      ]);
+      expect(deletedMissing, isFalse);
+      expect(deletedMissingCount, 0);
     });
 
     // Scenario: Query watchers observe visible query result changes.

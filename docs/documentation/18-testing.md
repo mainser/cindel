@@ -200,8 +200,8 @@ mostly use in-memory databases.
 
 ```yaml
 dependencies:
-  cindel: ^0.9.2
-  cindel_flutter_libs: ^0.9.2
+  cindel: ^x.y.z
+  cindel_flutter_libs: ^x.y.z
 ```
 
 This keeps integration tests and platform builds on the same package graph as

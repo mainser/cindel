@@ -94,13 +94,17 @@ final class CindelTypedCollection<T> {
     final nativeWriter = schema.writeNativeDocument;
     final fieldTypes = _nativeFieldTypes();
     if (nativeWriter != null && fieldTypes != null) {
-      return database.putAllNativeBinaryDocuments(
+      await database.putAllNativeBinaryDocuments(
         schema.name,
         ids,
         objectList,
         fieldTypes,
         nativeWriter,
       );
+      for (final object in objectList) {
+        _bindLinks(object);
+      }
+      return;
     }
 
     _throwMissingTypedStorage();
@@ -189,12 +193,16 @@ final class CindelTypedCollection<T> {
     if (nativeReader == null || nativeFieldTypes == null) {
       _throwMissingTypedStorage();
     }
-    return database.getAllNativeBinaryDocuments(
+    final objects = await database.getAllNativeBinaryDocuments(
       schema.name,
       idList,
       nativeFieldTypes,
       nativeReader,
     );
+    return [
+      for (final object in objects)
+        if (object == null) null else _bindLinks(object),
+    ];
   }
 
   /// Deletes the object stored under [id], if it exists.
@@ -303,6 +311,11 @@ final class CindelTypedCollection<T> {
     }
     _nativeFieldTypesCache[schema] = bytes;
     return bytes;
+  }
+
+  T _bindLinks(T object) {
+    schema.bindLinks?.call(database, schema, object);
+    return object;
   }
 
   StreamTransformer<T?, T?> _distinctObjectSnapshots() {
@@ -433,7 +446,8 @@ final class CindelTypedCollection<T> {
         'Unique index `$fieldName` is not declared in `${schema.name}`.',
       ),
     );
-    if (field.indexType == CindelIndexType.hash) {
+    if (field.indexType == CindelIndexType.hash ||
+        (!field.indexCaseSensitive && field.binaryType == 'string')) {
       final objects = await CindelQuery.equal(
         database: database,
         schema: schema,

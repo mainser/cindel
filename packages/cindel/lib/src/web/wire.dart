@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../schema.dart';
+import 'binary_document.dart';
 
 /// CindelWireV1 value tags shared by Dart and Rust.
 ///
@@ -697,16 +698,16 @@ final class CindelNativeDocumentWireWriter
 
   @override
   void writeObject(int fieldIndex, Map<String, Object?> value) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object writes are not available yet.',
-    );
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagObject);
+    _writer.writeBytes(cindelEncodeBinaryObject(value));
   }
 
   @override
   void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
-    throw UnsupportedError(
-      'Cindel Web native embedded object-list writes are not available yet.',
-    );
+    _checkFieldIndex(fieldIndex);
+    _writer.writeUint8(wireTagList);
+    _writer.writeBytes(cindelEncodeBinaryList(value));
   }
 
   @override
@@ -2170,6 +2171,8 @@ final class CindelWireReader {
       wireTagInt => WireNativeDocumentValue.int(readInt64()),
       wireTagDouble => WireNativeDocumentValue.double(readFloat64()),
       wireTagString => WireNativeDocumentValue.bytes(readBytes()),
+      wireTagList => WireNativeDocumentValue.bytes(readBytes()),
+      wireTagObject => WireNativeDocumentValue.bytes(readBytes()),
       final tag => throw FormatException(
         'unknown native document value tag $tag',
       ),

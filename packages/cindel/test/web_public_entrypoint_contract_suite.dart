@@ -82,6 +82,11 @@ void main() {
       );
 
       expect(source, contains('WireQueryPlan? _nativePlan'));
+      expect(source, contains('_indexedEqualityQuery'));
+      expect(source, contains('WireQuerySource.indexEqual'));
+      expect(source, contains('webIndexValueForField'));
+      expect(source, contains('_valuesAtPath'));
+      expect(source, contains('_modifierBaseQuery'));
       expect(source, contains('queryNativePlanIds'));
       expect(source, contains('queryNativePlanCount'));
       expect(source, contains('deleteNativePlan'));
@@ -286,6 +291,12 @@ void main() {
       contains('Future<List<int>> queryCompositeEqualIds'),
     );
     expect(databaseSource, contains('WireQuerySource.indexEqual'));
+    expect(
+      databaseSource,
+      contains("!field.indexCaseSensitive && field.binaryType == 'string'"),
+    );
+    expect(collectionSource, contains('CindelQuery.equal'));
+    expect(collectionSource, contains("field.binaryType == 'string'"));
   });
 
   // Scenario: Web watchers regress to unsupported stubs or stop consuming Worker
