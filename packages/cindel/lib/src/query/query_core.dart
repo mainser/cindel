@@ -563,6 +563,10 @@ final class CindelQuery<T> {
     if (mdbxNativeDocuments != null) {
       return mdbxNativeDocuments;
     }
+    final mdbxNativePlanDocuments = await _matchingMdbxNativePlanDocuments();
+    if (mdbxNativePlanDocuments != null) {
+      return mdbxNativePlanDocuments;
+    }
     final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments();
     if (sqliteNativeDocuments != null) {
       return sqliteNativeDocuments;
@@ -679,6 +683,28 @@ final class CindelQuery<T> {
         documents = _windowDocuments(documents, _offset, _limit);
       }
       return documents;
+    }();
+  }
+
+  Future<List<CindelDocument>>? _matchingMdbxNativePlanDocuments() {
+    final nativePlan = _nativePlan();
+    final readNativeDocument = _schema.readNativeDocument;
+    final fieldTypes = _nativeFieldTypes();
+    if (_database.backend != CindelStorageBackend.mdbx ||
+        nativePlan == null ||
+        readNativeDocument == null ||
+        fieldTypes == null) {
+      return null;
+    }
+
+    return () async {
+      final objects = await _database.queryNativePlanObjects(
+        _schema.name,
+        nativePlan,
+        fieldTypes,
+        readNativeDocument,
+      );
+      return [for (final object in objects) _documentFromObject(object)];
     }();
   }
 

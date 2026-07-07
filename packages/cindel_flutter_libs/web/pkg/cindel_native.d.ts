@@ -73,6 +73,8 @@ export interface InitOutput {
     readonly cindel_native_batch_writer_write_int: (a: number, b: number, c: bigint) => void;
     readonly cindel_native_batch_writer_write_double: (a: number, b: number, c: number) => void;
     readonly cindel_native_batch_writer_write_bytes: (a: number, b: number, c: number, d: number) => void;
+    readonly cindel_native_batch_writer_write_list_bytes: (a: number, b: number, c: number, d: number) => void;
+    readonly cindel_native_batch_writer_write_object_bytes: (a: number, b: number, c: number, d: number) => void;
     readonly cindel_native_batch_writer_begin_list: (a: number, b: number, c: number) => number;
     readonly cindel_native_batch_writer_end_list: (a: number, b: number) => void;
     readonly cindel_native_batch_writer_begin_object: (a: number, b: number, c: number, d: number) => number;
@@ -194,8 +196,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2795: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2820: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2797: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2822: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

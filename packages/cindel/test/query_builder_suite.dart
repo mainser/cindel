@@ -940,6 +940,36 @@ void main() {
       expect(lazyEvents.length, greaterThan(lazyEventsAfterNonMatch));
     });
 
+    // Scenario: A native-plan query watcher emits typed document snapshots.
+    // Covers:
+    // - [CindelQuery.watch] with a top-level generated filter.
+    // - Native typed document materialization for query watcher snapshots.
+    // Expected: SQLite and MDBX both emit typed objects for matching writes.
+    test('emits native-plan query watcher snapshots.', () async {
+      // Arrange.
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+
+      final events = <List<User>>[];
+      final subscription = database.users
+          .filter()
+          .activeEqualTo(true)
+          .watch(pollInterval: const Duration(milliseconds: 5))
+          .listen(events.add);
+      addTearDown(subscription.cancel);
+
+      // Act.
+      await _waitUntil(() => events.length == 1);
+      await database.users.put(
+        _user(dbId: 2, name: 'Ben', email: 'ben@example.com', active: true),
+      );
+      await _waitUntil(() => events.any((users) => users.isNotEmpty));
+
+      // Assert.
+      expect(events.first, isEmpty);
+      expect(events.last.single.name, 'Ben');
+    });
+
     // Scenario: A query uses a secondary sort key.
     // Covers:
     // - Generated thenBy helpers.

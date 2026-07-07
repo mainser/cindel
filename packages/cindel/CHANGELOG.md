@@ -6,6 +6,9 @@
   embedded objects, including embedded objects stored inside lists, so MDBX and
   SQLite native backends hydrate those values as lists instead of string
   payloads.
+- Fixed MDBX `CindelQuery.watch()` for native-planned queries so typed document
+  snapshots are materialized correctly instead of reporting a missing generated
+  native reader.
 - Bumped the native ABI to 34 for the typed native writer symbols that preserve
   dynamic value kinds for string, list, and object payloads.
 
