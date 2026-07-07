@@ -1,6 +1,6 @@
 name: cindel_flutter_libs
 description: Prebuilt native libraries and Web runtime assets for Flutter apps that use the Cindel local database.
-version: 0.9.2
+version: 0.9.3
 homepage: https://github.com/mainser/cindel
 repository: https://github.com/mainser/cindel
 issue_tracker: https://github.com/mainser/cindel/issues

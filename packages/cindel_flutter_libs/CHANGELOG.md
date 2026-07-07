@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3
+
+- Released in lockstep with `cindel` 0.9.3 for the native ABI 34 runtime fix
+  that preserves `List<String>` fields inside embedded objects on native
+  backends.
+
 ## 0.9.2
 
 - Released in lockstep with `cindel` 0.9.2 so Flutter apps resolve matching

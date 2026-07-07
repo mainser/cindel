@@ -87,7 +87,7 @@ final class _CindelNativeDocumentWriter
   @override
   void writeStringList(int fieldIndex, List<String> value) {
     _stringBytes.withCompactStringList(value, (pointer, length) {
-      _functions.nativeBatchWriterWriteBytes(
+      _functions.nativeBatchWriterWriteListBytes(
         _writer,
         fieldIndex,
         pointer,
@@ -101,7 +101,7 @@ final class _CindelNativeDocumentWriter
   void writeObject(int fieldIndex, Map<String, Object?> value) {
     final bytes = cindelEncodeBinaryObject(value);
     _stringBytes.withBytes(bytes, (pointer, length) {
-      _functions.nativeBatchWriterWriteBytes(
+      _functions.nativeBatchWriterWriteObjectBytes(
         _writer,
         fieldIndex,
         pointer,
@@ -115,7 +115,7 @@ final class _CindelNativeDocumentWriter
   void writeObjectList(int fieldIndex, List<Map<String, Object?>?> value) {
     final bytes = cindelEncodeBinaryList(value);
     _stringBytes.withBytes(bytes, (pointer, length) {
-      _functions.nativeBatchWriterWriteBytes(
+      _functions.nativeBatchWriterWriteListBytes(
         _writer,
         fieldIndex,
         pointer,

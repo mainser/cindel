@@ -21,7 +21,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    33
+    34
 }
 
 #[no_mangle]
@@ -407,6 +407,41 @@ pub unsafe extern "C" fn cindel_native_batch_writer_write_bytes(
         return;
     };
     writer.record(|writer| writer.write_bytes(index as usize, bytes));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_write_list_bytes(
+    writer: *mut CindelNativeBatchWriter,
+    index: u32,
+    bytes_ptr: *const u8,
+    bytes_len: usize,
+) {
+    let Some(writer) = writer.as_mut() else {
+        return;
+    };
+    let Some(bytes) = read_bytes(bytes_ptr, bytes_len) else {
+        writer.failed = true;
+        return;
+    };
+    writer.record(|writer| writer.write_typed_bytes(index as usize, bytes, NativeValueKind::List));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_write_object_bytes(
+    writer: *mut CindelNativeBatchWriter,
+    index: u32,
+    bytes_ptr: *const u8,
+    bytes_len: usize,
+) {
+    let Some(writer) = writer.as_mut() else {
+        return;
+    };
+    let Some(bytes) = read_bytes(bytes_ptr, bytes_len) else {
+        writer.failed = true;
+        return;
+    };
+    writer
+        .record(|writer| writer.write_typed_bytes(index as usize, bytes, NativeValueKind::Object));
 }
 
 #[no_mangle]
@@ -2490,6 +2525,13 @@ const NATIVE_VALUE_ENUM: u8 = 8;
 const NATIVE_VALUE_OBJECT: u8 = 10;
 const NATIVE_VALUE_NULL_FLAG: u8 = 0x01;
 
+#[derive(Clone, Copy)]
+enum NativeValueKind {
+    String,
+    List,
+    Object,
+}
+
 struct NativeBatchLayout {
     field_types: Vec<NativeBatchFieldType>,
     offsets: Vec<usize>,
@@ -2723,14 +2765,23 @@ impl CindelNativeBatchWriter {
     }
 
     fn write_bytes(&mut self, index: usize, payload: &[u8]) -> Result<(), String> {
+        self.write_typed_bytes(index, payload, NativeValueKind::String)
+    }
+
+    fn write_typed_bytes(
+        &mut self,
+        index: usize,
+        payload: &[u8],
+        kind: NativeValueKind,
+    ) -> Result<(), String> {
         match &mut self.mode {
             NativeBatchWriterMode::Batch { .. } => {
                 let field_type = self.field_type(index)?;
-                match field_type {
-                    NativeBatchFieldType::String
-                    | NativeBatchFieldType::List
-                    | NativeBatchFieldType::Object => {}
-                    _ => return Err("native batch writer expected a dynamic field".into()),
+                match (field_type, kind) {
+                    (NativeBatchFieldType::String, NativeValueKind::String)
+                    | (NativeBatchFieldType::List, NativeValueKind::List)
+                    | (NativeBatchFieldType::Object, NativeValueKind::Object) => {}
+                    _ => return Err("native batch writer dynamic field type mismatch".into()),
                 }
                 if payload.len() > 0x00ff_ffff {
                     return Err("native batch writer dynamic payload is too large".into());
@@ -2758,24 +2809,47 @@ impl CindelNativeBatchWriter {
             }
             NativeBatchWriterMode::List {
                 records, encoding, ..
-            } => match encoding {
-                NativeListEncoding::Unknown | NativeListEncoding::CompactString => {
-                    *encoding = NativeListEncoding::CompactString;
-                    write_list_record(records, index, payload.to_vec())
-                }
-                NativeListEncoding::Generic => {
-                    let record = write_string_value_record(payload)?;
-                    write_list_record(records, index, record)
+            } => match kind {
+                NativeValueKind::String => match encoding {
+                    NativeListEncoding::Unknown | NativeListEncoding::CompactString => {
+                        *encoding = NativeListEncoding::CompactString;
+                        write_list_record(records, index, payload.to_vec())
+                    }
+                    NativeListEncoding::Generic => {
+                        let record = write_string_value_record(payload)?;
+                        write_list_record(records, index, record)
+                    }
+                },
+                NativeValueKind::List | NativeValueKind::Object => {
+                    ensure_generic_list_records(records, encoding)?;
+                    let value_kind = match kind {
+                        NativeValueKind::List => NATIVE_VALUE_LIST,
+                        NativeValueKind::Object => NATIVE_VALUE_OBJECT,
+                        NativeValueKind::String => unreachable!(),
+                    };
+                    write_list_record(records, index, typed_value_record(value_kind, payload))
                 }
             },
-            NativeBatchWriterMode::Object { records, .. } => write_object_value_record(
-                records,
-                index,
-                Some(BinaryValue::String(
-                    String::from_utf8(payload.to_vec())
-                        .map_err(|_| "native object writer string is invalid utf-8")?,
-                )),
-            ),
+            NativeBatchWriterMode::Object { records, .. } => match kind {
+                NativeValueKind::String => write_object_value_record(
+                    records,
+                    index,
+                    Some(BinaryValue::String(
+                        String::from_utf8(payload.to_vec())
+                            .map_err(|_| "native object writer string is invalid utf-8")?,
+                    )),
+                ),
+                NativeValueKind::List => write_object_record(
+                    records,
+                    index,
+                    typed_value_record(NATIVE_VALUE_LIST, payload),
+                ),
+                NativeValueKind::Object => write_object_record(
+                    records,
+                    index,
+                    typed_value_record(NATIVE_VALUE_OBJECT, payload),
+                ),
+            },
         }
     }
 
@@ -2806,7 +2880,9 @@ impl CindelNativeBatchWriter {
             write_list_records(&records)?
         };
         match &mut self.mode {
-            NativeBatchWriterMode::Batch { .. } => self.write_bytes(parent_index, &bytes),
+            NativeBatchWriterMode::Batch { .. } => {
+                self.write_typed_bytes(parent_index, &bytes, NativeValueKind::List)
+            }
             NativeBatchWriterMode::Object { records, .. } => write_object_record(
                 records,
                 parent_index,
@@ -2843,7 +2919,9 @@ impl CindelNativeBatchWriter {
         };
         let bytes = write_object_records(&field_names, &records)?;
         match &mut self.mode {
-            NativeBatchWriterMode::Batch { .. } => self.write_bytes(parent_index, &bytes),
+            NativeBatchWriterMode::Batch { .. } => {
+                self.write_typed_bytes(parent_index, &bytes, NativeValueKind::Object)
+            }
             NativeBatchWriterMode::Object { records, .. } => write_object_record(
                 records,
                 parent_index,
@@ -3735,7 +3813,15 @@ impl CindelNativeDocumentReader {
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
-                if entry.is_null || !matches!(entry.kind, NATIVE_VALUE_STRING | NATIVE_VALUE_ENUM) {
+                if entry.is_null
+                    || !matches!(
+                        entry.kind,
+                        NATIVE_VALUE_STRING
+                            | NATIVE_VALUE_ENUM
+                            | NATIVE_VALUE_LIST
+                            | NATIVE_VALUE_OBJECT
+                    )
+                {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
@@ -3747,7 +3833,15 @@ impl CindelNativeDocumentReader {
                 entries,
             } => {
                 let entry = raw_object_entry(field_names, entries, field_index)?;
-                if entry.is_null || !matches!(entry.kind, NATIVE_VALUE_STRING | NATIVE_VALUE_ENUM) {
+                if entry.is_null
+                    || !matches!(
+                        entry.kind,
+                        NATIVE_VALUE_STRING
+                            | NATIVE_VALUE_ENUM
+                            | NATIVE_VALUE_LIST
+                            | NATIVE_VALUE_OBJECT
+                    )
+                {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;

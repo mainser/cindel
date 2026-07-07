@@ -787,6 +787,62 @@ void main({bool includeMdbxOnlyTests = false}) {
       },
     );
 
+    // Scenario: Native generated serializers write compact List<String>
+    // payloads inside embedded objects.
+    // Covers:
+    // - Embedded object child writers preserving string-list value kinds.
+    // - Embedded object-list element writers preserving string-list value
+    //   kinds.
+    // Expected: String lists inside embedded objects hydrate as lists, not as
+    //   string payloads.
+    test('round-trips native embedded string-list fields.', () async {
+      // Arrange.
+      final db = await openTestDatabaseInMemory(
+        schemas: [_nativeEmbeddedStringListFixtureSchema],
+      );
+      final fixture = _NativeEmbeddedStringListFixture(
+        dbId: 1,
+        details: const _NativeEmbeddedStringListDetails(
+          label: 'Keyboard',
+          materials: ['aluminum', 'pbt'],
+        ),
+        lineItems: const [
+          _NativeEmbeddedStringListItem(sku: 'switches', coupons: ['bulk']),
+          null,
+          _NativeEmbeddedStringListItem(
+            sku: 'keycaps',
+            coupons: ['vip', 'launch'],
+          ),
+        ],
+      );
+
+      addTearDown(db.close);
+
+      // Act.
+      await db.putAllNativeBinaryObjects<_NativeEmbeddedStringListFixture>(
+        _nativeEmbeddedStringListFixtureSchema.name,
+        [fixture],
+        _nativeEmbeddedStringListFieldTypes,
+        (object) => object.dbId,
+        _writeNativeEmbeddedStringListFixture,
+      );
+      final restored = await db
+          .getAllNativeBinaryDocuments<_NativeEmbeddedStringListFixture>(
+            _nativeEmbeddedStringListFixtureSchema.name,
+            [1],
+            _nativeEmbeddedStringListFieldTypes,
+            _readNativeEmbeddedStringListFixture,
+          );
+
+      // Assert.
+      expect(restored.single?.details.label, 'Keyboard');
+      expect(restored.single?.details.materials, ['aluminum', 'pbt']);
+      expect(restored.single?.lineItems, hasLength(3));
+      expect(restored.single?.lineItems[0]?.coupons, ['bulk']);
+      expect(restored.single?.lineItems[1], isNull);
+      expect(restored.single?.lineItems[2]?.coupons, ['vip', 'launch']);
+    });
+
     // Scenario: A manually defined schema writes native-only payloads that are
     // not covered by the generated fixture model.
     // Covers:
@@ -1404,6 +1460,231 @@ _NativeReaderMetadata _readNativeReaderMetadata(
   return _NativeReaderMetadata(
     label: reader.readString(documentIndex, 0) as String,
     name: reader.readString(documentIndex, 1) as String,
+  );
+}
+
+final _nativeEmbeddedStringListFixtureSchema =
+    CindelCollectionSchema<_NativeEmbeddedStringListFixture>(
+      name: 'nativeEmbeddedStringListFixtures',
+      dartName: 'NativeEmbeddedStringListFixture',
+      idField: 'dbId',
+      fields: const [
+        CindelFieldSchema(
+          name: 'dbId',
+          dartType: 'Id',
+          binaryType: 'int',
+          isId: true,
+          isIndexed: false,
+        ),
+        CindelFieldSchema(
+          name: 'details',
+          dartType: '_NativeEmbeddedStringListDetails',
+          binaryType: 'object',
+          isId: false,
+          isIndexed: false,
+        ),
+        CindelFieldSchema(
+          name: 'lineItems',
+          dartType: 'List<_NativeEmbeddedStringListItem?>',
+          binaryType: 'list',
+          isId: false,
+          isIndexed: false,
+        ),
+      ],
+      toDocument: _nativeEmbeddedStringListFixtureToDocument,
+      fromDocument: _nativeEmbeddedStringListFixtureFromDocument,
+      getId: (object) => object.dbId,
+      writeNativeDocument: _writeNativeEmbeddedStringListFixture,
+      readNativeDocument: _readNativeEmbeddedStringListFixture,
+    );
+
+final _nativeEmbeddedStringListFieldTypes = Uint8List.fromList(const [
+  5, // details
+  4, // lineItems
+]);
+
+const _nativeEmbeddedStringListDetailsFieldNames = ['label', 'materials'];
+const _nativeEmbeddedStringListItemFieldNames = ['sku', 'coupons'];
+
+final class _NativeEmbeddedStringListFixture {
+  const _NativeEmbeddedStringListFixture({
+    required this.dbId,
+    required this.details,
+    required this.lineItems,
+  });
+
+  final int dbId;
+  final _NativeEmbeddedStringListDetails details;
+  final List<_NativeEmbeddedStringListItem?> lineItems;
+}
+
+final class _NativeEmbeddedStringListDetails {
+  const _NativeEmbeddedStringListDetails({
+    required this.label,
+    required this.materials,
+  });
+
+  final String label;
+  final List<String> materials;
+}
+
+final class _NativeEmbeddedStringListItem {
+  const _NativeEmbeddedStringListItem({
+    required this.sku,
+    required this.coupons,
+  });
+
+  final String sku;
+  final List<String> coupons;
+}
+
+Map<String, Object?> _nativeEmbeddedStringListFixtureToDocument(
+  _NativeEmbeddedStringListFixture object,
+) {
+  return {
+    'details': _nativeEmbeddedStringListDetailsToDocument(object.details),
+    'lineItems': object.lineItems
+        .map(
+          (item) => item == null
+              ? null
+              : _nativeEmbeddedStringListItemToDocument(item),
+        )
+        .toList(growable: false),
+  };
+}
+
+_NativeEmbeddedStringListFixture _nativeEmbeddedStringListFixtureFromDocument(
+  Map<String, Object?> document,
+) {
+  return _NativeEmbeddedStringListFixture(
+    dbId: document['dbId'] as int,
+    details: _nativeEmbeddedStringListDetailsFromDocument(
+      (document['details'] as Map).cast<String, Object?>(),
+    ),
+    lineItems: (document['lineItems'] as List)
+        .map<_NativeEmbeddedStringListItem?>(
+          (item) => item == null
+              ? null
+              : _nativeEmbeddedStringListItemFromDocument(
+                  (item as Map).cast<String, Object?>(),
+                ),
+        )
+        .toList(growable: false),
+  );
+}
+
+void _writeNativeEmbeddedStringListFixture(
+  CindelNativeDocumentWriter writer,
+  _NativeEmbeddedStringListFixture object,
+) {
+  cindelWriteNativeObject<_NativeEmbeddedStringListDetails>(
+    writer,
+    0,
+    _nativeEmbeddedStringListDetailsFieldNames,
+    object.details,
+    _writeNativeEmbeddedStringListDetails,
+    _nativeEmbeddedStringListDetailsToDocument,
+  );
+  cindelWriteNativeObjectList<_NativeEmbeddedStringListItem>(
+    writer,
+    1,
+    _nativeEmbeddedStringListItemFieldNames,
+    object.lineItems,
+    _writeNativeEmbeddedStringListItem,
+    _nativeEmbeddedStringListItemToDocument,
+  );
+}
+
+_NativeEmbeddedStringListFixture _readNativeEmbeddedStringListFixture(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return _NativeEmbeddedStringListFixture(
+    dbId: reader.readId(documentIndex),
+    details: cindelReadNativeObject<_NativeEmbeddedStringListDetails>(
+      reader,
+      documentIndex,
+      0,
+      _nativeEmbeddedStringListDetailsFieldNames,
+      _readNativeEmbeddedStringListDetails,
+      _nativeEmbeddedStringListDetailsFromDocument,
+    )!,
+    lineItems:
+        cindelReadNativeObjectList<_NativeEmbeddedStringListItem>(
+          reader,
+          documentIndex,
+          1,
+          _nativeEmbeddedStringListItemFieldNames,
+          _readNativeEmbeddedStringListItem,
+          _nativeEmbeddedStringListItemFromDocument,
+        ) ??
+        const [],
+  );
+}
+
+Map<String, Object?> _nativeEmbeddedStringListDetailsToDocument(
+  _NativeEmbeddedStringListDetails object,
+) {
+  return {'label': object.label, 'materials': object.materials};
+}
+
+_NativeEmbeddedStringListDetails _nativeEmbeddedStringListDetailsFromDocument(
+  Map<String, Object?> document,
+) {
+  return _NativeEmbeddedStringListDetails(
+    label: document['label'] as String,
+    materials: (document['materials'] as List).cast<String>(),
+  );
+}
+
+void _writeNativeEmbeddedStringListDetails(
+  CindelNativeDocumentWriter writer,
+  _NativeEmbeddedStringListDetails object,
+) {
+  writer.writeString(0, object.label);
+  cindelWriteNativeStringList(writer, 1, object.materials);
+}
+
+_NativeEmbeddedStringListDetails _readNativeEmbeddedStringListDetails(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return _NativeEmbeddedStringListDetails(
+    label: reader.readString(documentIndex, 0) as String,
+    materials: reader.readStringList(documentIndex, 1) ?? const [],
+  );
+}
+
+Map<String, Object?> _nativeEmbeddedStringListItemToDocument(
+  _NativeEmbeddedStringListItem object,
+) {
+  return {'sku': object.sku, 'coupons': object.coupons};
+}
+
+_NativeEmbeddedStringListItem _nativeEmbeddedStringListItemFromDocument(
+  Map<String, Object?> document,
+) {
+  return _NativeEmbeddedStringListItem(
+    sku: document['sku'] as String,
+    coupons: (document['coupons'] as List).cast<String>(),
+  );
+}
+
+void _writeNativeEmbeddedStringListItem(
+  CindelNativeDocumentWriter writer,
+  _NativeEmbeddedStringListItem object,
+) {
+  writer.writeString(0, object.sku);
+  cindelWriteNativeStringList(writer, 1, object.coupons);
+}
+
+_NativeEmbeddedStringListItem _readNativeEmbeddedStringListItem(
+  CindelNativeDocumentReader reader,
+  int documentIndex,
+) {
+  return _NativeEmbeddedStringListItem(
+    sku: reader.readString(documentIndex, 0) as String,
+    coupons: reader.readStringList(documentIndex, 1) ?? const [],
   );
 }
 

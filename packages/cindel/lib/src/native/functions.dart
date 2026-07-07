@@ -96,6 +96,12 @@ abstract interface class _CindelNativeFunctions {
   void Function(Pointer<Void>, int, Pointer<Uint8>, int)
   get nativeBatchWriterWriteBytes;
 
+  void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterWriteListBytes;
+
+  void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterWriteObjectBytes;
+
   Pointer<Void> Function(Pointer<Void>, int, int)
   get nativeBatchWriterBeginList;
 

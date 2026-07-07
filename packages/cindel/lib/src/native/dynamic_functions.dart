@@ -176,6 +176,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
             void Function(Pointer<Void>, int, Pointer<Uint8>, int)
           >('cindel_native_batch_writer_write_bytes', isLeaf: true),
+      nativeBatchWriterWriteListBytes = library
+          .lookupFunction<
+            Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
+            void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+          >('cindel_native_batch_writer_write_list_bytes', isLeaf: true),
+      nativeBatchWriterWriteObjectBytes = library
+          .lookupFunction<
+            Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size),
+            void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+          >('cindel_native_batch_writer_write_object_bytes', isLeaf: true),
       nativeBatchWriterBeginList = library
           .lookupFunction<
             Pointer<Void> Function(Pointer<Void>, Uint32, Size),
@@ -1255,6 +1265,14 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final void Function(Pointer<Void>, int, Pointer<Uint8>, int)
   nativeBatchWriterWriteBytes;
+
+  @override
+  final void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  nativeBatchWriterWriteListBytes;
+
+  @override
+  final void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  nativeBatchWriterWriteObjectBytes;
 
   @override
   final Pointer<Void> Function(Pointer<Void>, int, int)

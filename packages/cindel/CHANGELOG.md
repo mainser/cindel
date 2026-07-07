@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.3
+
+- Fixed native generated serialization for `List<String>` fields inside
+  embedded objects, including embedded objects stored inside lists, so MDBX and
+  SQLite native backends hydrate those values as lists instead of string
+  payloads.
+- Bumped the native ABI to 34 for the typed native writer symbols that preserve
+  dynamic value kinds for string, list, and object payloads.
+
 ## 0.9.2
 
 - Fixed the Web database facade so `CindelDatabase.deleteAll(collection, ids)`

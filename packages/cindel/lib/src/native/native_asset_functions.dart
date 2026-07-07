@@ -131,6 +131,15 @@ final class _NativeAssetCindelNativeFunctions
   get nativeBatchWriterWriteBytes => _cindelNativeBatchWriterWriteBytes;
 
   @override
+  void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterWriteListBytes => _cindelNativeBatchWriterWriteListBytes;
+
+  @override
+  void Function(Pointer<Void>, int, Pointer<Uint8>, int)
+  get nativeBatchWriterWriteObjectBytes =>
+      _cindelNativeBatchWriterWriteObjectBytes;
+
+  @override
   Pointer<Void> Function(Pointer<Void>, int, int)
   get nativeBatchWriterBeginList => _cindelNativeBatchWriterBeginList;
 
@@ -958,6 +967,28 @@ external void _cindelNativeBatchWriterWriteDouble(
   assetId: _assetId,
 )
 external void _cindelNativeBatchWriterWriteBytes(
+  Pointer<Void> writer,
+  int fieldIndex,
+  Pointer<Uint8> bytes,
+  int bytesLen,
+);
+
+@Native<Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_native_batch_writer_write_list_bytes',
+  assetId: _assetId,
+)
+external void _cindelNativeBatchWriterWriteListBytes(
+  Pointer<Void> writer,
+  int fieldIndex,
+  Pointer<Uint8> bytes,
+  int bytesLen,
+);
+
+@Native<Void Function(Pointer<Void>, Uint32, Pointer<Uint8>, Size)>(
+  symbol: 'cindel_native_batch_writer_write_object_bytes',
+  assetId: _assetId,
+)
+external void _cindelNativeBatchWriterWriteObjectBytes(
   Pointer<Void> writer,
   int fieldIndex,
   Pointer<Uint8> bytes,

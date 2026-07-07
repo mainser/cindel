@@ -139,6 +139,8 @@ const _nativeAssetFunctionMembers = [
   'nativeBatchWriterWriteInt',
   'nativeBatchWriterWriteDouble',
   'nativeBatchWriterWriteBytes',
+  'nativeBatchWriterWriteListBytes',
+  'nativeBatchWriterWriteObjectBytes',
   'nativeBatchWriterBeginList',
   'nativeBatchWriterEndList',
   'nativeBatchWriterBeginObject',
