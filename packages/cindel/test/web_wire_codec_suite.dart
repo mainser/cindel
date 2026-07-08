@@ -167,14 +167,7 @@ void main() {
           {'nested': true},
         ],
       };
-      final list = <Object?>[
-        null,
-        true,
-        -7,
-        2.25,
-        'Ana',
-        object,
-      ];
+      final list = <Object?>[null, true, -7, 2.25, 'Ana', object];
 
       // Act / Assert.
       expect(
@@ -221,9 +214,9 @@ void main() {
         throwsArgumentError,
       );
       expect(
-        () => web_binary_document.cindelEncodeBinaryList(
-          const [0x20000000000000],
-        ),
+        () => web_binary_document.cindelEncodeBinaryList(const [
+          0x20000000000000,
+        ]),
         throwsUnsupportedError,
       );
     });
@@ -526,13 +519,15 @@ void main() {
           binary_document.CindelBinaryFieldType.stringValue,
         ],
       );
-      final stringListDocument =
-          binary_document.cindelEncodeSchemaBinaryDocument(
-            [jsonEncode(['vip', 'web'])],
+      final stringListDocument = binary_document
+          .cindelEncodeSchemaBinaryDocument(
+            [
+              jsonEncode(['vip', 'web']),
+            ],
             [binary_document.CindelBinaryFieldType.stringValue],
           );
-      final nullStringListDocument =
-          binary_document.cindelEncodeSchemaBinaryDocument(
+      final nullStringListDocument = binary_document
+          .cindelEncodeSchemaBinaryDocument(
             [null],
             [binary_document.CindelBinaryFieldType.stringValue],
           );
