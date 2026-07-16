@@ -171,9 +171,9 @@ final db = await Cindel.open(
 );
 ```
 
-The browser context must support Workers, Wasm, and OPFS. Web support is still
-experimental, so keep Web validation in your app focused on startup, asset
-loading, persistence after reopen, queries, transactions, and watcher behavior.
+The browser context must support Workers, Wasm, and OPFS. Validate Web behavior
+in your target browsers, focusing on startup, asset loading, persistence after
+reopen, queries, transactions, and watcher behavior.
 
 ## Closing A Database
 

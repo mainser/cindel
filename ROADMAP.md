@@ -11,9 +11,6 @@ and SQLite Web/OPFS as the browser backend.
 [Later](#later) |
 [Quality](#quality)
 
-> Cindel is still pre-1.0. The typed public API and storage format can still
-> change while backend parity, Web behavior, and release packaging settle.
-
 ## Status
 
 The current development line is focused on a typed-only public contract:
@@ -35,8 +32,8 @@ Current backend policy:
 - MDBX is the default native backend and the reference implementation for the
   typed API.
 - SQLite is selectable explicitly and must stay aligned with the same typed API.
-- Web uses the SQLite/OPFS Worker/Wasm runtime. It is still experimental, but it
-  is a real typed backend path, not a separate app API.
+- Web uses the SQLite/OPFS Worker/Wasm runtime as a supported typed backend
+  path, not a separate app API.
 - Unsupported backend behavior must fail explicitly instead of silently falling
   back to untyped storage.
 
@@ -176,7 +173,7 @@ Current public API policy:
 - macOS universal prebuilt library.
 - Windows prebuilt library.
 - Linux prebuilt library.
-- Experimental Web SQLite Wasm runtime assets for browser Worker execution.
+- Web SQLite Wasm runtime assets for browser Worker execution.
 - Web Worker, JS glue, and Wasm runtime assets declared through
   `cindel_flutter_libs` so Flutter Web apps can receive them from the companion
   package instead of app-local copies.
@@ -270,15 +267,14 @@ Current public API policy:
 
 ### Web Runtime
 
-- Treat Web as an experimental but real backend for generated typed Flutter Web
-  apps.
+- Treat Web as a supported backend for generated typed Flutter Web apps.
 - Keep Web validation focused on SQLite/OPFS persistence, binary Worker
   payloads, query parity, transaction atomicity, watcher behavior, and browser
   storage behavior.
 - Establish Web benchmark CSVs for the same typed app workloads used by native
   backend comparisons before starting optimization work.
 - Keep single-tab behavior correct before evaluating multi-tab coordination.
-- Keep Web Sync scoped to single-tab behavior for the current preview.
+- Keep Web Sync scoped to single-tab behavior.
 
 ## Next
 
@@ -316,7 +312,7 @@ Current public API policy:
   result.
 - Prevent reintroduction of untyped collection-level persistence APIs.
 
-### Web Platform Preview
+### Web Platform Validation
 
 - Keep Web asset packaging reproducible through the internal release workflow.
 - Prove `flutter run -d chrome`, `flutter build web`, and served release builds
@@ -324,9 +320,9 @@ Current public API policy:
 - Validate fresh browser storage, reopen persistence, typed seed flows,
   transactions, queries, watchers, and checkout-style app mutations.
 - Document secure-context, OPFS availability, storage quota, and current
-  single-tab limitations before calling Web preview-ready.
-- Keep multi-tab behavior out of the stable Web preview until the single-tab
-  watcher path and persistence story are validated.
+  single-tab limitations.
+- Keep multi-tab behavior unsupported until the single-tab watcher path and
+  persistence story are validated.
 
 ### Flutter App Performance
 

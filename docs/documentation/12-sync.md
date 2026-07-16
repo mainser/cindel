@@ -475,7 +475,7 @@ Avoid these patterns:
 - returning remote changes for collections that were not registered at open,
 - using query updates while sync is enabled,
 - assuming Cindel provides server-side auth or conflict rules,
-- assuming Web multi-tab sync coordination is part of the current preview.
+- assuming Web multi-tab sync coordination is supported.
 
 ## Testing Sync
 

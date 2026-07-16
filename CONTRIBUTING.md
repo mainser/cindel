@@ -2,13 +2,12 @@
 
 Thank you for taking the time to improve Cindel.
 
-Cindel is an experimental Flutter-first local database library. The project is
-in early MVP development, so the best contributions are small, well-tested, and
-aligned with `ROADMAP.md`.
+Cindel is a Flutter-first local database library. The best contributions are
+small, well-tested, and aligned with `ROADMAP.md`.
 
 ## Project Status
 
-Cindel currently has a working vertical slice:
+Cindel currently provides:
 
 - Dart public API.
 - Generated schema metadata and serializers.
@@ -17,9 +16,6 @@ Cindel currently has a working vertical slice:
 - Simple indexes and equality/range queries.
 - Dart streams for document and collection watchers.
 - Schema version registration and compatible additive migrations.
-
-The API is still experimental. Breaking changes may happen before a first
-public release.
 
 ## Repository Layout
 
@@ -108,20 +104,12 @@ Arrange/Act/Assert comments for readability.
 
 ## Versioning
 
-Cindel is pre-1.0.0 while the API and package boundaries are still settling.
-Use small version steps so every package change stays traceable without rushing
-to a stable release.
+Use small version steps so every package change stays traceable.
 
 - Keep changed packages and examples versioned in the same change that modifies
   them.
 - Record user-visible package, example, native binary, and migration changes in
   `CHANGELOG.md`.
-- Use `0.1.0` as the current development baseline.
-- For follow-up changes, bump the patch version: `0.1.1`, `0.1.2`, and so on.
-- For Flutter examples that include a build number, bump both the patch version
-  and build number when the example changes, for example `0.1.1+2`.
-- Do not jump to `1.0.0` until the public API, native binary distribution, and
-  publishing workflow are intentionally declared stable.
 
 ## Pull Request Guidelines
 

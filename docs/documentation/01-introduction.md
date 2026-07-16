@@ -245,15 +245,13 @@ Flutter Web uses the same `Cindel.open` call and generated collection API. In
 the browser, Cindel uses the packaged SQLite Web/OPFS Worker/Wasm runtime from
 `cindel_flutter_libs`.
 
-Web support is experimental, but it is still a typed Cindel backend path. App
-code should not switch to a different public database API only because it is
-running in the browser.
+Web is a supported typed Cindel backend path. App code uses the same public
+database API in the browser as on native platforms.
 
-## Pre-1.0 Status
+## Public API
 
-Cindel is currently pre-1.0. The public direction is the generated typed API:
-open a database, register generated schemas, and work through generated typed
-collections and queries.
+Cindel's public API is generated and typed: open a database, register generated
+schemas, and work through generated typed collections and queries.
 
 Prefer these APIs in new application code:
 

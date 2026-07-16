@@ -113,7 +113,7 @@ This package contains:
 
 - Flutter plugin registration files for supported platforms.
 - Prebuilt Cindel native libraries for supported platforms.
-- Experimental Web SQLite/OPFS Worker/Wasm runtime assets used by
+- Web SQLite/OPFS Worker/Wasm runtime assets used by
   `Cindel.open(...)` on Flutter Web.
 - Minimal Dart library metadata.
 
@@ -133,6 +133,6 @@ Those live in the other Cindel packages:
 
 ## Status
 
-Cindel is in active pre-1.0 development. Keep the `cindel` and
-`cindel_flutter_libs` package versions aligned with the native ABI expected by
-the Dart runtime for the release being tested or published.
+Keep the `cindel` and `cindel_flutter_libs` package versions aligned with the
+native ABI expected by the Dart runtime for the release being tested or
+published.

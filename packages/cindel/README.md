@@ -36,16 +36,16 @@
 
 ## Status
 
-Cindel is pre-1.0. The public direction is a generated typed API: application
-code works with typed collections such as `db.users`, and each backend adapts
-internally to that same app code.
+Cindel provides a generated typed API: application code works with typed
+collections such as `db.users`, and each backend adapts internally to that same
+app code.
 
 ## Features
 
 - Generated typed collections from Dart model classes.
 - MDBX as the default native backend.
 - SQLite as an explicit native backend.
-- Experimental SQLite Web/OPFS backend for Flutter Web.
+- SQLite Web/OPFS backend for Flutter Web.
 - Auto-increment ids.
 - Typed CRUD and bulk operations.
 - Typed links and backlinks.
@@ -782,8 +782,8 @@ Current Web behavior:
 - MDBX is not used in the browser.
 - Generated typed CRUD, queries, transactions, and single-tab watchers are the
   supported Web path.
-- Web support is experimental and should be validated in the target browser.
-- Multi-tab coordination is not part of the current preview.
+- Web support should be validated in the target browser.
+- Multi-tab coordination is not supported.
 
 ## Native Binaries
 

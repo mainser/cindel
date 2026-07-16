@@ -477,6 +477,6 @@ In normal projects, adding the dependency and running `build_runner` is enough.
 
 ## Status
 
-Cindel is in active pre-1.0 development. This generator follows the same
-release line as the runtime package and emits the native typed readers, writers,
-query helpers, and hydration hooks used by the optimized Cindel runtime.
+This generator follows the same release line as the runtime package and emits
+the native typed readers, writers, query helpers, and hydration hooks used by
+the optimized Cindel runtime.

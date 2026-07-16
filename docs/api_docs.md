@@ -3,9 +3,9 @@
 This document is the expanded user guide for the Dart API exported by
 `package:cindel/cindel.dart`.
 
-Cindel is still pre-1.0. The current public direction is generated and typed:
-application code opens a database, registers generated schemas, and works
-through typed collections such as `db.users`.
+Cindel provides a generated, typed public API: application code opens a
+database, registers generated schemas, and works through typed collections such
+as `db.users`.
 
 ## Import
 
@@ -1732,7 +1732,7 @@ Avoid these patterns:
 - returning remote changes for collections that were not registered at open,
 - using query updates while sync is enabled,
 - assuming Cindel provides server-side auth or conflict rules,
-- assuming Web multi-tab sync coordination is part of the current preview.
+- assuming Web multi-tab sync coordination is supported.
 
 ### Testing Sync
 
@@ -1812,11 +1812,10 @@ Supported Web app APIs:
 
 Current Web limits:
 
-- Web support is experimental.
 - MDBX is not used in browsers.
 - Watcher delivery is single-tab.
-- Sync watcher delivery is also single-tab in the current Web preview.
-- Multi-tab coordination is not part of the current preview.
+- Sync watcher delivery is also single-tab.
+- Multi-tab coordination is not supported.
 - Browser storage quota and OPFS availability depend on the target browser.
 
 ## Text Helpers

@@ -130,11 +130,10 @@ await CindelBackup.exportDatabase(
 
 Current Web limits:
 
-- Web support is experimental.
 - MDBX is not used in browsers.
 - Watcher delivery is single-tab.
-- Sync watcher delivery is also single-tab in the current Web preview.
-- Multi-tab coordination is not part of the current preview.
+- Sync watcher delivery is also single-tab.
+- Multi-tab coordination is not supported.
 - Browser storage quota and OPFS availability depend on the target browser.
 
 If the browser does not provide the required runtime features, opening the
@@ -165,7 +164,6 @@ final demoDb = await Cindel.open(
 Browser storage quota is controlled by the browser. Application behavior should
 account for the possibility that storage is limited or unavailable.
 
-Because watcher delivery is single-tab in the current preview, do not rely on
-one browser tab immediately updating another tab. If your application supports
-multi-tab usage, design the UI so a tab can reload or re-open its local view
-when needed.
+Because watcher delivery is single-tab, do not rely on one browser tab
+immediately updating another tab. If your application supports multi-tab usage,
+design the UI so a tab can reload or re-open its local view when needed.

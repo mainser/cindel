@@ -92,7 +92,7 @@
 - Aligned MDBX, SQLite native, and SQLite Web around the generated typed public
   API. Applications now use the same `Cindel.open(...)`, typed collections,
   typed queries, transactions, and watchers across supported platforms.
-- Added the experimental SQLite Web/OPFS backend behind the normal
+- Added the SQLite Web/OPFS backend behind the normal
   `Cindel.open(...)` path, loading packaged Worker/Wasm assets from
   `cindel_flutter_libs`.
 - Removed the separate public Web entrypoint and removed untyped
@@ -121,7 +121,7 @@
   SQLite schema metadata persistently.
 - Kept runtime collection schemas loaded after persisted Web SQLite opens so
   native document cursors remain available after OPFS reopen.
-- Added the experimental Web typed CRUD surface on `CindelWebEngine` and the
+- Added the Web typed CRUD surface on `CindelWebEngine` and the
   package worker template: id allocation, put/putAll, get/getAll,
   getStored/getAllStored, delete/deleteAll, documentIds, and SQLite-native
   document write/delete batches.
@@ -684,8 +684,8 @@
   schema collections.
 - Made schema-backed MDBX writes strict: unknown fields are rejected instead of
   falling back to JSON.
-- Removed the public migration callback and dry-run APIs while Cindel remains
-  pre-1.0 and the optimized storage format is still settling.
+- Removed the public migration callback and dry-run APIs while settling the
+  optimized storage format.
 - Made MDBX part of the default native Cargo build while keeping SQLite
   compiled as an explicit secondary backend.
 - Moved the native benchmark and experimental MDBX layout prototype behind the

@@ -344,6 +344,5 @@ the schema contract without depending on the database runtime.
 
 ## Status
 
-Cindel is in active pre-1.0 development. Annotation names are designed to stay
-small and familiar, but generated schema behavior can still evolve before the
-stable release line.
+Annotation names are designed to stay small and familiar. Generated schema
+behavior follows the runtime package's release line.

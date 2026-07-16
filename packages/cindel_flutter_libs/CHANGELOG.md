@@ -47,7 +47,7 @@
 
 ## 0.6.1
 
-- Added experimental Web SQLite Wasm runtime assets under `web/pkg`.
+- Added Web SQLite Wasm runtime assets under `web/pkg`.
 
 ## 0.6.0
 

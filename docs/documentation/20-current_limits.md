@@ -1,8 +1,8 @@
 # Current Limits
 
-Cindel is pre-1.0, and some capabilities are intentionally not part of the
-current public API. This page summarizes the limits users should account for
-when designing an application.
+Some capabilities are intentionally not part of Cindel's current public API.
+This page summarizes the limits users should account for when designing an
+application.
 
 ## General Limitations
 
@@ -60,11 +60,10 @@ collection model or persist an explicit field such as `type` instead.
 
 Current Web limits:
 
-- Web support is experimental.
 - MDBX is not used in browsers.
 - Watcher delivery is single-tab.
-- Sync watcher delivery is also single-tab in the current Web preview.
-- Multi-tab coordination is not part of the current preview.
+- Sync watcher delivery is also single-tab.
+- Multi-tab coordination is not supported.
 - Browser storage quota and OPFS availability depend on the target browser.
 
 Flutter Web still uses the same typed API:
