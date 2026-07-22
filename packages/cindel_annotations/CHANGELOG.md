@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0
+
+- Released the first stable Cindel annotations package version.
+
 ## 0.9.1
 
 - Published in lockstep with the 0.9.1 Cindel release line so downstream

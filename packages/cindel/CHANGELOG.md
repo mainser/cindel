@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0
+
+- Released the first stable Cindel package version.
+- Updated internal package constraints to the 1.0.0 release line.
+
 ## 0.9.3
 
 - Fixed native generated serialization for `List<String>` fields inside

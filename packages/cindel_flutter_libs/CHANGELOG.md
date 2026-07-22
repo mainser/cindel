@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0
+
+- Released the first stable Cindel Flutter libraries package version in
+  lockstep with `cindel` 1.0.0.
+
 ## 0.9.3
 
 - Released in lockstep with `cindel` 0.9.3 for the native ABI 34 runtime fix

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0
+
+- Released the first stable Cindel generator package version.
+- Updated the annotations dependency constraint to `^1.0.0`.
+
 ## 0.9.1
 
 - Published in lockstep with the 0.9.1 Cindel release line and updated the
