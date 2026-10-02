@@ -1,12 +1,13 @@
 [package]
 name = "mdbx-sys"
-version = "13.11.0"
+version = "14.4.0"
 edition = "2024"
-license = "MPL-2.0"
+links = "mdbx"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Rust bindings for libmdbx."
 documentation = "https://docs.rs/mdbx-sys"
-homepage = "https://github.com/vorot93/libmdbx-rs"
-repository = "https://github.com/vorot93/libmdbx-rs"
 keywords = ["MDBX", "database", "storage-engine", "bindings", "library"]
 categories = ["database", "external-ffi-bindings"]
 
@@ -18,4 +19,4 @@ libc = "0.2"
 
 [build-dependencies]
 cc = "1.0"
-bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
+bindgen = { version = "0.73", default-features = false, features = ["runtime"] }

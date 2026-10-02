@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+- Updated the native MDBX engine to 0.14.4 and the Rust wrapper to 0.9.0.
+- Preserved database geometry, shrink thresholds, durability settings, and
+  platform build optimizations. Removed the obsolete coalesce flag because
+  page coalescing is always enabled by MDBX, and migrated assertion checks to
+  `MDBX_CHECKING`.
+- Adapted native cursor lifetimes and Windows exception handling for the
+  updated MDBX integration.
+
 ## 1.0.0
 
 - Released the first stable Cindel package version.

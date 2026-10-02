@@ -12,15 +12,16 @@
 [package]
 edition = "2024"
 name = "mdbx-sys"
-version = "13.11.0"
+version = "14.4.0"
+authors = ["Artem Vorotnikov <artem@vorotnikov.me>"]
 build = "build.rs"
+links = "mdbx"
 autolib = false
 autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
 description = "Rust bindings for libmdbx."
-homepage = "https://github.com/vorot93/libmdbx-rs"
 documentation = "https://docs.rs/mdbx-sys"
 readme = false
 keywords = [
@@ -34,7 +35,7 @@ categories = [
     "database",
     "external-ffi-bindings",
 ]
-license = "MPL-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/vorot93/libmdbx-rs"
 
 [lib]
@@ -45,7 +46,7 @@ path = "src/lib.rs"
 version = "0.2"
 
 [build-dependencies.bindgen]
-version = "0.72"
+version = "0.73"
 features = ["runtime"]
 default-features = false
 

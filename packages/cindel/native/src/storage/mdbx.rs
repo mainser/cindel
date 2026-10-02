@@ -730,6 +730,9 @@ impl MdbxStorage {
             .cursor(&documents_table)
             .map_err(|error| error.to_string())?;
 
+        // Erase the cursor borrow before moving its owning transaction below.
+        let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
+
         // The libmdbx cursor internally owns a cloned transaction handle and
         // only carries the Rust transaction lifetime as a marker. Keep the
         // transaction in the reader and drop the cursor before it.
@@ -739,7 +742,6 @@ impl MdbxStorage {
                 Transaction<'static, RO, NoWriteMap>,
             >(transaction)
         };
-        let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
 
         Ok(MdbxCursorDocumentReader {
             cursor,
@@ -1932,7 +1934,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
                 max_tables: Some(MDBX_MAX_TABLES),
                 no_sub_dir: true,
                 accede: false,
-                coalesce: true,
+                // MDBX coalesces reclaimed pages unconditionally since 0.12.
                 mode: Mode::ReadWrite(ReadWriteOptions {
                     sync_mode: SyncMode::NoMetaSync,
                     min_size: Some(MDBX_MIN_SIZE),

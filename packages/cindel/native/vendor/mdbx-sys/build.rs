@@ -49,7 +49,7 @@ impl ParseCallbacks for Callbacks {
             | "MDBX_THREAD_MISMATCH"
             | "MDBX_TXN_OVERLAPPING"
             | "MDBX_BACKLOG_DEPLETED"
-            | "MDBX_DUPLICATED_CLK"
+            | "MDBX_DUPLICATED_LCK"
             | "MDBX_DANGLING_DBI"
             | "MDBX_OUSTED"
             | "MDBX_MVCC_RETARDED"
@@ -219,16 +219,21 @@ fn main() {
 
     let mut cc_builder = cc::Build::new();
     cc_builder
-        .flag_if_supported("-Wall")
         .flag_if_supported("-Werror")
         .flag_if_supported("-ffunction-sections")
         .flag_if_supported("-fvisibility=hidden")
         .flag_if_supported("-Wno-error=attributes");
 
+    // MSVC's /Wall includes off-by-default diagnostics in system headers.
+    // cc already enables /W4; keep -Wall for GCC and Clang only.
+    if !target.contains("msvc") {
+        cc_builder.flag_if_supported("-Wall");
+    }
+
     if cfg!(debug_assertions) {
-        cc_builder.define("MDBX_FORCE_ASSERTIONS", "1");
+        cc_builder.define("MDBX_CHECKING", "2");
     } else {
-        cc_builder.define("NDEBUG", "1");
+        cc_builder.define("NDEBUG", "1").define("MDBX_CHECKING", "0");
     }
 
     cc_builder
@@ -242,6 +247,8 @@ fn main() {
             .define("MDBX_LOCK_SUFFIX", "L\".lock\"")
             .define("_WIN32_WINNT", "0x0600")
             .define("MDBX_WITHOUT_MSVC_CRT", "1")
+            // The internal SEH fallback uses x86 inline assembly, invalid on x64.
+            .define("MDBX_NATIVE_SEH", "1")
             .define("UNICODE", "1")
             .define("HAVE_LIBM", "1");
     } else {
