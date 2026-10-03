@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import '../binary_document.dart';
+import '../cindel_error.dart';
 import '../schema.dart';
 import 'wire.dart';
 
@@ -39,6 +40,9 @@ const _assetId = 'package:cindel/src/native/bindings.dart';
 /// invoke the resolved native function table, and copy native results back into
 /// owned Dart collections before freeing the native buffer.
 final class CindelNativeBindings {
+  /// Resolves bindings and rejects an incompatible native ABI before use.
+  ///
+  /// Throws [CindelNativeError] when the library reports another ABI version.
   CindelNativeBindings() : _functions = _resolvedFunctions;
 
   static final _resolvedFunctions = _CindelNativeFunctions.resolve();

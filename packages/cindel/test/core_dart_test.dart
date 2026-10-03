@@ -2,6 +2,7 @@ import 'binary_document_suite.dart' as binary_document;
 import 'cindel_error_suite.dart' as cindel_error;
 import 'database_change_set_suite.dart' as database_change_set;
 import 'database_document_codecs_suite.dart' as database_document_codecs;
+import 'native_abi_suite.dart' as native_abi;
 import 'native_asset_functions_suite.dart' as native_asset_functions;
 import 'native_binding_utils_suite.dart' as native_binding_utils;
 import 'native_document_codecs_suite.dart' as native_document_codecs;
@@ -15,6 +16,7 @@ void main() {
   cindel_error.main();
   database_change_set.main();
   database_document_codecs.main();
+  native_abi.main();
   native_asset_functions.main();
   native_binding_utils.main();
   native_document_codecs.main();

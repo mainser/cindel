@@ -1,5 +1,21 @@
 part of 'bindings.dart';
 
+// Cindel FFI contract expected by these Dart bindings. Keep this in sync with
+// `cindel_abi_version` in native/src/ffi.rs when the native ABI changes; it is
+// independent of the MDBX engine version.
+const _expectedNativeAbiVersion = 34;
+
+// Require an exact ABI match for both loading strategies. A newer ABI is not
+// assumed compatible with the function signatures expected by these bindings.
+void _checkNativeAbi(int actualVersion) {
+  if (actualVersion != _expectedNativeAbiVersion) {
+    throw CindelNativeError(
+      'Incompatible Cindel native ABI: expected $_expectedNativeAbiVersion, '
+      'found $actualVersion. Load a native library matching this Cindel package.',
+    );
+  }
+}
+
 // Contract shared by every way Cindel can call the native library.
 //
 // `CindelNativeBindings` depends on this interface instead of binding directly
@@ -13,9 +29,21 @@ abstract interface class _CindelNativeFunctions {
   factory _CindelNativeFunctions.resolve() {
     final library = _openBundledLibrary();
     if (library != null) {
+      // Read only the ABI symbol first: the dynamic adapter eagerly resolves
+      // other symbols, which may be absent or have changed in another ABI.
+      final abiVersion = library
+          .lookupFunction<Uint32 Function(), int Function()>(
+            'cindel_abi_version',
+            isLeaf: true,
+          );
+      _checkNativeAbi(abiVersion());
       return _DynamicCindelNativeFunctions(library);
     }
-    return const _NativeAssetCindelNativeFunctions();
+    // Native-asset getters expose function tear-offs. Validate the ABI before
+    // returning this adapter to code that can invoke database operations.
+    const functions = _NativeAssetCindelNativeFunctions();
+    _checkNativeAbi(functions.abiVersion());
+    return functions;
   }
 
   // ABI/version and database open symbols.

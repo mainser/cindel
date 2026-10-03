@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Added an exact native ABI check for dynamic libraries and native assets.
+  Bindings require ABI 34 and reject both older and newer ABIs before opening
+  a database, with a `CindelNativeError` identifying the expected and reported
+  versions and recommending a matching native library.
+
 ## 1.1.0
 
 - Updated the native MDBX engine to 0.14.4 and the Rust wrapper to 0.9.0.
