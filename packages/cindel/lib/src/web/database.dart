@@ -208,6 +208,7 @@ class CindelDatabase {
   final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   bool _closed = false;
+  Future<void>? _closeFuture;
   _TransactionMode? _activeTransaction;
 
   // Sync persists outbox/state through normal Worker storage operations. These
@@ -262,7 +263,11 @@ class CindelDatabase {
       await database._syncSession?.start(database);
       return database;
     } catch (_) {
-      unawaited(bridge.close());
+      try {
+        await bridge.close();
+      } catch (_) {
+        // Preserve the open failure after attempting worker cleanup.
+      }
       throw CindelOpenError(backend: CindelStorageBackend.sqlite.name);
     }
   }
@@ -305,16 +310,70 @@ class CindelDatabase {
 
   /// Closes this database.
   ///
-  /// Calling [close] more than once is safe. Active Web watchers are closed
-  /// before the Worker bridge is terminated.
-  Future<void> close() async {
-    if (_closed) {
-      return;
+  /// Repeated and concurrent calls share the same completion, including errors.
+  /// An active transaction is rolled back during teardown. A suspended callback
+  /// then reports [CindelDatabaseClosedError], or preserves its own exception.
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    void rememberError(Object error, StackTrace stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+
+    // An in-flight sync cycle still needs the public storage methods to apply
+    // remote data and persist its checkpoint before the handle is retired.
+    try {
+      await _syncSession?.close();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
     }
     _closed = true;
-    await _syncSession?.close();
-    await _closeWatchers();
-    await _bridge.close();
+    // Stop timers and disregard in-flight poll results before awaiting Worker
+    // rollback. Streams finish only after rollback, without exposing retirement
+    // as a watcher error while the transport acknowledgement is pending.
+    for (final watchers in _watchersByCollection.values) {
+      for (final watcher in watchers) {
+        watcher.stopPolling();
+      }
+    }
+    try {
+      // This request follows operations already admitted by the bridge. The
+      // Worker owns the actual transaction state: a queued commit may already
+      // have finished, or a queued begin may not yet have reached Dart.
+      await _bridge
+          .send(operation: 'rollbackActiveTransaction')
+          .timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => throw const CindelWebWorkerException(
+              'close_timeout',
+              'Worker transaction cleanup timed out.',
+            ),
+          );
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    } finally {
+      _activeTransaction = null;
+      _changesInTransaction.clear();
+    }
+
+    // Attempt every cleanup stage and retain the first failure for all callers.
+    // Do not wait for user callbacks: one may itself be awaiting close().
+    try {
+      await _closeWatchers();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    try {
+      await _bridge.close();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 
   /// Runs [action] inside a Web SQLite read transaction.
@@ -1341,6 +1400,9 @@ class CindelDatabase {
     await _sendVoid(begin, const {});
     _activeTransaction = mode;
     try {
+      // The begin acknowledgement can arrive after close has retired the
+      // handle. In that case teardown owns rollback and the callback must not run.
+      _checkOpen();
       final result = await action();
       await _sendVoid('commitTransaction', const {});
       final localChanges = {
@@ -1362,10 +1424,12 @@ class CindelDatabase {
       }
       return result;
     } catch (_) {
-      try {
-        await _sendVoid('rollbackTransaction', const {});
-      } catch (_) {
-        // Preserve the original failure from user code or commit.
+      if (!_closed) {
+        try {
+          await _sendVoid('rollbackTransaction', const {});
+        } catch (_) {
+          // Preserve the original failure from user code or commit.
+        }
       }
       _changesInTransaction
         ..clear()
@@ -1426,6 +1490,10 @@ class CindelDatabase {
     String collection,
     CindelChangeSet Function() localChangeFactory,
   ) async {
+    // A storage request admitted before retirement may succeed while close is
+    // pending. Preserve that result without starting watcher work on the closed
+    // handle; canceled transactions still fail the final commit check.
+    if (_closed) return;
     if (_activeTransaction == _TransactionMode.write) {
       _markCollectionChanged(localChangeFactory());
       return;
@@ -1447,6 +1515,7 @@ class CindelDatabase {
   Future<List<CindelChangeSet>> _nativeChangesForWatchers(
     Map<String, CindelChangeSet> localChanges,
   ) async {
+    if (_closed) return const [];
     final nativeChanges = await _takeNativeChangeSets();
     if (!localChanges.keys.any(_hasWatchers)) {
       return const [];
@@ -1621,6 +1690,8 @@ final class _CindelChangeSetBuilder {
 abstract interface class _RegisteredWatcher {
   Future<void> poll({bool force, CindelChangeSet? change});
 
+  void stopPolling();
+
   Future<void> close();
 }
 
@@ -1677,6 +1748,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   bool _hasLastSnapshot = false;
   T? _lastSnapshot;
   bool _isPolling = false;
+  bool _stopped = false;
   bool _needsPoll = false;
   bool _pendingForce = false;
   CindelChangeSet? _pendingChange;
@@ -1684,16 +1756,17 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   Stream<T> get stream => _controller.stream;
 
   Future<void> _prime() async {
-    if (_isPolling || _controller.isClosed) {
+    if (_stopped || _isPolling || _controller.isClosed) {
       return;
     }
     _isPolling = true;
     try {
       _lastRevision = await _readRevision();
+      if (_stopped) return;
       _lastSnapshot = await _readSnapshot(null);
       _hasLastSnapshot = true;
     } catch (error, stackTrace) {
-      if (!_controller.isClosed) {
+      if (!_stopped && !_controller.isClosed) {
         _controller.addError(error, stackTrace);
       }
     } finally {
@@ -1702,6 +1775,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
   }
 
   Future<void> poll({bool force = false, CindelChangeSet? change}) async {
+    if (_stopped) return;
     if (_isPolling || _controller.isClosed) {
       if (!_controller.isClosed) {
         _needsPoll = true;
@@ -1716,6 +1790,7 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     _isPolling = true;
     try {
       final revision = change?.revision ?? await _readRevision();
+      if (_stopped) return;
       if (!force && change != null && !_shouldReadChange(change)) {
         _lastRevision = revision;
         return;
@@ -1735,16 +1810,16 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
       }
       _lastSnapshot = snapshot;
       _hasLastSnapshot = true;
-      if (!_controller.isClosed) {
+      if (!_stopped && !_controller.isClosed) {
         _controller.add(snapshot);
       }
     } catch (error, stackTrace) {
-      if (!_controller.isClosed) {
+      if (!_stopped && !_controller.isClosed) {
         _controller.addError(error, stackTrace);
       }
     } finally {
       _isPolling = false;
-      if (_needsPoll && !_controller.isClosed) {
+      if (_needsPoll && !_stopped && !_controller.isClosed) {
         final pendingForce = _pendingForce;
         final pendingChange = _pendingChange;
         _needsPoll = false;
@@ -1755,8 +1830,13 @@ final class _CindelWatcher<T> implements _RegisteredWatcher {
     }
   }
 
-  Future<void> close() async {
+  void stopPolling() {
+    _stopped = true;
     _timer?.cancel();
+  }
+
+  Future<void> close() async {
+    stopPolling();
     await _controller.close();
   }
 }

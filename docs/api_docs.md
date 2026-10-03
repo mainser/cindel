@@ -121,6 +121,22 @@ await db.close();
 Closing more than once is safe. Closing rolls back an active transaction and
 closes active watcher streams.
 
+On all platforms, repeated and concurrent calls share the same completion,
+including a cleanup error. Close drains in-flight sync before retiring the
+database handle. A transaction callback that resumes after its transaction was
+rolled back reports `CindelDatabaseClosedError`, or preserves its own exception.
+
+Finish application operations before requesting close. An operation admitted
+before the database handle is retired may still complete; subsequent operations
+are rejected as closed. Resume or cancel paused watcher subscriptions so their
+streams can finish and the close future can complete.
+
+On Web, Worker requests already admitted finish before shutdown. An already
+dispatched commit may complete successfully; a transaction whose callback is
+still suspended is rolled back. Worker cleanup or shutdown failures reach every
+close caller through the shared future, including a timeout if the Worker stops
+responding.
+
 ## Data Migrations
 
 Cindel stores a database-level data migration version inside the database.

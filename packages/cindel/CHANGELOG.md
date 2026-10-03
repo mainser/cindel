@@ -2,6 +2,8 @@
 
 ## 1.1.1
 
+- Fixed repeated and concurrent database closure across native and Web backends,
+  preserving transaction rollback and completing cleanup consistently.
 - Added an exact native ABI check for dynamic libraries and native assets.
   Bindings require ABI 34 and reject both older and newer ABIs before opening
   a database, with a `CindelNativeError` identifying the expected and reported

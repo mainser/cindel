@@ -151,6 +151,12 @@ async function execute(message) {
         rollbackTransaction();
         response(message.requestId, null);
         return;
+      case 'rollbackActiveTransaction':
+        // Teardown follows admitted requests. A queued commit may already have
+        // completed, so consult Worker-owned state before attempting rollback.
+        rollbackActiveTransaction();
+        response(message.requestId, null);
+        return;
       case 'allocateId':
         response(message.requestId, requireEngine().allocateId(payload.collection));
         return;
@@ -368,6 +374,13 @@ async function closeWorker() {
   } catch (error) {
     failure(0, 'close_failed', errorMessage(error));
   } finally {
+    try {
+      // Release SQLite/Wasm resources explicitly before acknowledging closure;
+      // finalization and Worker termination must not decide when the DB closes.
+      engine?.free();
+    } catch (error) {
+      failure(0, 'close_failed', errorMessage(error));
+    }
     engine = undefined;
     self.postMessage({ type: 'closed' });
     self.close();

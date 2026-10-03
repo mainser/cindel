@@ -2,6 +2,7 @@ import 'package:cindel/cindel.dart';
 
 import 'backup_suite.dart' as backup;
 import 'backend_test_support.dart';
+import 'close_suite.dart' as close;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'migration_suite.dart' as migration;
 import 'native_binding_validation_suite.dart' as native_binding_validation;
@@ -16,6 +17,7 @@ void main() {
   configureTestStorageBackend(CindelStorageBackend.sqlite);
 
   backup.main();
+  close.main();
   links_backlinks.main();
   sqlite_contract.main();
   migration.main();

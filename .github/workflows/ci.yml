@@ -336,6 +336,9 @@ jobs:
             --base-directory=. \
             --report-on=packages/cindel/lib
 
+      - name: Run Web closure integration tests in Chrome
+        run: dart run packages/cindel/tool/run_web_close_tests.dart
+
       - name: Upload Web backend coverage to Codecov
         uses: codecov/codecov-action@v6
         with:

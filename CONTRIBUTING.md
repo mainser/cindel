@@ -63,8 +63,14 @@ dart analyze
 cargo fmt --manifest-path packages/cindel/native/Cargo.toml --check
 cargo test --manifest-path packages/cindel/native/Cargo.toml
 dart test packages/cindel/test -r expanded
+dart run packages/cindel/tool/run_web_close_tests.dart
 flutter test examples/cindel_shop_lite
 ```
+
+The Web close tests run in Chrome against the packaged Worker/Wasm assets and
+share their public database scenarios with MDBX and SQLite. Install Chrome or
+set `CHROME_EXECUTABLE` to its executable. The runner stages assets temporarily
+and uses an isolated browser profile; it does not change application sources.
 
 Flutter app builds should use `cindel_flutter_libs` by default. If a maintainer
 needs to validate Dart native-assets instead of prebuilt binaries, temporarily

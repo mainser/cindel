@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- Fixed Web worker transaction rollback and resource cleanup during database
+  closure.
+
 ## 1.0.0
 
 - Released the first stable Cindel Flutter libraries package version in

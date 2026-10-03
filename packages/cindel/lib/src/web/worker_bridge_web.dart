@@ -52,12 +52,12 @@ final class CindelWebWorkerBridge {
       _handleMessage(_CindelWebWorkerMessage._(data as JSObject));
     }).toJS;
     _worker.onerror = ((web.Event _) {
-      _failOpenRequests(
+      _handleTransportFailure(
         const CindelWebWorkerException('worker_error', 'Worker error event.'),
       );
     }).toJS;
     _worker.onmessageerror = ((web.Event _) {
-      _failOpenRequests(
+      _handleTransportFailure(
         const CindelWebWorkerException(
           'message_error',
           'Worker message could not be deserialized.',
@@ -70,9 +70,12 @@ final class CindelWebWorkerBridge {
   final _pending = <int, Completer<CindelWebWorkerResponse>>{};
   Completer<void>? _readyCompleter;
   Completer<void>? _closedCompleter;
+  Future<void>? _closeFuture;
+  CindelWebWorkerException? _closeFailure;
   Future<void> _queue = Future<void>.value();
   int _nextRequestId = 1;
   bool _closed = false;
+  bool _terminated = false;
 
   /// Number of requests currently waiting for a worker response.
   int get pendingCount => _pending.length;
@@ -115,27 +118,41 @@ final class CindelWebWorkerBridge {
     return request;
   }
 
-  /// Closes the bridge and completes all pending requests with `closed`.
-  Future<void> close() {
-    if (_closed) {
-      return _closedCompleter?.future ?? Future<void>.value();
-    }
+  /// Closes the bridge after requests already admitted have completed.
+  ///
+  /// New requests are rejected immediately. Repeated calls share completion,
+  /// including a worker cleanup failure, and terminate the worker only once.
+  Future<void> close() => _closeFuture ??= _close().timeout(
+    const Duration(seconds: 2),
+    onTimeout: () {
+      // Bound both the admitted-request drain and the closed acknowledgement.
+      // Termination is observable as a failure, not an unconfirmed clean close.
+      _closeFailure ??= const CindelWebWorkerException(
+        'close_timeout',
+        'Worker shutdown timed out; the worker was terminated.',
+      );
+      _failOpenRequests(_closeFailure!);
+      _completeClosed();
+      throw _closeFailure!;
+    },
+  );
 
+  Future<void> _close() async {
     _closed = true;
     final closed = _closedCompleter = Completer<void>();
-    _worker.postMessage(_CindelWebWorkerMessage(type: 'close'));
-    _failOpenRequests(
-      const CindelWebWorkerException('closed', 'Worker bridge is closed.'),
-    );
-    return closed.future.timeout(
-      const Duration(seconds: 2),
-      onTimeout: () {
-        _worker.terminate();
-        if (!closed.isCompleted) {
-          closed.complete();
+    // Queued requests belong to their original callers. Let their real storage
+    // results settle before closing instead of turning successful writes into
+    // transport errors or dropping accepted requests that have not been posted.
+    await Future.wait<void>([
+      _queue.then<void>((_) {
+        if (!_terminated) {
+          _worker.postMessage(_CindelWebWorkerMessage(type: 'close'));
         }
-      },
-    );
+      }),
+      // Observe the acknowledgement immediately, including failures while an
+      // admitted request is still draining, so shutdown errors stay handled.
+      closed.future,
+    ], eagerError: true);
   }
 
   Future<CindelWebWorkerResponse> _sendNow({
@@ -143,12 +160,17 @@ final class CindelWebWorkerBridge {
     required Object? payload,
     required List<Object>? transfer,
   }) {
-    if (_closed) {
+    // send() already admitted this request. close() waits for the queue, so the
+    // worker remains available even if new requests are now being rejected.
+    if (_terminated) {
       return Future<CindelWebWorkerResponse>.error(
-        const CindelWebWorkerException('closed', 'Worker bridge is closed.'),
+        _closeFailure ??
+            const CindelWebWorkerException(
+              'closed',
+              'Worker bridge is closed.',
+            ),
       );
     }
-
     final requestId = _nextRequestId++;
     final completer = Completer<CindelWebWorkerResponse>();
     _pending[requestId] = completer;
@@ -190,8 +212,16 @@ final class CindelWebWorkerBridge {
   void _completeClosed() {
     final closed = _closedCompleter;
     if (closed != null && !closed.isCompleted) {
-      _worker.terminate();
-      closed.complete();
+      if (!_terminated) {
+        _terminated = true;
+        _worker.terminate();
+      }
+      final failure = _closeFailure;
+      if (failure == null) {
+        closed.complete();
+      } else {
+        closed.completeError(failure);
+      }
     }
   }
 
@@ -211,6 +241,12 @@ final class CindelWebWorkerBridge {
     );
     final requestId = message.requestId;
     if (requestId == null || requestId == 0) {
+      if (_closedCompleter != null && exception.code == 'close_failed') {
+        // The worker still owes its closed acknowledgement. Retain the error
+        // until that acknowledgement confirms cleanup and termination.
+        _closeFailure ??= exception;
+        return;
+      }
       _completeReadyWithError(exception);
       _failOpenRequests(exception);
       return;
@@ -226,6 +262,14 @@ final class CindelWebWorkerBridge {
     final ready = _readyCompleter;
     if (ready != null && !ready.isCompleted) {
       ready.completeError(exception);
+    }
+  }
+
+  void _handleTransportFailure(CindelWebWorkerException exception) {
+    _failOpenRequests(exception);
+    if (_closedCompleter != null) {
+      _closeFailure ??= exception;
+      _completeClosed();
     }
   }
 

@@ -94,6 +94,7 @@ class CindelDatabase {
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   final _CindelSyncSession? _syncSession;
   Pointer<Void>? _handle;
+  Future<void>? _closeFuture;
   _TransactionMode? _activeTransaction;
 
   // Sync writes its own outbox/state rows through the same storage paths as app
@@ -273,21 +274,62 @@ class CindelDatabase {
 
   /// Closes this database.
   ///
-  /// Calling [close] more than once is safe.
-  Future<void> close() async {
+  /// Repeated and concurrent calls share the same completion, including errors.
+  /// An active transaction is rolled back during teardown. A suspended callback
+  /// then reports [CindelDatabaseClosedError], or preserves its own exception.
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     final handle = _handle;
     if (handle == null) {
       return;
     }
-    await _syncSession?.close();
-    if (_activeTransaction != null) {
-      _bindings.rollbackTransaction(handle);
+
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    void rememberError(Object error, StackTrace stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+
+    // Keep the existing sync drain and an asynchronous boundary. The latter
+    // lets a synchronous native reader finish releasing its borrowed resources
+    // if its hydration callback requests close before returning.
+    try {
+      await _syncSession?.close();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+
+    // Teardown owns the pointer from here. Public calls and resumed transaction
+    // callbacks must no longer obtain it, even while watcher completion waits.
+    _handle = null;
+    try {
+      if (_activeTransaction != null) {
+        _bindings.rollbackTransaction(handle);
+      }
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    } finally {
       _activeTransaction = null;
       _changesInTransaction.clear();
     }
-    await _closeWatchers();
-    _bindings.close(handle);
-    _handle = null;
+
+    // Attempt every cleanup step after a failure. All close callers retain the
+    // first error, while watcher shutdown and the single native release still run.
+    try {
+      await _closeWatchers();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    try {
+      _bindings.close(handle);
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 
   /// Runs [action] inside a native read transaction.
@@ -1739,6 +1781,9 @@ class CindelDatabase {
 
     try {
       final result = await action();
+      // Close may have rolled back and detached this handle while the callback
+      // awaited user work. Never commit through that released native pointer.
+      _checkOpen();
       _bindings.commitTransaction(handle);
       final localChanges = {
         for (final entry in _changesInTransaction.entries)
@@ -1759,10 +1804,12 @@ class CindelDatabase {
       }
       return result;
     } catch (_) {
-      try {
-        _bindings.rollbackTransaction(handle);
-      } catch (_) {
-        // Preserve the original failure from user code or commit.
+      if (_handle == handle) {
+        try {
+          _bindings.rollbackTransaction(handle);
+        } catch (_) {
+          // Preserve the original failure from user code or commit.
+        }
       }
       _changesInTransaction
         ..clear()
@@ -2227,6 +2274,14 @@ class CindelDatabase {
   ) {
     if (_activeTransaction == _TransactionMode.write) {
       _markCollectionChanged(localChangeFactory());
+      return;
+    }
+
+    // The storage mutation has already succeeded before this notification tail.
+    // Close may detach the handle while sync bookkeeping yields, so skip native
+    // change draining for closing watchers without changing the write's result.
+    // A rolled-back transaction still fails its final _checkOpen() separately.
+    if (_handle == null && _closeFuture != null) {
       return;
     }
 

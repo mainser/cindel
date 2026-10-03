@@ -128,6 +128,22 @@ When a write transaction rolls back:
 Use normal Dart error handling to decide whether the caller should retry, show
 an error message, or abandon the operation.
 
+### Closing a Database During a Transaction
+
+Closing a database rolls back the active transaction without waiting for
+its application callback to finish. When a suspended callback resumes and returns,
+the transaction fails with `CindelDatabaseClosedError` instead of committing. If
+the callback throws, its original exception is preserved. Pending writes remain
+uncommitted, and their watcher notifications are not emitted.
+
+The callback can still perform other application work, but further database
+operations fail after the database handle is retired. Awaiting `db.close()` inside
+the callback completes the close; it does not commit that transaction.
+
+Web follows the same callback contract through its Worker/Wasm backend. Requests
+already admitted run in order before rollback; a commit dispatched before the
+handle is retired may already have completed and retains its successful result.
+
 ## Checkout-Style Example
 
 This example reads stock and writes an updated product inside one write

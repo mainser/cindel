@@ -2,6 +2,7 @@ import 'package:cindel/cindel.dart';
 
 import 'backup_suite.dart' as backup;
 import 'backend_test_support.dart';
+import 'close_suite.dart' as close;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
 import 'migration_suite.dart' as migration;
@@ -15,6 +16,7 @@ void main() {
   configureTestStorageBackend(CindelStorageBackend.mdbx);
 
   backup.main();
+  close.main();
   links_backlinks.main();
   mdbx_contract.main();
   migration.main();
