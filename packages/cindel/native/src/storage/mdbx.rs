@@ -145,6 +145,7 @@ pub(crate) struct MdbxQueryDocumentReader {
     _transaction: Arc<MdbxReadTransaction>,
     schema: CollectionSchemaManifest,
     filter: Option<NativeFilter>,
+    distinct: Option<DistinctState>,
     offset: usize,
     limit: Option<usize>,
     matched: usize,
@@ -185,6 +186,11 @@ impl MdbxQueryDocumentReader {
                 let id = decode_document_table_key(key.as_ref())?;
                 if let Some(filter) = &self.filter {
                     if !filter.matches_with_id(&self.schema, bytes.as_ref(), id)? {
+                        continue;
+                    }
+                }
+                if let Some(distinct) = &mut self.distinct {
+                    if !distinct.insert(&self.schema, bytes.as_ref(), id)? {
                         continue;
                     }
                 }
@@ -245,6 +251,11 @@ impl MdbxQueryDocumentReader {
                         continue;
                     }
                 }
+                if let Some(distinct) = &mut self.distinct {
+                    if !distinct.insert(&self.schema, bytes.as_ref(), id)? {
+                        continue;
+                    }
+                }
                 if self.matched < self.offset {
                     self.matched += 1;
                     continue;
@@ -300,6 +311,11 @@ impl MdbxQueryDocumentReader {
                 };
                 if let Some(filter) = &self.filter {
                     if !filter.matches_with_id(&self.schema, bytes.as_ref(), id)? {
+                        continue;
+                    }
+                }
+                if let Some(distinct) = &mut self.distinct {
+                    if !distinct.insert(&self.schema, bytes.as_ref(), id)? {
                         continue;
                     }
                 }
@@ -900,11 +916,18 @@ impl MdbxStorage {
         collection: &str,
         plan: &WireQueryPlan,
     ) -> Result<Option<MdbxQueryDocumentReader>, String> {
-        if self.active_write().is_some() || !plan.distinct_fields.is_empty() {
+        if self.active_write().is_some()
+            || (!plan.distinct_fields.is_empty() && !plan.sorts.is_empty())
+        {
             return Ok(None);
         }
 
         let schema = self.required_schema(collection)?;
+        let distinct = if plan.distinct_fields.is_empty() {
+            None
+        } else {
+            Some(DistinctState::new(&schema, &plan.distinct_fields)?)
+        };
         let filter = plan
             .filter
             .as_ref()
@@ -1091,6 +1114,7 @@ impl MdbxStorage {
                 _transaction: snapshot,
                 schema,
                 filter,
+                distinct: None,
                 offset: 0,
                 limit: None,
                 matched: 0,
@@ -1204,6 +1228,7 @@ impl MdbxStorage {
             _transaction: snapshot,
             schema,
             filter,
+            distinct,
             offset: plan.offset as usize,
             limit: plan.limit.map(|value| value as usize),
             matched: 0,
@@ -1299,7 +1324,10 @@ impl MdbxStorage {
         plan: &WireQueryPlan,
     ) -> Result<Vec<PlannedDocument>, String> {
         let schema = self.required_schema(collection)?;
-        if self.active_write().is_none() && direct_id_scan_direction(&schema, plan).is_some() {
+        if self.active_write().is_none()
+            && (direct_id_scan_direction(&schema, plan).is_some()
+                || (!plan.distinct_fields.is_empty() && plan.sorts.is_empty()))
+        {
             if let Some(mut reader) = self.query_document_reader(collection, plan)? {
                 let mut documents = Vec::new();
                 while reader.next()? {
@@ -2778,13 +2806,19 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
-        // Preserve distinct selection and the overlay of pending writes.
-        if !plan.distinct_fields.is_empty() || self.active_write().is_some() {
+        // Sorted distinct must select its first occurrence after sorting.
+        // Pending writes still need the materialized transaction overlay.
+        if (!plan.distinct_fields.is_empty() && !plan.sorts.is_empty())
+            || self.active_write().is_some()
+        {
             return Ok(self.execute_query_plan(collection, plan)?.len() as u64);
         }
         let schema = self.required_schema(collection)?;
         query_sort_fields(&schema, &plan.sorts)?;
-        if plan.filter.is_none() && matches!(plan.source, WireQuerySource::All { .. }) {
+        if plan.distinct_fields.is_empty()
+            && plan.filter.is_none()
+            && matches!(plan.source, WireQuerySource::All { .. })
+        {
             return self.with_read_transaction(|transaction, _tables| {
                 let table = match open_documents_table(transaction, collection) {
                     Ok(table) => table,
@@ -4236,24 +4270,49 @@ fn distinct_planned_documents(
     documents: Vec<PlannedDocument>,
     fields: &[String],
 ) -> Result<Vec<PlannedDocument>, String> {
-    for field in fields {
-        ensure_schema_field(schema, field)?;
-    }
-    let mut seen = HashSet::new();
+    let mut state = DistinctState::new(schema, fields)?;
     let mut distinct = Vec::new();
     for document in documents {
-        let key = fields
-            .iter()
-            .map(|field| {
-                query_binary_field(schema, &document.bytes, document.id, field)
-                    .map(DistinctValue::from)
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        if seen.insert(key) {
+        if state.insert(schema, &document.bytes, document.id)? {
             distinct.push(document);
         }
     }
     Ok(distinct)
+}
+
+// Keep only structural field keys, never document payloads. The same state
+// serves streaming and materialized plans so distinct equality stays identical.
+struct DistinctState {
+    fields: Vec<String>,
+    seen: HashSet<Vec<DistinctValue>>,
+}
+
+impl DistinctState {
+    fn new(schema: &CollectionSchemaManifest, fields: &[String]) -> Result<Self, String> {
+        for field in fields {
+            ensure_schema_field(schema, field)?;
+        }
+        Ok(Self {
+            fields: fields.to_vec(),
+            seen: HashSet::new(),
+        })
+    }
+
+    fn insert(
+        &mut self,
+        schema: &CollectionSchemaManifest,
+        bytes: &[u8],
+        id: u64,
+    ) -> Result<bool, String> {
+        #[cfg(test)]
+        tests::DISTINCT_CANDIDATES_READ.with(|count| count.set(count.get() + 1));
+        let key = self
+            .fields
+            .iter()
+            .map(|field| query_binary_field(schema, bytes, id, field).map(DistinctValue::from))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(self.seen.insert(key))
+    }
 }
 
 // Distinct equality needs structural keys, separate from the textual fallback

@@ -9,6 +9,7 @@ import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
+import 'mdbx_distinct_suite.dart' as distinct;
 import 'mdbx_id_scan_suite.dart' as id_scan;
 import 'mdbx_partial_selection_suite.dart' as partial_selection;
 import 'migration_suite.dart' as migration;
@@ -29,6 +30,7 @@ void main() {
   find_first.main();
   links_backlinks.main();
   mdbx_contract.main();
+  distinct.main();
   id_scan.main();
   partial_selection.main();
   migration.main();

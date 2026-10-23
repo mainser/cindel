@@ -6,9 +6,258 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 thread_local! {
+    pub(super) static DISTINCT_CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DOCUMENT_KEYS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static SORT_CANDIDATES_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn progressive_distinct_filters_before_deduplication_and_stops_at_the_window() {
+    let directory = TemporaryDirectory::new("progressive_distinct_window");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    for (id, name) in [
+        (1, "A"),
+        (2, "A"),
+        (3, "A"),
+        (4, "B"),
+        (5, "B"),
+        (6, "C"),
+        (7, "D"),
+    ] {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("group", id as i64, name, id as i64),
+                &[],
+            )
+            .unwrap();
+    }
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexEqual {
+            index_name: "email".into(),
+            value: WireIndexValue::String("group".into()),
+            dedupe: true,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(1)),
+            upper: Some(WireIndexValue::Int(7)),
+            dedupe: true,
+        },
+    ] {
+        for (offset, limit, expected, visited) in [
+            (0, Some(1), vec![2], 1),
+            (1, Some(1), vec![4], 3),
+            (1, Some(2), vec![4, 6], 5),
+            (0, Some(0), vec![], 0),
+            (10, Some(1), vec![], 6),
+            (0, None, vec![2, 4, 6, 7], 6),
+        ] {
+            let plan = WireQueryPlan {
+                source: source.clone(),
+                filter: Some(
+                    crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                        field: "id".into(),
+                        operation: crate::wire::WireFilterOperation::GreaterThan,
+                        value: WireValue::Int(1),
+                    })
+                    .unwrap(),
+                ),
+                sorts: vec![],
+                distinct_fields: vec!["name".into()],
+                offset,
+                limit,
+            };
+            DISTINCT_CANDIDATES_READ.with(|count| count.set(0));
+            let mut reader = storage
+                .query_document_reader("users", &plan)
+                .unwrap()
+                .expect("unsorted distinct streams");
+            assert_eq!(
+                DISTINCT_CANDIDATES_READ.with(|count| count.get()),
+                0,
+                "reader construction must be lazy"
+            );
+            let mut actual = Vec::new();
+            while reader.next().unwrap() {
+                actual.push(reader.document_id(0).unwrap().unwrap());
+                assert!(matches!(reader.current_bytes, Some(Cow::Borrowed(_))));
+            }
+            assert_eq!(actual, expected, "{plan:?}");
+            assert_eq!(
+                DISTINCT_CANDIDATES_READ.with(|count| count.get()),
+                visited,
+                "{plan:?}"
+            );
+            assert!(!reader.next().unwrap());
+            assert_eq!(DISTINCT_CANDIDATES_READ.with(|count| count.get()), visited);
+            assert!(reader.current_bytes.is_none());
+            assert!(reader.distinct.as_ref().unwrap().seen.len() <= 4);
+            for consumer in 0..5 {
+                DISTINCT_CANDIDATES_READ.with(|count| count.set(0));
+                match consumer {
+                    0 => assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected),
+                    1 => assert_eq!(
+                        storage.query_plan_count("users", &plan).unwrap(),
+                        expected.len() as u64
+                    ),
+                    2 => assert_eq!(
+                        storage.query_plan_project("users", &plan, "id").unwrap(),
+                        encode_projection_rows(&WireProjectionRows {
+                            row_count: expected.len() as u32,
+                            column_count: 1,
+                            cells: expected
+                                .iter()
+                                .map(|id| WireValue::Int(*id as i64))
+                                .collect()
+                        })
+                        .unwrap()
+                    ),
+                    3 => assert_eq!(
+                        storage
+                            .query_plan_aggregate("users", &plan, "score", "count")
+                            .unwrap(),
+                        encode_scalar(&WireScalar::Int(expected.len() as i64)).unwrap()
+                    ),
+                    _ => assert_eq!(
+                        storage
+                            .execute_query_plan("users", &plan)
+                            .unwrap()
+                            .iter()
+                            .map(|doc| doc.id)
+                            .collect::<Vec<_>>(),
+                        expected
+                    ),
+                }
+                assert_eq!(
+                    DISTINCT_CANDIDATES_READ.with(|count| count.get()),
+                    visited,
+                    "consumer {consumer}: {plan:?}"
+                );
+            }
+        }
+    }
+    let mut invalid = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: vec![],
+        distinct_fields: vec!["missing".into()],
+        offset: 0,
+        limit: Some(0),
+    };
+    assert!(storage.query_document_reader("users", &invalid).is_err());
+    invalid.distinct_fields = vec!["name".into()];
+    invalid.sorts.push(crate::wire::WireQuerySort {
+        field: "id".into(),
+        ascending: false,
+    });
+    assert!(storage
+        .query_document_reader("users", &invalid)
+        .unwrap()
+        .is_none());
+    invalid.sorts.clear();
+    storage.begin_write_transaction().unwrap();
+    assert!(storage
+        .query_document_reader("users", &invalid)
+        .unwrap()
+        .is_none());
+    storage.rollback_transaction().unwrap();
+}
+
+#[test]
+fn progressive_distinct_does_not_retain_discarded_document_payloads() {
+    let directory = TemporaryDirectory::new("progressive_distinct_memory");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let payload = "x".repeat(32 * 1024);
+    storage.begin_write_transaction().unwrap();
+    for id in 1..=256 {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("group", id as i64, &payload, ((id - 1) / 32) as i64),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexEqual {
+            index_name: "email".into(),
+            value: WireIndexValue::String("group".into()),
+            dedupe: true,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(0)),
+            upper: Some(WireIndexValue::Int(7)),
+            dedupe: true,
+        },
+    ] {
+        for (offset, limit, expected) in [
+            (0, None, vec![1, 33, 65, 97, 129, 161, 193, 225]),
+            (1, Some(2), vec![33, 65]),
+            (0, Some(0), vec![]),
+            (20, Some(1), vec![]),
+        ] {
+            let plan = WireQueryPlan {
+                source: source.clone(),
+                filter: None,
+                sorts: vec![],
+                distinct_fields: vec!["score".into()],
+                offset,
+                limit,
+            };
+            for consumer in 0..5 {
+                let peak = crate::storage::test_allocations::peak_bytes(|| match consumer {
+                    0 => assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected),
+                    1 => assert_eq!(
+                        storage.query_plan_count("users", &plan).unwrap(),
+                        expected.len() as u64
+                    ),
+                    2 => assert_eq!(
+                        storage.query_plan_project("users", &plan, "score").unwrap(),
+                        encode_projection_rows(&WireProjectionRows {
+                            row_count: expected.len() as u32,
+                            column_count: 1,
+                            cells: expected
+                                .iter()
+                                .map(|id| WireValue::Int(((id - 1) / 32) as i64))
+                                .collect()
+                        })
+                        .unwrap()
+                    ),
+                    3 => assert_eq!(
+                        storage
+                            .query_plan_aggregate("users", &plan, "score", "count")
+                            .unwrap(),
+                        encode_scalar(&WireScalar::Int(expected.len() as i64)).unwrap()
+                    ),
+                    _ => assert_eq!(
+                        storage
+                            .execute_query_plan("users", &plan)
+                            .unwrap()
+                            .iter()
+                            .map(|doc| doc.id)
+                            .collect::<Vec<_>>(),
+                        expected
+                    ),
+                });
+                // Eight returned documents fit; retaining the 8 MiB candidate
+                // payloads (including duplicates or skipped rows) does not.
+                assert!(
+                    peak < 512 * 1024,
+                    "consumer {consumer}, {plan:?}: {peak} heap bytes"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -1966,6 +2215,16 @@ fn streams_index_range_dedupes_and_skips_missing_documents() {
         generic.as_slice()
     );
     assert!(!reader.next().unwrap());
+
+    // Distinct runs after source-ID deduplication and missing-row handling.
+    let mut distinct_plan = plan.clone();
+    distinct_plan.distinct_fields = vec!["id".into()];
+    DISTINCT_CANDIDATES_READ.with(|count| count.set(0));
+    assert_eq!(
+        storage.query_plan_ids("users", &distinct_plan).unwrap(),
+        vec![1, 2]
+    );
+    assert_eq!(DISTINCT_CANDIDATES_READ.with(|count| count.get()), 2);
 }
 
 #[test]
@@ -2555,15 +2814,8 @@ fn streams_query_plan_count_and_aggregate_for_index_range_window() {
 }
 
 #[test]
-fn distinct_query_plan_count_and_aggregate_keep_materialized_fallback() {
-    // Scenario: Distinct query plans are not supported by the streaming
-    // query document reader.
-    // Covers:
-    // - query_plan_count fallback to execute_query_plan.
-    // - query_plan_aggregate fallback to the existing Vec-based aggregate.
-    // Expected: Distinct semantics remain unchanged while non-distinct
-    //   plans are free to stream.
-    let directory = TemporaryDirectory::new("query_plan_distinct_aggregate_fallback");
+fn distinct_query_plan_count_and_aggregate_preserve_first_occurrence() {
+    let directory = TemporaryDirectory::new("query_plan_distinct_aggregate");
     let mut storage = MdbxStorage::open(directory.path()).unwrap();
     storage.register_schemas(&schema_manifest()).unwrap();
 
@@ -2756,14 +3008,8 @@ fn streams_query_plan_projection_for_lists_and_sorted_plans() {
 }
 
 #[test]
-fn distinct_query_plan_projection_keeps_materialized_fallback() {
-    // Scenario: Distinct query plans are not supported by the streaming
-    // query document reader.
-    // Covers:
-    // - query_plan_project fallback to execute_query_plan.
-    // Expected: Distinct projection keeps the first visible document for
-    //   each distinct key exactly as before.
-    let directory = TemporaryDirectory::new("query_plan_distinct_projection_fallback");
+fn distinct_query_plan_projection_preserves_first_occurrence() {
+    let directory = TemporaryDirectory::new("query_plan_distinct_projection");
     let mut storage = MdbxStorage::open(directory.path()).unwrap();
     storage.register_schemas(&schema_manifest()).unwrap();
 
