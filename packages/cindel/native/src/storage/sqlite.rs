@@ -1592,8 +1592,34 @@ impl StorageEngine for SqliteStorage {
         operation: &str,
     ) -> Result<Vec<u8>, String> {
         let schema = self.required_collection_schema(collection)?;
-        let values = self.query_plan_native_values(&schema, plan, field)?;
-        encode_scalar(&aggregate_wire_values(&values, operation)?)
+        if !plan.distinct_fields.is_empty() {
+            let values = self.query_plan_native_values(&schema, plan, field)?;
+            return encode_scalar(&aggregate_wire_values(&values, operation)?);
+        }
+
+        let schema_field = sqlite_schema_field(&schema, field)?;
+        let (sql, params) =
+            sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Field(schema_field))?;
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(params.iter()), |row| {
+                sqlite_row_wire_value(row, 0, schema_field)
+            })
+            .map_err(|error| error.to_string())?;
+        let mut aggregate = StreamingWireAggregate::new(operation);
+        for row in rows {
+            let value = row.map_err(|error| error.to_string())?;
+            // Materializing the values used to report read errors before aggregate
+            // errors. Keep decoding after a calculation error to preserve that order.
+            aggregate = aggregate.and_then(|mut aggregate| {
+                aggregate.push(value)?;
+                Ok(aggregate)
+            });
+        }
+        encode_scalar(&aggregate?.finish()?)
     }
 
     fn query_plan_delete(
@@ -2371,6 +2397,109 @@ fn sqlite_row_wire_value(
             field.name.clone(),
             value.data_type(),
         )),
+    }
+}
+
+enum StreamingWireAggregate {
+    Count {
+        count: u64,
+    },
+    MinMax {
+        order: AggregateOrder,
+        best: Option<WireValue>,
+    },
+    Sum {
+        sum: f64,
+        count: u64,
+        average: bool,
+    },
+}
+
+impl StreamingWireAggregate {
+    fn new(operation: &str) -> Result<Self, String> {
+        match operation {
+            "count" => Ok(Self::Count { count: 0 }),
+            "min" => Ok(Self::MinMax {
+                order: AggregateOrder::Min,
+                best: None,
+            }),
+            "max" => Ok(Self::MinMax {
+                order: AggregateOrder::Max,
+                best: None,
+            }),
+            "sum" | "average" => Ok(Self::Sum {
+                sum: 0.0,
+                count: 0,
+                average: operation == "average",
+            }),
+            _ => Err(format!("unknown aggregate operation `{operation}`")),
+        }
+    }
+
+    fn push(&mut self, value: WireValue) -> Result<(), String> {
+        if matches!(value, WireValue::Null) {
+            return Ok(());
+        }
+        match self {
+            Self::Count { count } => *count += 1,
+            Self::MinMax { order, best } => {
+                if !matches!(
+                    value,
+                    WireValue::Int(_) | WireValue::Double(_) | WireValue::String(_)
+                ) {
+                    return Err("min/max aggregates require number, string, or null values".into());
+                }
+                let replace = match best.as_ref() {
+                    Some(current) => match order {
+                        AggregateOrder::Min => compare_wire_values(&value, current)?.is_lt(),
+                        AggregateOrder::Max => compare_wire_values(&value, current)?.is_gt(),
+                    },
+                    None => true,
+                };
+                if replace {
+                    *best = Some(value);
+                }
+            }
+            Self::Sum {
+                sum,
+                count,
+                average,
+            } => {
+                let number = wire_number(&value).ok_or_else(|| {
+                    let operation = if *average { "average" } else { "sum" };
+                    format!("{operation} aggregate requires number or null values")
+                })?;
+                *sum += number;
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<WireScalar, String> {
+        match self {
+            Self::Count { count } => Ok(WireScalar::Int(count as i64)),
+            Self::MinMax { best, .. } => best
+                .as_ref()
+                .map(wire_value_to_scalar)
+                .transpose()?
+                .map_or(Ok(WireScalar::Null), Ok),
+            Self::Sum {
+                sum,
+                count,
+                average,
+            } => {
+                if count == 0 {
+                    Ok(WireScalar::Null)
+                } else {
+                    Ok(WireScalar::Double(if average {
+                        sum / count as f64
+                    } else {
+                        sum
+                    }))
+                }
+            }
+        }
     }
 }
 
@@ -4647,6 +4776,74 @@ mod tests {
     use super::*;
     use crate::storage::contract_tests;
 
+    mod rust_allocations {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        use std::cell::Cell;
+
+        thread_local! {
+            // Only the measured test thread participates; concurrent tests are excluded.
+            static TRACKING: Cell<Option<(isize, usize)>> = const { Cell::new(None) };
+        }
+
+        fn record(delta: isize) {
+            let _ = TRACKING.try_with(|tracking| {
+                if let Some((live, peak)) = tracking.get() {
+                    let live = live + delta;
+                    tracking.set(Some((live, peak.max(live.max(0) as usize))));
+                }
+            });
+        }
+
+        struct TrackingAllocator;
+
+        #[global_allocator]
+        static ALLOCATOR: TrackingAllocator = TrackingAllocator;
+
+        unsafe impl GlobalAlloc for TrackingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                let pointer = unsafe { System.alloc(layout) };
+                if !pointer.is_null() {
+                    record(layout.size() as isize);
+                }
+                pointer
+            }
+
+            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+                let pointer = unsafe { System.alloc_zeroed(layout) };
+                if !pointer.is_null() {
+                    record(layout.size() as isize);
+                }
+                pointer
+            }
+
+            unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+                record(-(layout.size() as isize));
+                unsafe { System.dealloc(pointer, layout) };
+            }
+
+            unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+                let pointer = unsafe { System.realloc(pointer, layout, size) };
+                if !pointer.is_null() {
+                    record(size as isize - layout.size() as isize);
+                }
+                pointer
+            }
+        }
+
+        pub fn peak_bytes(work: impl FnOnce()) -> usize {
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    TRACKING.with(|tracking| tracking.set(None));
+                }
+            }
+            TRACKING.with(|tracking| tracking.set(Some((0, 0))));
+            let _reset = Reset;
+            work();
+            TRACKING.with(|tracking| tracking.get().unwrap().1)
+        }
+    }
+
     #[test]
     fn passes_the_shared_storage_engine_contract() {
         // Scenario: SQLite is the current default native storage backend.
@@ -5594,6 +5791,173 @@ mod tests {
     }
 
     #[test]
+    fn streaming_aggregates_preserve_scalar_results_and_errors() {
+        let cases = vec![
+            vec![],
+            vec![WireValue::Null, WireValue::Null],
+            vec![
+                WireValue::Int(i64::MAX),
+                WireValue::Null,
+                WireValue::Int(i64::MIN),
+                WireValue::Int(9_007_199_254_740_993),
+            ],
+            vec![
+                WireValue::Double(1e16),
+                WireValue::Double(1.0),
+                WireValue::Double(-1e16),
+                WireValue::Double(1.0),
+            ],
+            vec![WireValue::Double(-0.0), WireValue::Double(0.0)],
+            vec![WireValue::Double(0.0), WireValue::Double(-0.0)],
+            vec![
+                WireValue::String("z".into()),
+                WireValue::Null,
+                WireValue::String("Árbol".into()),
+                WireValue::String("a".into()),
+            ],
+            vec![WireValue::Bool(true)],
+            vec![WireValue::Int(1), WireValue::String("bad".into())],
+            vec![WireValue::Double(f64::NAN)],
+            vec![WireValue::Double(1.0), WireValue::Double(f64::NAN)],
+            vec![WireValue::Double(f64::INFINITY)],
+            vec![WireValue::Double(f64::MAX), WireValue::Double(f64::MAX)],
+        ];
+        for values in cases {
+            for operation in ["count", "min", "max", "sum", "average", "unknown"] {
+                let actual = (|| {
+                    let mut aggregate = StreamingWireAggregate::new(operation)?;
+                    for value in &values {
+                        aggregate.push(value.clone())?;
+                    }
+                    encode_scalar(&aggregate.finish()?)
+                })();
+                let expected = aggregate_wire_values(&values, operation)
+                    .and_then(|scalar| encode_scalar(&scalar));
+                assert_eq!(actual, expected, "{operation}: {values:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_aggregates_preserve_read_error_precedence() {
+        let directory = TemporaryDirectory::new("streaming_aggregate_errors");
+        let schema = native_user_schema();
+        let manifest = schema_manifest(vec![schema.clone()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        storage
+            .put_many_native_documents(
+                "users",
+                &[
+                    NativeDocumentWrite {
+                        id: 1,
+                        values: vec![
+                            NativeDocumentValue::Bool(true),
+                            NativeDocumentValue::Int(1),
+                            NativeDocumentValue::Bytes(b"text".to_vec()),
+                        ],
+                    },
+                    NativeDocumentWrite {
+                        id: 2,
+                        values: vec![
+                            NativeDocumentValue::Bool(true),
+                            NativeDocumentValue::Int(2),
+                            NativeDocumentValue::Bytes(b"text".to_vec()),
+                        ],
+                    },
+                ],
+                true,
+            )
+            .unwrap();
+        // SUM fails on the first string, but the old materialized path reports
+        // the later invalid SQLite column type before any calculation error.
+        storage
+            .connection
+            .execute("UPDATE users SET title = X'ff' WHERE _rowid_ = 2", [])
+            .unwrap();
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending: true,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+        let expected = storage
+            .query_plan_native_values(&schema, &plan, "title")
+            .unwrap_err();
+        for operation in ["count", "min", "max", "sum", "average", "unknown"] {
+            assert_eq!(
+                storage
+                    .query_plan_aggregate("users", &plan, "title", operation)
+                    .unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn query_aggregates_do_not_retain_all_projected_values() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("streaming_aggregate_memory");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            let title = "x".repeat(8192);
+            let documents: Vec<_> = (1..=1024)
+                .map(|id| NativeDocumentWrite {
+                    id,
+                    values: vec![
+                        NativeDocumentValue::Bool(true),
+                        NativeDocumentValue::Int(1),
+                        NativeDocumentValue::Bytes(title.as_bytes().to_vec()),
+                    ],
+                })
+                .collect();
+            storage
+                .put_many_native_documents("users", &documents, true)
+                .unwrap();
+            for limit in [128, 1024] {
+                let plan = WireQueryPlan {
+                    source: WireQuerySource::All { dedupe: false },
+                    filter: None,
+                    sorts: Vec::new(),
+                    distinct_fields: Vec::new(),
+                    offset: 0,
+                    limit: Some(limit),
+                };
+                for (field, operation, expected) in [
+                    ("title", "count", WireScalar::Int(limit as i64)),
+                    ("title", "min", WireScalar::String(title.clone())),
+                    ("title", "max", WireScalar::String(title.clone())),
+                    ("createdAtMicros", "sum", WireScalar::Double(limit as f64)),
+                    ("createdAtMicros", "average", WireScalar::Double(1.0)),
+                ] {
+                    let expected = encode_scalar(&expected).unwrap();
+                    let peak = rust_allocations::peak_bytes(|| {
+                        assert_eq!(
+                            storage
+                                .query_plan_aggregate("users", &plan, field, operation)
+                                .unwrap(),
+                            expected
+                        );
+                    });
+                    // Allow schema/statement setup and a few individual values, but
+                    // reject the 1-8 MiB vector of strings used by the old path.
+                    assert!(
+                        peak < 128 * 1024,
+                        "{operation}({field}), limit={limit}: {peak} Rust heap bytes"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn projects_and_aggregates_with_one_statement_regardless_of_row_count() {
         use std::cell::Cell;
         use std::ffi::c_void;
@@ -5639,7 +6003,17 @@ mod tests {
                     limit,
                 };
                 for field in ["id", "createdAtMicros", "title"] {
-                    for operation in [None, Some("count"), Some("min")] {
+                    for operation in [
+                        None,
+                        Some("count"),
+                        Some("min"),
+                        Some("max"),
+                        Some("sum"),
+                        Some("average"),
+                    ] {
+                        if field == "title" && matches!(operation, Some("sum" | "average")) {
+                            continue;
+                        }
                         let count = Cell::new(0_usize);
                         // SQLite invokes this callback synchronously. The counter stays
                         // alive until the trace is removed, before inspecting the result.

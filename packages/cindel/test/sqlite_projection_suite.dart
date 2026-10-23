@@ -66,6 +66,71 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    test('streams floating aggregates in the selected row order.', () async {
+      final samples = database.typedCollection(_sampleSchema);
+      await samples.putAll([
+        _AggregateSample(1, 1e16),
+        _AggregateSample(2, 1),
+        _AggregateSample(3, -1e16),
+        _AggregateSample(4, 1),
+        _AggregateSample(5, null),
+      ]);
+      final ascending = samples.all().sortBy('id');
+      final descending = samples.all().sortBy(
+        'id',
+        order: CindelSortOrder.descending,
+      );
+      // These sums differ because floating-point addition depends on row order.
+      expect(await ascending.property<double?>('value').sum(), 1.0);
+      expect(await descending.property<double?>('value').sum(), 0.0);
+      expect(await ascending.property<double?>('value').average(), 0.25);
+      expect(await descending.property<double?>('value').average(), 0.0);
+      for (final query in [
+        ascending.offset(1).limit(2),
+        descending.offset(2).limit(2),
+      ]) {
+        final property = query.property<double?>('value');
+        final values = (await property.findAll()).nonNulls.toList();
+        final sum = values.fold<double>(0, (sum, value) => sum + value);
+        expect(await property.sum(), sum);
+        expect(await property.average(), sum / values.length);
+      }
+    });
+
+    test(
+      'streams large nullable numeric aggregates and empty windows.',
+      () async {
+        final samples = database.typedCollection(_sampleSchema);
+        await samples.putAll([
+          for (var id = 1; id <= 2048; id++)
+            _AggregateSample(id, id % 3 == 0 ? null : id / 4 - 256),
+        ]);
+        await database.readTxn(() async {
+          final all = samples.all().sortBy('id');
+          for (final query in [
+            all,
+            all.offset(100).limit(1200),
+            all.limit(0),
+            all.offset(2048),
+            all.offset(2).limit(1),
+          ]) {
+            final property = query.property<double?>('value');
+            final values = (await property.findAll()).nonNulls.toList();
+            final sum = values.fold<double>(0, (sum, value) => sum + value);
+            final sorted = values.toList()..sort();
+            expect(await property.count(), values.length);
+            expect(await property.min(), sorted.firstOrNull);
+            expect(await property.max(), sorted.lastOrNull);
+            expect(await property.sum(), values.isEmpty ? null : sum);
+            expect(
+              await property.average(),
+              values.isEmpty ? null : sum / values.length,
+            );
+          }
+        });
+      },
+    );
+
     test('keeps empty and all-null aggregate behavior.', () async {
       final all = database.apiProducts.all().sortByDbId();
       for (final query in [
@@ -167,5 +232,59 @@ void main({bool includeSameDirectoryHandles = true}) {
   });
 }
 
-Future<CindelDatabase> _open(String directory) =>
-    openTestDatabase(directory: directory, schemas: [ApiProductSchema]);
+Future<CindelDatabase> _open(String directory) => openTestDatabase(
+  directory: directory,
+  schemas: [ApiProductSchema, _sampleSchema],
+);
+
+class _AggregateSample {
+  _AggregateSample(this.id, this.value);
+
+  int id;
+  final double? value;
+}
+
+final _sampleSchema = CindelCollectionSchema<_AggregateSample>(
+  name: 'aggregateSamples',
+  dartName: '_AggregateSample',
+  idField: 'id',
+  fields: const [
+    CindelFieldSchema(
+      name: 'id',
+      dartType: 'int',
+      binaryType: 'int',
+      isId: true,
+      isIndexed: false,
+    ),
+    CindelFieldSchema(
+      name: 'value',
+      dartType: 'double?',
+      binaryType: 'double',
+      isId: false,
+      isIndexed: false,
+    ),
+  ],
+  toDocument: (sample) => {'id': sample.id, 'value': sample.value},
+  fromDocument: (document) =>
+      _AggregateSample(document['id']! as int, document['value'] as double?),
+  toBinaryDocument: (sample) => cindelEncodeSchemaBinaryDocument(
+    [sample.value],
+    [CindelBinaryFieldType.doubleValue],
+  ),
+  fromBinaryDocument: (bytes) => _AggregateSample(
+    0,
+    CindelSchemaBinaryDocumentReader(bytes, staticSize: 8).readDouble(0, 0),
+  ),
+  writeNativeDocument: (writer, sample) {
+    final value = sample.value;
+    if (value == null) {
+      writer.writeNull(0);
+    } else {
+      writer.writeDouble(0, value);
+    }
+  },
+  readNativeDocument: (reader, index) =>
+      _AggregateSample(reader.readId(index), reader.readDouble(index, 0)),
+  getId: (sample) => sample.id,
+  setId: (sample, id) => sample.id = id,
+);

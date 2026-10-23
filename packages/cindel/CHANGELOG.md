@@ -2,7 +2,7 @@
 
 ## 1.1.2
 
-- Optimized non-distinct projections and property aggregates in SQLite native/Web with a single query.
+- Optimized non-distinct SQLite native/Web projections and aggregates with one query and streaming aggregation.
 - Optimized non-distinct object counts in MDBX and SQLite native/Web, preserving query windows.
 - Optimized `findFirst`, including projections, to request at most one result on native and Web.
 - Optimized `putAll` with batch ID reservations in MDBX and SQLite native/Web.
