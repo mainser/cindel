@@ -6,6 +6,8 @@ mod engine;
 mod ffi;
 #[cfg(feature = "mdbx")]
 mod native_filter;
+#[cfg(feature = "mdbx")]
+mod native_number;
 mod storage;
 #[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
 mod web;

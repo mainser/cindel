@@ -22,6 +22,7 @@ use crate::document_format::{
     validate_binary_document, validate_generic_document, BinarySortKey, BinaryValue,
 };
 use crate::native_filter::NativeFilter;
+use crate::native_number::NativeNumber;
 use crate::wire::{
     encode_projection_rows, encode_scalar, WireIndexValue, WireProjectionRows, WireQueryPlan,
     WireQuerySource, WireScalar, WireValue,
@@ -3893,7 +3894,7 @@ fn compare_binary_sort_keys(
             if let (Some(left), Some(right)) =
                 (binary_sort_key_number(left), binary_sort_key_number(right))
             {
-                return left.total_cmp(&right);
+                return left.total_cmp(right);
             }
             match (
                 binary_sort_key_string_bytes(left, left_bytes),
@@ -3923,11 +3924,11 @@ fn compare_owned_sort_values(left: &OwnedSortValue, right: &OwnedSortValue) -> O
     }
 }
 
-fn binary_sort_key_number(value: &BinarySortKey) -> Option<f64> {
+fn binary_sort_key_number(value: &BinarySortKey) -> Option<NativeNumber> {
     match value {
-        BinarySortKey::Int(value) => Some(*value as f64),
-        BinarySortKey::Double(value) if value.is_finite() => Some(*value),
-        BinarySortKey::Owned(value) => binary_number(value),
+        BinarySortKey::Int(value) => Some(NativeNumber::Int(*value)),
+        BinarySortKey::Double(value) if value.is_finite() => Some(NativeNumber::Double(*value)),
+        BinarySortKey::Owned(value) => NativeNumber::from_binary(value),
         BinarySortKey::Bool(_) | BinarySortKey::Double(_) | BinarySortKey::StringRange(_) => None,
     }
 }
@@ -3973,8 +3974,11 @@ fn compare_binary_values(left: Option<&BinaryValue>, right: Option<&BinaryValue>
         (None, Some(_)) => Ordering::Less,
         (Some(_), None) => Ordering::Greater,
         (Some(left), Some(right)) => {
-            if let (Some(left), Some(right)) = (binary_number(left), binary_number(right)) {
-                return left.total_cmp(&right);
+            if let (Some(left), Some(right)) = (
+                NativeNumber::from_binary(left),
+                NativeNumber::from_binary(right),
+            ) {
+                return left.total_cmp(right);
             }
             match (left, right) {
                 (BinaryValue::String(left), BinaryValue::String(right))

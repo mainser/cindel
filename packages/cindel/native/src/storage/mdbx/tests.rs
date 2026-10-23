@@ -6,6 +6,198 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 #[test]
+fn compares_int64_sort_keys_with_double_values_without_rounding() {
+    for (integer, double, expected) in [
+        (
+            9_007_199_254_740_993,
+            9_007_199_254_740_992.0,
+            Ordering::Greater,
+        ),
+        (
+            -9_007_199_254_740_993,
+            -9_007_199_254_740_992.0,
+            Ordering::Less,
+        ),
+        (i64::MAX, 9_223_372_036_854_775_808.0, Ordering::Less),
+        (
+            i64::MIN + 1,
+            -9_223_372_036_854_775_808.0,
+            Ordering::Greater,
+        ),
+        (i64::MIN, -9_223_372_036_854_775_808.0, Ordering::Equal),
+        (1, 1.5, Ordering::Less),
+        (-1, -1.5, Ordering::Greater),
+        (0, -0.0, Ordering::Greater),
+    ] {
+        let left = BinarySortKey::Int(integer);
+        let right = BinarySortKey::Double(double);
+        assert_eq!(
+            compare_binary_sort_keys(Some(&left), &[], Some(&right), &[]),
+            expected
+        );
+        assert_eq!(
+            compare_binary_sort_keys(Some(&right), &[], Some(&left), &[]),
+            expected.reverse()
+        );
+        for make_value in [
+            BinaryValue::Int,
+            BinaryValue::DateTimeMicros,
+            BinaryValue::DurationMicros,
+        ] {
+            let left = make_value(integer);
+            let right = BinaryValue::Double(double);
+            assert_eq!(compare_binary_values(Some(&left), Some(&right)), expected);
+            assert_eq!(
+                compare_binary_values(Some(&right), Some(&left)),
+                expected.reverse()
+            );
+        }
+    }
+    // Float-only ordering, including signed zero, remains unchanged.
+    assert_eq!(
+        compare_binary_values(
+            Some(&BinaryValue::Double(-0.0)),
+            Some(&BinaryValue::Double(0.0))
+        ),
+        Ordering::Less
+    );
+    assert_eq!(
+        compare_binary_values(
+            Some(&BinaryValue::Double(1.25)),
+            Some(&BinaryValue::Double(1.5))
+        ),
+        Ordering::Less
+    );
+}
+
+#[test]
+fn sorts_int64_boundaries_in_borrowed_and_materialized_queries() {
+    let directory = TemporaryDirectory::new("int64_sort");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let scores = [
+        i64::MIN,
+        i64::MIN + 1,
+        -9_007_199_254_740_993,
+        -9_007_199_254_740_992,
+        9_007_199_254_740_992,
+        9_007_199_254_740_993,
+        i64::MAX - 1,
+        i64::MAX,
+    ];
+    for (index, score) in scores.iter().rev().enumerate() {
+        let id = index as u64 + 1;
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document(&format!("{id}@test"), id as i64, "User", *score),
+                &[],
+            )
+            .unwrap();
+    }
+    for ascending in [true, false] {
+        let expected: Vec<u64> = if ascending {
+            (1..=8).rev().collect()
+        } else {
+            (1..=8).collect()
+        };
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "score".into(),
+                ascending,
+            }],
+            distinct_fields: Vec::new(),
+            offset: 0,
+            limit: None,
+        };
+        assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+        let mut reader = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .unwrap();
+        let mut ids = Vec::new();
+        while reader.next().unwrap() {
+            ids.push(reader.document_id(0).unwrap().unwrap());
+        }
+        assert_eq!(ids, expected);
+        drop(reader);
+        // An active write transaction selects the owned/materialized sort path.
+        storage.begin_write_transaction().unwrap();
+        assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+        storage.rollback_transaction().unwrap();
+        let window = WireQueryPlan {
+            offset: 1,
+            limit: Some(3),
+            ..plan
+        };
+        assert_eq!(
+            storage.query_plan_ids("users", &window).unwrap(),
+            expected[1..4]
+        );
+    }
+}
+
+#[test]
+fn int64_filters_select_exact_rows_for_updates_and_deletes() {
+    let directory = TemporaryDirectory::new("int64_filter_writes");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let low = 9_007_199_254_740_992;
+    for (id, score) in [(1, low), (2, low + 1)] {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document(&format!("{id}@test"), id as i64, "Before", score),
+                &[],
+            )
+            .unwrap();
+    }
+    let plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: Some(
+            crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                field: "score".into(),
+                operation: crate::wire::WireFilterOperation::GreaterThan,
+                value: WireValue::Int(low),
+            })
+            .unwrap(),
+        ),
+        sorts: Vec::new(),
+        distinct_fields: Vec::new(),
+        offset: 0,
+        limit: None,
+    };
+    assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 1);
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![2]);
+    assert_eq!(
+        storage
+            .query_plan_update(
+                "users",
+                &plan,
+                &[("name".into(), WireValue::String("After".into()))],
+                true
+            )
+            .unwrap(),
+        1
+    );
+    let schema = &schema_manifest().collections[0];
+    for (id, expected) in [(1, "Before"), (2, "After")] {
+        let bytes = storage.get("users", id).unwrap().unwrap();
+        assert_eq!(
+            read_binary_field(schema, &bytes, "name").unwrap(),
+            Some(BinaryValue::String(expected.into()))
+        );
+    }
+    assert_eq!(storage.query_plan_delete("users", &plan).unwrap(), vec![2]);
+    assert!(storage.get("users", 1).unwrap().is_some());
+    assert!(storage.get("users", 2).unwrap().is_none());
+}
+
+#[test]
 fn passes_the_shared_storage_engine_contract() {
     // Scenario: MDBX-06 promotes the prototype to a StorageEngine peer.
     // Covers:

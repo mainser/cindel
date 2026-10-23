@@ -9,6 +9,128 @@ import 'schema_generation_fixture.dart';
 
 void main() {
   group('Cindel MDBX typed contract', () {
+    test('filters and sorts int64 durations without rounding.', () async {
+      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+      addTearDown(database.close);
+      for (final low in [
+        // The compact native format reserves int64 minimum for null.
+        -9223372036854775807,
+        -9007199254740993,
+        9007199254740992,
+        9223372036854775806,
+      ]) {
+        await database.users.all().deleteAll();
+        final lower = Duration(microseconds: low);
+        final upper = Duration(microseconds: low + 1);
+        await database.users.putAll([
+          User()
+            ..dbId = 1
+            ..name = 'Higher'
+            ..email = 'high@test'
+            ..sessionLength = upper,
+          User()
+            ..dbId = 2
+            ..name = 'Lower'
+            ..email = 'low@test'
+            ..sessionLength = lower,
+        ]);
+        expect(
+          (await database.users
+                  .filter()
+                  .sessionLengthGreaterThan(lower)
+                  .findAll())
+              .map((user) => user.dbId),
+          [1],
+        );
+        expect(
+          (await database.users.filter().sessionLengthLessThan(upper).findAll())
+              .map((user) => user.dbId),
+          [2],
+        );
+        expect(
+          await database.users.filter().sessionLengthGreaterThan(lower).count(),
+          1,
+        );
+        Future<void> checkSorts() async {
+          expect(
+            (await database.users.all().sortBy('sessionLength').findAll()).map(
+              (user) => user.dbId,
+            ),
+            [2, 1],
+          );
+          expect(
+            (await database.users
+                    .all()
+                    .sortBy('sessionLength', order: CindelSortOrder.descending)
+                    .findAll())
+                .map((user) => user.dbId),
+            [1, 2],
+          );
+          expect(
+            (await database.users
+                    .all()
+                    .sortBy('sessionLength')
+                    .offset(1)
+                    .limit(1)
+                    .findAll())
+                .single
+                .dbId,
+            1,
+          );
+        }
+
+        await checkSorts();
+        await database.writeTxn(checkSorts);
+      }
+    });
+
+    test(
+      'preserves adjacent DateTime microseconds beyond double precision.',
+      () async {
+        final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+        addTearDown(database.close);
+        final lower = DateTime.fromMicrosecondsSinceEpoch(
+          9007199254740992,
+          isUtc: true,
+        );
+        final upper = DateTime.fromMicrosecondsSinceEpoch(
+          9007199254740993,
+          isUtc: true,
+        );
+        await database.users.putAll([
+          User()
+            ..dbId = 1
+            ..name = 'Higher'
+            ..email = 'high@test'
+            ..createdAt = upper,
+          User()
+            ..dbId = 2
+            ..name = 'Lower'
+            ..email = 'low@test'
+            ..createdAt = lower,
+        ]);
+        expect(
+          (await database.users.filter().createdAtGreaterThan(lower).findAll())
+              .map((user) => user.dbId),
+          [1],
+        );
+        expect(
+          (await database.users.all().sortBy('createdAt').findAll()).map(
+            (user) => user.dbId,
+          ),
+          [2, 1],
+        );
+        await database.writeTxn(() async {
+          expect(
+            (await database.users.all().sortBy('createdAt').findAll()).map(
+              (user) => user.dbId,
+            ),
+            [2, 1],
+          );
+        });
+      },
+    );
+
     test('persists and reopens generated typed objects.', () async {
       final directory = await Directory.systemTemp.createTemp(
         'cindel_mdbx_contract_',

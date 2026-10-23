@@ -3,6 +3,7 @@ use crate::document_format::{
     read_binary_field_payload, read_binary_field_payload_prepared, BinaryValue,
     PreparedBinaryFieldLayout,
 };
+use crate::native_number::NativeNumber;
 use crate::storage::CollectionSchemaManifest;
 use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
@@ -529,15 +530,17 @@ fn compare_list_length(actual: &BinaryValue, expected: &WireValue) -> Option<i8>
 }
 
 fn compare_numbers(actual: &BinaryValue, expected: &WireValue) -> Option<i8> {
-    let actual = binary_number(actual)?;
-    let expected = wire_number(expected)?;
-    if actual < expected {
-        Some(-1)
-    } else if actual > expected {
-        Some(1)
-    } else {
-        Some(0)
-    }
+    let actual = NativeNumber::from_binary(actual)?;
+    let expected = match expected {
+        WireValue::Int(value) => NativeNumber::Int(*value),
+        WireValue::Double(value) if value.is_finite() => NativeNumber::Double(*value),
+        _ => return None,
+    };
+    actual.partial_cmp(expected).map(|ordering| match ordering {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    })
 }
 
 fn contains_value(actual: &BinaryValue, expected: &WireValue) -> Result<bool, String> {
@@ -565,24 +568,6 @@ fn binary_values_equal(left: &BinaryValue, right: &BinaryValue) -> bool {
         | (BinaryValue::DateTimeMicros(left), BinaryValue::DurationMicros(right))
         | (BinaryValue::DurationMicros(left), BinaryValue::DateTimeMicros(right)) => left == right,
         _ => left == right,
-    }
-}
-
-fn binary_number(value: &BinaryValue) -> Option<f64> {
-    match value {
-        BinaryValue::Int(value)
-        | BinaryValue::DateTimeMicros(value)
-        | BinaryValue::DurationMicros(value) => Some(*value as f64),
-        BinaryValue::Double(value) => Some(*value),
-        _ => None,
-    }
-}
-
-fn wire_number(value: &WireValue) -> Option<f64> {
-    match value {
-        WireValue::Int(value) => Some(*value as f64),
-        WireValue::Double(value) if value.is_finite() => Some(*value),
-        _ => None,
     }
 }
 
@@ -636,6 +621,67 @@ mod tests {
     use crate::document_format::write_compact_document_for_test;
     use crate::storage::FieldSchemaManifest;
     use crate::wire::encode_filter;
+
+    #[test]
+    fn compares_int64_filter_boundaries_without_rounding() {
+        let pairs = [
+            (i64::MIN, i64::MIN + 1),
+            (-9_007_199_254_740_993, -9_007_199_254_740_992),
+            (9_007_199_254_740_992, 9_007_199_254_740_993),
+            (i64::MAX - 1, i64::MAX),
+        ];
+        for (low, high) in pairs {
+            for make_value in [
+                BinaryValue::Int,
+                BinaryValue::DateTimeMicros,
+                BinaryValue::DurationMicros,
+            ] {
+                for (actual, expected, ordering) in [(low, high, -1), (high, low, 1), (low, low, 0)]
+                {
+                    for (operation, matches) in [
+                        (FieldFilterOperation::GreaterThan, ordering > 0),
+                        (FieldFilterOperation::GreaterThanOrEqualTo, ordering >= 0),
+                        (FieldFilterOperation::LessThan, ordering < 0),
+                        (FieldFilterOperation::LessThanOrEqualTo, ordering <= 0),
+                    ] {
+                        assert_eq!(
+                            field_matches(
+                                &make_value(actual),
+                                operation,
+                                &WireValue::Int(expected)
+                            )
+                            .unwrap(),
+                            matches,
+                            "{actual} {operation:?} {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compares_int64_filters_with_double_bounds_exactly() {
+        for (integer, double, ordering) in [
+            (9_007_199_254_740_993, 9_007_199_254_740_992.0, 1),
+            (-9_007_199_254_740_993, -9_007_199_254_740_992.0, -1),
+            (i64::MAX, 9_223_372_036_854_775_808.0, -1),
+            (i64::MIN + 1, -9_223_372_036_854_775_808.0, 1),
+            (i64::MIN, -9_223_372_036_854_775_808.0, 0),
+            (1, 1.5, -1),
+            (-1, -1.5, 1),
+            (0, -0.0, 0),
+        ] {
+            assert_eq!(
+                compare_numbers(&BinaryValue::Int(integer), &WireValue::Double(double)),
+                Some(ordering)
+            );
+            assert_eq!(
+                compare_numbers(&BinaryValue::Double(double), &WireValue::Int(integer)),
+                Some(-ordering)
+            );
+        }
+    }
 
     fn schema() -> CollectionSchemaManifest {
         CollectionSchemaManifest {

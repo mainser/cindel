@@ -2,6 +2,11 @@
 
 ## 1.1.2
 
+- Fixed MDBX numeric filters and sorting losing precision for 64-bit integers,
+  including DateTime and Duration microseconds. Comparisons now preserve exact
+  integer values in both optimized and materialized query paths, including
+  comparisons with double bounds. Added regression coverage for integer limits,
+  query windows, and rows selected for updates and deletes.
 - Fixed MDBX `readTxn` isolation so document reads, queries, and cursors share
   the snapshot captured when the transaction starts.
 - Fixed auto-increment ID collisions across overlapping MDBX transactions and
