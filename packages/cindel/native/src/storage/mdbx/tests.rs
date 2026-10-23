@@ -106,6 +106,130 @@ fn limited_id_scan_visits_only_the_requested_prefix_in_both_directions() {
 }
 
 #[test]
+fn filtered_id_scan_stops_after_the_requested_matches_in_both_directions() {
+    use crate::wire::{encode_filter, WireFilter, WireFilterOperation};
+
+    let directory = TemporaryDirectory::new("filtered_id_scan");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let ids = [
+        1,
+        7,
+        255,
+        256,
+        65536,
+        9_007_199_254_740_992,
+        9_007_199_254_740_993,
+        i64::MAX as u64,
+    ];
+    storage.begin_write_transaction().unwrap();
+    for (position, id) in ids.iter().copied().enumerate().rev() {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("same", id as i64, "Name", (position % 2) as i64),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    let equal_score = |score| WireFilter::Field {
+        field: "score".into(),
+        operation: WireFilterOperation::Equal,
+        value: WireValue::Int(score),
+    };
+    for (filter, matches) in [
+        (equal_score(1), vec![7, 256, ids[5], ids[7]]),
+        (
+            WireFilter::All {
+                predicates: vec![
+                    WireFilter::Field {
+                        field: "id".into(),
+                        operation: WireFilterOperation::GreaterThan,
+                        value: WireValue::Int(9_007_199_254_740_992),
+                    },
+                    WireFilter::Not {
+                        predicate: Box::new(equal_score(1)),
+                    },
+                ],
+            },
+            vec![ids[6]],
+        ),
+        (equal_score(99), vec![]),
+    ] {
+        for ascending in [true, false] {
+            let mut ordered = ids.to_vec();
+            if !ascending {
+                ordered.reverse();
+            }
+            let matching = ordered
+                .iter()
+                .copied()
+                .filter(|id| matches.contains(id))
+                .collect::<Vec<_>>();
+            for (offset, limit) in [(0, 1), (1, 2), (0, 0), (3, 8), (20, 1), (20, 0)] {
+                let expected = matching
+                    .iter()
+                    .copied()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>();
+                let expected_reads = if limit == 0 {
+                    0
+                } else {
+                    matching.get(offset + limit - 1).map_or(ids.len(), |last| {
+                        ordered.iter().position(|id| id == last).unwrap() + 1
+                    })
+                };
+                let plan = WireQueryPlan {
+                    source: WireQuerySource::All { dedupe: false },
+                    filter: Some(encode_filter(&filter).unwrap()),
+                    sorts: vec![crate::wire::WireQuerySort {
+                        field: "id".into(),
+                        ascending,
+                    }],
+                    distinct_fields: vec![],
+                    offset: offset as u32,
+                    limit: Some(limit as u32),
+                };
+                DOCUMENT_KEYS_READ.with(|count| count.set(0));
+                SORT_KEY_COMPARISONS.with(|count| count.set(0));
+                assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+                assert_eq!(
+                    DOCUMENT_KEYS_READ.with(|count| count.get()),
+                    expected_reads,
+                    "ascending={ascending}, offset={offset}, limit={limit}, filter={filter:?}"
+                );
+                assert_eq!(SORT_KEY_COMPARISONS.with(|count| count.get()), 0);
+
+                DOCUMENT_KEYS_READ.with(|count| count.set(0));
+                let mut reader = storage
+                    .query_document_reader("users", &plan)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(DOCUMENT_KEYS_READ.with(|count| count.get()), 0);
+                let mut actual = Vec::new();
+                while reader.next().unwrap() {
+                    actual.push(reader.document_id(0).unwrap().unwrap());
+                }
+                assert_eq!(actual, expected);
+                assert_eq!(DOCUMENT_KEYS_READ.with(|count| count.get()), expected_reads);
+                for field in ["id", "score", "name"] {
+                    let projected = storage.query_project("users", &expected, field).unwrap();
+                    DOCUMENT_KEYS_READ.with(|count| count.set(0));
+                    assert_eq!(
+                        storage.query_plan_project("users", &plan, field).unwrap(),
+                        projected
+                    );
+                    assert_eq!(DOCUMENT_KEYS_READ.with(|count| count.get()), expected_reads);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn direct_id_readers_retain_the_snapshot_after_transaction_and_handle_close() {
     for ascending in [true, false] {
         let directory = TemporaryDirectory::new("direct_id_snapshot");

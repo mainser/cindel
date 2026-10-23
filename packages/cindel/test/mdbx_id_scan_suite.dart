@@ -57,6 +57,48 @@ void main() {
     );
 
     test(
+      'applies filtered windows to matches in both ID directions.',
+      () async {
+        for (final (source, matching) in [
+          (
+            database.apiProducts.all().filter().nameContains('5'),
+            ids.where((id) => 'Name $id'.contains('5')).toList(),
+          ),
+          (
+            database.apiProducts.all().filter().dbIdGreaterThan(
+              9007199254740992,
+            ),
+            [9007199254740993],
+          ),
+          (database.apiProducts.all().filter().nameEqualTo('missing'), <int>[]),
+        ]) {
+          for (final ascending in [true, false]) {
+            final ordered = ascending
+                ? source.sortByDbId()
+                : source.sortByDbIdDesc();
+            final expected = ascending ? matching : matching.reversed.toList();
+            for (final (offset, limit) in [
+              (0, 1),
+              (1, 2),
+              (0, 0),
+              (3, 9),
+              (20, 1),
+            ]) {
+              await _expectIds(
+                ordered.offset(offset).limit(limit),
+                expected.skip(offset).take(limit).toList(),
+              );
+            }
+          }
+        }
+        await database.apiProducts.deleteAll(ids);
+        final empty = database.apiProducts.all().filter().nameContains('5');
+        await _expectIds(empty.sortByDbId().limit(2), []);
+        await _expectIds(empty.sortByDbIdDesc().limit(2), []);
+      },
+    );
+
+    test(
       'preserves filters, indexes, distinct and additional sort keys.',
       () async {
         await _expectIds(
@@ -153,6 +195,63 @@ void main() {
         65536,
       ]);
     });
+
+    test(
+      'filters pending writes and preserves rollback and read snapshots.',
+      () async {
+        final filtered = database.apiProducts.all().filter().nameContains('5');
+        await expectLater(
+          database.writeTxn<void>(() async {
+            await database.apiProducts.delete(255);
+            await database.apiProducts.put(
+              ApiProduct()
+                ..dbId = 5
+                ..name = 'Name 5',
+            );
+            await database.apiProducts.put(
+              ApiProduct()
+                ..dbId = ids.last
+                ..name = 'Excluded',
+            );
+            await _expectIds(filtered.sortByDbId().offset(1).limit(2), [
+              256,
+              65536,
+            ]);
+            await _expectIds(filtered.sortByDbIdDesc().limit(2), [
+              ids[5],
+              65536,
+            ]);
+            throw StateError('rollback');
+          }),
+          throwsStateError,
+        );
+        await _expectIds(filtered.sortByDbId().limit(2), [255, 256]);
+        await _expectIds(filtered.sortByDbIdDesc().limit(2), [
+          ids.last,
+          ids[5],
+        ]);
+
+        final other = await _open(directory);
+        addTearDown(other.close);
+        await database.readTxn(() async {
+          await other.writeTxn(() async {
+            await other.apiProducts.delete(255);
+            await other.apiProducts.put(
+              ApiProduct()
+                ..dbId = ids.last
+                ..name = 'Excluded',
+            );
+          });
+          await _expectIds(filtered.sortByDbId().limit(2), [255, 256]);
+          await _expectIds(filtered.sortByDbIdDesc().limit(2), [
+            ids.last,
+            ids[5],
+          ]);
+        });
+        await _expectIds(filtered.sortByDbId().limit(2), [256, 65536]);
+        await _expectIds(filtered.sortByDbIdDesc().limit(2), [ids[5], 65536]);
+      },
+    );
   });
 }
 

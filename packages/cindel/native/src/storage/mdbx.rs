@@ -3765,13 +3765,13 @@ fn sort_planned_documents(
 }
 
 // INTEGER_KEY document tables already have this order. Restrict the fast path
-// to a bounded, unfiltered window with exactly one ID sort key.
+// to a bounded window with exactly one ID sort key. The cursor evaluates any
+// filter before counting matches toward the offset and limit.
 fn direct_id_scan_direction(
     schema: &CollectionSchemaManifest,
     plan: &WireQueryPlan,
 ) -> Option<bool> {
     if plan.limit.is_none()
-        || plan.filter.is_some()
         || !plan.distinct_fields.is_empty()
         || !matches!(plan.source, WireQuerySource::All { .. })
     {

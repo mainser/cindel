@@ -2,7 +2,7 @@
 
 ## 1.1.2
 
-- Optimized limited MDBX queries with direct ID scans and partial sorting when the order includes the ID.
+- Optimized limited MDBX queries with direct ID scans (including filters) and partial sorting when the order includes the ID.
 - Optimized non-distinct SQLite native/Web projections and aggregates with one query and streaming aggregation.
 - Optimized non-distinct object counts in MDBX and SQLite native/Web, preserving query windows.
 - Optimized `findFirst`, including projections, to request at most one result on native and Web.
