@@ -6,8 +6,10 @@ import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
 import 'schema_generation_fixture.dart';
+import 'sqlite_id_suite.dart' as ids;
 
 void main() {
+  ids.main();
   group('Cindel SQLite typed contract', () {
     test('persists and reopens generated typed objects.', () async {
       final directory = await Directory.systemTemp.createTemp(

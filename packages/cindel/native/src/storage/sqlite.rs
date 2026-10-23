@@ -11,7 +11,9 @@ use std::slice;
 use rusqlite::types::{Null, Value, ValueRef};
 #[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
 use rusqlite::OpenFlags;
-use rusqlite::{ffi, params, params_from_iter, Connection, OptionalExtension, Row};
+use rusqlite::{
+    ffi, params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior,
+};
 
 use crate::document_format::{decode_list, BinaryValue};
 use crate::wire::{
@@ -31,7 +33,6 @@ pub struct SqliteStorage {
     connection: Connection,
     schemas: HashMap<String, RegisteredCollectionSchema>,
     collection_revisions: HashMap<String, u64>,
-    id_counters: HashMap<String, i64>,
     persist_schema_metadata: bool,
     active_transaction: Option<TransactionMode>,
     active_change_sets: Vec<StorageChangeSet>,
@@ -541,7 +542,6 @@ impl SqliteStorage {
             connection,
             schemas: HashMap::new(),
             collection_revisions: HashMap::new(),
-            id_counters: HashMap::new(),
             persist_schema_metadata,
             active_transaction: None,
             active_change_sets: Vec::new(),
@@ -578,6 +578,7 @@ impl SqliteStorage {
     }
 
     fn initialize_transaction(&mut self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
+        ensure_id_counters_table(&self.connection)?;
         if self.persist_schema_metadata {
             ensure_base_tables(&self.connection)?;
             ensure_binary_schema_collections_table(&self.connection)?;
@@ -646,7 +647,6 @@ impl SqliteStorage {
             }
         };
         create_collection_table(&self.connection, collection)?;
-        let next_id = self.next_collection_row_id(&collection.name)?;
         self.schemas.insert(
             collection.name.clone(),
             RegisteredCollectionSchema {
@@ -654,16 +654,7 @@ impl SqliteStorage {
                 schema: collection.clone(),
             },
         );
-        self.id_counters.insert(collection.name.clone(), next_id);
         Ok(())
-    }
-
-    fn next_collection_row_id(&self, collection: &str) -> Result<i64, String> {
-        let sql = format!("SELECT MAX({SQLITE_ROW_ID_COLUMN}) FROM {collection}");
-        self.connection
-            .query_row(&sql, [], |row| row.get::<_, Option<i64>>(0))
-            .map_err(|error| error.to_string())
-            .map(|max_id| max_id.map(|id| id + 1).unwrap_or(1))
     }
 
     fn bump_collection_revision_in_memory(&mut self, collection: &str) -> u64 {
@@ -673,12 +664,6 @@ impl SqliteStorage {
             .or_default();
         *revision += 1;
         *revision
-    }
-
-    fn advance_collection_id_counter(&mut self, collection: &str, id: i64) {
-        let next_id = id.saturating_add(1);
-        let counter = self.id_counters.entry(collection.to_string()).or_default();
-        *counter = (*counter).max(next_id);
     }
 }
 
@@ -718,11 +703,6 @@ impl StorageEngine for SqliteStorage {
         self.connection
             .execute_batch("ROLLBACK")
             .map_err(|error| error.to_string())?;
-        let collections = self.schemas.keys().cloned().collect::<Vec<_>>();
-        for collection in collections {
-            let next_id = self.next_collection_row_id(&collection)?;
-            self.id_counters.insert(collection, next_id);
-        }
         self.active_transaction = None;
         self.active_change_sets.clear();
         Ok(())
@@ -730,24 +710,25 @@ impl StorageEngine for SqliteStorage {
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
         self.ensure_can_write()?;
-        if self.collection_schema(collection).is_some() {
-            let id = *self.id_counters.entry(collection.to_string()).or_default();
-            self.id_counters
-                .insert(collection.to_string(), id.saturating_add(1));
-            return u64::try_from(id).map_err(|error| error.to_string());
-        }
+        let is_native = self.collection_schema(collection).is_some();
         if self.active_transaction.is_some() {
-            ensure_generic_document_tables(&self.connection)?;
+            if !is_native {
+                ensure_generic_document_tables(&self.connection)?;
+            }
             let id = allocate_id(&self.connection, collection)?;
             return u64::try_from(id).map_err(|error| error.to_string());
         }
 
+        // Acquire the write lock before reading the shared counter. A deferred
+        // read/update could race another connection or fail while upgrading.
         let transaction = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
 
-        ensure_generic_document_tables(&transaction)?;
+        if !is_native {
+            ensure_generic_document_tables(&transaction)?;
+        }
         let id = allocate_id(&transaction, collection)?;
 
         transaction.commit().map_err(|error| error.to_string())?;
@@ -1004,7 +985,7 @@ impl StorageEngine for SqliteStorage {
         if self.active_transaction.is_some() {
             let max_id = put_native_documents(&self.connection, &schema, documents)?;
             if let Some(max_id) = max_id {
-                self.advance_collection_id_counter(collection, max_id);
+                advance_id_counter(&self.connection, collection, max_id)?;
             }
             let revision = self.bump_collection_revision_in_memory(collection);
             if track_changes {
@@ -1022,11 +1003,10 @@ impl StorageEngine for SqliteStorage {
             .transaction()
             .map_err(|error| error.to_string())?;
         let max_id = put_native_documents(&transaction, &schema, documents)?;
-
-        transaction.commit().map_err(|error| error.to_string())?;
         if let Some(max_id) = max_id {
-            self.advance_collection_id_counter(collection, max_id);
+            advance_id_counter(&transaction, collection, max_id)?;
         }
+        transaction.commit().map_err(|error| error.to_string())?;
         let revision = self.bump_collection_revision_in_memory(collection);
         if track_changes {
             self.record_change(
@@ -3646,6 +3626,17 @@ fn merge_change_set(
     });
 }
 
+fn ensure_id_counters_table(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS id_counters (
+            collection TEXT PRIMARY KEY NOT NULL,
+            next_id INTEGER NOT NULL
+        )",
+        )
+        .map_err(|error| error.to_string())
+}
+
 fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
@@ -4232,8 +4223,23 @@ fn create_collection_table(
     sql.push(')');
     connection
         .execute(&sql, [])
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // Bootstrap databases written before typed IDs had persisted counters.
+    // Reopening or registering schemas must never lower an existing counter.
+    let max_id = connection
+        .query_row(
+            &format!(
+                "SELECT MAX({SQLITE_ROW_ID_COLUMN}) FROM {}",
+                collection.name
+            ),
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if let Some(max_id) = max_id {
+        advance_id_counter(connection, &collection.name, max_id)?;
+    }
+    Ok(())
 }
 
 fn native_fields(collection: &CollectionSchemaManifest) -> Vec<&FieldSchemaManifest> {
@@ -5987,6 +5993,124 @@ mod tests {
 
         // Assert.
         assert_eq!(allocated, 11);
+    }
+
+    #[test]
+    fn typed_ids_are_shared_by_native_and_web_storage_handles() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("typed_shared_ids");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut first = open(directory.path(), &manifest).unwrap();
+            let mut second = open(directory.path(), &manifest).unwrap();
+            first.begin_write_transaction().unwrap();
+            assert_eq!(first.allocate_id("users").unwrap(), 1);
+            first.commit_transaction().unwrap();
+            second.begin_write_transaction().unwrap();
+            assert_eq!(second.allocate_id("users").unwrap(), 2);
+            second.commit_transaction().unwrap();
+            assert_eq!(first.allocate_id("users").unwrap(), 3);
+            drop(first);
+            drop(second);
+            let mut reopened = open(directory.path(), &manifest).unwrap();
+            // Allocations remain consumed even without a document insertion.
+            assert_eq!(reopened.allocate_id("users").unwrap(), 4);
+        }
+    }
+
+    #[test]
+    fn typed_id_counters_follow_commits_rollbacks_and_manual_writes() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("typed_id_transactions");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut first = open(directory.path(), &manifest).unwrap();
+            let mut second = open(directory.path(), &manifest).unwrap();
+            let document = NativeDocumentWrite {
+                id: 41,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(0),
+                    NativeDocumentValue::Bytes(b"Manual".to_vec()),
+                ],
+            };
+            first.begin_write_transaction().unwrap();
+            first
+                .put_many_native_documents("users", &[document.clone()], true)
+                .unwrap();
+            assert_eq!(first.allocate_id("users").unwrap(), 42);
+            first.rollback_transaction().unwrap();
+            assert_eq!(second.allocate_id("users").unwrap(), 1);
+            first
+                .put_many_native_documents("users", &[document], true)
+                .unwrap();
+            assert_eq!(second.allocate_id("users").unwrap(), 42);
+            first.delete("users", 41).unwrap();
+            first.begin_write_transaction().unwrap();
+            assert_eq!(first.allocate_id("users").unwrap(), 43);
+            first.rollback_transaction().unwrap();
+            assert_eq!(second.allocate_id("users").unwrap(), 43);
+            drop(first);
+            drop(second);
+            let mut reopened = open(directory.path(), &manifest).unwrap();
+            assert_eq!(reopened.allocate_id("users").unwrap(), 44);
+        }
+    }
+
+    #[test]
+    fn typed_ids_bootstrap_existing_rows_without_lowering_persisted_counters() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("typed_legacy_ids");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            {
+                let storage = open(directory.path(), &manifest).unwrap();
+                // Simulate a database created before typed counters were persisted.
+                storage.connection.execute("INSERT INTO users (_rowid_, completed, createdAtMicros, title) VALUES (41, 1, 0, 'Legacy')", []).unwrap();
+            }
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            assert_eq!(storage.allocate_id("users").unwrap(), 42);
+            storage.delete("users", 41).unwrap();
+            drop(storage);
+            let mut reopened = open(directory.path(), &manifest).unwrap();
+            assert_eq!(reopened.allocate_id("users").unwrap(), 43);
+        }
+    }
+
+    #[test]
+    fn concurrent_typed_allocations_are_unique_across_connections() {
+        let directory = TemporaryDirectory::new("typed_concurrent_ids");
+        let manifest = schema_manifest(vec![native_user_schema()]);
+        let mut handles: Vec<_> = (0..4)
+            .map(|_| SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap())
+            .collect();
+        let barrier = std::sync::Barrier::new(4);
+        let mut ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = handles
+                .iter_mut()
+                .map(|storage| {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (0..16)
+                            .map(|_| storage.allocate_id("users").unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        ids.sort_unstable();
+        assert_eq!(ids, (1..=64).collect::<Vec<_>>());
     }
 
     #[test]

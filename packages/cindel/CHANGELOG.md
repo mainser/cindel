@@ -7,10 +7,15 @@
 - Fixed auto-increment ID collisions across overlapping MDBX transactions and
   implicit writes on database handles in the same process, preserving rollback
   behavior and committed counters after reopening.
+- Fixed SQLite typed auto-increment ID collisions between database handles by
+  persisting counters transactionally in the shared native and Web engine.
+  Manual IDs advance the counter, rollbacks restore it, and reopening preserves
+  committed reservations even after deleting rows.
 - Fixed Dart decoding of empty native string lists written by MDBX `putAll`,
   preventing a `RangeError` when reading those objects with `get()`.
 - Added regression coverage for transaction snapshots, overlapping ID
-  allocations, and empty-list decoding through generated serializers.
+  allocations, SQLite counter persistence and rollback, and empty-list decoding
+  through generated serializers.
 
 ## 1.1.1
 
