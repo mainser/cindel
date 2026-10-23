@@ -5,6 +5,288 @@ use super::*;
 use crate::document_format::{read_binary_field, write_compact_document_for_test, BinaryValue};
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
+thread_local! {
+    pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn limited_id_order_uses_fewer_comparisons_than_full_sort() {
+    let fields = [QuerySortField {
+        index: 0,
+        ascending: true,
+        target: QuerySortTarget::Id,
+    }];
+    let documents = || {
+        (0..32768)
+            .map(|position| {
+                let id = ((position * 7919) % 32768 + 1) as u64;
+                BorrowedPlannedDocument {
+                    id,
+                    bytes: Cow::Borrowed(&[]),
+                    position,
+                    sort_values: BorrowedSortValues::One(BorrowedSortValue::Id(id)),
+                }
+            })
+            .collect()
+    };
+    for materialized in [false, true] {
+        let run = |limit| -> Vec<u64> {
+            if materialized {
+                sort_and_window_borrowed_planned_documents(documents(), &fields, 7, limit)
+                    .into_iter()
+                    .map(|document| document.id)
+                    .collect()
+            } else {
+                sort_and_window_borrowed_query_documents(documents(), &fields, 7, limit)
+                    .into_iter()
+                    .map(|document| document.id)
+                    .collect()
+            }
+        };
+        SORT_KEY_COMPARISONS.with(|count| count.set(0));
+        let all = run(None);
+        let full_comparisons = SORT_KEY_COMPARISONS.with(|count| count.get());
+        SORT_KEY_COMPARISONS.with(|count| count.set(0));
+        let limited = run(Some(20));
+        let limited_comparisons = SORT_KEY_COMPARISONS.with(|count| count.get());
+        assert_eq!(limited, all[..20]);
+        assert!(
+            limited_comparisons < full_comparisons / 2,
+            "materialized={materialized}: limited={limited_comparisons}, full={full_comparisons}"
+        );
+    }
+}
+
+#[test]
+fn limited_order_without_id_keeps_full_sort_and_ties() {
+    let schema = schema_manifest();
+    let fields = query_sort_fields(
+        &schema.collections[0],
+        &[crate::wire::WireQuerySort {
+            field: "score".into(),
+            ascending: true,
+        }],
+    )
+    .unwrap();
+    let documents = || {
+        (0..1024)
+            .map(|position| {
+                let id = ((position * 7919) % 1024 + 1) as u64;
+                BorrowedPlannedDocument {
+                    id,
+                    bytes: Cow::Borrowed(&[]),
+                    position,
+                    sort_values: BorrowedSortValues::One(BorrowedSortValue::Field(Some(
+                        BinarySortKey::Int((id % 7) as i64),
+                    ))),
+                }
+            })
+            .collect()
+    };
+    SORT_KEY_COMPARISONS.with(|count| count.set(0));
+    let full = sort_and_window_borrowed_query_documents(documents(), &fields, 3, None);
+    let full_comparisons = SORT_KEY_COMPARISONS.with(|count| count.get());
+    SORT_KEY_COMPARISONS.with(|count| count.set(0));
+    let limited = sort_and_window_borrowed_query_documents(documents(), &fields, 3, Some(10));
+    assert_eq!(
+        limited
+            .iter()
+            .map(|document| document.id)
+            .collect::<Vec<_>>(),
+        full[..10]
+            .iter()
+            .map(|document| document.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        SORT_KEY_COMPARISONS.with(|count| count.get()),
+        full_comparisons
+    );
+}
+
+#[test]
+fn partial_selection_matches_full_order_for_sources_filters_and_windows() {
+    let directory = TemporaryDirectory::new("partial_selection_windows");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    let manifest = schema_manifest();
+    let schema = &manifest.collections[0];
+    storage.register_schemas(&manifest).unwrap();
+    let base_id = 9_007_199_254_740_992_u64;
+    let scores = [
+        i64::MIN,
+        i64::MIN + 1,
+        -9_007_199_254_740_993,
+        9_007_199_254_740_992,
+        9_007_199_254_740_993,
+        i64::MAX,
+    ];
+    storage.begin_write_transaction().unwrap();
+    for position in 1..=48 {
+        let id = base_id + position;
+        let name = match position % 4 {
+            0 => None,
+            1 => Some(BinaryValue::String("Árbol".into())),
+            2 => Some(BinaryValue::String("same".into())),
+            _ => Some(BinaryValue::String(String::new())),
+        };
+        let bytes = write_compact_document_for_test(
+            schema,
+            &[
+                Some(BinaryValue::String(format!("group{}", position % 2))),
+                Some(BinaryValue::Int(id as i64)),
+                name,
+                Some(BinaryValue::Int(scores[position as usize % scores.len()])),
+            ],
+        )
+        .unwrap();
+        storage.put_indexed("users", id, &bytes, &[]).unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    // Include a duplicate candidate and a dangling index row in range scans.
+    storage
+        .with_write_transaction(|transaction, _| {
+            let table = create_index_table(transaction, "users", "score")?;
+            for id in [base_id + 1, 404] {
+                transaction
+                    .put(
+                        &table,
+                        index_value_key(&IndexValue::Int(0))?,
+                        document_id_key(id),
+                        WriteFlags::empty(),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let sort = |field: &str, ascending| crate::wire::WireQuerySort {
+        field: field.into(),
+        ascending,
+    };
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexEqual {
+            index_name: "email".into(),
+            value: WireIndexValue::String("group1".into()),
+            dedupe: true,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(i64::MIN)),
+            upper: Some(WireIndexValue::Int(i64::MAX)),
+            dedupe: true,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(i64::MIN)),
+            upper: Some(WireIndexValue::Int(i64::MAX)),
+            dedupe: false,
+        },
+    ] {
+        for filter in [
+            None,
+            Some(
+                crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                    field: "score".into(),
+                    operation: crate::wire::WireFilterOperation::GreaterThan,
+                    value: WireValue::Int(0),
+                })
+                .unwrap(),
+            ),
+        ] {
+            for sorts in [
+                vec![sort("id", false)],
+                vec![sort("score", true), sort("id", false)],
+                vec![sort("name", false), sort("score", false), sort("id", true)],
+                vec![sort("id", true), sort("name", false)],
+                vec![sort("name", true)], // Unresolved ties must keep the full-sort path.
+            ] {
+                let mut plan = WireQueryPlan {
+                    source: source.clone(),
+                    filter: filter.clone(),
+                    sorts,
+                    distinct_fields: Vec::new(),
+                    offset: 0,
+                    limit: None,
+                };
+                let all = storage.query_plan_ids("users", &plan).unwrap();
+                for (offset, limit) in [
+                    (0, None),
+                    (0, Some(0)),
+                    (0, Some(1)),
+                    (3, Some(7)),
+                    (0, Some(48)),
+                    (47, Some(8)),
+                    (99, Some(1)),
+                    (u32::MAX, Some(u32::MAX)),
+                ] {
+                    plan.offset = offset;
+                    plan.limit = limit;
+                    let expected: Vec<_> = all
+                        .iter()
+                        .copied()
+                        .skip(offset as usize)
+                        .take(limit.unwrap_or(u32::MAX) as usize)
+                        .collect();
+                    assert_eq!(
+                        storage.query_plan_ids("users", &plan).unwrap(),
+                        expected,
+                        "{plan:?}"
+                    );
+                    let mut reader = storage
+                        .query_document_reader("users", &plan)
+                        .unwrap()
+                        .unwrap();
+                    let mut actual = Vec::new();
+                    while reader.next().unwrap() {
+                        actual.push(reader.document_id(0).unwrap().unwrap());
+                    }
+                    assert_eq!(actual, expected, "reader: {plan:?}");
+                    assert_eq!(
+                        storage.query_plan_project("users", &plan, "name").unwrap(),
+                        storage.query_project("users", &expected, "name").unwrap()
+                    );
+                    assert_eq!(
+                        storage
+                            .query_plan_aggregate("users", &plan, "score", "sum")
+                            .unwrap(),
+                        storage
+                            .query_aggregate("users", &expected, "score", "sum")
+                            .unwrap()
+                    );
+                }
+            }
+        }
+    }
+    let mut invalid = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: vec![sort("id", true), sort("missing", true)],
+        distinct_fields: Vec::new(),
+        offset: 0,
+        limit: Some(0),
+    };
+    assert!(storage.query_plan_ids("users", &invalid).is_err());
+    assert!(storage.query_document_reader("users", &invalid).is_err());
+    invalid.sorts.pop();
+    storage
+        .delete_many(
+            "users",
+            &(1..=48).map(|id| base_id + id).collect::<Vec<_>>(),
+        )
+        .unwrap();
+    assert!(storage
+        .query_plan_ids("users", &invalid)
+        .unwrap()
+        .is_empty());
+    assert!(!storage
+        .query_document_reader("users", &invalid)
+        .unwrap()
+        .unwrap()
+        .next()
+        .unwrap());
+}
+
 #[test]
 fn counts_query_windows_with_stats_and_unsorted_filtered_readers() {
     let directory = TemporaryDirectory::new("count_windows");

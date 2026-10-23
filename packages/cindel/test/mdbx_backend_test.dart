@@ -8,6 +8,7 @@ import 'count_suite.dart' as count;
 import 'find_first_suite.dart' as find_first;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
+import 'mdbx_partial_selection_suite.dart' as partial_selection;
 import 'migration_suite.dart' as migration;
 import 'query_builder_suite.dart' as query_builder;
 import 'schema_generation_suite.dart' as schema_generation;
@@ -25,6 +26,7 @@ void main() {
   find_first.main();
   links_backlinks.main();
   mdbx_contract.main();
+  partial_selection.main();
   migration.main();
   schema_version.main();
   sync.main();

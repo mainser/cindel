@@ -3817,8 +3817,9 @@ fn push_borrowed_planned_document<'a>(
 fn sort_borrowed_planned_documents(
     documents: &mut [BorrowedPlannedDocument<'_>],
     sort_fields: &[QuerySortField],
+    prefix_len: usize,
 ) {
-    documents.sort_unstable_by(|left, right| {
+    let compare = |left: &BorrowedPlannedDocument<'_>, right: &BorrowedPlannedDocument<'_>| {
         for (index, sort_field) in sort_fields.iter().enumerate() {
             let ordering = compare_borrowed_sort_values(left, right, index);
             if ordering != Ordering::Equal {
@@ -3830,7 +3831,21 @@ fn sort_borrowed_planned_documents(
             }
         }
         Ordering::Equal
-    });
+    };
+    // An explicit ID key distinguishes documents without changing the existing
+    // ordering of unresolved ties. The caller only needs this sorted prefix.
+    if prefix_len < documents.len()
+        && sort_fields
+            .iter()
+            .any(|field| matches!(field.target, QuerySortTarget::Id))
+    {
+        if prefix_len > 0 {
+            documents.select_nth_unstable_by(prefix_len, compare);
+            documents[..prefix_len].sort_unstable_by(compare);
+        }
+    } else {
+        documents.sort_unstable_by(compare);
+    }
 }
 
 fn borrowed_sort_value<'a>(
@@ -3863,6 +3878,8 @@ fn compare_borrowed_sort_values(
     right: &BorrowedPlannedDocument<'_>,
     index: usize,
 ) -> Ordering {
+    #[cfg(test)]
+    tests::SORT_KEY_COMPARISONS.with(|count| count.set(count.get() + 1));
     match (&left.sort_values, &right.sort_values, index) {
         (
             BorrowedSortValues::OneStringRange(left_range),
@@ -4031,13 +4048,13 @@ fn sort_and_window_borrowed_planned_documents(
     offset: usize,
     limit: Option<usize>,
 ) -> Vec<PlannedDocument> {
-    sort_borrowed_planned_documents(&mut documents, sort_fields);
-    if offset >= documents.len() {
-        return Vec::new();
-    }
     let end = limit
         .map(|limit| offset.saturating_add(limit).min(documents.len()))
         .unwrap_or(documents.len());
+    sort_borrowed_planned_documents(&mut documents, sort_fields, end);
+    if offset >= documents.len() {
+        return Vec::new();
+    }
     documents
         .drain(offset..end)
         .map(|document| PlannedDocument {
@@ -4054,13 +4071,13 @@ fn sort_and_window_borrowed_query_documents<'a>(
     offset: usize,
     limit: Option<usize>,
 ) -> Vec<BorrowedPlannedDocument<'a>> {
-    sort_borrowed_planned_documents(&mut documents, sort_fields);
-    if offset >= documents.len() {
-        return Vec::new();
-    }
     let end = limit
         .map(|limit| offset.saturating_add(limit).min(documents.len()))
         .unwrap_or(documents.len());
+    sort_borrowed_planned_documents(&mut documents, sort_fields, end);
+    if offset >= documents.len() {
+        return Vec::new();
+    }
     documents.drain(offset..end).collect()
 }
 
