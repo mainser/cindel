@@ -10,6 +10,7 @@ import '../cindel_error.dart';
 import '../migration.dart';
 import '../schema.dart';
 import '../sync.dart';
+import '../watch_coordinator.dart';
 import 'native_document_reader.dart';
 import 'schema_manifest.dart';
 import 'wire.dart';
@@ -262,7 +263,20 @@ class CindelDatabase {
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   final CindelWebWorkerBridge _bridge;
   final _CindelWebSyncSession? _syncSession;
-  final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
+  late final _watchCoordinator = CindelWatchCoordinator<CindelChangeSet>(
+    readRevision: _collectionRevision,
+    shouldPoll: () => !_closed && _activeTransaction == null,
+    revisionOf: (change) => change.revision,
+    mergeChanges: (left, right) {
+      if (left.isExternal || right.isExternal) {
+        return CindelChangeSet.external(left.collection);
+      }
+      return (_CindelChangeSetBuilder(left.collection)
+            ..add(left)
+            ..add(right))
+          .build();
+    },
+  );
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   bool _closed = false;
   Future<void>? _closeFuture;
@@ -395,11 +409,7 @@ class CindelDatabase {
     // Stop timers and disregard in-flight poll results before awaiting Worker
     // rollback. Streams finish only after rollback, without exposing retirement
     // as a watcher error while the transport acknowledgement is pending.
-    for (final watchers in _watchersByCollection.values) {
-      for (final watcher in watchers) {
-        watcher.stopPolling();
-      }
-    }
+    _watchCoordinator.stop();
     try {
       // This request follows operations already admitted by the bridge. The
       // Worker owns the actual transaction state: a queued commit may already
@@ -1521,25 +1531,14 @@ class CindelDatabase {
     required Future<T> Function(CindelChangeSet? change) readSnapshot,
     required bool Function(T left, T right)? areSnapshotsEqual,
   }) {
-    late final _CindelWatcher<T> watcher;
-    watcher = _CindelWatcher<T>(
+    return _watchCoordinator.watch<T>(
+      collection,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-      shouldPoll: () => _activeTransaction == null,
-      readRevision: () => _collectionRevision(collection),
       shouldReadChange: shouldReadChange,
       readSnapshot: readSnapshot,
       areSnapshotsEqual: areSnapshotsEqual,
-      onListen: () => _registerWatcher(collection, watcher),
-      onCancel: () => _unregisterWatcher(collection, watcher),
     );
-    return watcher.stream;
-  }
-
-  void _registerWatcher(String collection, _RegisteredWatcher watcher) {
-    _watchersByCollection
-        .putIfAbsent(collection, () => <_RegisteredWatcher>{})
-        .add(watcher);
   }
 
   Future<int> _collectionRevision(String collection) async {
@@ -1550,13 +1549,7 @@ class CindelDatabase {
   }
 
   void _notifyWatchers(CindelChangeSet change) {
-    final watchers = _watchersByCollection[change.collection];
-    if (watchers == null) {
-      return;
-    }
-    for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
-      unawaited(watcher.poll(change: change));
-    }
+    _watchCoordinator.notify(change.collection, change);
   }
 
   Future<void> _markNativeCollectionChanged(
@@ -1573,7 +1566,7 @@ class CindelDatabase {
     }
 
     final nativeChanges = await _takeNativeChangeSets();
-    if (_watchersByCollection.isEmpty) {
+    if (_watchCoordinator.isEmpty) {
       return;
     }
     final localChange = localChangeFactory();
@@ -1598,7 +1591,7 @@ class CindelDatabase {
   }
 
   bool _hasWatchers(String collection) {
-    return _watchersByCollection[collection]?.isNotEmpty ?? false;
+    return _watchCoordinator.hasWatchers(collection);
   }
 
   Future<List<WireChangeSet>> _takeNativeChangeSets() async {
@@ -1681,25 +1674,7 @@ class CindelDatabase {
     _notifyWatchers(change);
   }
 
-  void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
-    final watchers = _watchersByCollection[collection];
-    if (watchers == null) {
-      return;
-    }
-    watchers.remove(watcher);
-    if (watchers.isEmpty) {
-      _watchersByCollection.remove(collection);
-    }
-  }
-
-  Future<void> _closeWatchers() async {
-    final watchers = [
-      for (final collectionWatchers in _watchersByCollection.values)
-        ...collectionWatchers,
-    ];
-    _watchersByCollection.clear();
-    await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
-  }
+  Future<void> _closeWatchers() => _watchCoordinator.close();
 
   Future<void> _sendVoid(String operation, Map<String, Object?> payload) async {
     _checkOpen();
@@ -1768,160 +1743,6 @@ final class _CindelChangeSetBuilder {
       isExternal: false,
       revision: _revision,
     );
-  }
-}
-
-abstract interface class _RegisteredWatcher {
-  Future<void> poll({bool force, CindelChangeSet? change});
-
-  void stopPolling();
-
-  Future<void> close();
-}
-
-final class _CindelWatcher<T> implements _RegisteredWatcher {
-  _CindelWatcher({
-    required Duration pollInterval,
-    required bool fireImmediately,
-    required bool Function() shouldPoll,
-    required Future<int> Function() readRevision,
-    required bool Function(CindelChangeSet change) shouldReadChange,
-    required Future<T> Function(CindelChangeSet? change) readSnapshot,
-    required bool Function(T left, T right)? areSnapshotsEqual,
-    required void Function() onListen,
-    required void Function() onCancel,
-  }) : _pollInterval = pollInterval,
-       _fireImmediately = fireImmediately,
-       _shouldPoll = shouldPoll,
-       _readRevision = readRevision,
-       _shouldReadChange = shouldReadChange,
-       _readSnapshot = readSnapshot,
-       _areSnapshotsEqual = areSnapshotsEqual,
-       _onListen = onListen,
-       _onCancel = onCancel {
-    _controller = StreamController<T>(
-      onListen: () {
-        _onListen();
-        if (_fireImmediately) {
-          unawaited(poll(force: true));
-        } else {
-          unawaited(_prime());
-        }
-        _timer = Timer.periodic(_pollInterval, (_) => unawaited(poll()));
-      },
-      onCancel: () {
-        _timer?.cancel();
-        _onCancel();
-      },
-    );
-  }
-
-  final Duration _pollInterval;
-  final bool _fireImmediately;
-  final bool Function() _shouldPoll;
-  final Future<int> Function() _readRevision;
-  final bool Function(CindelChangeSet change) _shouldReadChange;
-  final Future<T> Function(CindelChangeSet? change) _readSnapshot;
-  final bool Function(T left, T right)? _areSnapshotsEqual;
-  final void Function() _onListen;
-  final void Function() _onCancel;
-
-  late final StreamController<T> _controller;
-  Timer? _timer;
-  int? _lastRevision;
-  bool _hasLastSnapshot = false;
-  T? _lastSnapshot;
-  bool _isPolling = false;
-  bool _stopped = false;
-  bool _needsPoll = false;
-  bool _pendingForce = false;
-  CindelChangeSet? _pendingChange;
-
-  Stream<T> get stream => _controller.stream;
-
-  Future<void> _prime() async {
-    if (_stopped || _isPolling || _controller.isClosed) {
-      return;
-    }
-    _isPolling = true;
-    try {
-      _lastRevision = await _readRevision();
-      if (_stopped) return;
-      _lastSnapshot = await _readSnapshot(null);
-      _hasLastSnapshot = true;
-    } catch (error, stackTrace) {
-      if (!_stopped && !_controller.isClosed) {
-        _controller.addError(error, stackTrace);
-      }
-    } finally {
-      _isPolling = false;
-    }
-  }
-
-  Future<void> poll({bool force = false, CindelChangeSet? change}) async {
-    if (_stopped) return;
-    if (_isPolling || _controller.isClosed) {
-      if (!_controller.isClosed) {
-        _needsPoll = true;
-        _pendingForce = _pendingForce || force;
-        _pendingChange ??= change;
-      }
-      return;
-    }
-    if (!force && !_shouldPoll()) {
-      return;
-    }
-    _isPolling = true;
-    try {
-      final revision = change?.revision ?? await _readRevision();
-      if (_stopped) return;
-      if (!force && change != null && !_shouldReadChange(change)) {
-        _lastRevision = revision;
-        return;
-      }
-      if (!force && change == null && revision == _lastRevision) {
-        return;
-      }
-      _lastRevision = revision;
-      final snapshot = await _readSnapshot(change);
-      final areSnapshotsEqual = _areSnapshotsEqual;
-      if (!force && _hasLastSnapshot && areSnapshotsEqual != null) {
-        final lastSnapshot = _lastSnapshot as T;
-        if (areSnapshotsEqual(lastSnapshot, snapshot)) {
-          _lastSnapshot = snapshot;
-          return;
-        }
-      }
-      _lastSnapshot = snapshot;
-      _hasLastSnapshot = true;
-      if (!_stopped && !_controller.isClosed) {
-        _controller.add(snapshot);
-      }
-    } catch (error, stackTrace) {
-      if (!_stopped && !_controller.isClosed) {
-        _controller.addError(error, stackTrace);
-      }
-    } finally {
-      _isPolling = false;
-      if (_needsPoll && !_stopped && !_controller.isClosed) {
-        final pendingForce = _pendingForce;
-        final pendingChange = _pendingChange;
-        _needsPoll = false;
-        _pendingForce = false;
-        _pendingChange = null;
-        unawaited(poll(force: pendingForce, change: pendingChange));
-      }
-    }
-  }
-
-  void stopPolling() {
-    _stopped = true;
-    _timer?.cancel();
-  }
-
-  Future<void> close() async {
-    stopPolling();
-    await _controller.close();
   }
 }
 

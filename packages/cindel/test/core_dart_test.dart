@@ -1,3 +1,4 @@
+import 'watch_coordinator_suite.dart' as watcher_coordinator;
 import 'binary_document_suite.dart' as binary_document;
 import 'cindel_error_suite.dart' as cindel_error;
 import 'database_change_set_suite.dart' as database_change_set;
@@ -12,6 +13,7 @@ import 'text_suite.dart' as text;
 import 'wire_codec_suite.dart' as wire_codec;
 
 void main() {
+  watcher_coordinator.main();
   binary_document.main();
   cindel_error.main();
   database_change_set.main();

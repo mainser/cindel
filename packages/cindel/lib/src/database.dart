@@ -12,6 +12,7 @@ import 'native/bindings.dart';
 import 'native/wire.dart';
 import 'schema.dart';
 import 'sync.dart';
+import 'watch_coordinator.dart';
 
 part 'database/native_query_plan.dart';
 part 'database/document_codecs.dart';
@@ -142,7 +143,21 @@ class CindelDatabase {
   final CindelNativeBindings _bindings;
   final Map<String, CindelCollectionSchema<dynamic>> _schemas;
   bool _schemasWereRegisteredOnOpen;
-  final Map<String, Set<_RegisteredWatcher>> _watchersByCollection = {};
+  late final _watchCoordinator = CindelWatchCoordinator<CindelChangeSet>(
+    readRevision: (collection) =>
+        _bindings.collectionRevision(_checkOpen(), collection),
+    shouldPoll: () => _handle != null && _activeTransaction == null,
+    revisionOf: (change) => change.revision,
+    mergeChanges: (left, right) {
+      if (left.isExternal || right.isExternal) {
+        return CindelChangeSet.external(left.collection);
+      }
+      return (_CindelChangeSetBuilder(left.collection)
+            ..add(left)
+            ..add(right))
+          .build();
+    },
+  );
   final Map<String, _CindelChangeSetBuilder> _changesInTransaction = {};
   final _CindelSyncSession? _syncSession;
   Pointer<Void>? _handle;
@@ -360,6 +375,7 @@ class CindelDatabase {
     // Teardown owns the pointer from here. Public calls and resumed transaction
     // callbacks must no longer obtain it, even while watcher completion waits.
     _handle = null;
+    _watchCoordinator.stop();
     try {
       if (_activeTransaction != null) {
         _bindings.rollbackTransaction(handle);
@@ -2277,31 +2293,14 @@ class CindelDatabase {
     required Future<T> Function(CindelChangeSet? change) readSnapshot,
     bool Function(T left, T right)? areSnapshotsEqual,
   }) {
-    late final _CindelWatcher<T> watcher;
-    watcher = _CindelWatcher<T>(
+    return _watchCoordinator.watch<T>(
+      collection,
       pollInterval: pollInterval,
       fireImmediately: fireImmediately,
-      shouldPoll: () => _activeTransaction == null,
-      readRevision: () {
-        final handle = _handle;
-        if (handle == null) {
-          throw CindelDatabaseClosedError();
-        }
-        return _bindings.collectionRevision(handle, collection);
-      },
       shouldReadChange: shouldReadChange,
       readSnapshot: readSnapshot,
       areSnapshotsEqual: areSnapshotsEqual,
-      onListen: () => _registerWatcher(collection, watcher),
-      onCancel: () => _unregisterWatcher(collection, watcher),
     );
-    return watcher.stream;
-  }
-
-  void _registerWatcher(String collection, _RegisteredWatcher watcher) {
-    _watchersByCollection
-        .putIfAbsent(collection, () => <_RegisteredWatcher>{})
-        .add(watcher);
   }
 
   /// Watches raw collection change metadata.
@@ -2329,13 +2328,7 @@ class CindelDatabase {
   }
 
   void _notifyWatchers(CindelChangeSet change) {
-    final watchers = _watchersByCollection[change.collection];
-    if (watchers == null) {
-      return;
-    }
-    for (final watcher in List<_RegisteredWatcher>.of(watchers)) {
-      unawaited(watcher.poll(change: change));
-    }
+    _watchCoordinator.notify(change.collection, change);
   }
 
   void _markNativeCollectionChanged(
@@ -2356,7 +2349,7 @@ class CindelDatabase {
     }
 
     final handle = _checkOpen();
-    if (_watchersByCollection.isEmpty) {
+    if (_watchCoordinator.isEmpty) {
       _bindings.discardChanges(handle);
       return;
     }
@@ -2373,7 +2366,7 @@ class CindelDatabase {
     Pointer<Void> handle,
     Map<String, CindelChangeSet> localChanges,
   ) {
-    if (_watchersByCollection.isEmpty) {
+    if (_watchCoordinator.isEmpty) {
       _bindings.discardChanges(handle);
       return const [];
     }
@@ -2381,7 +2374,7 @@ class CindelDatabase {
   }
 
   bool _hasWatchers(String collection) {
-    return _watchersByCollection[collection]?.isNotEmpty ?? false;
+    return _watchCoordinator.hasWatchers(collection);
   }
 
   List<WireChangeSet> _takeNativeChangeSets(Pointer<Void> handle) {
@@ -2455,25 +2448,7 @@ class CindelDatabase {
     _notifyWatchers(change);
   }
 
-  void _unregisterWatcher(String collection, _RegisteredWatcher watcher) {
-    final watchers = _watchersByCollection[collection];
-    if (watchers == null) {
-      return;
-    }
-    watchers.remove(watcher);
-    if (watchers.isEmpty) {
-      _watchersByCollection.remove(collection);
-    }
-  }
-
-  Future<void> _closeWatchers() async {
-    final watchers = [
-      for (final collectionWatchers in _watchersByCollection.values)
-        ...collectionWatchers,
-    ];
-    _watchersByCollection.clear();
-    await Future.wait<void>([for (final watcher in watchers) watcher.close()]);
-  }
+  Future<void> _closeWatchers() => _watchCoordinator.close();
 }
 
 // Internal sidecar that owns scheduling and adapter calls for one open
