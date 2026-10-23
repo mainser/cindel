@@ -11,6 +11,85 @@ thread_local! {
 }
 
 #[test]
+fn query_plan_ids_do_not_copy_document_payloads() {
+    let directory = TemporaryDirectory::new("query_ids_memory");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let name = "x".repeat(32 * 1024);
+    storage.begin_write_transaction().unwrap();
+    for id in 1..=128 {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("group", id as i64, &name, (id % 5) as i64),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexEqual {
+            index_name: "email".into(),
+            value: WireIndexValue::String("group".into()),
+            dedupe: true,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(0)),
+            upper: Some(WireIndexValue::Int(4)),
+            dedupe: true,
+        },
+    ] {
+        for sorts in [
+            vec![],
+            vec![crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending: true,
+            }],
+            vec![crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending: false,
+            }],
+            vec![
+                crate::wire::WireQuerySort {
+                    field: "score".into(),
+                    ascending: true,
+                },
+                crate::wire::WireQuerySort {
+                    field: "id".into(),
+                    ascending: false,
+                },
+            ],
+        ] {
+            for limit in [None, Some(64)] {
+                let plan = WireQueryPlan {
+                    source: source.clone(),
+                    filter: None,
+                    sorts: sorts.clone(),
+                    distinct_fields: vec![],
+                    offset: 3,
+                    limit,
+                };
+                let expected = storage
+                    .execute_query_plan("users", &plan)
+                    .unwrap()
+                    .into_iter()
+                    .map(|document| document.id)
+                    .collect::<Vec<_>>();
+                let peak = crate::storage::test_allocations::peak_bytes(|| {
+                    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+                });
+                // Allow cursor/schema setup and sorted candidate metadata, but not
+                // the 2-4 MiB of document payloads retained by materialization.
+                assert!(peak < 256 * 1024, "{plan:?}: {peak} Rust heap bytes");
+            }
+        }
+    }
+}
+
+#[test]
 fn limited_id_scan_visits_only_the_requested_prefix_in_both_directions() {
     let directory = TemporaryDirectory::new("direct_id_scan");
     let mut storage = MdbxStorage::open(directory.path()).unwrap();
@@ -485,6 +564,7 @@ fn partial_selection_matches_full_order_for_sources_filters_and_windows() {
             ),
         ] {
             for sorts in [
+                vec![],
                 vec![sort("id", false)],
                 vec![sort("score", true), sort("id", false)],
                 vec![sort("name", false), sort("score", false), sort("id", true)],
@@ -499,7 +579,14 @@ fn partial_selection_matches_full_order_for_sources_filters_and_windows() {
                     offset: 0,
                     limit: None,
                 };
-                let all = storage.query_plan_ids("users", &plan).unwrap();
+                // Keep the materialized implementation as an independent oracle
+                // now that ID queries consume the document reader directly.
+                let all = storage
+                    .execute_query_plan("users", &plan)
+                    .unwrap()
+                    .into_iter()
+                    .map(|document| document.id)
+                    .collect::<Vec<_>>();
                 for (offset, limit) in [
                     (0, None),
                     (0, Some(0)),

@@ -26,6 +26,112 @@ void main() {
     });
 
     test(
+      'returns native plan IDs for all and indexed sources without losing windows.',
+      () async {
+        for (final source in [
+          const CindelNativeAllQuerySource(),
+          const CindelNativeIndexEqualQuerySource(
+            indexName: 'id',
+            value: 'same',
+            dedupe: true,
+          ),
+          const CindelNativeIndexRangeQuerySource(
+            indexName: 'id',
+            lower: 'same',
+            upper: 'same',
+            dedupe: true,
+          ),
+        ]) {
+          for (final descending in [false, true]) {
+            final ordered = descending ? ids.reversed.toList() : ids;
+            for (final (offset, limit) in [
+              (0, null),
+              (1, 3),
+              (0, 0),
+              (20, 2),
+            ]) {
+              expect(
+                await database.queryNativePlanIds(
+                  'apiProducts',
+                  CindelNativeQueryPlan(
+                    source: source,
+                    sorts: [
+                      CindelNativeQuerySort(
+                        field: 'dbId',
+                        descending: descending,
+                      ),
+                    ],
+                    offset: offset,
+                    limit: limit,
+                  ),
+                ),
+                ordered.skip(offset).take(limit ?? ids.length),
+              );
+            }
+          }
+        }
+        expect(
+          await database.queryNativePlanIds(
+            'apiProducts',
+            const CindelNativeQueryPlan(
+              source: CindelNativeIndexEqualQuerySource(
+                indexName: 'id',
+                value: 'missing',
+              ),
+            ),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'native plan IDs preserve distinct, pending writes and snapshots.',
+      () async {
+        const plan = CindelNativeQueryPlan(
+          source: CindelNativeAllQuerySource(),
+          sorts: [CindelNativeQuerySort(field: 'dbId', descending: true)],
+          limit: 2,
+        );
+        const distinct = CindelNativeQueryPlan(
+          source: CindelNativeAllQuerySource(),
+          sorts: [CindelNativeQuerySort(field: 'dbId', descending: true)],
+          distinctFields: ['id'],
+          limit: 2,
+        );
+        Future<List<int>> read(CindelNativeQueryPlan query) =>
+            database.queryNativePlanIds('apiProducts', query);
+        expect(await read(distinct), [ids.last]);
+        await expectLater(
+          database.writeTxn<void>(() async {
+            await database.apiProducts.delete(ids.last);
+            await database.apiProducts.put(
+              ApiProduct()
+                ..dbId = 4
+                ..id = 'other'
+                ..name = 'Name 4',
+            );
+            expect(await read(plan), [ids[5], 65536]);
+            expect(await read(distinct), [ids[5], 4]);
+            throw StateError('rollback');
+          }),
+          throwsStateError,
+        );
+        expect(await read(plan), [ids.last, ids[5]]);
+        expect(await read(distinct), [ids.last]);
+        final other = await _open(directory);
+        addTearDown(other.close);
+        await database.readTxn(() async {
+          await other.apiProducts.delete(ids.last);
+          expect(await read(plan), [ids.last, ids[5]]);
+          expect(await read(distinct), [ids.last]);
+        });
+        expect(await read(plan), [ids[5], 65536]);
+        expect(await read(distinct), [ids[5]]);
+      },
+    );
+
+    test(
       'reads sparse 64-bit IDs and projections in both directions.',
       () async {
         for (final ascending in [true, false]) {

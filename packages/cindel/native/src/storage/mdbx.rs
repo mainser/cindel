@@ -2654,6 +2654,17 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
+        if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+            let mut ids = Vec::new();
+            while reader.next()? {
+                ids.push(
+                    reader
+                        .document_id(0)?
+                        .ok_or_else(|| "query ID reader yielded no document id".to_string())?,
+                );
+            }
+            return Ok(ids);
+        }
         Ok(self
             .execute_query_plan(collection, plan)?
             .into_iter()

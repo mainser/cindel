@@ -5,6 +5,8 @@ mod mdbx;
 mod mdbx_key;
 mod metadata;
 mod sqlite;
+#[cfg(test)]
+mod test_allocations;
 
 use serde::{Deserialize, Serialize};
 
