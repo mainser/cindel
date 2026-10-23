@@ -21,7 +21,44 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    35
+    36
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_backup_command(
+    handle: *mut CindelEngine,
+    input: *const u8,
+    length: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out.is_null() || out_len.is_null() {
+        return -1;
+    }
+    *out = std::ptr::null_mut();
+    *out_len = 0;
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(bytes) = read_bytes(input, length) else {
+        return -1;
+    };
+    let result = match engine.backup_command(bytes) {
+        Ok(bytes) => {
+            let mut result = vec![0];
+            result.extend(bytes);
+            result
+        }
+        Err(error) => {
+            let mut result = vec![1];
+            result.extend(error.as_bytes());
+            result
+        }
+    };
+    let (pointer, length) = into_raw_bytes(result);
+    *out = pointer;
+    *out_len = length;
+    0
 }
 
 #[no_mangle]

@@ -11,6 +11,47 @@ import 'schema_generation_fixture.dart';
 
 void main() {
   group('Cindel backup', () {
+    test(
+      'rolls back staged rows when gzip validation fails at the trailer.',
+      () async {
+        final source = await openTestDatabaseInMemory(schemas: [UserSchema]);
+        addTearDown(source.close);
+        await source.users.putAll([_user(1), _user(2), _user(3)]);
+        final output = _BytesConsumer();
+        final collections = [CindelBackupCollection<User>(UserSchema)];
+        await CindelBackup.exportDatabase(
+          database: source,
+          collections: collections,
+          output: output,
+        );
+        final bytes = output.bytes;
+        bytes[bytes.length - 8] ^= 1;
+        final target = await openTestDatabaseInMemory(schemas: [UserSchema]);
+        addTearDown(target.close);
+        await target.setMigrationVersion(9);
+        Stream<List<int>> corrupted() async* {
+          yield bytes.sublist(0, bytes.length - 8);
+          yield bytes.sublist(bytes.length - 8);
+        }
+
+        await expectLater(
+          CindelBackup.importDatabase(
+            database: target,
+            collections: collections,
+            input: corrupted(),
+            batchSize: 1,
+          ),
+          throwsA(anything),
+        );
+        expect(
+          await target.documentIdsPage(UserSchema.name, limit: 1),
+          isEmpty,
+        );
+        expect(await target.migrationVersion(), 9);
+        expect(await target.allocateId(UserSchema.name), 1);
+      },
+    );
+
     // Scenario: tooling exports a full typed database and restores it into an
     // empty database using the backend under test.
     // Covers:

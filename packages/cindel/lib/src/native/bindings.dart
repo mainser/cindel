@@ -51,6 +51,18 @@ final class CindelNativeBindings {
   /// ABI version reported by the loaded native library.
   int get abiVersion => _functions.abiVersion();
 
+  /// Internal streaming backup protocol.
+  Uint8List backupCommand(Pointer<Void> handle, Uint8List bytes) =>
+      _withNativeBytes(
+        bytes,
+        (pointer, length) => _queryBytes(
+          (out, outLength) =>
+              _functions.backupCommand(handle, pointer, length, out, outLength),
+          _functions.freeBuffer,
+          'backupCommand',
+        ),
+      );
+
   /// Opens a database handle at [directory].
   ///
   /// [backend] is forwarded to native storage. If the loaded library does not

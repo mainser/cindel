@@ -194,8 +194,8 @@ final output = File('backup.cindelbak').openWrite();
 await CindelBackup.exportDatabase(
   database: db,
   collections: [
-    CindelBackupCollection(UserSchema),
-    CindelBackupCollection(OrderSchema),
+    CindelBackupCollection<User>(UserSchema),
+    CindelBackupCollection<Order>(OrderSchema),
   ],
   output: output,
 );
@@ -207,8 +207,8 @@ Restore targets must be opened with matching schemas and must be empty:
 await CindelBackup.importDatabase(
   database: restoredDb,
   collections: [
-    CindelBackupCollection(UserSchema),
-    CindelBackupCollection(OrderSchema),
+    CindelBackupCollection<User>(UserSchema),
+    CindelBackupCollection<Order>(OrderSchema),
   ],
   input: File('backup.cindelbak').openRead(),
 );
@@ -217,6 +217,22 @@ await CindelBackup.importDatabase(
 The archive is JSONL after decompression. Native Dart uses gzip by default;
 Web-compatible code can pass `compression: CindelBackupCompression.none` and
 store or transport the same JSONL bytes.
+
+Version 2 exports documents, saved forward links, and migration metadata from
+one read snapshot; restoration reconstructs backlinks. Include every collection
+referenced by a forward link. Restore validates matching schema manifests and
+stages data in temporary disk storage (OPFS on Web), then applies documents,
+indexes, links, IDs, and migration metadata in one transaction. Failed imports
+leave the target unchanged. Temporary storage is released on completion, error,
+or handle closure. A process crash can leave an unused temporary file; target
+recovery follows the storage engine's transaction durability.
+
+Import batches are capped by record count and a 1 MiB JSON budget, with a 16 MiB
+default limit per JSONL record (`maxRecordBytes` can raise it for larger
+documents). Export hydrates one document at a time and pages link IDs. These bounds cover backup buffers, not the engine's database/page cache or
+bytes retained by the caller's stream consumer. Version 1 archives contain no
+relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
+that loss explicitly. Backups require ABI 36 binaries.
 
 Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
 of ids without materializing the whole collection:

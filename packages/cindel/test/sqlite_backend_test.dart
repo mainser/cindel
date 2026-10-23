@@ -1,3 +1,4 @@
+import 'backup_contract_suite.dart' as backup_contract;
 import 'package:cindel/cindel.dart';
 
 import 'backup_suite.dart' as backup;
@@ -22,6 +23,7 @@ void main() {
   configureTestStorageBackend(CindelStorageBackend.sqlite);
 
   backup.main();
+  backup_contract.main();
   bulk_ids.main();
   close.main();
   count.main();

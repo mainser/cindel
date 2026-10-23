@@ -9,9 +9,131 @@ use crate::wire::WireQueryPlan;
 
 pub struct CindelEngine {
     storage: StorageBackend,
+    backup: Option<crate::backup::BackupSpool>,
 }
 
 impl CindelEngine {
+    pub(crate) fn backup_command(&mut self, request: &[u8]) -> Result<Vec<u8>, String> {
+        use crate::backup::{field, integer, string, BackupSpool};
+        use crate::wire::{decode_field_updates, encode_id_list, WireValue};
+        if request.len() < 4 {
+            return Err("invalid backup request".into());
+        }
+        let length = u32::from_le_bytes(request[..4].try_into().unwrap()) as usize;
+        let end = 4usize
+            .checked_add(length)
+            .filter(|n| *n <= request.len())
+            .ok_or("invalid backup request length")?;
+        let fields = decode_field_updates(&request[4..end])?;
+        let text = |name| string(field(&fields, name)?);
+        let number = |name| integer(field(&fields, name)?);
+        let op = text("op")?;
+        if op == "links" {
+            let link = LinkSave {
+                source_collection: text("collection")?.into(),
+                source_id: number("id")?,
+                link_name: text("name")?.into(),
+                target_collection: text("target")?.into(),
+                target_ids: vec![],
+            };
+            let after = match field(&fields, "after")? {
+                WireValue::Null => None,
+                v => Some(integer(v)?),
+            };
+            let limit =
+                usize::try_from(number("limit")?).map_err(|_| "invalid backup page limit")?;
+            if limit == 0 || limit > 100_000 {
+                return Err("invalid backup page limit".into());
+            }
+            let ids = match &self.storage {
+                StorageBackend::Sqlite(s) => s.backup_link_ids(&link, after, limit)?,
+                #[cfg(feature = "mdbx")]
+                StorageBackend::Mdbx(s) => s.backup_link_ids(&link, after, limit)?,
+            };
+            return encode_id_list(&ids);
+        }
+        // Aborting only releases the private spool, even if unrelated code has
+        // opened a destination transaction while the input stream was awaited.
+        if op == "abort" {
+            self.backup.take();
+            return Ok(vec![]);
+        }
+        match &self.storage {
+            StorageBackend::Sqlite(s) => s.backup_check_idle()?,
+            #[cfg(feature = "mdbx")]
+            StorageBackend::Mdbx(s) => s.backup_check_idle()?,
+        }
+        match op {
+            "begin" => {
+                if self.backup.is_some() {
+                    return Err("a restore is already active".into());
+                }
+                let WireValue::List(names) = field(&fields, "collections")? else {
+                    return Err("invalid backup collections".into());
+                };
+                let mut collections = Vec::new();
+                for value in names {
+                    let name = string(value)?;
+                    if !self.storage.document_ids_page(name, None, 1)?.is_empty() {
+                        return Err(format!("Restore target `{name}` must be empty."));
+                    }
+                    collections.push((name.into(), self.storage.schema_version(name)?));
+                }
+                self.backup = Some(BackupSpool::open(
+                    text("token")?,
+                    collections,
+                    self.storage.migration_version()?.unwrap_or(0),
+                )?);
+            }
+            "documents" => {
+                self.backup.as_mut().ok_or("no active restore")?.stage(
+                    text("collection")?,
+                    number("native")? != 0,
+                    &request[end..],
+                )?;
+            }
+            "edges" => {
+                let WireValue::List(rows) = field(&fields, "rows")? else {
+                    return Err("invalid backup edges".into());
+                };
+                let mut links = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let WireValue::List(v) = row else {
+                        return Err("invalid backup edge".into());
+                    };
+                    if v.len() != 6 {
+                        return Err("invalid backup edge length".into());
+                    }
+                    links.push((
+                        LinkSave {
+                            source_collection: string(&v[0])?.into(),
+                            source_id: integer(&v[1])?,
+                            link_name: string(&v[2])?.into(),
+                            target_collection: string(&v[3])?.into(),
+                            target_ids: vec![integer(&v[4])?],
+                        },
+                        integer(&v[5])? != 0,
+                    ));
+                }
+                self.backup
+                    .as_ref()
+                    .ok_or("no active restore")?
+                    .stage_edges(&links)?;
+            }
+            "commit" => {
+                let spool = self.backup.take().ok_or("no active restore")?;
+                let version = number("version")?;
+                match &mut self.storage {
+                    StorageBackend::Sqlite(s) => s.restore_backup(&spool, version)?,
+                    #[cfg(feature = "mdbx")]
+                    StorageBackend::Mdbx(s) => s.restore_backup(&spool, version)?,
+                }
+            }
+            _ => return Err("unknown backup operation".into()),
+        }
+        Ok(vec![])
+    }
+
     pub fn open(directory: &str) -> Result<Self, String> {
         #[cfg(feature = "mdbx")]
         {
@@ -26,6 +148,7 @@ impl CindelEngine {
     pub fn open_with_backend(directory: &str, backend: StorageBackendKind) -> Result<Self, String> {
         Ok(Self {
             storage: StorageBackend::open(backend, directory)?,
+            backup: None,
         })
     }
 
@@ -36,6 +159,7 @@ impl CindelEngine {
     ) -> Result<Self, String> {
         Ok(Self {
             storage: StorageBackend::open_with_schemas(backend, directory, manifest)?,
+            backup: None,
         })
     }
 
@@ -45,6 +169,7 @@ impl CindelEngine {
     ) -> Result<Self, String> {
         Ok(Self {
             storage: StorageBackend::open_sqlite_with_persisted_schemas(directory, manifest)?,
+            backup: None,
         })
     }
 

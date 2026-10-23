@@ -2,6 +2,7 @@
 compile_error!("The `web` feature must be built without the default `mdbx` feature.");
 
 mod document_format;
+mod backup;
 mod engine;
 mod ffi;
 #[cfg(feature = "mdbx")]

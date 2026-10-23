@@ -28,6 +28,22 @@ pub struct CindelWebEngine {
 
 #[wasm_bindgen]
 impl CindelWebEngine {
+    #[wasm_bindgen(js_name = backupCommand)]
+    pub fn backup_command(&mut self, bytes: &[u8]) -> Vec<u8> {
+        match self.inner.backup_command(bytes) {
+            Ok(bytes) => {
+                let mut result = vec![0];
+                result.extend(bytes);
+                result
+            }
+            Err(error) => {
+                let mut result = vec![1];
+                result.extend(error.as_bytes());
+                result
+            }
+        }
+    }
+
     #[wasm_bindgen(js_name = openWithSchemas)]
     pub async fn open_with_schemas(
         db_name: String,

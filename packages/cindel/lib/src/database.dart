@@ -65,6 +65,18 @@ const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 /// collection helpers, and the native storage engine. Generated paths use
 /// binary document serializers and native query plans for lower overhead.
 class CindelDatabase {
+  /// Internal bounded backup protocol.
+  Future<Uint8List> backupCommand(Uint8List bytes) async {
+    return _bindings.backupCommand(_checkOpen(), bytes);
+  }
+
+  /// Publishes one collection-level notification after an atomic restore.
+  Future<void> backupRestored(Iterable<String> collections) async {
+    for (final name in collections) {
+      _markNativeCollectionChanged(name, () => CindelChangeSet.external(name));
+    }
+  }
+
   CindelDatabase._({
     required this.directory,
     required CindelNativeBindings bindings,

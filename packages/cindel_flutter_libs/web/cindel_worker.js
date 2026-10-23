@@ -160,6 +160,9 @@ async function execute(message) {
       case 'allocateId':
         response(message.requestId, requireEngine().allocateId(payload.collection));
         return;
+      case 'backupCommand':
+        response(message.requestId, requireEngine().backupCommand(bytes(payload.bytes)));
+        return;
       case 'allocateIds':
         response(
           message.requestId,

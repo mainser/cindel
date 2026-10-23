@@ -1,3 +1,5 @@
+#[path = "sqlite_backup.rs"]
+mod backup;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fmt::Write as _;

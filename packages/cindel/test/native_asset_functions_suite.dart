@@ -117,6 +117,7 @@ String? _expectedLibraryName() {
 
 const _nativeAssetFunctionMembers = [
   'abiVersion',
+  'backupCommand',
   'open',
   'openWithBackend',
   'openWithBackendAndSchemas',

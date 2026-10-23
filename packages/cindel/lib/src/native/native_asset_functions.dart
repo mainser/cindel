@@ -11,6 +11,16 @@ final class _NativeAssetCindelNativeFunctions
     implements _CindelNativeFunctions {
   const _NativeAssetCindelNativeFunctions();
 
+  @override
+  int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  get backupCommand => _cindelBackupCommand;
+
   // ABI/version and database open symbols.
   @override
   int Function() get abiVersion => _cindelAbiVersion;
@@ -2074,3 +2084,20 @@ external int _cindelQueryPlanUpdate(
   assetId: _assetId,
 )
 external void _cindelFreeBuffer(Pointer<Uint8> pointer, int length);
+
+@Native<
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+>(symbol: 'cindel_backup_command', assetId: _assetId)
+external int _cindelBackupCommand(
+  Pointer<Void> handle,
+  Pointer<Uint8> input,
+  int length,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Size> outLength,
+);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.3
+
+- Added consistent backups with links/backlinks and atomic, disk-staged restores for MDBX and SQLite native/Web, with regression and memory checks.
+- Versioned backup schema validation and native ABI 36.
+
 ## 1.1.2
 
 - Optimized limited MDBX integer-index ranges ordered ascending by field and ID, stopping when the result window is complete.
@@ -14,7 +19,7 @@
 - Fixed auto-increment ID collisions in MDBX and SQLite native/Web.
 - Fixed MDBX `readTxn` isolation, 64-bit integer filtering/sorting, and `distinct` collisions.
 - Fixed reading empty string lists written by MDBX `putAll`.
-- Added regression tests and bumped the native ABI to 35 (requires matching binaries).
+- Added regression tests and bumped the native ABI to 35.
 
 ## 1.1.1
 

@@ -184,6 +184,20 @@ enum _TransactionMode { read, write }
 /// every storage operation is serialized through a browser Worker that owns the
 /// SQLite/Wasm engine. MDBX remains a native backend only.
 class CindelDatabase {
+  /// Internal bounded backup protocol.
+  Future<Uint8List> backupCommand(Uint8List bytes) =>
+      _sendBytes('backupCommand', {'bytes': bytes});
+
+  /// Publishes one collection-level notification after an atomic restore.
+  Future<void> backupRestored(Iterable<String> collections) async {
+    for (final name in collections) {
+      await _markNativeCollectionChanged(
+        name,
+        () => CindelChangeSet.external(name),
+      );
+    }
+  }
+
   CindelDatabase._({
     required this.directory,
     required Map<String, CindelCollectionSchema<dynamic>> schemas,

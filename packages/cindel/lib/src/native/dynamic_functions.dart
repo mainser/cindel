@@ -11,7 +11,24 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   // Stable ABI symbols are resolved eagerly so startup fails early when the
   // loaded library does not match the Dart binding surface.
   _DynamicCindelNativeFunctions(DynamicLibrary library)
-    : abiVersion = library.lookupFunction<Uint32 Function(), int Function()>(
+    : backupCommand = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              Pointer<Pointer<Uint8>>,
+              Pointer<Size>,
+            )
+          >('cindel_backup_command'),
+      abiVersion = library.lookupFunction<Uint32 Function(), int Function()>(
         'cindel_abi_version',
         isLeaf: true,
       ),
@@ -1815,4 +1832,14 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   // Releases native-owned result buffers returned through pointer/length pairs.
   @override
   final void Function(Pointer<Uint8>, int) freeBuffer;
+
+  @override
+  final int Function(
+    Pointer<Void>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Pointer<Uint8>>,
+    Pointer<Size>,
+  )
+  backupCommand;
 }
