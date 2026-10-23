@@ -6,6 +6,130 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 #[test]
+fn counts_query_windows_with_stats_and_unsorted_filtered_readers() {
+    let directory = TemporaryDirectory::new("count_windows");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let mut plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: vec![crate::wire::WireQuerySort {
+            field: "name".into(),
+            ascending: false,
+        }],
+        distinct_fields: Vec::new(),
+        offset: 0,
+        limit: None,
+    };
+    assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 0);
+    storage.begin_write_transaction().unwrap();
+    for id in 1..=40 {
+        storage
+            .put(
+                "users",
+                id,
+                &user_document(
+                    &format!("{id}@test"),
+                    id as i64,
+                    &format!("Name {}", 41 - id),
+                    id as i64,
+                ),
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(5)),
+            upper: Some(WireIndexValue::Int(30)),
+            dedupe: true,
+        },
+    ] {
+        plan.source = source;
+        for filter in [
+            None,
+            Some(
+                crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                    field: "score".into(),
+                    operation: crate::wire::WireFilterOperation::GreaterThan,
+                    value: WireValue::Int(10),
+                })
+                .unwrap(),
+            ),
+        ] {
+            plan.filter = filter;
+            for offset in [0, 5, 50, u32::MAX] {
+                for limit in [None, Some(0), Some(1), Some(7), Some(u32::MAX)] {
+                    plan.offset = offset;
+                    plan.limit = limit;
+                    assert_eq!(
+                        storage.query_plan_count("users", &plan).unwrap(),
+                        storage.query_plan_ids("users", &plan).unwrap().len() as u64
+                    );
+                }
+            }
+        }
+    }
+    plan.source = WireQuerySource::All { dedupe: false };
+    plan.filter = None;
+    plan.sorts[0].field = "missing".into();
+    plan.limit = Some(0);
+    assert!(storage.query_plan_count("users", &plan).is_err());
+    assert!(storage.query_plan_count("missing", &plan).is_err());
+}
+
+#[test]
+fn count_deduplicates_index_sources_before_applying_the_window() {
+    let directory = TemporaryDirectory::new("count_index_dedupe");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    storage
+        .put("users", 1, &user_document("a@test", 1, "A", 10))
+        .unwrap();
+    storage
+        .put("users", 2, &user_document("b@test", 2, "B", 30))
+        .unwrap();
+    storage
+        .with_write_transaction(|transaction, _| {
+            let table = create_index_table(transaction, "users", "score")?;
+            for (score, id) in [(20, 1), (25, 404)] {
+                transaction
+                    .put(
+                        &table,
+                        index_value_key(&IndexValue::Int(score))?,
+                        document_id_key(id),
+                        WriteFlags::empty(),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let mut plan = WireQueryPlan {
+        source: WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(0)),
+            upper: None,
+            dedupe: true,
+        },
+        filter: None,
+        sorts: vec![crate::wire::WireQuerySort {
+            field: "name".into(),
+            ascending: false,
+        }],
+        distinct_fields: Vec::new(),
+        offset: 0,
+        limit: None,
+    };
+    assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 2);
+    plan.offset = 1;
+    plan.limit = Some(5);
+    assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 1);
+}
+
+#[test]
 fn overlapping_id_ranges_preserve_committed_high_water_marks() {
     for reverse_commit in [false, true] {
         let directory = TemporaryDirectory::new("overlapping_id_ranges");

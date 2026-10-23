@@ -2,6 +2,7 @@
 
 ## 1.1.2
 
+- Optimized non-distinct object counts in MDBX and SQLite native/Web, preserving query windows.
 - Optimized `findFirst`, including projections, to request at most one result on native and Web.
 - Optimized `putAll` with batch ID reservations in MDBX and SQLite native/Web.
 - Fixed auto-increment ID collisions in MDBX and SQLite native/Web.

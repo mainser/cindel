@@ -2650,7 +2650,33 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
-        if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+        // Preserve distinct selection and the overlay of pending writes.
+        if !plan.distinct_fields.is_empty() || self.active_write().is_some() {
+            return Ok(self.execute_query_plan(collection, plan)?.len() as u64);
+        }
+        let schema = self.required_schema(collection)?;
+        query_sort_fields(&schema, &plan.sorts)?;
+        if plan.filter.is_none() && matches!(plan.source, WireQuerySource::All { .. }) {
+            return self.with_read_transaction(|transaction, _tables| {
+                let table = match open_documents_table(transaction, collection) {
+                    Ok(table) => table,
+                    Err(_) => return Ok(0),
+                };
+                let count = transaction
+                    .table_stat(&table)
+                    .map_err(|error| error.to_string())?
+                    .entries() as u64;
+                let remaining = count.saturating_sub(u64::from(plan.offset));
+                Ok(plan
+                    .limit
+                    .map_or(remaining, |limit| remaining.min(u64::from(limit))))
+            });
+        }
+        // Only cardinality matters here; retain filters, deduplication and
+        // the window while avoiding the sorted reader's materialization.
+        let mut count_plan = plan.clone();
+        count_plan.sorts.clear();
+        if let Some(mut reader) = self.query_document_reader(collection, &count_plan)? {
             let mut count = 0_u64;
             while reader.next()? {
                 count = count
@@ -2659,7 +2685,7 @@ impl StorageEngine for MdbxStorage {
             }
             return Ok(count);
         }
-        Ok(self.execute_query_plan(collection, plan)?.len() as u64)
+        Ok(self.execute_query_plan(collection, &count_plan)?.len() as u64)
     }
 
     fn query_plan_project(

@@ -1531,7 +1531,18 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn query_plan_count(&self, collection: &str, plan: &WireQueryPlan) -> Result<u64, String> {
-        Ok(self.query_plan_ids(collection, plan)?.len() as u64)
+        if !plan.distinct_fields.is_empty() {
+            return Ok(self.query_plan_ids(collection, plan)?.len() as u64);
+        }
+        let schema = self.required_collection_schema(collection)?;
+        let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Count)?;
+        let count = self
+            .connection
+            .query_row(&sql, params_from_iter(params.iter()), |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|error| error.to_string())?;
+        u64::try_from(count).map_err(|error| error.to_string())
     }
 
     fn query_project(
@@ -1778,6 +1789,7 @@ fn sqlite_id(id: u64) -> Result<i64, String> {
 enum SqliteQuerySelect {
     Ids,
     Documents,
+    Count,
 }
 
 fn sqlite_query_plan_sql(
@@ -1790,6 +1802,7 @@ fn sqlite_query_plan_sql(
 
     let mut sql = String::new();
     match select {
+        SqliteQuerySelect::Count => sql.push_str("SELECT COUNT(*) FROM (SELECT 1"),
         SqliteQuerySelect::Ids => {
             sql.push_str("SELECT ");
             sql.push_str(SQLITE_ROW_ID_COLUMN);
@@ -1818,7 +1831,13 @@ fn sqlite_query_plan_sql(
             .collect::<Result<Vec<_>, String>>()?;
         sql.push_str(&distinct.join(", "));
     }
-    if !plan.sorts.is_empty() {
+    if matches!(select, SqliteQuerySelect::Count) {
+        // Sorting cannot change the size of a non-distinct result window,
+        // but invalid sort fields must still be rejected.
+        for sort in &plan.sorts {
+            sqlite_column_for_field(schema, &sort.field)?;
+        }
+    } else if !plan.sorts.is_empty() {
         sql.push_str(" ORDER BY ");
         for (index, sort) in plan.sorts.iter().enumerate() {
             if index > 0 {
@@ -1839,6 +1858,9 @@ fn sqlite_query_plan_sql(
         ));
     } else if let Some(limit) = plan.limit {
         sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    if matches!(select, SqliteQuerySelect::Count) {
+        sql.push(')');
     }
 
     Ok((sql, params))
@@ -5458,6 +5480,79 @@ mod tests {
 
         // Assert.
         assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn counts_native_query_windows_with_one_scalar_and_no_sort() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("native_count_windows");
+            let schema = native_user_schema();
+            let manifest = schema_manifest(vec![schema.clone()]);
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            let documents: Vec<_> = (1..=1000)
+                .map(|id| NativeDocumentWrite {
+                    id,
+                    values: vec![
+                        NativeDocumentValue::Bool(id % 2 == 0),
+                        NativeDocumentValue::Int(id as i64),
+                        NativeDocumentValue::Bytes(format!("Title {}", 1001 - id).into_bytes()),
+                    ],
+                })
+                .collect();
+            storage
+                .put_many_native_documents("users", &documents, true)
+                .unwrap();
+            let mut plan = WireQueryPlan {
+                source: WireQuerySource::All { dedupe: false },
+                filter: None,
+                sorts: vec![crate::wire::WireQuerySort {
+                    field: "title".into(),
+                    ascending: false,
+                }],
+                distinct_fields: Vec::new(),
+                offset: 10,
+                limit: Some(20),
+            };
+            let (sql, params) =
+                sqlite_query_plan_sql(&schema, &plan, SqliteQuerySelect::Count).unwrap();
+            let mut statement = storage.connection.prepare(&sql).unwrap();
+            {
+                let mut rows = statement.query(params_from_iter(params.iter())).unwrap();
+                assert_eq!(rows.next().unwrap().unwrap().get::<_, i64>(0).unwrap(), 20);
+                assert!(rows.next().unwrap().is_none());
+            }
+            // Verify SQLite did not sort the source merely to count its window.
+            assert_eq!(statement.get_status(rusqlite::StatementStatus::Sort), 0);
+            for filter in [
+                None,
+                Some(
+                    crate::wire::encode_filter(&WireFilter::Field {
+                        field: "completed".into(),
+                        operation: WireFilterOperation::Equal,
+                        value: WireValue::Bool(true),
+                    })
+                    .unwrap(),
+                ),
+            ] {
+                plan.filter = filter;
+                for offset in [0, 10, 2000, u32::MAX] {
+                    for limit in [None, Some(0), Some(1), Some(20), Some(u32::MAX)] {
+                        plan.offset = offset;
+                        plan.limit = limit;
+                        assert_eq!(
+                            storage.query_plan_count("users", &plan).unwrap(),
+                            storage.query_plan_ids("users", &plan).unwrap().len() as u64
+                        );
+                    }
+                }
+            }
+            plan.sorts[0].field = "missing".into();
+            plan.limit = Some(0);
+            assert!(storage.query_plan_count("users", &plan).is_err());
+        }
     }
 
     #[test]
