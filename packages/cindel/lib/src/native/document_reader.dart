@@ -59,6 +59,20 @@ final class _CindelNativeDocumentReader
   final bool _ownsScratch;
   bool _released = false;
 
+  void checkError() {
+    final pointer = _functions.nativeDocumentReaderError(_reader, _bytesLength);
+    if (pointer == nullptr) return;
+    final length = _bytesLength.value;
+    try {
+      throw cindelOperationError(
+        'read document',
+        utf8.decode(pointer.asTypedList(length)),
+      );
+    } finally {
+      _functions.freeBuffer(pointer, length);
+    }
+  }
+
   /// Number of documents or list items exposed by this reader.
   @override
   int get length => _functions.nativeDocumentReaderLen(_reader);
@@ -66,7 +80,12 @@ final class _CindelNativeDocumentReader
   /// Whether [documentIndex] contains a stored document.
   @override
   bool isPresent(int documentIndex) {
-    return _functions.nativeDocumentReaderIsPresent(_reader, documentIndex);
+    final present = _functions.nativeDocumentReaderIsPresent(
+      _reader,
+      documentIndex,
+    );
+    checkError();
+    return present;
   }
 
   /// Reads the external document id.
@@ -79,7 +98,8 @@ final class _CindelNativeDocumentReader
         ? _functions.nativeDocumentReaderReadCurrentIdValue(_reader)
         : _functions.nativeDocumentReaderReadIdValue(_reader, documentIndex);
     if (value == _nativeReaderNullId) {
-      throw StateError('Native Cindel document id is not available.');
+      checkError();
+      throw CindelQueryError('Native Cindel document id is not available.');
     }
     return value;
   }

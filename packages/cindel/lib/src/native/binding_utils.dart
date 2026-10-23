@@ -183,6 +183,48 @@ void _checkPageLimit(int limit) {
 // Converts C-style status codes into Dart exceptions.
 void _checkStatus(int status, String operation) {
   if (status != 0) {
-    throw StateError('Native Cindel $operation failed.');
+    throw cindelOperationError(
+      operation,
+      _takeNativeError(status) ?? 'Native operation returned status $status.',
+    );
+  }
+}
+
+// Claim the diagnostic owned by this result, independently of thread/connection.
+String? _takeNativeError(int status) => _readNativeDiagnostic(
+  (length) => CindelNativeBindings._resolvedFunctions.takeError(status, length),
+);
+
+String? _readNativeDiagnostic(Pointer<Uint8> Function(Pointer<Size>) read) {
+  final length = calloc<Size>();
+  var pointer = nullptr.cast<Uint8>();
+  try {
+    pointer = read(length);
+    if (pointer == nullptr) return null;
+    return utf8.decode(pointer.asTypedList(length.value));
+  } finally {
+    if (pointer != nullptr)
+      CindelNativeBindings._resolvedFunctions.freeBuffer(pointer, length.value);
+    calloc.free(length);
+  }
+}
+
+Pointer<Void> _checkedNativePointer(
+  Pointer<Void> Function(Pointer<Int32>) action,
+  String operation, {
+  String? backend,
+}) {
+  final status = calloc<Int32>();
+  try {
+    final pointer = action(status);
+    if (pointer != nullptr && status.value == 0) return pointer;
+    final cause =
+        _takeNativeError(status.value) ??
+        'Native operation returned no handle.';
+    if (operation == 'open')
+      throw CindelOpenError(backend: backend!, cause: cause);
+    throw cindelOperationError(operation, cause, backend: backend);
+  } finally {
+    calloc.free(status);
   }
 }

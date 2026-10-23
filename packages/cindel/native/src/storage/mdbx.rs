@@ -102,6 +102,8 @@ impl MdbxCursorDocumentReader {
     }
 
     fn load(&mut self, document_index: usize) -> Result<(), String> {
+        #[cfg(test)]
+        super::test_faults::check("document_seek")?;
         if self.current_index == Some(document_index) {
             return Ok(());
         }
@@ -163,6 +165,8 @@ pub(crate) struct MdbxQueryDocumentReader {
 
 impl MdbxQueryDocumentReader {
     pub(crate) fn next(&mut self) -> Result<bool, String> {
+        #[cfg(test)]
+        super::test_faults::check("query_next")?;
         if self.limit.is_some_and(|limit| self.emitted >= limit) {
             self.current_present = false;
             self.current_bytes = None;
@@ -2181,7 +2185,8 @@ impl StorageEngine for MdbxStorage {
             MdbxActiveTransaction::Write(staged) => match self.commit_staged_write(staged) {
                 Ok(()) => Ok(()),
                 Err(error) => {
-                    self.begin_write_transaction()?;
+                    // Recovery must not replace the original commit failure.
+                    let _ = self.begin_write_transaction();
                     Err(error)
                 }
             },

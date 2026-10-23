@@ -3,6 +3,7 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
 import 'package:web/web.dart' as web;
+import '../cindel_error.dart';
 
 /// Response returned by a Cindel Web worker request.
 ///
@@ -115,7 +116,21 @@ final class CindelWebWorkerBridge {
           _sendNow(operation: operation, payload: payload, transfer: transfer),
     );
     _queue = request.then<void>((_) {}, onError: (_) {});
-    return request;
+    return request.catchError((Object error, StackTrace stack) {
+      if (error is CindelWebWorkerException &&
+          error.code == 'operation_failed') {
+        Error.throwWithStackTrace(
+          cindelOperationError(
+            operation,
+            error,
+            backend: 'sqlite',
+            code: error.code,
+          ),
+          stack,
+        );
+      }
+      Error.throwWithStackTrace(error, stack);
+    });
   }
 
   /// Closes the bridge after requests already admitted have completed.

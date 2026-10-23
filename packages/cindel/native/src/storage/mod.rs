@@ -1,4 +1,6 @@
 #[cfg(test)]
+pub(crate) mod test_faults;
+#[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
 mod backup_tests;
@@ -83,10 +85,10 @@ impl StorageBackend {
         &self,
         collection: &str,
         ids: &[u64],
-    ) -> Result<MdbxCursorDocumentReader, String> {
+    ) -> Result<Option<MdbxCursorDocumentReader>, String> {
         match self {
-            Self::Mdbx(storage) => storage.cursor_document_reader(collection, ids),
-            Self::Sqlite(_) => Err("cursor document reader requires MDBX backend".into()),
+            Self::Mdbx(storage) => storage.cursor_document_reader(collection, ids).map(Some),
+            Self::Sqlite(_) => Ok(None),
         }
     }
 

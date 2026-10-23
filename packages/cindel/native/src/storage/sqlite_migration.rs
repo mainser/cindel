@@ -9,13 +9,13 @@ fn page_ids(
     sql: &str,
     params: impl rusqlite::Params,
 ) -> Result<Vec<u64>, String> {
-    let mut statement = connection.prepare(sql).map_err(|e| e.to_string())?;
+    let mut statement = connection.prepare(sql).map_err(sqlite_diagnostic)?;
     let ids = statement
         .query_map(params, |r| r.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
+        .map_err(sqlite_diagnostic)?
         .map(|r| {
-            r.map_err(|e| e.to_string())
-                .and_then(|v| u64::try_from(v).map_err(|e| e.to_string()))
+            r.map_err(sqlite_diagnostic)
+                .and_then(|v| u64::try_from(v).map_err(sqlite_diagnostic))
         })
         .collect::<Result<Vec<_>, _>>()?;
     #[cfg(test)]
@@ -29,26 +29,26 @@ fn page_ids(
 
 fn objects(connection: &Connection, kind: &str) -> Result<Vec<(String, String)>, String> {
     connection.prepare("SELECT name,sql FROM sqlite_schema WHERE type=?1 AND substr(name,1,7) != 'sqlite_' AND sql IS NOT NULL ORDER BY name")
-        .map_err(|e| e.to_string())?.query_map([kind], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(|e| e.to_string())?.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        .map_err(sqlite_diagnostic)?.query_map([kind], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(sqlite_diagnostic)?.collect::<Result<_, _>>().map_err(sqlite_diagnostic)
 }
 
 fn copy_tables(source: &Connection, target: &Connection) -> Result<(), String> {
     for (name, _) in objects(target, "view")? {
         target
             .execute_batch(&format!("DROP VIEW {}", quote(&name)))
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     for (name, _) in objects(target, "table")? {
         target
             .execute_batch(&format!("DROP TABLE {}", quote(&name)))
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     for (name, sql) in objects(source, "table")? {
-        target.execute_batch(&sql).map_err(|e| e.to_string())?;
+        target.execute_batch(&sql).map_err(sqlite_diagnostic)?;
         let mut read = source
             .prepare(&format!("SELECT * FROM {}", quote(&name)))
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let count = read.column_count();
         let params = std::iter::repeat("?")
             .take(count)
@@ -56,22 +56,22 @@ fn copy_tables(source: &Connection, target: &Connection) -> Result<(), String> {
             .join(",");
         let mut write = target
             .prepare(&format!("INSERT INTO {} VALUES ({params})", quote(&name)))
-            .map_err(|e| e.to_string())?;
-        let mut rows = read.query([]).map_err(|e| e.to_string())?;
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            .map_err(sqlite_diagnostic)?;
+        let mut rows = read.query([]).map_err(sqlite_diagnostic)?;
+        while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
             let values = (0..count)
                 .map(|i| row.get::<_, Value>(i))
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             write
                 .execute(params_from_iter(values.iter()))
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             super::super::migration::copied_record()?;
         }
     }
     for kind in ["index", "trigger", "view"] {
         for (_, sql) in objects(source, kind)? {
-            target.execute_batch(&sql).map_err(|e| e.to_string())?;
+            target.execute_batch(&sql).map_err(sqlite_diagnostic)?;
         }
     }
     Ok(())
@@ -119,7 +119,7 @@ impl SqliteStorage {
         stage
             .connection
             .execute_batch("PRAGMA cache_size=-1024; PRAGMA temp_store=FILE;")
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         stage.initialize(None)?;
         self.begin_read_transaction()?;
         let result = (|| {
@@ -127,10 +127,10 @@ impl SqliteStorage {
             let revision = self
                 .connection
                 .query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))
-                .map_err(|e| e.to_string())?;
-            let txn = stage.connection.transaction().map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
+            let txn = stage.connection.transaction().map_err(sqlite_diagnostic)?;
             copy_tables(&self.connection, &txn)?;
-            txn.commit().map_err(|e| e.to_string())?;
+            txn.commit().map_err(sqlite_diagnostic)?;
             stage.register_schemas(manifest)?;
             stage.collection_revisions = self.collection_revisions.clone();
             stage.relation_revisions = self.relation_revisions.clone();
@@ -164,10 +164,10 @@ impl SqliteStorage {
         let txn = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let current = txn
             .query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         if current as u64 != revision {
             return Err("migration source changed during preparation".into());
         }
@@ -177,10 +177,10 @@ impl SqliteStorage {
             let next = current
                 .checked_add(1)
                 .ok_or("migration revision overflow")?;
-            txn.execute("INSERT INTO collection_revisions VALUES (?1,?2) ON CONFLICT(collection) DO UPDATE SET revision=excluded.revision", params![name, i64::try_from(next).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
+            txn.execute("INSERT INTO collection_revisions VALUES (?1,?2) ON CONFLICT(collection) DO UPDATE SET revision=excluded.revision", params![name, i64::try_from(next).map_err(sqlite_diagnostic)?]).map_err(sqlite_diagnostic)?;
         }
         write_migration_version(&txn, version)?;
-        txn.commit().map_err(|e| e.to_string())?;
+        txn.commit().map_err(sqlite_diagnostic)?;
         self.schemas = stage.schemas.clone();
         self.collection_revisions = stage.collection_revisions.clone();
         self.relation_revisions = stage.relation_revisions.clone();

@@ -2,7 +2,7 @@
 
 ## 1.1.3
 
-- Released in lockstep with `cindel` 1.1.3 for the native ABI 38.
+- Released in lockstep with `cindel` 1.1.3 for the native ABI 39.
 
 ## 1.1.2
 

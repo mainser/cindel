@@ -280,7 +280,7 @@ impl CindelEngine {
         &self,
         collection: &str,
         ids: &[u64],
-    ) -> Result<MdbxCursorDocumentReader, String> {
+    ) -> Result<Option<MdbxCursorDocumentReader>, String> {
         self.storage.mdbx_cursor_document_reader(collection, ids)
     }
 
@@ -318,6 +318,8 @@ impl CindelEngine {
     }
 
     pub fn commit_transaction(&mut self) -> Result<(), String> {
+        #[cfg(test)]
+        crate::storage::test_faults::check("commit")?;
         self.storage.commit_transaction()
     }
 

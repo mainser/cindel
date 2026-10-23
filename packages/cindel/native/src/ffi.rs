@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[path = "ffi_error_tests.rs"]
+mod error_tests;
 use crate::document_format::{
     write_compact_string_list_records, write_list_records, write_string_value_record,
     write_value_record, BinaryValue,
@@ -18,10 +21,132 @@ use crate::wire::{
     WireIndexValue as WireBatchIndexValue,
     WireIndexedDocumentWrite as WireBatchIndexedDocumentWrite, WireQueryPlan, WireScalar,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::rc::Rc;
+use std::sync::{LazyLock, Mutex};
+
+// Negative statuses own a diagnostic token until cindel_take_error consumes it.
+// Unlike a last-error lookup across FFI calls, this remains correct when a Dart
+// isolate changes OS thread or calls another connection before decoding a result.
+static ERRORS: LazyLock<Mutex<(i32, HashMap<i32, String>)>> =
+    LazyLock::new(|| Mutex::new((-2, HashMap::new())));
+
+fn error_status() -> i32 {
+    let error = LAST_ERROR
+        .with(|slot| slot.borrow_mut().take())
+        .unwrap_or_else(|| "invalid native operation arguments or state".into());
+    let mut errors = ERRORS.lock().unwrap();
+    loop {
+        let status = errors.0;
+        errors.0 = if status == i32::MIN { -2 } else { status - 1 };
+        if !errors.1.contains_key(&status) {
+            errors.1.insert(status, error);
+            return status;
+        }
+    }
+}
+
+// Internal scratch used only within one synchronous Rust entrypoint.
+// Readers keep their own sticky error (shared with children), so hydration may
+// re-enter another connection without losing the original failure.
+thread_local! {
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+type ReaderError = Rc<RefCell<Option<String>>>;
+
+fn clear_error() {
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = None);
+}
+fn record_error(error: impl ToString) {
+    LAST_ERROR.with(|slot| {
+        slot.borrow_mut().get_or_insert_with(|| error.to_string());
+    });
+}
+trait CaptureError<T> {
+    fn capture(self) -> Option<T>;
+    fn capture_reader(self, slot: &ReaderError) -> Option<T>;
+}
+impl<T, E: std::fmt::Display> CaptureError<T> for Result<T, E> {
+    fn capture(self) -> Option<T> {
+        self.map_err(record_error).ok()
+    }
+    fn capture_reader(self, slot: &ReaderError) -> Option<T> {
+        self.map_err(|error| {
+            slot.borrow_mut().get_or_insert_with(|| error.to_string());
+        })
+        .ok()
+    }
+}
+
+// Returns an owned UTF-8 buffer, released through cindel_free_buffer. Taking a
+// diagnostic consumes it; a successful subsequent call cannot inherit it.
+#[no_mangle]
+pub unsafe extern "C" fn cindel_take_error(status: i32, out_len: *mut usize) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_len = 0;
+    match ERRORS.lock().unwrap().1.remove(&status) {
+        Some(error) => {
+            let (pointer, length) = into_raw_bytes(error.into_bytes());
+            *out_len = length;
+            pointer
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_error(
+    reader: *const CindelNativeDocumentReader,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_len = 0;
+    let Some(reader) = reader.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    match reader.error.borrow().as_ref() {
+        Some(error) => {
+            let (pointer, length) = into_raw_bytes(error.as_bytes().to_vec());
+            *out_len = length;
+            pointer
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_error(
+    writer: *const CindelNativeBatchWriter,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_len = 0;
+    let Some(writer) = writer.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    if !writer.failed {
+        return std::ptr::null_mut();
+    }
+    let error = writer
+        .error
+        .as_deref()
+        .unwrap_or("invalid native writer input");
+    let (pointer, length) = into_raw_bytes(error.as_bytes().to_vec());
+    *out_len = length;
+    pointer
+}
+
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    38
+    39
 }
 
 #[no_mangle]
@@ -30,20 +155,28 @@ pub unsafe extern "C" fn cindel_cleanup_orphan_links(
     out: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
     *out = std::ptr::null_mut();
     *out_len = 0;
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let result = match engine.cleanup_orphan_links() {
         Ok((examined, removed)) => match encode_id_list(&[examined, removed]) {
             Ok(bytes) => bytes,
-            Err(_) => return -1,
+            Err(error) => {
+                record_error(error);
+                return error_status();
+            }
         },
-        Err(_) => return -1,
+        Err(error) => {
+            record_error(error);
+            return error_status();
+        }
     };
     let (pointer, length) = into_raw_bytes(result);
     *out = pointer;
@@ -59,16 +192,19 @@ pub unsafe extern "C" fn cindel_backup_command(
     out: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
     *out = std::ptr::null_mut();
     *out_len = 0;
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(bytes) = read_bytes(input, length) else {
-        return -1;
+        record_error("invalid bytes argument");
+        return error_status();
     };
     let result = match engine.backup_command(bytes) {
         Ok(bytes) => {
@@ -88,64 +224,76 @@ pub unsafe extern "C" fn cindel_backup_command(
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_open(
-    directory_ptr: *const u8,
-    directory_len: usize,
-) -> *mut CindelEngine {
+unsafe fn cindel_open_inner(directory_ptr: *const u8, directory_len: usize) -> *mut CindelEngine {
+    clear_error();
     let Some(directory) = read_str(directory_ptr, directory_len) else {
+        record_error("invalid directory argument");
         return std::ptr::null_mut();
     };
 
     match CindelEngine::open(directory) {
         Ok(engine) => Box::into_raw(Box::new(engine)),
-        Err(_) => std::ptr::null_mut(),
+        Err(error) => {
+            record_error(error);
+            std::ptr::null_mut()
+        }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_open_with_backend(
+unsafe fn cindel_open_with_backend_inner(
     directory_ptr: *const u8,
     directory_len: usize,
     backend: u32,
 ) -> *mut CindelEngine {
+    clear_error();
     let Some(directory) = read_str(directory_ptr, directory_len) else {
+        record_error("invalid directory argument");
         return std::ptr::null_mut();
     };
     let Some(backend) = decode_backend(backend) else {
+        record_error("invalid backend argument");
         return std::ptr::null_mut();
     };
 
     match CindelEngine::open_with_backend(directory, backend) {
         Ok(engine) => Box::into_raw(Box::new(engine)),
-        Err(_) => std::ptr::null_mut(),
+        Err(error) => {
+            record_error(error);
+            std::ptr::null_mut()
+        }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_open_with_backend_and_schemas(
+unsafe fn cindel_open_with_backend_and_schemas_inner(
     directory_ptr: *const u8,
     directory_len: usize,
     backend: u32,
     schemas_ptr: *const u8,
     schemas_len: usize,
 ) -> *mut CindelEngine {
+    clear_error();
     let Some(directory) = read_str(directory_ptr, directory_len) else {
+        record_error("invalid directory argument");
         return std::ptr::null_mut();
     };
     let Some(backend) = decode_backend(backend) else {
+        record_error("invalid backend argument");
         return std::ptr::null_mut();
     };
     let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
+        record_error("invalid schemas argument");
         return std::ptr::null_mut();
     };
-    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
+    let Some(manifest) = (schema_manifest_from_wire(schemas)).capture() else {
         return std::ptr::null_mut();
     };
 
     match CindelEngine::open_with_backend_and_schemas(directory, backend, &manifest) {
         Ok(engine) => Box::into_raw(Box::new(engine)),
-        Err(_) => std::ptr::null_mut(),
+        Err(error) => {
+            record_error(error);
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -158,49 +306,69 @@ pub unsafe extern "C" fn cindel_close(handle: *mut CindelEngine) {
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_begin_read_txn(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.begin_read_transaction() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_begin_write_txn(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.begin_write_transaction() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_commit_txn(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.commit_transaction() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_rollback_txn(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.rollback_transaction() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -213,19 +381,26 @@ pub unsafe extern "C" fn cindel_put(
     bytes_ptr: *const u8,
     bytes_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(bytes) = read_bytes(bytes_ptr, bytes_len) else {
-        return -1;
+        record_error("invalid bytes argument");
+        return error_status();
     };
 
     match engine.put(collection, id, bytes) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -236,17 +411,20 @@ pub unsafe extern "C" fn cindel_allocate_id(
     collection_len: usize,
     out_id: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_id.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_id = 0;
 
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.allocate_id(collection) {
@@ -254,7 +432,10 @@ pub unsafe extern "C" fn cindel_allocate_id(
             *out_id = id;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -266,22 +447,28 @@ pub unsafe extern "C" fn cindel_reserve_ids(
     count: u32,
     out_first_id: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_first_id.is_null() {
-        return -1;
+        return error_status();
     }
     *out_first_id = 0;
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     match engine.reserve_ids(collection, count) {
         Ok(first) => {
             *out_first_id = first;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -291,19 +478,25 @@ pub unsafe extern "C" fn cindel_register_schemas(
     schemas_ptr: *const u8,
     schemas_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
-        return -1;
+        record_error("invalid schemas argument");
+        return error_status();
     };
-    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
-        return -1;
+    let Some(manifest) = (schema_manifest_from_wire(schemas)).capture() else {
+        return error_status();
     };
 
     match engine.register_schemas(&manifest) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -313,19 +506,25 @@ pub unsafe extern "C" fn cindel_register_migrated_schemas(
     schemas_ptr: *const u8,
     schemas_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(schemas) = read_bytes(schemas_ptr, schemas_len) else {
-        return -1;
+        record_error("invalid schemas argument");
+        return error_status();
     };
-    let Ok(manifest) = schema_manifest_from_wire(schemas) else {
-        return -1;
+    let Some(manifest) = (schema_manifest_from_wire(schemas)).capture() else {
+        return error_status();
     };
 
     match engine.register_migrated_schemas(&manifest) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -340,22 +539,29 @@ pub unsafe extern "C" fn cindel_put_indexed(
     indexes_ptr: *const u8,
     indexes_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(bytes) = read_bytes(bytes_ptr, bytes_len) else {
-        return -1;
+        record_error("invalid bytes argument");
+        return error_status();
     };
-    let Ok(indexes) = read_index_entries(indexes_ptr, indexes_len) else {
-        return -1;
+    let Some(indexes) = (read_index_entries(indexes_ptr, indexes_len)).capture() else {
+        return error_status();
     };
 
     match engine.put_indexed(collection, id, bytes, &indexes) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -367,19 +573,25 @@ pub unsafe extern "C" fn cindel_put_many_indexed(
     documents_ptr: *const u8,
     documents_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(documents) = read_document_writes(documents_ptr, documents_len) else {
-        return -1;
+    let Some(documents) = (read_document_writes(documents_ptr, documents_len)).capture() else {
+        return error_status();
     };
 
     match engine.put_many_indexed(collection, &documents) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -391,34 +603,43 @@ pub unsafe extern "C" fn cindel_put_many_stored(
     documents_ptr: *const u8,
     documents_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(documents) = read_binary_document_writes(documents_ptr, documents_len) else {
-        return -1;
+    let Some(documents) = (read_binary_document_writes(documents_ptr, documents_len)).capture()
+    else {
+        return error_status();
     };
 
     match engine.put_many_indexed(collection, &documents) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_native_batch_writer_new(
+unsafe fn cindel_native_batch_writer_new_inner(
     field_types_ptr: *const u8,
     field_types_len: usize,
     capacity: usize,
     collect_native_values: i32,
 ) -> *mut CindelNativeBatchWriter {
+    clear_error();
     let Some(field_type_bytes) = read_bytes(field_types_ptr, field_types_len) else {
+        record_error("invalid field_type_bytes argument");
         return std::ptr::null_mut();
     };
-    let Ok(writer) =
-        CindelNativeBatchWriter::new(field_type_bytes, capacity, collect_native_values != 0)
+    let Some(writer) =
+        (CindelNativeBatchWriter::new(field_type_bytes, capacity, collect_native_values != 0))
+            .capture()
     else {
         return std::ptr::null_mut();
     };
@@ -549,7 +770,8 @@ pub unsafe extern "C" fn cindel_native_batch_writer_begin_list(
     }
     match writer.begin_list(index as usize, length) {
         Ok(list_writer) => Box::into_raw(Box::new(list_writer)),
-        Err(_) => {
+        Err(error) => {
+            writer.error.get_or_insert(error);
             writer.failed = true;
             std::ptr::null_mut()
         }
@@ -592,13 +814,21 @@ pub unsafe extern "C" fn cindel_native_batch_writer_begin_object(
         writer.failed = true;
         return std::ptr::null_mut();
     };
-    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
-        writer.failed = true;
+    let field_names = match decode_native_field_names(field_name_bytes) {
+        Ok(names) => names,
+        Err(error) => {
+            writer.error.get_or_insert(error);
+            writer.failed = true;
+            return std::ptr::null_mut();
+        }
+    };
+    if writer.failed {
         return std::ptr::null_mut();
     };
     match writer.begin_object(index as usize, field_names) {
         Ok(object_writer) => Box::into_raw(Box::new(object_writer)),
-        Err(_) => {
+        Err(error) => {
+            writer.error.get_or_insert(error);
             writer.failed = true;
             std::ptr::null_mut()
         }
@@ -652,27 +882,37 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish(
     collection_len: usize,
     writer: *mut CindelNativeBatchWriter,
 ) -> i32 {
+    clear_error();
     if writer.is_null() {
-        return -1;
+        return error_status();
     }
     let Some(engine) = handle.as_mut() else {
         drop(Box::from_raw(writer));
-        return -1;
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         drop(Box::from_raw(writer));
-        return -1;
+        return error_status();
     };
     let writer = Box::from_raw(writer);
     if writer.failed {
-        return -1;
+        record_error(
+            writer
+                .error
+                .as_deref()
+                .unwrap_or("invalid native document writer input"),
+        );
+        return error_status();
     }
-    let Ok(documents) = writer.take_documents() else {
-        return -1;
+    let Some(documents) = (writer.take_documents()).capture() else {
+        return error_status();
     };
     match engine.put_many_indexed(collection, &documents) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -684,35 +924,49 @@ pub unsafe extern "C" fn cindel_native_batch_writer_finish_with_options(
     writer: *mut CindelNativeBatchWriter,
     track_changes: i32,
 ) -> i32 {
+    clear_error();
     if writer.is_null() {
-        return -1;
+        return error_status();
     }
     let Some(engine) = handle.as_mut() else {
         drop(Box::from_raw(writer));
-        return -1;
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
         drop(Box::from_raw(writer));
-        return -1;
+        return error_status();
     };
     let writer = Box::from_raw(writer);
     if writer.failed {
-        return -1;
+        record_error(
+            writer
+                .error
+                .as_deref()
+                .unwrap_or("invalid native document writer input"),
+        );
+        return error_status();
     }
-    let Ok((documents, native_documents)) = writer.take_documents_with_optional_native_values()
+    let Some((documents, native_documents)) =
+        (writer.take_documents_with_optional_native_values()).capture()
     else {
-        return -1;
+        return error_status();
     };
     if let Some(native_documents) = native_documents {
         match engine.put_many_native_documents(collection, &native_documents, track_changes != 0) {
             Ok(true) => return 0,
-            Ok(false) => return -1,
-            Err(_) => return -1,
+            Ok(false) => return error_status(),
+            Err(error) => {
+                record_error(error);
+                return error_status();
+            }
         }
     }
     match engine.put_many_indexed_with_options(collection, &documents, track_changes != 0, true) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -723,8 +977,7 @@ pub unsafe extern "C" fn cindel_native_batch_writer_abort(writer: *mut CindelNat
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_native_document_reader_new(
+unsafe fn cindel_native_document_reader_new_inner(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
     collection_len: usize,
@@ -733,30 +986,48 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     field_types_ptr: *const u8,
     field_types_len: usize,
 ) -> *mut CindelNativeDocumentReader {
+    clear_error();
     let Some(engine) = handle.as_ref() else {
+        record_error("invalid engine argument");
         return std::ptr::null_mut();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
+        record_error("invalid collection argument");
         return std::ptr::null_mut();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
+        record_error("invalid ids argument");
         return std::ptr::null_mut();
     };
     let Some(field_type_bytes) = read_bytes(field_types_ptr, field_types_len) else {
+        record_error("invalid field_type_bytes argument");
         return std::ptr::null_mut();
     };
-    let Ok(layout) = NativeBatchLayout::new(field_type_bytes) else {
+    let Some(layout) = (NativeBatchLayout::new(field_type_bytes)).capture() else {
         return std::ptr::null_mut();
     };
     #[cfg(feature = "mdbx")]
-    if let Ok(cursor) = engine.mdbx_cursor_document_reader(collection, &ids) {
+    if let Some(cursor) = engine
+        .mdbx_cursor_document_reader(collection, &ids)
+        .capture()
+        .flatten()
+    {
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            error: ReaderError::default(),
             current_index: None,
             mode: CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor },
         }));
     }
-    if let Ok(Some(cursor)) = engine.sqlite_native_document_cursor(collection, &ids) {
+    if LAST_ERROR.with(|slot| slot.borrow().is_some()) {
+        return std::ptr::null_mut();
+    }
+    if let Some(cursor) = engine
+        .sqlite_native_document_cursor(collection, &ids)
+        .capture()
+        .flatten()
+    {
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            error: ReaderError::default(),
             current_index: None,
             mode: CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor },
         }));
@@ -764,8 +1035,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_new(
     std::ptr::null_mut()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
+unsafe fn cindel_native_document_reader_new_from_query_plan_inner(
     handle: *mut CindelEngine,
     collection_ptr: *const u8,
     collection_len: usize,
@@ -774,50 +1044,68 @@ pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
     field_types_ptr: *const u8,
     field_types_len: usize,
 ) -> *mut CindelNativeDocumentReader {
+    clear_error();
     let Some(engine) = handle.as_ref() else {
+        record_error("invalid engine argument");
         return std::ptr::null_mut();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
+        record_error("invalid collection argument");
         return std::ptr::null_mut();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
         return std::ptr::null_mut();
     };
     let Some(field_type_bytes) = read_bytes(field_types_ptr, field_types_len) else {
+        record_error("invalid field_type_bytes argument");
         return std::ptr::null_mut();
     };
-    let Ok(layout) = NativeBatchLayout::new(field_type_bytes) else {
+    let Some(layout) = (NativeBatchLayout::new(field_type_bytes)).capture() else {
         return std::ptr::null_mut();
     };
     #[cfg(feature = "mdbx")]
-    if let Ok(Some(cursor)) = engine.mdbx_query_document_reader(collection, &plan) {
+    if let Some(cursor) = engine
+        .mdbx_query_document_reader(collection, &plan)
+        .capture()
+        .flatten()
+    {
         return Box::into_raw(Box::new(CindelNativeDocumentReader {
+            error: ReaderError::default(),
             current_index: None,
             mode: CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor },
         }));
     }
 
+    if LAST_ERROR.with(|slot| slot.borrow().is_some()) {
+        return std::ptr::null_mut();
+    }
     match engine.sqlite_query_plan_native_cursor(collection, &plan) {
         Ok(Some(cursor)) => {
             return Box::into_raw(Box::new(CindelNativeDocumentReader {
+                error: ReaderError::default(),
                 current_index: None,
                 mode: CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor },
             }));
         }
         Ok(None) => {}
-        Err(_) => return std::ptr::null_mut(),
+        Err(error) => {
+            record_error(error);
+            return std::ptr::null_mut();
+        }
     }
 
-    let Ok(ids) = engine.query_plan_ids(collection, &plan) else {
+    let Some(ids) = (engine.query_plan_ids(collection, &plan)).capture() else {
+        record_error("invalid ids argument");
         return std::ptr::null_mut();
     };
-    let Ok(documents) = engine.query_plan_documents(collection, &plan) else {
+    let Some(documents) = (engine.query_plan_documents(collection, &plan)).capture() else {
         return std::ptr::null_mut();
     };
     if ids.len() != documents.len() {
         return std::ptr::null_mut();
     }
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        error: ReaderError::default(),
         current_index: None,
         mode: CindelNativeDocumentReaderMode::Batch {
             layout,
@@ -1261,6 +1549,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_list(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        error: reader.error.clone(),
         current_index: None,
         mode: CindelNativeDocumentReaderMode::RawList {
             bytes: raw_list.bytes,
@@ -1284,6 +1573,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_current_list(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        error: reader.error.clone(),
         current_index: None,
         mode: CindelNativeDocumentReaderMode::RawList {
             bytes: raw_list.bytes,
@@ -1304,9 +1594,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_object(
         return std::ptr::null_mut();
     };
     let Some(field_name_bytes) = read_bytes(field_names_ptr, field_names_len) else {
+        record_error("invalid field_name_bytes argument");
         return std::ptr::null_mut();
     };
-    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
+    let Some(field_names) =
+        (decode_native_field_names(field_name_bytes)).capture_reader(&reader.error)
+    else {
         return std::ptr::null_mut();
     };
     let Some(raw_object) = reader.read_object(document_index, field_index as usize, field_names)
@@ -1314,6 +1607,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_object(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        error: reader.error.clone(),
         current_index: None,
         mode: CindelNativeDocumentReaderMode::RawObject {
             field_names: raw_object.field_names,
@@ -1337,9 +1631,12 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_current_object(
         return std::ptr::null_mut();
     };
     let Some(field_name_bytes) = read_bytes(field_names_ptr, field_names_len) else {
+        record_error("invalid field_name_bytes argument");
         return std::ptr::null_mut();
     };
-    let Ok(field_names) = decode_native_field_names(field_name_bytes) else {
+    let Some(field_names) =
+        (decode_native_field_names(field_name_bytes)).capture_reader(&reader.error)
+    else {
         return std::ptr::null_mut();
     };
     let Some(raw_object) = reader.read_object(document_index, field_index as usize, field_names)
@@ -1347,6 +1644,7 @@ pub unsafe extern "C" fn cindel_native_document_reader_read_current_object(
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(CindelNativeDocumentReader {
+        error: reader.error.clone(),
         current_index: None,
         mode: CindelNativeDocumentReaderMode::RawObject {
             field_names: raw_object.field_names,
@@ -1374,18 +1672,21 @@ pub unsafe extern "C" fn cindel_get(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.get(collection, id) {
@@ -1396,7 +1697,10 @@ pub unsafe extern "C" fn cindel_get(
             0
         }
         Ok(None) => 1,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1410,26 +1714,33 @@ pub unsafe extern "C" fn cindel_get_many(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
 
     match engine.get_many(collection, &ids) {
         Ok(documents) => write_binary_documents(documents, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1442,18 +1753,21 @@ pub unsafe extern "C" fn cindel_get_stored(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.get_stored(collection, id) {
@@ -1464,7 +1778,10 @@ pub unsafe extern "C" fn cindel_get_stored(
             0
         }
         Ok(None) => 1,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1478,26 +1795,33 @@ pub unsafe extern "C" fn cindel_get_many_stored(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
 
     match engine.get_many_stored(collection, &ids) {
         Ok(documents) => write_binary_documents(documents, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1509,23 +1833,29 @@ pub unsafe extern "C" fn cindel_document_ids(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.document_ids(collection) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1540,18 +1870,21 @@ pub unsafe extern "C" fn cindel_document_ids_page(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let after_id = if has_after_id == 0 {
         None
@@ -1561,7 +1894,10 @@ pub unsafe extern "C" fn cindel_document_ids_page(
 
     match engine.document_ids_page(collection, after_id, limit) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1572,16 +1908,22 @@ pub unsafe extern "C" fn cindel_delete(
     collection_len: usize,
     id: u64,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.delete(collection, id) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1593,19 +1935,26 @@ pub unsafe extern "C" fn cindel_delete_many(
     ids_ptr: *const u8,
     ids_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
 
     match engine.delete_many(collection, &ids) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1617,19 +1966,30 @@ pub unsafe extern "C" fn cindel_delete_many_native_documents(
     ids_ptr: *const u8,
     ids_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
 
     match engine.delete_many_native_documents(collection, &ids) {
         Ok(true) => 0,
-        Ok(false) | Err(_) => -1,
+        Ok(false) => {
+            record_error("native document deletion is unavailable");
+            error_status()
+        }
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1646,20 +2006,22 @@ pub unsafe extern "C" fn cindel_replace_links(
     target_ids_ptr: *const u8,
     target_ids_len: usize,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
-        return -1;
+        return error_status();
     };
     let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
-        return -1;
+        return error_status();
     };
     let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
-        return -1;
+        return error_status();
     };
     let Some(target_ids) = read_wire_ids(target_ids_ptr, target_ids_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.replace_links(LinkSave {
@@ -1670,7 +2032,10 @@ pub unsafe extern "C" fn cindel_replace_links(
         target_ids,
     }) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1687,27 +2052,32 @@ pub unsafe extern "C" fn cindel_forward_link_ids(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
-        return -1;
+        return error_status();
     };
     let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
-        return -1;
+        return error_status();
     };
     let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.forward_link_ids(source_collection, source_id, link_name, target_collection) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1724,27 +2094,32 @@ pub unsafe extern "C" fn cindel_backlink_source_ids(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(target_collection) = read_str(target_collection_ptr, target_collection_len) else {
-        return -1;
+        return error_status();
     };
     let Some(source_collection) = read_str(source_collection_ptr, source_collection_len) else {
-        return -1;
+        return error_status();
     };
     let Some(link_name) = read_str(link_name_ptr, link_name_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.backlink_source_ids(target_collection, target_id, source_collection, link_name) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1755,17 +2130,20 @@ pub unsafe extern "C" fn cindel_collection_revision(
     collection_len: usize,
     out_revision: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_revision.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_revision = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.collection_revision(collection) {
@@ -1773,7 +2151,10 @@ pub unsafe extern "C" fn cindel_collection_revision(
             *out_revision = revision;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1783,15 +2164,17 @@ pub unsafe extern "C" fn cindel_take_changes(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.take_change_sets() {
@@ -1811,21 +2194,32 @@ pub unsafe extern "C" fn cindel_take_changes(
                     *out_len = len;
                     0
                 }
-                Err(_) => -1,
+                Err(error) => {
+                    record_error(error);
+                    error_status()
+                }
             }
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_discard_changes(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     match engine.discard_change_sets() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1836,17 +2230,20 @@ pub unsafe extern "C" fn cindel_schema_version(
     collection_len: usize,
     out_version: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_version.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_version = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
 
     match engine.schema_version(collection) {
@@ -1855,7 +2252,10 @@ pub unsafe extern "C" fn cindel_schema_version(
             0
         }
         Ok(None) => 1,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1864,14 +2264,16 @@ pub unsafe extern "C" fn cindel_migration_version(
     handle: *mut CindelEngine,
     out_version: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_version.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_version = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.migration_version() {
@@ -1880,7 +2282,10 @@ pub unsafe extern "C" fn cindel_migration_version(
             0
         }
         Ok(None) => 1,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1889,25 +2294,35 @@ pub unsafe extern "C" fn cindel_set_migration_version(
     handle: *mut CindelEngine,
     version: u64,
 ) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.set_migration_version(version) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cindel_compact(handle: *mut CindelEngine) -> i32 {
+    clear_error();
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
 
     match engine.compact() {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1923,29 +2338,35 @@ pub unsafe extern "C" fn cindel_query_index_equal(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(index) = read_str(index_ptr, index_len) else {
-        return -1;
+        return error_status();
     };
-    let Ok(value) = read_index_value(value_ptr, value_len) else {
-        return -1;
+    let Some(value) = (read_index_value(value_ptr, value_len)).capture() else {
+        return error_status();
     };
 
     match engine.query_index_equal(collection, index, &value) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -1963,32 +2384,38 @@ pub unsafe extern "C" fn cindel_query_index_range(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(index) = read_str(index_ptr, index_len) else {
-        return -1;
+        return error_status();
     };
-    let Ok(lower) = read_optional_index_value(lower_ptr, lower_len) else {
-        return -1;
+    let Some(lower) = (read_optional_index_value(lower_ptr, lower_len)).capture() else {
+        return error_status();
     };
-    let Ok(upper) = read_optional_index_value(upper_ptr, upper_len) else {
-        return -1;
+    let Some(upper) = (read_optional_index_value(upper_ptr, upper_len)).capture() else {
+        return error_status();
     };
 
     match engine.query_index_range(collection, index, lower.as_ref(), upper.as_ref()) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2004,29 +2431,36 @@ pub unsafe extern "C" fn cindel_query_filter(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
     let Some(filter) = read_bytes(filter_ptr, filter_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.query_filter(collection, &ids, filter) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2042,24 +2476,28 @@ pub unsafe extern "C" fn cindel_query_project(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
     let Some(field) = read_str(field_ptr, field_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.query_project(collection, &ids, field) {
@@ -2069,7 +2507,10 @@ pub unsafe extern "C" fn cindel_query_project(
             *out_len = len;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2087,27 +2528,31 @@ pub unsafe extern "C" fn cindel_query_aggregate(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
     let Some(ids) = read_wire_ids(ids_ptr, ids_len) else {
-        return -1;
+        record_error("invalid ids argument");
+        return error_status();
     };
     let Some(field) = read_str(field_ptr, field_len) else {
-        return -1;
+        return error_status();
     };
     let Some(operation) = read_str(operation_ptr, operation_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.query_aggregate(collection, &ids, field, operation) {
@@ -2117,7 +2562,10 @@ pub unsafe extern "C" fn cindel_query_aggregate(
             *out_len = len;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2131,26 +2579,32 @@ pub unsafe extern "C" fn cindel_query_plan_ids(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
 
     match engine.query_plan_ids(collection, &plan) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2164,28 +2618,34 @@ pub unsafe extern "C" fn cindel_query_plan_documents(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
 
     match engine.query_plan_documents(collection, &plan) {
         Ok(documents) => {
             write_binary_documents(documents.into_iter().map(Some).collect(), out_ptr, out_len)
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2199,21 +2659,24 @@ pub unsafe extern "C" fn cindel_query_plan_count(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
 
     match engine
@@ -2231,7 +2694,10 @@ pub unsafe extern "C" fn cindel_query_plan_count(
             *out_len = len;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2247,24 +2713,27 @@ pub unsafe extern "C" fn cindel_query_plan_project(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
     let Some(field) = read_str(field_ptr, field_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.query_plan_project(collection, &plan, field) {
@@ -2274,7 +2743,10 @@ pub unsafe extern "C" fn cindel_query_plan_project(
             *out_len = len;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2292,27 +2764,30 @@ pub unsafe extern "C" fn cindel_query_plan_aggregate(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_ref() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
     let Some(field) = read_str(field_ptr, field_len) else {
-        return -1;
+        return error_status();
     };
     let Some(operation) = read_str(operation_ptr, operation_len) else {
-        return -1;
+        return error_status();
     };
 
     match engine.query_plan_aggregate(collection, &plan, field, operation) {
@@ -2322,7 +2797,10 @@ pub unsafe extern "C" fn cindel_query_plan_aggregate(
             *out_len = len;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2336,26 +2814,32 @@ pub unsafe extern "C" fn cindel_query_plan_delete(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_error();
     if out_ptr.is_null() || out_len.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_ptr = std::ptr::null_mut();
     *out_len = 0;
 
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
 
     match engine.query_plan_delete(collection, &plan) {
         Ok(ids) => write_wire_ids(&ids, out_ptr, out_len),
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2371,26 +2855,29 @@ pub unsafe extern "C" fn cindel_query_plan_update(
     collect_changes: bool,
     out_count: *mut u64,
 ) -> i32 {
+    clear_error();
     if out_count.is_null() {
-        return -1;
+        return error_status();
     }
 
     *out_count = 0;
 
     let Some(engine) = handle.as_mut() else {
-        return -1;
+        record_error("invalid engine argument");
+        return error_status();
     };
     let Some(collection) = read_str(collection_ptr, collection_len) else {
-        return -1;
+        record_error("invalid collection argument");
+        return error_status();
     };
-    let Ok(plan) = read_query_plan(plan_ptr, plan_len) else {
-        return -1;
+    let Some(plan) = (read_query_plan(plan_ptr, plan_len)).capture() else {
+        return error_status();
     };
     let Some(updates_bytes) = read_bytes(updates_ptr, updates_len) else {
-        return -1;
+        return error_status();
     };
-    let Ok(updates) = decode_field_updates(updates_bytes) else {
-        return -1;
+    let Some(updates) = (decode_field_updates(updates_bytes)).capture() else {
+        return error_status();
     };
 
     match engine.query_plan_update(collection, &plan, &updates, collect_changes) {
@@ -2398,7 +2885,10 @@ pub unsafe extern "C" fn cindel_query_plan_update(
             *out_count = count as u64;
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2413,7 +2903,7 @@ pub unsafe extern "C" fn cindel_free_buffer(ptr: *mut u8, len: usize) {
 }
 
 unsafe fn read_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
-    std::str::from_utf8(read_bytes(ptr, len)?).ok()
+    std::str::from_utf8(read_bytes(ptr, len)?).capture()
 }
 
 fn decode_backend(value: u32) -> Option<StorageBackendKind> {
@@ -2458,7 +2948,10 @@ fn write_wire_ids(ids: &[u64], out_ptr: *mut *mut u8, out_len: *mut usize) -> i3
             }
             0
         }
-        Err(_) => -1,
+        Err(error) => {
+            record_error(error);
+            error_status()
+        }
     }
 }
 
@@ -2472,8 +2965,8 @@ fn write_binary_documents(
     for document in documents {
         match document {
             Some(document) => {
-                let Ok(length) = u32::try_from(document.len()) else {
-                    return -1;
+                let Some(length) = (u32::try_from(document.len())).capture() else {
+                    return error_status();
                 };
                 bytes.push(1);
                 bytes.extend_from_slice(&length.to_le_bytes());
@@ -2507,6 +3000,7 @@ enum NativeBatchFieldType {
 pub struct CindelNativeBatchWriter {
     mode: NativeBatchWriterMode,
     failed: bool,
+    error: Option<String>,
 }
 
 enum NativeBatchWriterMode {
@@ -2537,6 +3031,7 @@ enum NativeListEncoding {
 }
 
 pub struct CindelNativeDocumentReader {
+    error: ReaderError,
     current_index: Option<usize>,
     mode: CindelNativeDocumentReaderMode,
 }
@@ -2654,6 +3149,7 @@ impl CindelNativeBatchWriter {
                 document_capacity_hint,
             },
             failed: false,
+            error: None,
         })
     }
 
@@ -2665,6 +3161,7 @@ impl CindelNativeBatchWriter {
                 encoding: NativeListEncoding::Unknown,
             },
             failed: false,
+            error: None,
         }
     }
 
@@ -2677,6 +3174,7 @@ impl CindelNativeBatchWriter {
                 records: vec![None; length],
             },
             failed: false,
+            error: None,
         }
     }
 
@@ -2684,7 +3182,8 @@ impl CindelNativeBatchWriter {
         if self.failed {
             return;
         }
-        if action(self).is_err() {
+        if let Err(error) = action(self) {
+            self.error.get_or_insert(error);
             self.failed = true;
         }
     }
@@ -2952,6 +3451,11 @@ impl CindelNativeBatchWriter {
     }
 
     fn end_list(&mut self, list_writer: Self) -> Result<(), String> {
+        if list_writer.failed {
+            return Err(list_writer
+                .error
+                .unwrap_or_else(|| "invalid nested list writer input".into()));
+        }
         let NativeBatchWriterMode::List {
             parent_index,
             records,
@@ -3000,6 +3504,11 @@ impl CindelNativeBatchWriter {
     }
 
     fn end_object(&mut self, object_writer: Self) -> Result<(), String> {
+        if object_writer.failed {
+            return Err(object_writer
+                .error
+                .unwrap_or_else(|| "invalid nested object writer input".into()));
+        }
         let NativeBatchWriterMode::Object {
             parent_index,
             field_names,
@@ -3479,13 +3988,16 @@ impl CindelNativeDocumentReader {
     }
 
     fn next(&mut self) -> bool {
+        if self.error.borrow().is_some() {
+            return false;
+        }
         let has_next = match &mut self.mode {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
-                cursor.next().unwrap_or(false)
+                cursor.next().capture_reader(&self.error).unwrap_or(false)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
-                cursor.next().unwrap_or(false)
+                cursor.next().capture_reader(&self.error).unwrap_or(false)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => false,
@@ -3513,20 +4025,22 @@ impl CindelNativeDocumentReader {
                     documents.get(document_index).is_some_and(Option::is_some)
                 }
             }
-            CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
-                cursor.is_present(document_index).unwrap_or(false)
-            }
+            CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => cursor
+                .is_present(document_index)
+                .capture_reader(&self.error)
+                .unwrap_or(false),
             CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
                 cursor.document_id(document_index).is_some()
             }
             #[cfg(feature = "mdbx")]
-            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
-                cursor.is_present(document_index).unwrap_or(false)
-            }
+            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor
+                .is_present(document_index)
+                .capture_reader(&self.error)
+                .unwrap_or(false),
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => cursor
                 .document_bytes(document_index)
-                .ok()
+                .capture_reader(&self.error)
                 .flatten()
                 .is_some(),
             CindelNativeDocumentReaderMode::RawList { entries, .. } => {
@@ -3544,19 +4058,24 @@ impl CindelNativeDocumentReader {
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { ids, .. } => ids.get(document_index).copied(),
             CindelNativeDocumentReaderMode::SqliteCursor { cursor, .. } => {
+                cursor
+                    .is_present(document_index)
+                    .capture_reader(&self.error)?;
                 cursor.document_id(document_index)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
                 cursor.document_id(document_index)
             }
             #[cfg(feature = "mdbx")]
-            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => {
-                cursor.document_id(document_index).ok().flatten()
-            }
+            CindelNativeDocumentReaderMode::MdbxCursor { cursor, .. } => cursor
+                .document_id(document_index)
+                .capture_reader(&self.error)
+                .flatten(),
             #[cfg(feature = "mdbx")]
-            CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => {
-                cursor.document_id(document_index).ok().flatten()
-            }
+            CindelNativeDocumentReaderMode::MdbxQueryCursor { cursor, .. } => cursor
+                .document_id(document_index)
+                .capture_reader(&self.error)
+                .flatten(),
             CindelNativeDocumentReaderMode::RawList { .. }
             | CindelNativeDocumentReaderMode::RawObject { .. } => None,
         }
@@ -3581,6 +4100,9 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                cursor
+                    .is_present(document_index)
+                    .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
                 cursor.read_bool(document_index, field_index)
             }
@@ -3591,7 +4113,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 match *bytes.get(offset)? {
                     0 => Some(false),
@@ -3602,7 +4126,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 match *bytes.get(offset)? {
                     0 => Some(false),
@@ -3651,6 +4177,9 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                cursor
+                    .is_present(document_index)
+                    .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
                 cursor.read_int(document_index, field_index)
             }
@@ -3661,7 +4190,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value == i64::MIN {
@@ -3673,7 +4204,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = i64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value == i64::MIN {
@@ -3745,6 +4278,9 @@ impl CindelNativeDocumentReader {
                 }
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                cursor
+                    .is_present(document_index)
+                    .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
                 cursor.read_double(document_index, field_index)
             }
@@ -3755,7 +4291,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value.is_finite() {
@@ -3767,7 +4305,9 @@ impl CindelNativeDocumentReader {
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let value = f64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?);
                 if value.is_finite() {
@@ -3845,6 +4385,9 @@ impl CindelNativeDocumentReader {
                 bytes.get(start..end)
             }
             CindelNativeDocumentReaderMode::SqliteCursor { layout, cursor } => {
+                cursor
+                    .is_present(document_index)
+                    .capture_reader(&self.error)?;
                 match layout.field_type(field_index)? {
                     NativeBatchFieldType::String
                     | NativeBatchFieldType::List
@@ -3870,7 +4413,9 @@ impl CindelNativeDocumentReader {
                     | NativeBatchFieldType::Object => {}
                     _ => return None,
                 }
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let relative = read_u24(bytes, offset)?;
                 if relative == 0 {
@@ -3890,7 +4435,9 @@ impl CindelNativeDocumentReader {
                     | NativeBatchFieldType::Object => {}
                     _ => return None,
                 }
-                let bytes = cursor.document_bytes(document_index).ok()??;
+                let bytes = cursor
+                    .document_bytes(document_index)
+                    .capture_reader(&self.error)??;
                 let offset = layout.absolute_offset(field_index)?;
                 let relative = read_u24(bytes, offset)?;
                 if relative == 0 {
@@ -3942,23 +4489,29 @@ impl CindelNativeDocumentReader {
     }
 
     fn read_list(&mut self, document_index: usize, field_index: usize) -> Option<NativeRawList> {
+        let error = self.error.clone();
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { .. } => {
-                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?)
+                    .capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::SqliteCursor { .. } => {
-                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?)
+                    .capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => {
-                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?)
+                    .capture_reader(&error)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. } => {
-                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?)
+                    .capture_reader(&error)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => {
-                parse_native_raw_list(self.read_bytes(document_index, field_index)?).ok()
+                parse_native_raw_list(self.read_bytes(document_index, field_index)?)
+                    .capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
@@ -3966,7 +4519,7 @@ impl CindelNativeDocumentReader {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
-                parse_native_raw_list(bytes.get(entry.payload_start..end)?).ok()
+                parse_native_raw_list(bytes.get(entry.payload_start..end)?).capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::RawObject {
                 field_names,
@@ -3978,7 +4531,7 @@ impl CindelNativeDocumentReader {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
-                parse_native_raw_list(bytes.get(entry.payload_start..end)?).ok()
+                parse_native_raw_list(bytes.get(entry.payload_start..end)?).capture_reader(&error)
             }
         }
     }
@@ -3989,18 +4542,19 @@ impl CindelNativeDocumentReader {
         field_index: usize,
         field_names: Vec<String>,
     ) -> Option<NativeRawObject> {
+        let error = self.error.clone();
         match &mut self.mode {
             CindelNativeDocumentReaderMode::Batch { .. }
             | CindelNativeDocumentReaderMode::SqliteCursor { .. }
             | CindelNativeDocumentReaderMode::SqliteQueryCursor { .. } => {
                 parse_native_raw_object(self.read_bytes(document_index, field_index)?, field_names)
-                    .ok()
+                    .capture_reader(&error)
             }
             #[cfg(feature = "mdbx")]
             CindelNativeDocumentReaderMode::MdbxCursor { .. }
             | CindelNativeDocumentReaderMode::MdbxQueryCursor { .. } => {
                 parse_native_raw_object(self.read_bytes(document_index, field_index)?, field_names)
-                    .ok()
+                    .capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::RawList { bytes, entries } => {
                 let entry = entries.get(field_index)?;
@@ -4008,7 +4562,8 @@ impl CindelNativeDocumentReader {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
-                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names).ok()
+                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names)
+                    .capture_reader(&error)
             }
             CindelNativeDocumentReaderMode::RawObject {
                 field_names: parent_field_names,
@@ -4020,7 +4575,8 @@ impl CindelNativeDocumentReader {
                     return None;
                 }
                 let end = entry.payload_start.checked_add(entry.payload_len)?;
-                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names).ok()
+                parse_native_raw_object(bytes.get(entry.payload_start..end)?, field_names)
+                    .capture_reader(&error)
             }
         }
     }
@@ -4046,6 +4602,12 @@ fn batch_document_bytes<'a>(
 }
 
 fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
+    // SQLite serializes an empty object list as JSON. It is a valid empty
+    // value, and must not become a decoder error when errors are propagated.
+    if bytes == b"[]" {
+        return Ok(NativeRawList { bytes: bytes.to_vec(), entries: Vec::new() });
+    }
+
     if is_native_compact_string_list(bytes)? {
         return parse_native_compact_string_list(bytes);
     }
@@ -4053,6 +4615,9 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
         return Ok(list);
     }
     let count = read_u32_le(bytes, 0)? as usize;
+    if count > bytes.len().saturating_sub(4) / 8 {
+        return Err("native list count exceeds payload".into());
+    }
     let mut offset = 4usize;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
@@ -4088,6 +4653,9 @@ fn parse_native_raw_object(
     field_names: Vec<String>,
 ) -> Result<NativeRawObject, String> {
     let count = read_u32_le(bytes, 0)? as usize;
+    if count > bytes.len().saturating_sub(4) / 12 {
+        return Err("native object count exceeds payload".into());
+    }
     let mut offset = 4usize;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
@@ -4141,6 +4709,9 @@ fn raw_object_entry<'a>(
 
 fn decode_native_field_names(bytes: &[u8]) -> Result<Vec<String>, String> {
     let count = read_u32_le(bytes, 0)? as usize;
+    if count > bytes.len().saturating_sub(4) / 4 {
+        return Err("native field names count exceeds payload".into());
+    }
     let mut offset = 4usize;
     let mut names = Vec::with_capacity(count);
     for _ in 0..count {
@@ -4421,25 +4992,23 @@ fn read_u24(bytes: &[u8], offset: usize) -> Option<usize> {
     )
 }
 
-unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntry>, ()> {
+unsafe fn read_index_entries(ptr: *const u8, len: usize) -> Result<Vec<IndexEntry>, String> {
     if len == 0 {
         return Ok(Vec::new());
     }
-    let bytes = read_bytes(ptr, len).ok_or(())?;
-    decode_index_entry_list(bytes)
-        .map_err(|_| ())?
+    let bytes = read_bytes(ptr, len).ok_or("invalid null input buffer")?;
+    decode_index_entry_list(bytes)?
         .into_iter()
         .map(WireBatchIndexEntry::into_index_entry)
         .collect()
 }
 
-unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<DocumentWrite>, ()> {
+unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<DocumentWrite>, String> {
     if len == 0 {
         return Ok(Vec::new());
     }
-    let bytes = read_bytes(ptr, len).ok_or(())?;
-    decode_indexed_document_write_batch(bytes)
-        .map_err(|_| ())?
+    let bytes = read_bytes(ptr, len).ok_or("invalid null input buffer")?;
+    decode_indexed_document_write_batch(bytes)?
         .into_iter()
         .map(WireBatchIndexedDocumentWrite::into_document_write)
         .collect()
@@ -4448,10 +5017,9 @@ unsafe fn read_document_writes(ptr: *const u8, len: usize) -> Result<Vec<Documen
 unsafe fn read_binary_document_writes(
     ptr: *const u8,
     len: usize,
-) -> Result<Vec<DocumentWrite>, ()> {
-    let bytes = read_bytes(ptr, len).ok_or(())?;
-    decode_document_write_batch(bytes)
-        .map_err(|_| ())?
+) -> Result<Vec<DocumentWrite>, String> {
+    let bytes = read_bytes(ptr, len).ok_or("invalid null input buffer")?;
+    decode_document_write_batch(bytes)?
         .into_iter()
         .map(WireBatchDocumentWrite::into_document_write)
         .collect()
@@ -4459,34 +5027,32 @@ unsafe fn read_binary_document_writes(
 
 unsafe fn read_wire_ids(ptr: *const u8, len: usize) -> Option<Vec<u64>> {
     let bytes = read_bytes(ptr, len)?;
-    decode_id_list(bytes).ok()
+    decode_id_list(bytes).capture()
 }
 
-unsafe fn read_query_plan(ptr: *const u8, len: usize) -> Result<WireQueryPlan, ()> {
-    let bytes = read_bytes(ptr, len).ok_or(())?;
-    decode_query_plan(bytes).map_err(|_| ())
+unsafe fn read_query_plan(ptr: *const u8, len: usize) -> Result<WireQueryPlan, String> {
+    let bytes = read_bytes(ptr, len).ok_or("invalid null input buffer")?;
+    decode_query_plan(bytes)
 }
 
-unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, ()> {
-    let bytes = read_bytes(ptr, len).ok_or(())?;
-    decode_index_value(bytes)
-        .map_err(|_| ())?
-        .into_index_value()
+unsafe fn read_index_value(ptr: *const u8, len: usize) -> Result<IndexValue, String> {
+    let bytes = read_bytes(ptr, len).ok_or("invalid null input buffer")?;
+    decode_index_value(bytes)?.into_index_value()
 }
 
-unsafe fn read_optional_index_value(ptr: *const u8, len: usize) -> Result<Option<IndexValue>, ()> {
-    let bytes = read_optional_bytes(ptr, len).ok_or(())?;
+unsafe fn read_optional_index_value(
+    ptr: *const u8,
+    len: usize,
+) -> Result<Option<IndexValue>, String> {
+    let bytes = read_optional_bytes(ptr, len).ok_or("invalid null input buffer")?;
     if bytes.is_empty() {
         return Ok(None);
     }
-    decode_index_value(bytes)
-        .map_err(|_| ())?
-        .into_index_value()
-        .map(Some)
+    decode_index_value(bytes)?.into_index_value().map(Some)
 }
 
 impl WireBatchDocumentWrite {
-    fn into_document_write(self) -> Result<DocumentWrite, ()> {
+    fn into_document_write(self) -> Result<DocumentWrite, String> {
         Ok(DocumentWrite {
             id: self.id,
             bytes: self.bytes,
@@ -4496,7 +5062,7 @@ impl WireBatchDocumentWrite {
 }
 
 impl WireBatchIndexedDocumentWrite {
-    fn into_document_write(self) -> Result<DocumentWrite, ()> {
+    fn into_document_write(self) -> Result<DocumentWrite, String> {
         let indexes = self
             .indexes
             .into_iter()
@@ -4511,7 +5077,7 @@ impl WireBatchIndexedDocumentWrite {
 }
 
 impl WireBatchIndexEntry {
-    fn into_index_entry(self) -> Result<IndexEntry, ()> {
+    fn into_index_entry(self) -> Result<IndexEntry, String> {
         Ok(IndexEntry {
             name: self.index_name,
             value: self.value.into_index_value()?,
@@ -4520,15 +5086,15 @@ impl WireBatchIndexEntry {
 }
 
 impl WireBatchIndexValue {
-    fn into_index_value(self) -> Result<IndexValue, ()> {
+    fn into_index_value(self) -> Result<IndexValue, String> {
         match self {
-            WireBatchIndexValue::Null => Err(()),
+            WireBatchIndexValue::Null => Err("invalid null or non-finite index value".into()),
             WireBatchIndexValue::Bool(value) => Ok(IndexValue::Bool(value)),
             WireBatchIndexValue::Int(value) => Ok(IndexValue::Int(value)),
             WireBatchIndexValue::Double(value) if value.is_finite() => {
                 Ok(IndexValue::Double(value))
             }
-            WireBatchIndexValue::Double(_) => Err(()),
+            WireBatchIndexValue::Double(_) => Err("invalid null or non-finite index value".into()),
             WireBatchIndexValue::String(value) => Ok(IndexValue::String(value)),
             WireBatchIndexValue::List(values) => values
                 .into_iter()
@@ -4537,4 +5103,149 @@ impl WireBatchIndexValue {
                 .map(IndexValue::List),
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_open(
+    directory_ptr: *const u8,
+    directory_len: usize,
+    out_status: *mut i32,
+) -> *mut CindelEngine {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_open_inner(directory_ptr, directory_len);
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_open_with_backend(
+    directory_ptr: *const u8,
+    directory_len: usize,
+    backend: u32,
+    out_status: *mut i32,
+) -> *mut CindelEngine {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_open_with_backend_inner(directory_ptr, directory_len, backend);
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_open_with_backend_and_schemas(
+    directory_ptr: *const u8,
+    directory_len: usize,
+    backend: u32,
+    schemas_ptr: *const u8,
+    schemas_len: usize,
+    out_status: *mut i32,
+) -> *mut CindelEngine {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_open_with_backend_and_schemas_inner(
+        directory_ptr,
+        directory_len,
+        backend,
+        schemas_ptr,
+        schemas_len,
+    );
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_batch_writer_new(
+    field_types_ptr: *const u8,
+    field_types_len: usize,
+    capacity: usize,
+    collect_native_values: i32,
+    out_status: *mut i32,
+) -> *mut CindelNativeBatchWriter {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_native_batch_writer_new_inner(
+        field_types_ptr,
+        field_types_len,
+        capacity,
+        collect_native_values,
+    );
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_new(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    ids_ptr: *const u8,
+    ids_len: usize,
+    field_types_ptr: *const u8,
+    field_types_len: usize,
+    out_status: *mut i32,
+) -> *mut CindelNativeDocumentReader {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_native_document_reader_new_inner(
+        handle,
+        collection_ptr,
+        collection_len,
+        ids_ptr,
+        ids_len,
+        field_types_ptr,
+        field_types_len,
+    );
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_native_document_reader_new_from_query_plan(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    field_types_ptr: *const u8,
+    field_types_len: usize,
+    out_status: *mut i32,
+) -> *mut CindelNativeDocumentReader {
+    if out_status.is_null() {
+        return std::ptr::null_mut();
+    }
+    *out_status = 0;
+    let pointer = cindel_native_document_reader_new_from_query_plan_inner(
+        handle,
+        collection_ptr,
+        collection_len,
+        plan_ptr,
+        plan_len,
+        field_types_ptr,
+        field_types_len,
+    );
+    if pointer.is_null() {
+        *out_status = error_status();
+    }
+    pointer
 }

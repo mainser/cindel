@@ -319,13 +319,17 @@ class CindelDatabase {
       );
       await database._syncSession?.start(database);
       return database;
-    } catch (_) {
+    } catch (error) {
       try {
         await bridge.close();
       } catch (_) {
         // Preserve the open failure after attempting worker cleanup.
       }
-      throw CindelOpenError(backend: CindelStorageBackend.sqlite.name);
+      throw CindelOpenError(
+        backend: CindelStorageBackend.sqlite.name,
+        cause: error,
+        code: error is CindelError ? error.code : null,
+      );
     }
   }
 

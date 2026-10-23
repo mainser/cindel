@@ -1,3 +1,5 @@
+import 'error_propagation_suite.dart' as errors;
+import 'native_error_propagation_suite.dart' as native_errors;
 import 'relation_lifecycle_suite.dart' as relation_lifecycle;
 import 'migration_atomic_suite.dart' as atomic_migrations;
 import 'backup_contract_suite.dart' as backup_contract;
@@ -26,6 +28,8 @@ import 'typed_collection_suite.dart' as typed_collection;
 void main() {
   configureTestStorageBackend(CindelStorageBackend.mdbx);
 
+  errors.main();
+  native_errors.main();
   backup.main();
   atomic_migrations.main();
   relation_lifecycle.main();

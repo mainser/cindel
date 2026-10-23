@@ -70,37 +70,21 @@ final class CindelNativeBindings {
         ),
       );
 
-  /// Opens a database handle at [directory].
-  ///
-  /// [backend] is forwarded to native storage. If the loaded library does not
-  /// expose backend-aware open symbols, backend `0` uses the legacy `open`
-  /// function and other backend values fail with `nullptr`.
+  /// Opens a database handle at [directory], retaining any engine diagnostic.
   Pointer<Void> open(String directory, {int backend = 1}) {
-    return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
-      try {
-        return _functions.openWithBackend(
-          directoryPointer,
-          directoryLength,
-          backend,
-        );
-      } on ArgumentError {
-        if (backend == 0) {
-          return _functions.open(directoryPointer, directoryLength);
-        }
-        return nullptr;
-      } on OSError {
-        if (backend == 0) {
-          return _functions.open(directoryPointer, directoryLength);
-        }
-        return nullptr;
-      }
+    return _withNativeUtf8Bytes(directory, (pointer, length) {
+      final handle = _checkedNativePointer(
+        (status) =>
+            _functions.openWithBackend(pointer, length, backend, status),
+        'open',
+        backend: backend == 0 ? 'sqlite' : 'mdbx',
+      );
+      return handle;
     });
   }
 
-  /// Opens a database handle and registers encoded schema metadata upfront.
-  ///
-  /// Returns `nullptr` when the loaded native library cannot satisfy the
-  /// backend/schema-aware open call.
+  /// Opens and validates schemas atomically. An engine error is never retried
+  /// as a schema-less open: the exact ABI already guarantees this symbol.
   Pointer<Void> openWithSchemas(
     String directory,
     Uint8List schemas, {
@@ -108,19 +92,19 @@ final class CindelNativeBindings {
   }) {
     return _withNativeUtf8Bytes(directory, (directoryPointer, directoryLength) {
       return _withNativeBytes(schemas, (schemasPointer, schemasLength) {
-        try {
-          return _functions.openWithBackendAndSchemas(
+        final handle = _checkedNativePointer(
+          (status) => _functions.openWithBackendAndSchemas(
             directoryPointer,
             directoryLength,
             backend,
             schemasPointer,
             schemasLength,
-          );
-        } on ArgumentError {
-          return nullptr;
-        } on OSError {
-          return nullptr;
-        }
+            status,
+          ),
+          'open',
+          backend: backend == 0 ? 'sqlite' : 'mdbx',
+        );
+        return handle;
       });
     });
   }
@@ -329,16 +313,17 @@ final class CindelNativeBindings {
       fieldTypesPointer,
       fieldTypesLength,
     ) {
-      return _functions.nativeBatchWriterNew(
-        fieldTypesPointer,
-        fieldTypesLength,
-        objects.length,
-        collectNativeValues ? 1 : 0,
+      return _checkedNativePointer(
+        (status) => _functions.nativeBatchWriterNew(
+          fieldTypesPointer,
+          fieldTypesLength,
+          objects.length,
+          collectNativeValues ? 1 : 0,
+          status,
+        ),
+        'create document writer',
       );
     });
-    if (writer == nullptr) {
-      throw StateError('Native Cindel batch writer allocation failed.');
-    }
 
     var finished = false;
     try {
@@ -386,16 +371,17 @@ final class CindelNativeBindings {
       fieldTypesPointer,
       fieldTypesLength,
     ) {
-      return _functions.nativeBatchWriterNew(
-        fieldTypesPointer,
-        fieldTypesLength,
-        objects.length,
-        collectNativeValues ? 1 : 0,
+      return _checkedNativePointer(
+        (status) => _functions.nativeBatchWriterNew(
+          fieldTypesPointer,
+          fieldTypesLength,
+          objects.length,
+          collectNativeValues ? 1 : 0,
+          status,
+        ),
+        'create document writer',
       );
     });
-    if (writer == nullptr) {
-      throw StateError('Native Cindel batch writer allocation failed.');
-    }
 
     var finished = false;
     try {
@@ -561,20 +547,19 @@ final class CindelNativeBindings {
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
       return _withNativeBytes(ids, (idsPointer, idsLength) {
         return _withNativeBytes(fieldTypes, (fieldTypesPointer, fieldTypesLen) {
-          final readerPointer = _functions.nativeDocumentReaderNew(
-            handle,
-            collectionPointer,
-            collectionLen,
-            idsPointer,
-            idsLength,
-            fieldTypesPointer,
-            fieldTypesLen,
+          final readerPointer = _checkedNativePointer(
+            (status) => _functions.nativeDocumentReaderNew(
+              handle,
+              collectionPointer,
+              collectionLen,
+              idsPointer,
+              idsLength,
+              fieldTypesPointer,
+              fieldTypesLen,
+              status,
+            ),
+            'create document reader',
           );
-          if (readerPointer == nullptr) {
-            throw StateError(
-              'Native Cindel document reader allocation failed.',
-            );
-          }
           final reader = _CindelNativeDocumentReader(
             _functions,
             readerPointer,
@@ -587,7 +572,11 @@ final class CindelNativeBindings {
                 if (reader.isPresent(i)) readDocument(reader, i) else null,
             ];
           } finally {
-            reader.release();
+            try {
+              reader.checkError();
+            } finally {
+              reader.release();
+            }
           }
         });
       });
@@ -607,20 +596,19 @@ final class CindelNativeBindings {
     return _withNativeUtf8Bytes(collection, (collectionPointer, collectionLen) {
       return _withNativeBytes(plan, (planPointer, planLength) {
         return _withNativeBytes(fieldTypes, (fieldTypesPointer, fieldTypesLen) {
-          final readerPointer = _functions.nativeDocumentReaderNewFromQueryPlan(
-            handle,
-            collectionPointer,
-            collectionLen,
-            planPointer,
-            planLength,
-            fieldTypesPointer,
-            fieldTypesLen,
+          final readerPointer = _checkedNativePointer(
+            (status) => _functions.nativeDocumentReaderNewFromQueryPlan(
+              handle,
+              collectionPointer,
+              collectionLen,
+              planPointer,
+              planLength,
+              fieldTypesPointer,
+              fieldTypesLen,
+              status,
+            ),
+            'create query reader',
           );
-          if (readerPointer == nullptr) {
-            throw StateError(
-              'Native Cindel query document reader allocation failed.',
-            );
-          }
           final isStreaming = _functions.nativeDocumentReaderIsStreaming(
             readerPointer,
           );
@@ -632,6 +620,8 @@ final class CindelNativeBindings {
           try {
             if (isStreaming) {
               final values = <T>[];
+              // next also stops on a sticky field/child-reader error; the
+              // finally block distinguishes that failure from legitimate EOF.
               while (_functions.nativeDocumentReaderNext(readerPointer)) {
                 values.add(readDocument(reader, 0));
               }
@@ -644,7 +634,11 @@ final class CindelNativeBindings {
               growable: false,
             );
           } finally {
-            reader.release();
+            try {
+              reader.checkError();
+            } finally {
+              reader.release();
+            }
           }
         });
       });

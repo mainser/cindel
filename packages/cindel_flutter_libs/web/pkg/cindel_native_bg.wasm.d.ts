@@ -1,12 +1,12 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const cindel_take_error: (a: number, b: number) => number;
+export const cindel_native_document_reader_error: (a: number, b: number) => number;
+export const cindel_native_batch_writer_error: (a: number, b: number) => number;
 export const cindel_abi_version: () => number;
 export const cindel_cleanup_orphan_links: (a: number, b: number, c: number) => number;
 export const cindel_backup_command: (a: number, b: number, c: number, d: number, e: number) => number;
-export const cindel_open: (a: number, b: number) => number;
-export const cindel_open_with_backend: (a: number, b: number, c: number) => number;
-export const cindel_open_with_backend_and_schemas: (a: number, b: number, c: number, d: number, e: number) => number;
 export const cindel_close: (a: number) => void;
 export const cindel_begin_read_txn: (a: number) => number;
 export const cindel_begin_write_txn: (a: number) => number;
@@ -20,7 +20,6 @@ export const cindel_register_migrated_schemas: (a: number, b: number, c: number)
 export const cindel_put_indexed: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => number;
 export const cindel_put_many_indexed: (a: number, b: number, c: number, d: number, e: number) => number;
 export const cindel_put_many_stored: (a: number, b: number, c: number, d: number, e: number) => number;
-export const cindel_native_batch_writer_new: (a: number, b: number, c: number, d: number) => number;
 export const cindel_native_batch_writer_begin_document: (a: number, b: bigint) => void;
 export const cindel_native_batch_writer_write_null: (a: number, b: number) => void;
 export const cindel_native_batch_writer_write_bool: (a: number, b: number, c: number) => void;
@@ -38,8 +37,6 @@ export const cindel_native_batch_writer_end_document: (a: number) => void;
 export const cindel_native_batch_writer_finish: (a: number, b: number, c: number, d: number) => number;
 export const cindel_native_batch_writer_finish_with_options: (a: number, b: number, c: number, d: number, e: number) => number;
 export const cindel_native_batch_writer_abort: (a: number) => void;
-export const cindel_native_document_reader_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
-export const cindel_native_document_reader_new_from_query_plan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
 export const cindel_native_document_reader_len: (a: number) => number;
 export const cindel_native_document_reader_is_streaming: (a: number) => number;
 export const cindel_native_document_reader_next: (a: number) => number;
@@ -97,6 +94,12 @@ export const cindel_query_plan_aggregate: (a: number, b: number, c: number, d: n
 export const cindel_query_plan_delete: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
 export const cindel_query_plan_update: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
 export const cindel_free_buffer: (a: number, b: number) => void;
+export const cindel_open: (a: number, b: number, c: number) => number;
+export const cindel_open_with_backend: (a: number, b: number, c: number, d: number) => number;
+export const cindel_open_with_backend_and_schemas: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+export const cindel_native_batch_writer_new: (a: number, b: number, c: number, d: number, e: number) => number;
+export const cindel_native_document_reader_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
+export const cindel_native_document_reader_new_from_query_plan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
 export const __wbg_cindelwebengine_free: (a: number, b: number) => void;
 export const cindelwebengine_cleanupOrphanLinks: (a: number, b: number) => void;
 export const cindelwebengine_backupCommand: (a: number, b: number, c: number, d: number) => void;
@@ -139,9 +142,9 @@ export const cindelwebengine_queryPlanProject: (a: number, b: number, c: number,
 export const cindelwebengine_queryPlanAggregate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
 export const cindelwebengine_queryPlanDelete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const cindelwebengine_queryPlanUpdate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+export const cindel_get_stored: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
 export const cindel_native_document_reader_read_current_list_bytes: (a: number, b: number, c: number, d: number) => number;
 export const cindel_native_document_reader_read_list_bytes: (a: number, b: number, c: number, d: number, e: number) => number;
-export const cindel_get_stored: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
 export const rust_sqlite_wasm_getentropy: (a: number, b: number) => number;
 export const rust_sqlite_wasm_assert_fail: (a: number, b: number, c: number, d: number) => void;
 export const rust_sqlite_wasm_abort: () => void;
@@ -152,8 +155,8 @@ export const rust_sqlite_wasm_realloc: (a: number, b: number) => number;
 export const rust_sqlite_wasm_calloc: (a: number, b: number) => number;
 export const sqlite3_os_init: () => number;
 export const sqlite3_os_end: () => number;
-export const __wasm_bindgen_func_elem_2882: (a: number, b: number, c: number, d: number) => void;
-export const __wasm_bindgen_func_elem_2907: (a: number, b: number, c: number, d: number) => void;
+export const __wasm_bindgen_func_elem_2901: (a: number, b: number, c: number, d: number) => void;
+export const __wasm_bindgen_func_elem_2926: (a: number, b: number, c: number, d: number) => void;
 export const __wbindgen_export: (a: number, b: number) => number;
 export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_export3: (a: number) => void;

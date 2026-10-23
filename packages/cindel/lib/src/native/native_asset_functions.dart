@@ -12,6 +12,16 @@ final class _NativeAssetCindelNativeFunctions
   const _NativeAssetCindelNativeFunctions();
 
   @override
+  Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  get nativeBatchWriterError => _cindelNativeBatchWriterError;
+
+  @override
+  Pointer<Uint8> Function(int, Pointer<Size>) get takeError => _cindelTakeError;
+  @override
+  Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  get nativeDocumentReaderError => _cindelNativeDocumentReaderError;
+
+  @override
   int Function(
     Pointer<Void>,
     Pointer<Uint8>,
@@ -30,15 +40,17 @@ final class _NativeAssetCindelNativeFunctions
   int Function() get abiVersion => _cindelAbiVersion;
 
   @override
-  Pointer<Void> Function(Pointer<Uint8>, int) get open => _cindelOpen;
+  Pointer<Void> Function(Pointer<Uint8>, int, Pointer<Int32>) get open =>
+      _cindelOpen;
 
   @override
   Pointer<Void> openWithBackend(
     Pointer<Uint8> directory,
     int length,
     int backend,
+    Pointer<Int32> status,
   ) {
-    return _cindelOpenWithBackend(directory, length, backend);
+    return _cindelOpenWithBackend(directory, length, backend, status);
   }
 
   @override
@@ -48,6 +60,7 @@ final class _NativeAssetCindelNativeFunctions
     int backend,
     Pointer<Uint8> schemas,
     int schemasLength,
+    Pointer<Int32> status,
   ) {
     return _cindelOpenWithBackendAndSchemas(
       directory,
@@ -55,6 +68,7 @@ final class _NativeAssetCindelNativeFunctions
       backend,
       schemas,
       schemasLength,
+      status,
     );
   }
 
@@ -121,7 +135,7 @@ final class _NativeAssetCindelNativeFunctions
 
   // Native generated-document writer symbols.
   @override
-  Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  Pointer<Void> Function(Pointer<Uint8>, int, int, int, Pointer<Int32>)
   get nativeBatchWriterNew => _cindelNativeBatchWriterNew;
 
   @override
@@ -204,6 +218,7 @@ final class _NativeAssetCindelNativeFunctions
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   get nativeDocumentReaderNew => _cindelNativeDocumentReaderNew;
 
@@ -216,6 +231,7 @@ final class _NativeAssetCindelNativeFunctions
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   get nativeDocumentReaderNewFromQueryPlan =>
       _cindelNativeDocumentReaderNewFromQueryPlan;
@@ -765,13 +781,17 @@ String _joinPath(String base, String relativePath) {
 )
 external int _cindelAbiVersion();
 
-@Native<Pointer<Void> Function(Pointer<Uint8>, Size)>(
+@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Pointer<Int32>)>(
   symbol: 'cindel_open',
   assetId: _assetId,
 )
-external Pointer<Void> _cindelOpen(Pointer<Uint8> directory, int directoryLen);
+external Pointer<Void> _cindelOpen(
+  Pointer<Uint8> directory,
+  int directoryLen,
+  Pointer<Int32> status,
+);
 
-@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Uint32)>(
+@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Uint32, Pointer<Int32>)>(
   symbol: 'cindel_open_with_backend',
   assetId: _assetId,
 )
@@ -779,10 +799,18 @@ external Pointer<Void> _cindelOpenWithBackend(
   Pointer<Uint8> directory,
   int directoryLen,
   int backend,
+  Pointer<Int32> status,
 );
 
 @Native<
-  Pointer<Void> Function(Pointer<Uint8>, Size, Uint32, Pointer<Uint8>, Size)
+  Pointer<Void> Function(
+    Pointer<Uint8>,
+    Size,
+    Uint32,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Int32>,
+  )
 >(symbol: 'cindel_open_with_backend_and_schemas', assetId: _assetId)
 external Pointer<Void> _cindelOpenWithBackendAndSchemas(
   Pointer<Uint8> directory,
@@ -790,6 +818,7 @@ external Pointer<Void> _cindelOpenWithBackendAndSchemas(
   int backend,
   Pointer<Uint8> schemas,
   int schemasLen,
+  Pointer<Int32> status,
 );
 
 // Lifecycle and transaction exports.
@@ -932,15 +961,15 @@ external int _cindelPutManyStored(
 );
 
 // Native generated-document writer exports.
-@Native<Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32)>(
-  symbol: 'cindel_native_batch_writer_new',
-  assetId: _assetId,
-)
+@Native<
+  Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32, Pointer<Int32>)
+>(symbol: 'cindel_native_batch_writer_new', assetId: _assetId)
 external Pointer<Void> _cindelNativeBatchWriterNew(
   Pointer<Uint8> fieldTypes,
   int fieldTypesLen,
   int capacity,
   int collectNativeValues,
+  Pointer<Int32> status,
 );
 
 @Native<Void Function(Pointer<Void>, Uint64)>(
@@ -1116,6 +1145,7 @@ external void _cindelNativeBatchWriterAbort(Pointer<Void> writer);
     Size,
     Pointer<Uint8>,
     Size,
+    Pointer<Int32>,
   )
 >(symbol: 'cindel_native_document_reader_new', assetId: _assetId)
 external Pointer<Void> _cindelNativeDocumentReaderNew(
@@ -1126,6 +1156,7 @@ external Pointer<Void> _cindelNativeDocumentReaderNew(
   int idsLen,
   Pointer<Uint8> fieldTypes,
   int fieldTypesLen,
+  Pointer<Int32> status,
 );
 
 @Native<
@@ -1137,6 +1168,7 @@ external Pointer<Void> _cindelNativeDocumentReaderNew(
     Size,
     Pointer<Uint8>,
     Size,
+    Pointer<Int32>,
   )
 >(
   symbol: 'cindel_native_document_reader_new_from_query_plan',
@@ -1150,6 +1182,7 @@ external Pointer<Void> _cindelNativeDocumentReaderNewFromQueryPlan(
   int planLen,
   Pointer<Uint8> fieldTypes,
   int fieldTypesLen,
+  Pointer<Int32> status,
 );
 
 @Native<Size Function(Pointer<Void>)>(
@@ -2114,4 +2147,31 @@ external int _cindelCleanupOrphanLinks(
   Pointer<Void> handle,
   Pointer<Pointer<Uint8>> out,
   Pointer<Size> outLength,
+);
+
+@Native<Pointer<Uint8> Function(Int32, Pointer<Size>)>(
+  symbol: 'cindel_take_error',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external Pointer<Uint8> _cindelTakeError(int status, Pointer<Size> length);
+
+@Native<Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)>(
+  symbol: 'cindel_native_document_reader_error',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external Pointer<Uint8> _cindelNativeDocumentReaderError(
+  Pointer<Void> reader,
+  Pointer<Size> length,
+);
+
+@Native<Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)>(
+  symbol: 'cindel_native_batch_writer_error',
+  assetId: _assetId,
+  isLeaf: true,
+)
+external Pointer<Uint8> _cindelNativeBatchWriterError(
+  Pointer<Void> writer,
+  Pointer<Size> length,
 );

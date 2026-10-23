@@ -100,7 +100,7 @@ impl SqliteNativeDocumentCursor {
         select.push_str(SQLITE_ROW_ID_COLUMN);
         select.push_str(" = ?");
 
-        let sql = CString::new(select).map_err(|error| error.to_string())?;
+        let sql = CString::new(select).map_err(sqlite_diagnostic)?;
         let mut statement = ptr::null_mut();
         let database = unsafe { connection.handle() };
         if owns_transaction {
@@ -110,10 +110,11 @@ impl SqliteNativeDocumentCursor {
             ffi::sqlite3_prepare_v2(database, sql.as_ptr(), -1, &mut statement, ptr::null_mut())
         };
         if status != ffi::SQLITE_OK {
+            let error = sqlite_error(database);
             if owns_transaction {
                 let _ = sqlite_exec(database, "ROLLBACK");
             }
-            return Err(sqlite_error(database));
+            return Err(error);
         }
         Ok(Self {
             database,
@@ -209,6 +210,8 @@ impl SqliteNativeDocumentCursor {
     }
 
     fn seek(&mut self, document_index: usize) -> Result<bool, String> {
+        #[cfg(test)]
+        super::test_faults::check("document_seek")?;
         if self.current_index == Some(document_index) {
             return Ok(self.current_present);
         }
@@ -251,7 +254,7 @@ impl SqliteNativeQueryCursor {
         owns_transaction: bool,
     ) -> Result<Self, String> {
         let (sql, params) = sqlite_query_plan_sql(schema, plan, SqliteQuerySelect::Documents)?;
-        let sql = CString::new(sql).map_err(|error| error.to_string())?;
+        let sql = CString::new(sql).map_err(sqlite_diagnostic)?;
         let mut statement = ptr::null_mut();
         let database = unsafe { connection.handle() };
         if owns_transaction {
@@ -261,23 +264,29 @@ impl SqliteNativeQueryCursor {
             ffi::sqlite3_prepare_v2(database, sql.as_ptr(), -1, &mut statement, ptr::null_mut())
         };
         if status != ffi::SQLITE_OK {
+            let error = sqlite_error(database);
             if owns_transaction {
                 let _ = sqlite_exec(database, "ROLLBACK");
             }
-            return Err(sqlite_error(database));
+            return Err(error);
         }
-        for (index, value) in params.iter().enumerate() {
-            bind_sqlite_value(database, statement, index + 1, value)?;
-        }
-        Ok(Self {
+        // Own the statement and transaction before binding: an error must run
+        // the same cleanup as a reader dropped after successful preparation.
+        let cursor = Self {
             database,
             statement,
             current_present: false,
             owns_transaction,
-        })
+        };
+        for (index, value) in params.iter().enumerate() {
+            bind_sqlite_value(database, statement, index + 1, value)?;
+        }
+        Ok(cursor)
     }
 
     pub(crate) fn next(&mut self) -> Result<bool, String> {
+        #[cfg(test)]
+        super::test_faults::check("query_next")?;
         let status = unsafe { ffi::sqlite3_step(self.statement) };
         self.current_present = match status {
             ffi::SQLITE_ROW => true,
@@ -403,7 +412,7 @@ fn bind_sqlite_value(
     index: usize,
     value: &Value,
 ) -> Result<(), String> {
-    let index = i32::try_from(index).map_err(|error| error.to_string())?;
+    let index = i32::try_from(index).map_err(sqlite_diagnostic)?;
     let status = match value {
         Value::Null => unsafe { ffi::sqlite3_bind_null(statement, index) },
         Value::Integer(value) => unsafe { ffi::sqlite3_bind_int64(statement, index, *value) },
@@ -413,7 +422,7 @@ fn bind_sqlite_value(
                 statement,
                 index,
                 value.as_ptr().cast(),
-                i32::try_from(value.len()).map_err(|error| error.to_string())?,
+                i32::try_from(value.len()).map_err(sqlite_diagnostic)?,
                 ffi::SQLITE_TRANSIENT(),
             )
         },
@@ -422,7 +431,7 @@ fn bind_sqlite_value(
                 statement,
                 index,
                 value.as_ptr().cast::<c_void>(),
-                i32::try_from(value.len()).map_err(|error| error.to_string())?,
+                i32::try_from(value.len()).map_err(sqlite_diagnostic)?,
                 ffi::SQLITE_TRANSIENT(),
             )
         },
@@ -431,7 +440,7 @@ fn bind_sqlite_value(
 }
 
 fn sqlite_exec(database: *mut ffi::sqlite3, sql: &str) -> Result<(), String> {
-    let sql = CString::new(sql).map_err(|error| error.to_string())?;
+    let sql = CString::new(sql).map_err(sqlite_diagnostic)?;
     let mut error_message = ptr::null_mut();
     let status = unsafe {
         ffi::sqlite3_exec(
@@ -448,9 +457,11 @@ fn sqlite_exec(database: *mut ffi::sqlite3, sql: &str) -> Result<(), String> {
     if error_message.is_null() {
         return Err(sqlite_error(database));
     }
-    let message = unsafe { CStr::from_ptr(error_message) }
-        .to_string_lossy()
-        .into_owned();
+    let message = format!(
+        "SQLite code {}: {}",
+        unsafe { ffi::sqlite3_extended_errcode(database) },
+        unsafe { CStr::from_ptr(error_message) }.to_string_lossy()
+    );
     unsafe {
         ffi::sqlite3_free(error_message.cast());
     }
@@ -465,6 +476,21 @@ fn sqlite_status(database: *mut ffi::sqlite3, status: i32) -> Result<(), String>
     }
 }
 
+// rusqlite's Display omits the extended code when SQLite supplies a message.
+// Preserve both before this error is transported through FFI or Wasm.
+fn sqlite_diagnostic<E: std::fmt::Display + 'static>(error: E) -> String {
+    if let Some(rusqlite::Error::SqliteFailure(code, message)) =
+        (&error as &dyn std::any::Any).downcast_ref::<rusqlite::Error>()
+    {
+        return format!(
+            "SQLite code {}: {}",
+            code.extended_code,
+            message.as_deref().unwrap_or("SQLite operation failed")
+        );
+    }
+    error.to_string()
+}
+
 fn sqlite_error(database: *mut ffi::sqlite3) -> String {
     if database.is_null() {
         return "SQLite operation failed".into();
@@ -473,9 +499,11 @@ fn sqlite_error(database: *mut ffi::sqlite3) -> String {
     if message.is_null() {
         "SQLite operation failed".into()
     } else {
-        unsafe { CStr::from_ptr(message) }
-            .to_string_lossy()
-            .into_owned()
+        format!(
+            "SQLite code {}: {}",
+            unsafe { ffi::sqlite3_extended_errcode(database) },
+            unsafe { CStr::from_ptr(message) }.to_string_lossy()
+        )
     }
 }
 
@@ -570,16 +598,16 @@ impl SqliteStorage {
                 PRAGMA case_sensitive_like = true;
                 "#,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         self.connection
             .execute_batch("BEGIN")
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let result = self.initialize_transaction(manifest);
         match result {
             Ok(()) => self
                 .connection
                 .execute_batch("COMMIT")
-                .map_err(|error| error.to_string()),
+                .map_err(sqlite_diagnostic),
             Err(error) => {
                 let _ = self.connection.execute_batch("ROLLBACK");
                 Err(error)
@@ -697,7 +725,7 @@ impl StorageEngine for SqliteStorage {
         };
         self.connection
             .execute_batch("COMMIT")
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         self.active_transaction = None;
         self.last_change_sets = if mode == TransactionMode::Write {
             std::mem::take(&mut self.active_change_sets)
@@ -713,7 +741,7 @@ impl StorageEngine for SqliteStorage {
         }
         self.connection
             .execute_batch("ROLLBACK")
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         self.active_transaction = None;
         self.active_change_sets.clear();
         Ok(())
@@ -734,7 +762,7 @@ impl StorageEngine for SqliteStorage {
                 ensure_generic_document_tables(&self.connection)?;
             }
             let id = reserve_ids(&self.connection, collection, count)?;
-            return u64::try_from(id).map_err(|error| error.to_string());
+            return u64::try_from(id).map_err(sqlite_diagnostic);
         }
 
         // Acquire the write lock before reading the shared counter. A deferred
@@ -742,15 +770,15 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
 
         if !is_native {
             ensure_generic_document_tables(&transaction)?;
         }
         let id = reserve_ids(&transaction, collection, count)?;
 
-        transaction.commit().map_err(|error| error.to_string())?;
-        u64::try_from(id).map_err(|error| error.to_string())
+        transaction.commit().map_err(sqlite_diagnostic)?;
+        u64::try_from(id).map_err(sqlite_diagnostic)
     }
 
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
@@ -766,7 +794,7 @@ impl StorageEngine for SqliteStorage {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)
     }
 
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String> {
@@ -828,7 +856,7 @@ impl StorageEngine for SqliteStorage {
         limit: usize,
     ) -> Result<Vec<u64>, String> {
         let after_id = optional_sql_id(after_id)?;
-        let limit = i64::try_from(limit).map_err(|error| error.to_string())?;
+        let limit = i64::try_from(limit).map_err(sqlite_diagnostic)?;
         if self.collection_schema(collection).is_some() {
             if table_exists(&self.connection, "documents")? {
                 let sql = format!(
@@ -893,12 +921,12 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
 
         put_document_with_indexes(&transaction, collection, id, bytes, indexes)?;
         let revision = bump_collection_revision(&transaction, collection)?;
 
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         self.record_change(collection, revision, [id]);
         Ok(())
     }
@@ -958,7 +986,7 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
 
         for document in documents {
             put_document_with_indexes(
@@ -971,7 +999,7 @@ impl StorageEngine for SqliteStorage {
         }
         let revision = bump_collection_revision(&transaction, collection)?;
 
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         if track_changes {
             self.record_change(
                 collection,
@@ -1019,12 +1047,12 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let max_id = put_native_documents(&transaction, &schema, documents)?;
         if let Some(max_id) = max_id {
             advance_id_counter(&transaction, collection, max_id)?;
         }
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         let revision = self.bump_collection_revision_in_memory(collection);
         if track_changes {
             self.record_change(
@@ -1064,7 +1092,7 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
 
         let deleted =
             delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
@@ -1073,7 +1101,7 @@ impl StorageEngine for SqliteStorage {
             revision = Some(bump_collection_revision(&transaction, collection)?);
         }
 
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         if deleted && has_collection_table {
             revision = Some(self.bump_collection_revision_in_memory(collection));
         }
@@ -1121,7 +1149,7 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
 
         let mut deleted_ids = Vec::new();
         for id in ids {
@@ -1140,7 +1168,7 @@ impl StorageEngine for SqliteStorage {
             Some(bump_collection_revision(&transaction, collection)?)
         };
 
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         let revision = if !deleted_ids.is_empty() && has_collection_table {
             Some(self.bump_collection_revision_in_memory(collection))
         } else {
@@ -1181,11 +1209,11 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let deleted_ids = delete_native_documents(&transaction, &schema.name, ids)?;
         let has_deleted_ids = !deleted_ids.is_empty();
 
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         if has_deleted_ids {
             let revision = self.bump_collection_revision_in_memory(collection);
             self.record_change(collection, revision, deleted_ids);
@@ -1212,7 +1240,7 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         replace_links_sqlite(&transaction, links, &target_ids)?;
         let revision = if has_source_schema {
             None
@@ -1222,7 +1250,7 @@ impl StorageEngine for SqliteStorage {
                 &links.source_collection,
             )?)
         };
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         let revision = revision
             .unwrap_or_else(|| self.bump_collection_revision_in_memory(&links.source_collection));
         self.record_change(&links.source_collection, revision, [links.source_id]);
@@ -1319,10 +1347,10 @@ impl StorageEngine for SqliteStorage {
                     |row| row.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(|e| e.to_string())?
+                .map_err(sqlite_diagnostic)?
                 .map(u64::try_from)
                 .transpose()
-                .map_err(|e| e.to_string())?
+                .map_err(sqlite_diagnostic)?
                 .unwrap_or_default()
         } else {
             0
@@ -1336,7 +1364,7 @@ impl StorageEngine for SqliteStorage {
                     [collection],
                     |row| row.get(0),
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
         // Keep relation revisions separate: advancing them must not hide the
         // next document revision from either the typed or generic write path.
         Ok(documents
@@ -1380,11 +1408,11 @@ impl StorageEngine for SqliteStorage {
             let transaction = self
                 .connection
                 .transaction()
-                .map_err(|error| error.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             for collection in &manifest.collections {
                 register_persisted_collection_schema(&transaction, collection)?;
             }
-            transaction.commit().map_err(|error| error.to_string())?;
+            transaction.commit().map_err(sqlite_diagnostic)?;
             for collection in &manifest.collections {
                 let version =
                     persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
@@ -1408,7 +1436,7 @@ impl StorageEngine for SqliteStorage {
 
         self.connection
             .execute_batch("BEGIN")
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         for collection in &manifest.collections {
             if let Err(error) = self.register_collection_schema(collection) {
                 let _ = self.connection.execute_batch("ROLLBACK");
@@ -1418,7 +1446,7 @@ impl StorageEngine for SqliteStorage {
 
         self.connection
             .execute_batch("COMMIT")
-            .map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)
     }
 
     fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
@@ -1446,11 +1474,11 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         for collection in &manifest.collections {
             register_migrated_collection_schema(&transaction, collection)?;
         }
-        transaction.commit().map_err(|error| error.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         for collection in &manifest.collections {
             let version =
                 persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
@@ -1475,10 +1503,10 @@ impl StorageEngine for SqliteStorage {
                     |row| row.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(|error| error.to_string())?
+                .map_err(sqlite_diagnostic)?
                 .map(u64::try_from)
                 .transpose()
-                .map_err(|error| error.to_string());
+                .map_err(sqlite_diagnostic);
         }
         Ok(self.schemas.get(collection).map(|schema| schema.version))
     }
@@ -1507,7 +1535,7 @@ impl StorageEngine for SqliteStorage {
         }
         self.connection
             .execute_batch("VACUUM")
-            .map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)
     }
 
     fn rebuild_indexes(
@@ -1523,9 +1551,9 @@ impl StorageEngine for SqliteStorage {
         let transaction = self
             .connection
             .transaction()
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         rebuild_indexes_on_connection(&transaction, collection, documents)?;
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(sqlite_diagnostic)
     }
 
     fn query_plan_ids(&self, collection: &str, plan: &WireQueryPlan) -> Result<Vec<u64>, String> {
@@ -1557,8 +1585,8 @@ impl StorageEngine for SqliteStorage {
             .query_row(&sql, params_from_iter(params.iter()), |row| {
                 row.get::<_, i64>(0)
             })
-            .map_err(|error| error.to_string())?;
-        u64::try_from(count).map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)?;
+        u64::try_from(count).map_err(sqlite_diagnostic)
     }
 
     fn query_project(
@@ -1619,15 +1647,15 @@ impl StorageEngine for SqliteStorage {
         let mut statement = self
             .connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 sqlite_row_wire_value(row, 0, schema_field)
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let mut aggregate = StreamingWireAggregate::new(operation);
         for row in rows {
-            let value = row.map_err(|error| error.to_string())?;
+            let value = row.map_err(sqlite_diagnostic)?;
             // Materializing the values used to report read errors before aggregate
             // errors. Keep decoding after a calculation error to preserve that order.
             aggregate = aggregate.and_then(|mut aggregate| {
@@ -1692,7 +1720,7 @@ impl SqliteStorage {
         let mut statement = self
             .connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 Ok((
@@ -1700,12 +1728,12 @@ impl SqliteStorage {
                     native_document_from_row(row, &fields)?,
                 ))
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let mut documents = Vec::new();
         for row in rows {
-            let (id, document) = row.map_err(|error| error.to_string())?;
+            let (id, document) = row.map_err(sqlite_diagnostic)?;
             documents.push((
-                u64::try_from(id).map_err(|error| error.to_string())?,
+                u64::try_from(id).map_err(sqlite_diagnostic)?,
                 document,
             ));
         }
@@ -1730,14 +1758,14 @@ impl SqliteStorage {
         let mut statement = self
             .connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 sqlite_row_wire_value(row, 0, schema_field)
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)
     }
 
     fn query_native_projection(
@@ -1768,7 +1796,7 @@ impl SqliteStorage {
             for id in ids {
                 if native_document_exists(&self.connection, schema, *id)? {
                     values.push(WireValue::Int(
-                        i64::try_from(*id).map_err(|error| error.to_string())?,
+                        i64::try_from(*id).map_err(sqlite_diagnostic)?,
                     ));
                 }
             }
@@ -1783,7 +1811,7 @@ impl SqliteStorage {
         let mut statement = self
             .connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let mut values = Vec::new();
         for id in ids {
             let id = sqlite_id(*id)?;
@@ -1792,7 +1820,7 @@ impl SqliteStorage {
                     sqlite_row_wire_value(row, 0, schema_field)
                 })
                 .optional()
-                .map_err(|error| error.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             if let Some(value) = value {
                 values.push(value);
             }
@@ -1806,7 +1834,7 @@ impl SqliteStorage {
         }
         self.connection
             .execute_batch(sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         self.active_transaction = Some(mode);
         Ok(())
     }
@@ -1826,17 +1854,17 @@ fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
         | OpenFlags::SQLITE_OPEN_URI
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if directory == IN_MEMORY_DIRECTORY {
-        Connection::open_in_memory_with_flags(flags).map_err(|error| error.to_string())
+        Connection::open_in_memory_with_flags(flags).map_err(sqlite_diagnostic)
     } else {
         Connection::open_with_flags_and_vfs(directory, flags, "opfs-sahpool")
-            .map_err(|error| error.to_string())
+            .map_err(sqlite_diagnostic)
     }
 }
 
 #[cfg(all(not(feature = "web"), target_family = "wasm", target_os = "unknown"))]
 fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
     if directory == IN_MEMORY_DIRECTORY {
-        Connection::open_in_memory().map_err(|error| error.to_string())
+        Connection::open_in_memory().map_err(sqlite_diagnostic)
     } else {
         Err(
             "persistent SQLite storage on Web requires the `web` feature and OPFS SAHPool setup"
@@ -1848,11 +1876,11 @@ fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 fn open_sqlite_connection(directory: &str) -> Result<Connection, String> {
     if directory == IN_MEMORY_DIRECTORY {
-        Connection::open_in_memory().map_err(|error| error.to_string())
+        Connection::open_in_memory().map_err(sqlite_diagnostic)
     } else {
-        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        fs::create_dir_all(directory).map_err(sqlite_diagnostic)?;
         let database_path = Path::new(directory).join("cindel.sqlite");
-        Connection::open(database_path).map_err(|error| error.to_string())
+        Connection::open(database_path).map_err(sqlite_diagnostic)
     }
 }
 
@@ -2003,7 +2031,7 @@ fn update_native_query_plan(
 
     connection
         .execute(&sql, params_from_iter(params.iter()))
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn sqlite_update_sql(
@@ -2382,7 +2410,7 @@ fn native_document_exists(
         .query_row(&sql, params![id], |_| Ok(()))
         .optional()
         .map(|value| value.is_some())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn sqlite_row_wire_value(
@@ -2669,7 +2697,7 @@ fn reserve_ids(connection: &Connection, collection: &str, count: u32) -> Result<
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
 
     let Some(next_id) = existing else {
         connection
@@ -2677,7 +2705,7 @@ fn reserve_ids(connection: &Connection, collection: &str, count: u32) -> Result<
                 "INSERT INTO id_counters (collection, next_id) VALUES (?1, ?2)",
                 params![collection, 1 + i64::from(count)],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         return Ok(1);
     };
 
@@ -2694,7 +2722,7 @@ fn reserve_ids(connection: &Connection, collection: &str, count: u32) -> Result<
             "UPDATE id_counters SET next_id = ?2 WHERE collection = ?1",
             params![collection, following_id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     Ok(next_id)
 }
 
@@ -2715,7 +2743,7 @@ fn advance_id_counter(connection: &Connection, collection: &str, id: i64) -> Res
             params![collection, next_id],
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn put_document_with_indexes(
@@ -2750,7 +2778,7 @@ fn put_document(
             params![collection, id, bytes],
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn put_native_documents(
@@ -2784,7 +2812,7 @@ fn put_native_documents_cached_chunk_statement(
         let full_chunk_sql = native_insert_sql(&schema.name, fields, batch_limit);
         let mut full_statement = connection
             .prepare(&full_chunk_sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         for chunk in &mut chunks {
             execute_native_insert_chunk(
                 &mut full_statement,
@@ -2802,7 +2830,7 @@ fn put_native_documents_cached_chunk_statement(
         let sql = native_insert_sql(&schema.name, fields, remainder.len());
         let mut statement = connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         execute_native_insert_chunk(&mut statement, schema, fields, remainder, &mut max_seen_id)?;
     }
 
@@ -2828,14 +2856,14 @@ fn execute_native_insert_chunk(
         *max_seen_id = Some((*max_seen_id).map_or(id, |current: i64| current.max(id)));
         statement
             .raw_bind_parameter(parameter_index, id)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         parameter_index += 1;
         for (field, value) in fields.iter().zip(document.values.iter()) {
             bind_native_sql_value(statement, parameter_index, field, value)?;
             parameter_index += 1;
         }
     }
-    statement.raw_execute().map_err(|error| error.to_string())?;
+    statement.raw_execute().map_err(sqlite_diagnostic)?;
     Ok(())
 }
 
@@ -2958,13 +2986,13 @@ fn enforce_native_unique_index(
     }
     let mut statement = connection
         .prepare(&sql)
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     for (index, (_, value)) in values.iter().enumerate() {
         bind_native_unique_value(&mut statement, index + 1, value)?;
     }
     let mut rows = statement.raw_query();
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let existing_id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+    while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
+        let existing_id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
         if existing_id == id {
             continue;
         }
@@ -2988,7 +3016,7 @@ fn bind_native_unique_value(
     match value {
         NativeSqlValueRef::Id(id) => statement
             .raw_bind_parameter(parameter_index, id)
-            .map_err(|error| error.to_string()),
+            .map_err(sqlite_diagnostic),
         NativeSqlValueRef::Field(field, value) => {
             bind_native_sql_value(statement, parameter_index, field, value)
         }
@@ -3035,14 +3063,14 @@ fn delete_native_documents(
     let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
     let mut statement = connection
         .prepare(&sql)
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let mut deleted_ids = Vec::new();
     for id in ids {
         let id = sqlite_id(*id)?;
         relations::delete_relations(connection, collection, id)?;
         let deleted = statement
             .execute(params![id])
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         if deleted > 0 {
             deleted_ids.push(id as u64);
         }
@@ -3068,12 +3096,12 @@ fn bind_native_sql_value(
             statement.raw_bind_parameter(parameter_index, *value)
         }
         ("string", NativeDocumentValue::Bytes(value)) => {
-            let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
+            let text = std::str::from_utf8(value).map_err(sqlite_diagnostic)?;
             statement.raw_bind_parameter(parameter_index, text)
         }
         ("list", NativeDocumentValue::Bytes(value)) => {
             if value.first() == Some(&b'[') {
-                let text = std::str::from_utf8(value).map_err(|error| error.to_string())?;
+                let text = std::str::from_utf8(value).map_err(sqlite_diagnostic)?;
                 statement.raw_bind_parameter(parameter_index, text)
             } else if let Ok(text) = native_string_list_json(value) {
                 statement.raw_bind_parameter(parameter_index, text.as_str())
@@ -3091,7 +3119,7 @@ fn bind_native_sql_value(
             ))
         }
     }
-    .map_err(|error| error.to_string())
+    .map_err(sqlite_diagnostic)
 }
 
 fn native_string_list_json(bytes: &[u8]) -> Result<String, String> {
@@ -3124,7 +3152,7 @@ fn push_json_string(json: &mut String, value: &str) -> Result<(), String> {
             '\u{08}' => json.push_str("\\b"),
             '\u{0c}' => json.push_str("\\f"),
             character if character <= '\u{1f}' => {
-                write!(json, "\\u{:04x}", character as u32).map_err(|error| error.to_string())?;
+                write!(json, "\\u{:04x}", character as u32).map_err(sqlite_diagnostic)?;
             }
             character => json.push(character),
         }
@@ -3154,15 +3182,15 @@ fn get_many_generic_documents(
         params.extend(chunk.iter().copied().map(Value::Integer));
         let mut statement = connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let mut rows = statement
             .query(params_from_iter(params.iter()))
-            .map_err(|error| error.to_string())?;
-        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-            let id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
+        while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
+            let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
             let document = row
                 .get::<_, Vec<u8>>(1)
-                .map_err(|error| error.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             found.insert(id, document);
         }
     }
@@ -3217,14 +3245,14 @@ fn get_many_native_documents(
         let sql = format!("{select}{}", sqlite_placeholders(chunk.len()));
         let mut statement = connection
             .prepare(&sql)
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let mut rows = statement
             .query(params_from_iter(chunk.iter()))
-            .map_err(|error| error.to_string())?;
-        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-            let id = row.get::<_, i64>(0).map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
+        while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
+            let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
             let document =
-                native_document_from_row(row, &fields).map_err(|error| error.to_string())?;
+                native_document_from_row(row, &fields).map_err(sqlite_diagnostic)?;
             found.insert(id, document);
         }
     }
@@ -3369,7 +3397,7 @@ fn delete_document_with_layout(
         let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
         deleted += connection
             .execute(&sql, params![id])
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     if table_exists(connection, "documents")? {
         deleted += connection
@@ -3377,7 +3405,7 @@ fn delete_document_with_layout(
                 "DELETE FROM documents WHERE collection = ?1 AND id = ?2",
                 params![collection, id],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     if table_exists(connection, "index_entries")? {
         delete_index_entries(connection, collection, id)?;
@@ -3392,7 +3420,7 @@ fn delete_index_entries(connection: &Connection, collection: &str, id: i64) -> R
             params![collection, id],
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 #[allow(dead_code)]
@@ -3406,7 +3434,7 @@ fn rebuild_indexes_on_connection(
             "DELETE FROM index_entries WHERE collection = ?1",
             params![collection],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     for document in documents {
         let id = sqlite_id(document.id)?;
         ensure_document_exists(connection, collection, id)?;
@@ -3433,7 +3461,7 @@ fn ensure_document_exists(
         connection
             .query_row(&sql, params![id, collection], |_| Ok(()))
             .optional()
-            .map_err(|error| error.to_string())?
+            .map_err(sqlite_diagnostic)?
             .is_some()
     } else {
         connection
@@ -3443,7 +3471,7 @@ fn ensure_document_exists(
                 |_| Ok(()),
             )
             .optional()
-            .map_err(|error| error.to_string())?
+            .map_err(sqlite_diagnostic)?
             .is_some()
     };
     if exists {
@@ -3514,7 +3542,7 @@ fn unique_index_options(
             |row| row.get::<_, Vec<u8>>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let Some(schema_bytes) = schema_bytes else {
         return Ok(std::collections::HashMap::new());
     };
@@ -3569,7 +3597,7 @@ fn insert_index_entries(
                     id,
                 ],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     Ok(())
 }
@@ -3585,19 +3613,19 @@ fn ensure_storage_metadata(
             "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
             params!["storage_layout", layout.as_str()],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .execute(
             "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
             params!["document_format", document_format.as_str()],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .execute(
             "INSERT OR IGNORE INTO storage_metadata (key, value) VALUES (?1, ?2)",
             params!["schema_metadata_format", schema_metadata_format.as_str()],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     Ok(())
 }
 
@@ -3610,7 +3638,7 @@ fn ensure_binary_schema_collections_table(connection: &Connection) -> Result<(),
             .query_row("SELECT COUNT(*) FROM schema_collections", [], |row| {
                 row.get::<_, i64>(0)
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         if row_count > 0 {
             return Err(
                 "JSON-era preview schema metadata is incompatible with Cindel binary metadata; recreate the database"
@@ -3619,7 +3647,7 @@ fn ensure_binary_schema_collections_table(connection: &Connection) -> Result<(),
         }
         connection
             .execute("DROP TABLE schema_collections", [])
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         connection
             .execute(
                 r#"
@@ -3631,7 +3659,7 @@ fn ensure_binary_schema_collections_table(connection: &Connection) -> Result<(),
                 "#,
                 [],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     Ok(())
 }
@@ -3639,23 +3667,23 @@ fn ensure_binary_schema_collections_table(connection: &Connection) -> Result<(),
 fn schema_collection_columns(connection: &Connection) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(schema_collections)")
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn validate_schema_metadata_records(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("SELECT schema_bytes FROM schema_collections")
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let rows = statement
         .query_map([], |row| row.get::<_, Vec<u8>>(0))
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     for row in rows {
-        let bytes = row.map_err(|error| error.to_string())?;
+        let bytes = row.map_err(sqlite_diagnostic)?;
         decode_schema_record(&bytes)?;
     }
     Ok(())
@@ -3695,7 +3723,7 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?
+        .map_err(sqlite_diagnostic)?
         .unwrap_or_else(|| StorageLayoutVersion::SqliteV1.as_str().to_string());
     let document_format = connection
         .query_row(
@@ -3704,7 +3732,7 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?
+        .map_err(sqlite_diagnostic)?
         .unwrap_or_else(|| DocumentFormatVersion::BinaryV2.as_str().to_string());
     let schema_metadata_format = connection
         .query_row(
@@ -3713,7 +3741,7 @@ fn read_storage_metadata(connection: &Connection) -> Result<StorageMetadata, Str
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?
+        .map_err(sqlite_diagnostic)?
         .unwrap_or_else(|| SchemaMetadataVersion::BinaryV1.as_str().to_string());
     Ok(StorageMetadata {
         layout: parse_storage_layout(&layout)?,
@@ -3735,8 +3763,8 @@ fn read_migration_version(connection: &Connection) -> Result<Option<u64>, String
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?
-        .map(|value| value.parse::<u64>().map_err(|error| error.to_string()))
+        .map_err(sqlite_diagnostic)?
+        .map(|value| value.parse::<u64>().map_err(sqlite_diagnostic))
         .transpose()
 }
 
@@ -3751,7 +3779,7 @@ fn write_migration_version(connection: &Connection, version: u64) -> Result<(), 
             "#,
             [],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .execute(
             r#"
@@ -3762,7 +3790,7 @@ fn write_migration_version(connection: &Connection, version: u64) -> Result<(), 
             params![version.to_string()],
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 #[allow(dead_code)]
@@ -3800,15 +3828,15 @@ fn bump_collection_revision(connection: &Connection, collection: &str) -> Result
             "#,
             params![collection],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .query_row(
             "SELECT revision FROM collection_revisions WHERE collection = ?1",
             params![collection],
             |row| row.get::<_, i64>(0),
         )
-        .map_err(|error| error.to_string())
-        .and_then(|revision| u64::try_from(revision).map_err(|error| error.to_string()))
+        .map_err(sqlite_diagnostic)
+        .and_then(|revision| u64::try_from(revision).map_err(sqlite_diagnostic))
 }
 
 fn merge_change_set(
@@ -3848,7 +3876,7 @@ fn ensure_id_counters_table(connection: &Connection) -> Result<(), String> {
             next_id INTEGER NOT NULL
         )",
         )
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
@@ -3905,7 +3933,7 @@ fn ensure_base_tables(connection: &Connection) -> Result<(), String> {
             );
             "#,
         )
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn ensure_relation_tables(connection: &Connection) -> Result<(), String> {
@@ -3937,7 +3965,7 @@ fn ensure_relation_tables(connection: &Connection) -> Result<(), String> {
             );
             "#,
         )
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn replace_links_sqlite(
@@ -3981,7 +4009,7 @@ fn replace_links_sqlite(
                 links.target_collection
             ],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let mut statement = connection
         .prepare(
             r#"
@@ -3995,7 +4023,7 @@ fn replace_links_sqlite(
             VALUES (?1, ?2, ?3, ?4, ?5)
             "#,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     for target_id in target_ids {
         statement
             .execute(params![
@@ -4005,7 +4033,7 @@ fn replace_links_sqlite(
                 links.target_collection,
                 sqlite_id(*target_id)?
             ])
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     Ok(())
 }
@@ -4024,7 +4052,7 @@ fn ensure_sqlite_document_exists(
                 |_| Ok(()),
             )
             .optional()
-            .map_err(|error| error.to_string())?
+            .map_err(sqlite_diagnostic)?
             .is_some();
     if generic_exists {
         return Ok(());
@@ -4034,7 +4062,7 @@ fn ensure_sqlite_document_exists(
         if connection
             .query_row(&sql, params![id], |_| Ok(()))
             .optional()
-            .map_err(|error| error.to_string())?
+            .map_err(sqlite_diagnostic)?
             .is_some()
         {
             return Ok(());
@@ -4093,7 +4121,7 @@ fn ensure_generic_document_tables(connection: &Connection) -> Result<(), String>
             );
             "#,
         )
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
@@ -4105,7 +4133,7 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
         )
         .optional()
         .map(|value| value.is_some())
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn validate_schema_manifest(manifest: &SchemaManifest) -> Result<(), String> {
@@ -4136,7 +4164,7 @@ fn register_persisted_collection_schema(
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
         )
         .optional()
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
 
     let Some((version, schema_bytes)) = existing else {
         let schema_bytes = encode_schema_record(1, collection)?;
@@ -4148,13 +4176,13 @@ fn register_persisted_collection_schema(
                 "#,
                 params![collection.name, schema_bytes],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         create_collection_table(connection, collection)?;
         return Ok(());
     };
 
     let (stored_version, existing_schema) = decode_schema_record(&schema_bytes)?;
-    let stored_version = i64::try_from(stored_version).map_err(|error| error.to_string())?;
+    let stored_version = i64::try_from(stored_version).map_err(sqlite_diagnostic)?;
     if stored_version != version {
         return Err(format!(
             "schema metadata version mismatch for `{}`",
@@ -4170,7 +4198,7 @@ fn register_persisted_collection_schema(
 
     let next_version = version + 1;
     let schema_bytes = encode_schema_record(
-        u64::try_from(next_version).map_err(|error| error.to_string())?,
+        u64::try_from(next_version).map_err(sqlite_diagnostic)?,
         collection,
     )?;
     connection
@@ -4182,7 +4210,7 @@ fn register_persisted_collection_schema(
             "#,
             params![collection.name, next_version, schema_bytes],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     create_collection_table(connection, collection)?;
     Ok(())
 }
@@ -4198,7 +4226,7 @@ fn register_migrated_collection_schema(
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let next_version = match existing {
         Some(version) => version
             .checked_add(1)
@@ -4206,7 +4234,7 @@ fn register_migrated_collection_schema(
         None => 1,
     };
     let schema_bytes = encode_schema_record(
-        u64::try_from(next_version).map_err(|error| error.to_string())?,
+        u64::try_from(next_version).map_err(sqlite_diagnostic)?,
         collection,
     )?;
 
@@ -4214,20 +4242,20 @@ fn register_migrated_collection_schema(
         let sql = format!("DROP TABLE {}", collection.name);
         connection
             .execute(&sql, [])
-            .map_err(|error| error.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     connection
         .execute(
             "DELETE FROM documents WHERE collection = ?1",
             params![collection.name],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .execute(
             "DELETE FROM index_entries WHERE collection = ?1",
             params![collection.name],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     connection
         .execute(
             r#"
@@ -4239,7 +4267,7 @@ fn register_migrated_collection_schema(
             "#,
             params![collection.name, next_version, schema_bytes],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     create_collection_table(connection, collection)
 }
 
@@ -4254,10 +4282,10 @@ fn persisted_schema_version(
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?
+        .map_err(sqlite_diagnostic)?
         .map(u64::try_from)
         .transpose()
-        .map_err(|error| error.to_string())
+        .map_err(sqlite_diagnostic)
 }
 
 fn validate_collection_schema(collection: &CollectionSchemaManifest) -> Result<(), String> {
@@ -4413,7 +4441,7 @@ fn collection_schema(
             |row| row.get::<_, Vec<u8>>(0),
         )
         .optional()
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     schema_bytes
         .map(|bytes| decode_schema_record(&bytes).map(|(_, schema)| schema))
         .transpose()
@@ -4437,7 +4465,7 @@ fn create_collection_table(
     sql.push(')');
     connection
         .execute(&sql, [])
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     // Bootstrap databases written before typed IDs had persisted counters.
     // Reopening or registering schemas must never lower an existing counter.
     let max_id = connection
@@ -4449,7 +4477,7 @@ fn create_collection_table(
             [],
             |row| row.get::<_, Option<i64>>(0),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     if let Some(max_id) = max_id {
         advance_id_counter(connection, &collection.name, max_id)?;
     }
@@ -4681,20 +4709,20 @@ fn query_ids<P>(connection: &Connection, sql: &str, params: P) -> Result<Vec<u64
 where
     P: rusqlite::Params,
 {
-    let mut statement = connection.prepare(sql).map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare(sql).map_err(sqlite_diagnostic)?;
     let rows = statement
         .query_map(params, |row| row.get::<_, i64>(0))
-        .map_err(|error| error.to_string())?;
+        .map_err(sqlite_diagnostic)?;
     let mut ids = Vec::new();
     for row in rows {
-        let id = row.map_err(|error| error.to_string())?;
-        ids.push(u64::try_from(id).map_err(|error| error.to_string())?);
+        let id = row.map_err(sqlite_diagnostic)?;
+        ids.push(u64::try_from(id).map_err(sqlite_diagnostic)?);
     }
     Ok(ids)
 }
 
 fn optional_sql_id(id: Option<u64>) -> Result<Option<i64>, String> {
-    id.map(|value| i64::try_from(value).map_err(|error| error.to_string()))
+    id.map(|value| i64::try_from(value).map_err(sqlite_diagnostic))
         .transpose()
 }
 
@@ -4795,6 +4823,58 @@ mod tests {
     use crate::storage::contract_tests;
 
     use crate::storage::test_allocations as rust_allocations;
+
+    #[test]
+    fn errors_sqlite_prepare_keeps_cause_before_rollback() {
+        let schema = user_schema(vec![field("value", "int", false, false)]);
+        let mut storage = SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
+        storage.connection.execute_batch("DROP TABLE users").unwrap();
+        let error = match storage.native_document_cursor("users", &[1]) {
+            Err(error) => error, _ => panic!("missing table must fail preparation"),
+        };
+        assert!(error.contains("no such table: users"), "{error}");
+        assert!(error.contains("SQLite code 1"), "{error}");
+        storage.begin_write_transaction().unwrap();
+        storage.rollback_transaction().unwrap();
+    }
+
+    #[test]
+    fn errors_sqlite_interrupt_after_rows_keeps_code_and_releases_statement() {
+        let schema = user_schema(vec![field("value", "int", false, false)]);
+        let mut storage = SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
+        storage.put_many_native_documents("users", &(1..=10).map(|id| NativeDocumentWrite {
+            id, values: vec![NativeDocumentValue::Int(id as i64)],
+        }).collect::<Vec<_>>(), true).unwrap();
+        let plan = WireQueryPlan { source: WireQuerySource::All { dedupe: false }, filter: None,
+            sorts: vec![], distinct_fields: vec![], offset: 0, limit: None };
+        let mut cursor = storage.query_plan_native_cursor("users", &plan).unwrap().unwrap();
+        assert!(cursor.next().unwrap());
+        assert!(cursor.next().unwrap());
+        unsafe { ffi::sqlite3_interrupt(storage.connection.handle()); }
+        let error = cursor.next().unwrap_err();
+        assert!(error.contains("SQLite code 9"), "{error}");
+        assert!(error.contains("interrupted"), "{error}");
+        drop(cursor);
+        assert!(unsafe { ffi::sqlite3_next_stmt(storage.connection.handle(), ptr::null_mut()) }.is_null());
+        storage.begin_write_transaction().unwrap();
+        storage.commit_transaction().unwrap();
+        assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 10);
+    }
+
+    #[test]
+    fn errors_sqlite_real_commit_constraint_keeps_extended_code_and_recovers() {
+        let mut storage = SqliteStorage::open(":memory:").unwrap();
+        storage.connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE child(id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)").unwrap();
+        storage.begin_write_transaction().unwrap();
+        storage.connection.execute("INSERT INTO child VALUES(1)", []).unwrap();
+        let error = storage.commit_transaction().unwrap_err();
+        assert!(error.contains("SQLite code 787"), "{error}");
+        assert!(error.contains("FOREIGN KEY constraint failed"), "{error}");
+        storage.rollback_transaction().unwrap();
+        assert_eq!(storage.connection.query_row("SELECT count(*) FROM child", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        storage.begin_write_transaction().unwrap();
+        storage.commit_transaction().unwrap();
+    }
 
     #[test]
     fn passes_the_shared_storage_engine_contract() {

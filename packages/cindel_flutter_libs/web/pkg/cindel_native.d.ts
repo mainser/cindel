@@ -52,12 +52,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly cindel_take_error: (a: number, b: number) => number;
+    readonly cindel_native_document_reader_error: (a: number, b: number) => number;
+    readonly cindel_native_batch_writer_error: (a: number, b: number) => number;
     readonly cindel_abi_version: () => number;
     readonly cindel_cleanup_orphan_links: (a: number, b: number, c: number) => number;
     readonly cindel_backup_command: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly cindel_open: (a: number, b: number) => number;
-    readonly cindel_open_with_backend: (a: number, b: number, c: number) => number;
-    readonly cindel_open_with_backend_and_schemas: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_close: (a: number) => void;
     readonly cindel_begin_read_txn: (a: number) => number;
     readonly cindel_begin_write_txn: (a: number) => number;
@@ -71,7 +71,6 @@ export interface InitOutput {
     readonly cindel_put_indexed: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => number;
     readonly cindel_put_many_indexed: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_put_many_stored: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly cindel_native_batch_writer_new: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_native_batch_writer_begin_document: (a: number, b: bigint) => void;
     readonly cindel_native_batch_writer_write_null: (a: number, b: number) => void;
     readonly cindel_native_batch_writer_write_bool: (a: number, b: number, c: number) => void;
@@ -89,8 +88,6 @@ export interface InitOutput {
     readonly cindel_native_batch_writer_finish: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_native_batch_writer_finish_with_options: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_native_batch_writer_abort: (a: number) => void;
-    readonly cindel_native_document_reader_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
-    readonly cindel_native_document_reader_new_from_query_plan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly cindel_native_document_reader_len: (a: number) => number;
     readonly cindel_native_document_reader_is_streaming: (a: number) => number;
     readonly cindel_native_document_reader_next: (a: number) => number;
@@ -148,6 +145,12 @@ export interface InitOutput {
     readonly cindel_query_plan_delete: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly cindel_query_plan_update: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly cindel_free_buffer: (a: number, b: number) => void;
+    readonly cindel_open: (a: number, b: number, c: number) => number;
+    readonly cindel_open_with_backend: (a: number, b: number, c: number, d: number) => number;
+    readonly cindel_open_with_backend_and_schemas: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly cindel_native_batch_writer_new: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly cindel_native_document_reader_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
+    readonly cindel_native_document_reader_new_from_query_plan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
     readonly __wbg_cindelwebengine_free: (a: number, b: number) => void;
     readonly cindelwebengine_cleanupOrphanLinks: (a: number, b: number) => void;
     readonly cindelwebengine_backupCommand: (a: number, b: number, c: number, d: number) => void;
@@ -190,9 +193,9 @@ export interface InitOutput {
     readonly cindelwebengine_queryPlanAggregate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly cindelwebengine_queryPlanDelete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly cindelwebengine_queryPlanUpdate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly cindel_get_stored: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
     readonly cindel_native_document_reader_read_current_list_bytes: (a: number, b: number, c: number, d: number) => number;
     readonly cindel_native_document_reader_read_list_bytes: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly cindel_get_stored: (a: number, b: number, c: number, d: bigint, e: number, f: number) => number;
     readonly rust_sqlite_wasm_getentropy: (a: number, b: number) => number;
     readonly rust_sqlite_wasm_assert_fail: (a: number, b: number, c: number, d: number) => void;
     readonly rust_sqlite_wasm_abort: () => void;
@@ -203,8 +206,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2882: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2907: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2901: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2926: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

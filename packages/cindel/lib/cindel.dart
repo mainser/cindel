@@ -21,7 +21,7 @@ export 'src/binary_document.dart'
         cindelEncodeBinaryObject,
         cindelEncodeSchemaBinaryDocument;
 export 'src/cindel.dart' if (dart.library.js_interop) 'src/web/cindel.dart';
-export 'src/cindel_error.dart';
+export 'src/cindel_error.dart' hide cindelOperationError;
 export 'src/database.dart' if (dart.library.js_interop) 'src/web/database.dart';
 export 'src/links.dart';
 export 'src/migration.dart';

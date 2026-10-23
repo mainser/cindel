@@ -2,6 +2,8 @@
 // ignore_for_file: undefined_identifier, uri_does_not_exist
 
 import 'dart:ffi';
+import 'dart:convert';
+import 'package:ffi/ffi.dart';
 import 'dart:io';
 import 'dart:mirrors';
 
@@ -10,6 +12,49 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel native asset functions', () {
+    test('executes ABI 39 error ownership through native assets.', () {
+      final functions = reflect(_nativeAssetFunctions());
+      final abi =
+          functions.getField(const Symbol('abiVersion')).reflectee
+              as int Function();
+      expect(abi(), 39);
+      final directory = ':memory:'.toNativeUtf8();
+      final status = calloc<Int32>();
+      final length = calloc<Size>();
+      try {
+        final handle =
+            functions.invoke(const Symbol('openWithBackend'), [
+                  directory.cast<Uint8>(),
+                  8,
+                  999,
+                  status,
+                ]).reflectee
+                as Pointer<Void>;
+        expect(handle, nullptr);
+        expect(status.value, lessThan(0));
+        final take =
+            functions.getField(const Symbol('takeError')).reflectee
+                as Pointer<Uint8> Function(int, Pointer<Size>);
+        final free =
+            functions.getField(const Symbol('freeBuffer')).reflectee
+                as void Function(Pointer<Uint8>, int);
+        final bytes = take(status.value, length);
+        try {
+          expect(
+            utf8.decode(bytes.asTypedList(length.value)),
+            contains('backend'),
+          );
+        } finally {
+          free(bytes, length.value);
+        }
+        expect(take(status.value, length), nullptr);
+      } finally {
+        calloc.free(directory);
+        calloc.free(status);
+        calloc.free(length);
+      }
+    });
+
     // Scenario: The native-assets implementation exposes every native symbol
     // through the same function contract used by the dynamic-library adapter.
     // Covers:
@@ -117,6 +162,9 @@ String? _expectedLibraryName() {
 
 const _nativeAssetFunctionMembers = [
   'abiVersion',
+  'takeError',
+  'nativeBatchWriterError',
+  'nativeDocumentReaderError',
   'backupCommand',
   'cleanupOrphanLinks',
   'open',

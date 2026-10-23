@@ -11,18 +11,18 @@ void main() {
   group('Cindel native ABI compatibility', () {
     // Scenario: The native library reports the ABI expected by these bindings.
     // Covers:
-    // - Exact ABI 38 acceptance by the shared compatibility check.
+    // - Exact ABI 39 acceptance by the shared compatibility check.
     // Expected: Validation returns normally without loading a native library.
     test('accepts the exact native ABI version.', () {
       // Arrange.
-      const version = 38;
+      const version = 39;
 
       // Act / Assert.
       expect(() => _checkAbi(version), returnsNormally);
     });
 
-    for (final version in [0, 37, 39, 0xffffffff]) {
-      // Scenario: The native library reports an ABI different from ABI 38.
+    for (final version in [0, 38, 40, 0xffffffff]) {
+      // Scenario: The native library reports an ABI different from ABI 39.
       // Covers:
       // - Older and newer ABIs, including the uint32 boundary values.
       // - CindelNativeError with the expected ABI, actual ABI, and corrective
@@ -31,7 +31,7 @@ void main() {
       test('rejects native ABI $version with the required version.', () {
         // Arrange.
         final expectedMessage =
-            'Incompatible Cindel native ABI: expected 38, '
+            'Incompatible Cindel native ABI: expected 39, '
             'found $version. Load a native library matching this Cindel package.';
 
         // Act / Assert.

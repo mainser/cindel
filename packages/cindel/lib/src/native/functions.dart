@@ -3,7 +3,7 @@ part of 'bindings.dart';
 // Cindel FFI contract expected by these Dart bindings. Keep this in sync with
 // `cindel_abi_version` in native/src/ffi.rs when the native ABI changes; it is
 // independent of the MDBX engine version.
-const _expectedNativeAbiVersion = 38;
+const _expectedNativeAbiVersion = 39;
 
 // Require an exact ABI match for both loading strategies. A newer ABI is not
 // assumed compatible with the function signatures expected by these bindings.
@@ -59,14 +59,23 @@ abstract interface class _CindelNativeFunctions {
   int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
   get cleanupOrphanLinks;
 
+  Pointer<Uint8> Function(int, Pointer<Size>) get takeError;
+
+  Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  get nativeDocumentReaderError;
+
+  Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  get nativeBatchWriterError;
+
   int Function() get abiVersion;
 
-  Pointer<Void> Function(Pointer<Uint8>, int) get open;
+  Pointer<Void> Function(Pointer<Uint8>, int, Pointer<Int32>) get open;
 
   Pointer<Void> openWithBackend(
     Pointer<Uint8> directory,
     int length,
     int backend,
+    Pointer<Int32> status,
   );
 
   Pointer<Void> openWithBackendAndSchemas(
@@ -75,6 +84,7 @@ abstract interface class _CindelNativeFunctions {
     int backend,
     Pointer<Uint8> schemas,
     int schemasLength,
+    Pointer<Int32> status,
   );
 
   // Database lifecycle and transaction symbols.
@@ -123,7 +133,7 @@ abstract interface class _CindelNativeFunctions {
 
   // Native writer symbols used by generated collection code to serialize
   // documents directly into Rust-owned batch builders.
-  Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  Pointer<Void> Function(Pointer<Uint8>, int, int, int, Pointer<Int32>)
   get nativeBatchWriterNew;
 
   void Function(Pointer<Void>, int) get nativeBatchWriterBeginDocument;
@@ -177,6 +187,7 @@ abstract interface class _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   get nativeDocumentReaderNew;
 
@@ -188,6 +199,7 @@ abstract interface class _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   get nativeDocumentReaderNewFromQueryPlan;
 

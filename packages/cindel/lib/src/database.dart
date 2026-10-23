@@ -268,7 +268,11 @@ class CindelDatabase {
           database._schemasWereRegisteredOnOpen = true;
         }
       } catch (_) {
-        await database.close();
+        try {
+          await database.close();
+        } catch (_) {
+          // Preserve the original initialization failure.
+        }
         rethrow;
       }
     }

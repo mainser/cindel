@@ -4,7 +4,7 @@ const PAGE: usize = 128;
 type Edge = (String, i64, String, String, i64);
 
 pub(super) fn initialize(connection: &Connection) -> Result<(), String> {
-    connection.execute_batch("CREATE TEMP TABLE IF NOT EXISTS cindel_relation_changes (collection TEXT PRIMARY KEY) WITHOUT ROWID;").map_err(|e| e.to_string())
+    connection.execute_batch("CREATE TEMP TABLE IF NOT EXISTS cindel_relation_changes (collection TEXT PRIMARY KEY) WITHOUT ROWID;").map_err(sqlite_diagnostic)
 }
 
 fn row_edge(row: &Row<'_>) -> rusqlite::Result<Edge> {
@@ -25,7 +25,7 @@ fn remove_edge(connection: &Connection, edge: &Edge) -> Result<(), String> {
                 "INSERT OR IGNORE INTO temp.cindel_relation_changes VALUES (?1)",
                 [name],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
     }
     Ok(())
 }
@@ -39,12 +39,12 @@ pub(super) fn delete_relations(
         // Both predicates use an existing leading index pair; never scan unrelated edges.
         let sql = format!("SELECT source_collection,source_id,link_name,target_collection,target_id FROM cindel_relations WHERE {endpoint}_collection=?1 AND {endpoint}_id=?2 LIMIT {PAGE}");
         loop {
-            let mut statement = connection.prepare(&sql).map_err(|e| e.to_string())?;
+            let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
             let page = statement
                 .query_map(params![collection, id], row_edge)
-                .map_err(|e| e.to_string())?
+                .map_err(sqlite_diagnostic)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             #[cfg(test)]
             assert_eq!(
                 statement.get_status(rusqlite::StatementStatus::FullscanStep),
@@ -74,7 +74,7 @@ fn exists(connection: &Connection, collection: &str, id: i64) -> Result<bool, St
                 [id],
                 |r| r.get::<_, bool>(0),
             )
-            .map_err(|e| e.to_string())?
+            .map_err(sqlite_diagnostic)?
         {
             return Ok(true);
         }
@@ -86,7 +86,7 @@ fn exists(connection: &Connection, collection: &str, id: i64) -> Result<bool, St
                 params![collection, id],
                 |r| r.get(0),
             )
-            .map_err(|e| e.to_string());
+            .map_err(sqlite_diagnostic);
     }
     Ok(false)
 }
@@ -145,7 +145,7 @@ impl SqliteStorage {
         let txn = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         let (mut examined, mut removed) = (0, 0);
         let mut after: Option<Edge> = None;
         loop {
@@ -156,11 +156,11 @@ impl SqliteStorage {
                     .query_map(params![e.0,e.1,e.2,e.3,e.4],row_edge).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?
             } else {
                 txn.prepare(&format!("{base}{order}"))
-                    .map_err(|e| e.to_string())?
+                    .map_err(sqlite_diagnostic)?
                     .query_map([], row_edge)
-                    .map_err(|e| e.to_string())?
+                    .map_err(sqlite_diagnostic)?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?
+                    .map_err(sqlite_diagnostic)?
             };
             super::super::relations::observe_page(page.len());
             if page.is_empty() {
@@ -175,7 +175,7 @@ impl SqliteStorage {
                 }
             }
         }
-        txn.commit().map_err(|e| e.to_string())?;
+        txn.commit().map_err(sqlite_diagnostic)?;
         self.last_change_sets.clear();
         Ok((examined, removed))
     }
@@ -187,11 +187,11 @@ impl SqliteStorage {
         let names = self
             .connection
             .prepare("SELECT collection FROM temp.cindel_relation_changes")
-            .map_err(|e| e.to_string())?
+            .map_err(sqlite_diagnostic)?
             .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
+            .map_err(sqlite_diagnostic)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         for name in names {
             let current = self.collection_revision(&name)?;
             *self.relation_revisions.entry(name.clone()).or_default() += 1;
@@ -204,7 +204,7 @@ impl SqliteStorage {
         }
         self.connection
             .execute("DELETE FROM temp.cindel_relation_changes", [])
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         Ok(())
     }
 }

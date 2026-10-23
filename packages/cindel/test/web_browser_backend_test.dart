@@ -1,6 +1,9 @@
 @TestOn('browser')
 library;
 
+import 'web_error_propagation_suite.dart' as web_errors;
+import 'error_propagation_suite.dart' as errors;
+
 import 'relation_lifecycle_suite.dart' as relation_lifecycle;
 import 'migration_atomic_suite.dart' as atomic_migrations;
 import 'backup_contract_suite.dart' as backup_contract;
@@ -17,6 +20,8 @@ import 'web_close_additional_suite.dart' as web_close;
 import 'web_worker_close_suite.dart' as worker_close;
 
 void main() {
+  errors.main();
+  web_errors.main();
   atomic_migrations.main(concurrentHandles: false);
   relation_lifecycle.main();
   backup_contract.main(includeSameDirectoryHandles: false);

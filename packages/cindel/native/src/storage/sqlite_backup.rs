@@ -15,7 +15,7 @@ impl SqliteStorage {
         after: Option<u64>,
         limit: usize,
     ) -> Result<Vec<u64>, String> {
-        let mut statement = self.connection.prepare("SELECT target_id FROM cindel_relations WHERE source_collection=?1 AND source_id=?2 AND link_name=?3 AND target_collection=?4 AND target_id>?5 ORDER BY target_id LIMIT ?6").map_err(|e| e.to_string())?;
+        let mut statement = self.connection.prepare("SELECT target_id FROM cindel_relations WHERE source_collection=?1 AND source_id=?2 AND link_name=?3 AND target_collection=?4 AND target_id>?5 ORDER BY target_id LIMIT ?6").map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(
                 params![
@@ -28,9 +28,9 @@ impl SqliteStorage {
                 ],
                 |r| r.get::<_, i64>(0).map(|v| v as u64),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+            .map_err(sqlite_diagnostic)
     }
 
     pub(crate) fn restore_backup(
@@ -42,7 +42,7 @@ impl SqliteStorage {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| e.to_string())?;
+            .map_err(sqlite_diagnostic)?;
         if read_migration_version(&transaction)?.unwrap_or(0) != spool.migration_version {
             return Err("restore target metadata changed".into());
         }
@@ -58,7 +58,7 @@ impl SqliteStorage {
                     [],
                     |r| r.get(0),
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             if exists {
                 return Err(format!("Restore target `{name}` must be empty."));
             }
@@ -97,7 +97,7 @@ impl SqliteStorage {
                 .query_row(&format!("SELECT count(*) FROM \"{name}\""), [], |r| {
                     r.get(0)
                 })
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             if actual as u64 != spool.document_count(name)? {
                 return Err("backup unique index would discard documents".into());
             }
@@ -121,11 +121,11 @@ impl SqliteStorage {
                         sqlite_id(link.target_ids[0])?
                     ],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(sqlite_diagnostic)?;
             Ok(())
         })?;
         write_migration_version(&transaction, version)?;
-        transaction.commit().map_err(|e| e.to_string())?;
+        transaction.commit().map_err(sqlite_diagnostic)?;
         self.last_change_sets.clear();
         for (name, _) in &spool.collections {
             self.bump_collection_revision_in_memory(name);

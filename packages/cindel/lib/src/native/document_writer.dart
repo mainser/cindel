@@ -34,6 +34,14 @@ final class _CindelNativeDocumentWriter
   final LinkedHashMap<List<String>, Uint8List> _fieldNamesCache;
   final bool _ownsBuffers;
 
+  CindelError _failure(String operation) => cindelOperationError(
+    operation,
+    _readNativeDiagnostic(
+          (length) => _functions.nativeBatchWriterError(_writer, length),
+        ) ??
+        'Native writer allocation failed.',
+  );
+
   /// Writes a null field value.
   @override
   void writeNull(int fieldIndex) {
@@ -135,7 +143,7 @@ final class _CindelNativeDocumentWriter
       length,
     );
     if (writer == nullptr) {
-      throw StateError('Native Cindel list writer allocation failed.');
+      throw _failure('create list writer');
     }
     return _CindelNativeDocumentWriter._child(
       _functions,
@@ -179,7 +187,7 @@ final class _CindelNativeDocumentWriter
       );
     });
     if (writer == nullptr) {
-      throw StateError('Native Cindel object writer allocation failed.');
+      throw _failure('create object writer');
     }
     return _CindelNativeDocumentWriter._child(
       _functions,

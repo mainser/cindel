@@ -8,10 +8,35 @@ part of 'bindings.dart';
 // covers the static/native-assets path; both implementations must stay aligned
 // with `_CindelNativeFunctions`.
 final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
+  @override
+  final Pointer<Uint8> Function(int, Pointer<Size>) takeError;
+  @override
+  final Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  nativeDocumentReaderError;
+
+  @override
+  final Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+  nativeBatchWriterError;
+
   // Stable ABI symbols are resolved eagerly so startup fails early when the
   // loaded library does not match the Dart binding surface.
   _DynamicCindelNativeFunctions(DynamicLibrary library)
-    : cleanupOrphanLinks = library
+    : nativeBatchWriterError = library
+          .lookupFunction<
+            Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>),
+            Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+          >('cindel_native_batch_writer_error', isLeaf: true),
+      takeError = library
+          .lookupFunction<
+            Pointer<Uint8> Function(Int32, Pointer<Size>),
+            Pointer<Uint8> Function(int, Pointer<Size>)
+          >('cindel_take_error', isLeaf: true),
+      nativeDocumentReaderError = library
+          .lookupFunction<
+            Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>),
+            Pointer<Uint8> Function(Pointer<Void>, Pointer<Size>)
+          >('cindel_native_document_reader_error', isLeaf: true),
+      cleanupOrphanLinks = library
           .lookupFunction<
             Int32 Function(
               Pointer<Void>,
@@ -43,8 +68,8 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
       ),
       open = library
           .lookupFunction<
-            Pointer<Void> Function(Pointer<Uint8>, Size),
-            Pointer<Void> Function(Pointer<Uint8>, int)
+            Pointer<Void> Function(Pointer<Uint8>, Size, Pointer<Int32>),
+            Pointer<Void> Function(Pointer<Uint8>, int, Pointer<Int32>)
           >('cindel_open'),
       close = library
           .lookupFunction<
@@ -186,8 +211,20 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
           >('cindel_put_many_stored'),
       nativeBatchWriterNew = library
           .lookupFunction<
-            Pointer<Void> Function(Pointer<Uint8>, Size, Size, Int32),
-            Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+            Pointer<Void> Function(
+              Pointer<Uint8>,
+              Size,
+              Size,
+              Int32,
+              Pointer<Int32>,
+            ),
+            Pointer<Void> Function(
+              Pointer<Uint8>,
+              int,
+              int,
+              int,
+              Pointer<Int32>,
+            )
           >('cindel_native_batch_writer_new'),
       nativeBatchWriterBeginDocument = library
           .lookupFunction<
@@ -290,6 +327,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Size,
               Pointer<Uint8>,
               Size,
+              Pointer<Int32>,
             ),
             Pointer<Void> Function(
               Pointer<Void>,
@@ -299,6 +337,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
               Pointer<Uint8>,
               int,
+              Pointer<Int32>,
             )
           >('cindel_native_document_reader_new'),
       nativeDocumentReaderNewFromQueryPlan = library
@@ -311,6 +350,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               Size,
               Pointer<Uint8>,
               Size,
+              Pointer<Int32>,
             ),
             Pointer<Void> Function(
               Pointer<Void>,
@@ -320,6 +360,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
               int,
               Pointer<Uint8>,
               int,
+              Pointer<Int32>,
             )
           >('cindel_native_document_reader_new_from_query_plan'),
       nativeDocumentReaderLen = library
@@ -1168,17 +1209,18 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   cleanupOrphanLinks;
 
   @override
-  final Pointer<Void> Function(Pointer<Uint8>, int) open;
+  final Pointer<Void> Function(Pointer<Uint8>, int, Pointer<Int32>) open;
 
   // Kept only for symbols that are intentionally resolved lazily.
   final DynamicLibrary _library;
 
   // Backend-aware open was added after the legacy `cindel_open` symbol. The
-  // lazy lookup lets `CindelNativeBindings.open` fall back for older libraries.
-  late final Pointer<Void> Function(Pointer<Uint8>, int, int) _openWithBackend =
-      _library.lookupFunction<
-        Pointer<Void> Function(Pointer<Uint8>, Size, Uint32),
-        Pointer<Void> Function(Pointer<Uint8>, int, int)
+  // lazy lookup resolves it when first used, after the exact ABI check.
+  late final Pointer<Void> Function(Pointer<Uint8>, int, int, Pointer<Int32>)
+  _openWithBackend = _library
+      .lookupFunction<
+        Pointer<Void> Function(Pointer<Uint8>, Size, Uint32, Pointer<Int32>),
+        Pointer<Void> Function(Pointer<Uint8>, int, int, Pointer<Int32>)
       >('cindel_open_with_backend');
 
   @override
@@ -1186,18 +1228,19 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     Pointer<Uint8> directory,
     int length,
     int backend,
+    Pointer<Int32> status,
   ) {
-    return _openWithBackend(directory, length, backend);
+    return _openWithBackend(directory, length, backend, status);
   }
 
-  // Schema-aware open follows the same compatibility rule as backend-aware
-  // open: resolve it only when the facade actually needs the newer symbol.
+  // Resolve schema-aware open lazily, after checking the exact ABI version.
   late final Pointer<Void> Function(
     Pointer<Uint8>,
     int,
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   _openWithBackendAndSchemas = _library
       .lookupFunction<
@@ -1207,8 +1250,16 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
           Uint32,
           Pointer<Uint8>,
           Size,
+          Pointer<Int32>,
         ),
-        Pointer<Void> Function(Pointer<Uint8>, int, int, Pointer<Uint8>, int)
+        Pointer<Void> Function(
+          Pointer<Uint8>,
+          int,
+          int,
+          Pointer<Uint8>,
+          int,
+          Pointer<Int32>,
+        )
       >('cindel_open_with_backend_and_schemas');
 
   @override
@@ -1218,6 +1269,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     int backend,
     Pointer<Uint8> schemas,
     int schemasLength,
+    Pointer<Int32> status,
   ) {
     return _openWithBackendAndSchemas(
       directory,
@@ -1225,6 +1277,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
       backend,
       schemas,
       schemasLength,
+      status,
     );
   }
 
@@ -1295,7 +1348,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   // Native generated-document writer symbols. These are used by generated
   // collection code to avoid building intermediate Dart maps during batch puts.
   @override
-  final Pointer<Void> Function(Pointer<Uint8>, int, int, int)
+  final Pointer<Void> Function(Pointer<Uint8>, int, int, int, Pointer<Int32>)
   nativeBatchWriterNew;
 
   @override
@@ -1367,6 +1420,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   nativeDocumentReaderNew;
 
@@ -1379,6 +1433,7 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
     int,
     Pointer<Uint8>,
     int,
+    Pointer<Int32>,
   )
   nativeDocumentReaderNewFromQueryPlan;
 
