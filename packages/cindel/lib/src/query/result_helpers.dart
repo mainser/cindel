@@ -139,19 +139,12 @@ List<CindelDocument> _distinctDocuments(
   final seen = <String>{};
   final distinct = <CindelDocument>[];
   for (final document in documents) {
-    final key = _distinctKey(document, fields);
+    final key = cindelDistinctKey(document, fields);
     if (seen.add(key)) {
       distinct.add(document);
     }
   }
   return distinct;
-}
-
-// Builds a simple stable key for Dart-side distinct processing.
-String _distinctKey(CindelDocument document, List<String> fields) {
-  return fields
-      .map((field) => '${document[field].runtimeType}:${document[field]}')
-      .join('\u0001');
 }
 
 // Applies offset and limit after filtering, sorting, and distinct.

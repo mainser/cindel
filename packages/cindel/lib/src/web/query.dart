@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
+import '../query/distinct_key.dart';
 import '../schema.dart';
 import 'database.dart';
 import 'wire.dart';
@@ -702,7 +703,8 @@ final class CindelQuery<T> {
         final seen = <String>{};
         documents = [
           for (final document in documents)
-            if (seen.add(_distinctKey(document, _distinctFields))) document,
+            if (seen.add(cindelDistinctKey(document, _distinctFields)))
+              document,
         ];
       }
       if (_offset > 0 || _limit != null) {
@@ -1592,8 +1594,4 @@ int _compareDocuments(
     }
   }
   return 0;
-}
-
-String _distinctKey(CindelDocument document, Iterable<String> fields) {
-  return fields.map((field) => '${document[field]}').join('\u0000');
 }

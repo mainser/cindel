@@ -6,6 +6,7 @@ import 'package:test/test.dart';
 import 'close_suite.dart' as close;
 import 'bulk_id_suite.dart' as bulk_ids;
 import 'count_suite.dart' as count;
+import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
 import 'sqlite_id_suite.dart' as ids;
 import 'sqlite_projection_suite.dart' as sqlite_projection;
@@ -21,6 +22,7 @@ void main() {
   ids.main(includeSameDirectoryHandles: false);
   bulk_ids.main(includeSameDirectoryHandles: false);
   count.main(includeSameDirectoryHandles: false);
+  dart_distinct.main();
   sqlite_projection.main(includeSameDirectoryHandles: false);
   find_first.main();
   web_close.main();

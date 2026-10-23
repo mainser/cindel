@@ -6,6 +6,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 import 'cindel_error.dart';
 import 'database.dart';
 import 'native/wire.dart';
+import 'query/distinct_key.dart';
 import 'schema.dart';
 import 'text.dart';
 
