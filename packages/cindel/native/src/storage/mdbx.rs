@@ -421,6 +421,94 @@ struct BorrowedPlannedDocument<'a> {
     sort_values: BorrowedSortValues,
 }
 
+// A max-heap keeps the worst retained candidate at the root. With an explicit
+// ID sort key, replacing that candidate cannot change unresolved sort ties.
+// Unbounded queries and orders without an ID keep the existing full-sort path.
+struct BorrowedQueryCandidates<'a> {
+    documents: Vec<BorrowedPlannedDocument<'a>>,
+    bound: Option<usize>,
+}
+
+impl<'a> BorrowedQueryCandidates<'a> {
+    fn new(sort_fields: &[QuerySortField], offset: usize, limit: Option<usize>) -> Self {
+        let bound = limit
+            .filter(|_| {
+                sort_fields
+                    .iter()
+                    .any(|field| matches!(field.target, QuerySortTarget::Id))
+            })
+            .map(|limit| offset.saturating_add(limit));
+        Self {
+            documents: Vec::new(),
+            bound,
+        }
+    }
+
+    fn push(&mut self, document: BorrowedPlannedDocument<'a>, fields: &[QuerySortField]) {
+        if let Some(bound) = self.bound {
+            if bound == 0 {
+                return;
+            }
+            if self.documents.len() < bound {
+                // Grow on demand: a very large offset must not preallocate a
+                // huge heap for a small collection.
+                self.documents.push(document);
+                let mut child = self.documents.len() - 1;
+                while child > 0 {
+                    let parent = (child - 1) / 2;
+                    if compare_borrowed_planned_documents(
+                        &self.documents[parent],
+                        &self.documents[child],
+                        fields,
+                    ) != Ordering::Less
+                    {
+                        break;
+                    }
+                    self.documents.swap(parent, child);
+                    child = parent;
+                }
+            } else if compare_borrowed_planned_documents(&document, &self.documents[0], fields)
+                == Ordering::Less
+            {
+                self.documents[0] = document;
+                let mut parent = 0;
+                loop {
+                    let left = parent * 2 + 1;
+                    if left >= self.documents.len() {
+                        break;
+                    }
+                    let right = left + 1;
+                    let worst = if right < self.documents.len()
+                        && compare_borrowed_planned_documents(
+                            &self.documents[left],
+                            &self.documents[right],
+                            fields,
+                        ) == Ordering::Less
+                    {
+                        right
+                    } else {
+                        left
+                    };
+                    if compare_borrowed_planned_documents(
+                        &self.documents[parent],
+                        &self.documents[worst],
+                        fields,
+                    ) != Ordering::Less
+                    {
+                        break;
+                    }
+                    self.documents.swap(parent, worst);
+                    parent = worst;
+                }
+            }
+        } else {
+            self.documents.push(document);
+        }
+        #[cfg(test)]
+        tests::SORT_CANDIDATES_PEAK.with(|peak| peak.set(peak.get().max(self.documents.len())));
+    }
+}
+
 enum BorrowedSortValues {
     One(BorrowedSortValue),
     OneStringRange(Option<std::ops::Range<usize>>),
@@ -840,7 +928,7 @@ impl MdbxStorage {
                 let mut documents_cursor = transaction
                     .cursor(&documents_table)
                     .map_err(|error| error.to_string())?;
-                let mut planned = Vec::new();
+                let mut planned = BorrowedQueryCandidates::new(&sort_fields, offset, limit);
                 let mut seen = query_source_dedupes(&plan.source).then(HashSet::new);
                 let mut position = 0usize;
 
@@ -982,7 +1070,12 @@ impl MdbxStorage {
                         }
                     }
                 }
-                sort_and_window_borrowed_query_documents(planned, &sort_fields, offset, limit)
+                sort_and_window_borrowed_query_documents(
+                    planned.documents,
+                    &sort_fields,
+                    offset,
+                    limit,
+                )
             };
             let documents = unsafe {
                 std::mem::transmute::<
@@ -1367,7 +1460,7 @@ impl MdbxStorage {
             let mut documents_cursor = transaction
                 .cursor(&documents_table)
                 .map_err(|error| error.to_string())?;
-            let mut planned = Vec::new();
+            let mut planned = BorrowedQueryCandidates::new(&sort_fields, offset, limit);
             let mut seen = query_source_dedupes(&plan.source).then(HashSet::new);
             let mut position = 0usize;
 
@@ -1390,7 +1483,7 @@ impl MdbxStorage {
                     position += 1;
                 }
                 return Ok(sort_and_window_borrowed_planned_documents(
-                    planned,
+                    planned.documents,
                     &sort_fields,
                     offset,
                     limit,
@@ -1512,7 +1605,7 @@ impl MdbxStorage {
             }
 
             Ok(sort_and_window_borrowed_planned_documents(
-                planned,
+                planned.documents,
                 &sort_fields,
                 offset,
                 limit,
@@ -3832,7 +3925,7 @@ fn push_borrowed_planned_document<'a>(
     schema: &CollectionSchemaManifest,
     filter: Option<&NativeFilter>,
     sort_fields: &[QuerySortField],
-    planned: &mut Vec<BorrowedPlannedDocument<'a>>,
+    planned: &mut BorrowedQueryCandidates<'a>,
     id: u64,
     bytes: Cow<'a, [u8]>,
     position: usize,
@@ -3865,47 +3958,44 @@ fn push_borrowed_planned_document<'a>(
                 .collect::<Result<Vec<_>, String>>()?,
         )
     };
-    planned.push(BorrowedPlannedDocument {
-        id,
-        bytes,
-        position,
-        sort_values,
-    });
+    planned.push(
+        BorrowedPlannedDocument {
+            id,
+            bytes,
+            position,
+            sort_values,
+        },
+        sort_fields,
+    );
     Ok(())
+}
+
+fn compare_borrowed_planned_documents(
+    left: &BorrowedPlannedDocument<'_>,
+    right: &BorrowedPlannedDocument<'_>,
+    sort_fields: &[QuerySortField],
+) -> Ordering {
+    for (index, sort_field) in sort_fields.iter().enumerate() {
+        let ordering = compare_borrowed_sort_values(left, right, index);
+        if ordering != Ordering::Equal {
+            return if sort_field.ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+        }
+    }
+    Ordering::Equal
 }
 
 fn sort_borrowed_planned_documents(
     documents: &mut [BorrowedPlannedDocument<'_>],
     sort_fields: &[QuerySortField],
-    prefix_len: usize,
 ) {
-    let compare = |left: &BorrowedPlannedDocument<'_>, right: &BorrowedPlannedDocument<'_>| {
-        for (index, sort_field) in sort_fields.iter().enumerate() {
-            let ordering = compare_borrowed_sort_values(left, right, index);
-            if ordering != Ordering::Equal {
-                return if sort_field.ascending {
-                    ordering
-                } else {
-                    ordering.reverse()
-                };
-            }
-        }
-        Ordering::Equal
-    };
-    // An explicit ID key distinguishes documents without changing the existing
-    // ordering of unresolved ties. The caller only needs this sorted prefix.
-    if prefix_len < documents.len()
-        && sort_fields
-            .iter()
-            .any(|field| matches!(field.target, QuerySortTarget::Id))
-    {
-        if prefix_len > 0 {
-            documents.select_nth_unstable_by(prefix_len, compare);
-            documents[..prefix_len].sort_unstable_by(compare);
-        }
-    } else {
-        documents.sort_unstable_by(compare);
-    }
+    // Eligible limited queries have already retained only their top-k prefix.
+    documents.sort_unstable_by(|left, right| {
+        compare_borrowed_planned_documents(left, right, sort_fields)
+    });
 }
 
 fn borrowed_sort_value<'a>(
@@ -4111,7 +4201,7 @@ fn sort_and_window_borrowed_planned_documents(
     let end = limit
         .map(|limit| offset.saturating_add(limit).min(documents.len()))
         .unwrap_or(documents.len());
-    sort_borrowed_planned_documents(&mut documents, sort_fields, end);
+    sort_borrowed_planned_documents(&mut documents, sort_fields);
     if offset >= documents.len() {
         return Vec::new();
     }
@@ -4134,7 +4224,7 @@ fn sort_and_window_borrowed_query_documents<'a>(
     let end = limit
         .map(|limit| offset.saturating_add(limit).min(documents.len()))
         .unwrap_or(documents.len());
-    sort_borrowed_planned_documents(&mut documents, sort_fields, end);
+    sort_borrowed_planned_documents(&mut documents, sort_fields);
     if offset >= documents.len() {
         return Vec::new();
     }

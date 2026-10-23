@@ -69,6 +69,29 @@ void main() {
       },
     );
 
+    test('selects small windows from thousands of tied candidates.', () async {
+      await database.apiProducts.putAll([
+        for (var id = 1000; id < 3048; id++)
+          ApiProduct()
+            ..dbId = id
+            ..id = id.isEven ? 'bulk' : null
+            ..name = 'Name ${(id * 37) % 11}',
+      ]);
+      for (final source in [
+        database.apiProducts.all(),
+        database.apiProducts.where().idEqualTo('bulk'),
+        database.apiProducts.filter().dbIdGreaterThan(1500),
+      ]) {
+        for (final ordered in [
+          source.sortByName().thenByDbIdDesc(),
+          source.sortByIdDesc().thenByName().thenByDbId(),
+        ]) {
+          await _expectWindow(ordered, 0, 1);
+          await _expectWindow(ordered, 7, 20);
+        }
+      }
+    });
+
     test('preserves pending writes and rollback.', () async {
       final ordered = database.apiProducts.all().sortByName().thenByDbId();
       final original = await ordered.dbIdProperty().findAll();

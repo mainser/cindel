@@ -8,6 +8,121 @@ use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManife
 thread_local! {
     pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DOCUMENT_KEYS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static SORT_CANDIDATES_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn top_k_bounds_retained_candidates_in_both_sorted_read_paths() {
+    let directory = TemporaryDirectory::new("top_k_candidates");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    storage.begin_write_transaction().unwrap();
+    for id in 1..=2048 {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document(
+                    "group",
+                    id as i64,
+                    &format!("name{}", id % 11),
+                    (id % 7) as i64,
+                ),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    let sort = |field: &str, ascending| crate::wire::WireQuerySort {
+        field: field.into(),
+        ascending,
+    };
+    for source in [
+        WireQuerySource::All { dedupe: false },
+        WireQuerySource::IndexEqual {
+            index_name: "email".into(),
+            value: WireIndexValue::String("group".into()),
+            dedupe: false,
+        },
+        WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(0)),
+            upper: Some(WireIndexValue::Int(6)),
+            dedupe: false,
+        },
+    ] {
+        for sorts in [
+            vec![sort("score", true), sort("id", false)],
+            vec![sort("name", false), sort("score", true), sort("id", true)],
+            vec![sort("id", false), sort("name", true)],
+        ] {
+            for filter in [
+                None,
+                Some(
+                    crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                        field: "score".into(),
+                        operation: crate::wire::WireFilterOperation::GreaterThan,
+                        value: WireValue::Int(2),
+                    })
+                    .unwrap(),
+                ),
+            ] {
+                let mut plan = WireQueryPlan {
+                    source: source.clone(),
+                    filter,
+                    sorts: sorts.clone(),
+                    distinct_fields: vec![],
+                    offset: 0,
+                    limit: None,
+                };
+                let all = storage.execute_query_plan("users", &plan).unwrap();
+                for (offset, limit) in [
+                    (0, 0),
+                    (0, 1),
+                    (7, 20),
+                    (2040, 20),
+                    (3000, 2),
+                    (u32::MAX, u32::MAX),
+                ] {
+                    plan.offset = offset;
+                    plan.limit = Some(limit);
+                    let expected: Vec<_> = all
+                        .iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .map(|document| document.id)
+                        .collect();
+                    let bound = (offset as usize).saturating_add(limit as usize);
+                    for materialized in [false, true] {
+                        SORT_CANDIDATES_PEAK.with(|peak| peak.set(0));
+                        let actual = if materialized {
+                            storage
+                                .execute_query_plan("users", &plan)
+                                .unwrap()
+                                .into_iter()
+                                .map(|document| document.id)
+                                .collect::<Vec<_>>()
+                        } else {
+                            storage.query_plan_ids("users", &plan).unwrap()
+                        };
+                        assert_eq!(actual, expected, "materialized={materialized}: {plan:?}");
+                        let peak = SORT_CANDIDATES_PEAK.with(|peak| peak.get());
+                        assert!(
+                            peak <= bound.min(all.len()),
+                            "materialized={materialized}: retained {peak}, bound {bound}: {plan:?}"
+                        );
+                        if limit > 0 && (offset as usize) < all.len() {
+                            assert_eq!(
+                                peak,
+                                bound.min(all.len()),
+                                "counter must observe retained candidates"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -396,17 +511,21 @@ fn limited_id_order_uses_fewer_comparisons_than_full_sort() {
                     sort_values: BorrowedSortValues::One(BorrowedSortValue::Id(id)),
                 }
             })
-            .collect()
+            .collect::<Vec<_>>()
     };
     for materialized in [false, true] {
         let run = |limit| -> Vec<u64> {
+            let mut candidates = BorrowedQueryCandidates::new(&fields, 7, limit);
+            for document in documents() {
+                candidates.push(document, &fields);
+            }
             if materialized {
-                sort_and_window_borrowed_planned_documents(documents(), &fields, 7, limit)
+                sort_and_window_borrowed_planned_documents(candidates.documents, &fields, 7, limit)
                     .into_iter()
                     .map(|document| document.id)
                     .collect()
             } else {
-                sort_and_window_borrowed_query_documents(documents(), &fields, 7, limit)
+                sort_and_window_borrowed_query_documents(candidates.documents, &fields, 7, limit)
                     .into_iter()
                     .map(|document| document.id)
                     .collect()

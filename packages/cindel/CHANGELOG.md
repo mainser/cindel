@@ -3,7 +3,7 @@
 ## 1.1.2
 
 - Fixed Dart-side `distinct` collisions in MDBX and SQLite native/Web queries.
-- Optimized limited MDBX queries with direct ID scans (including filters) and partial sorting when the order includes the ID.
+- Optimized limited MDBX queries with direct ID scans (including filters) and bounded-memory top-k selection when the order includes the ID.
 - Avoided full document copies in MDBX ID queries.
 - Optimized non-distinct SQLite native/Web projections and aggregates with one query and streaming aggregation.
 - Optimized non-distinct object counts in MDBX and SQLite native/Web, preserving query windows.
