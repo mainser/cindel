@@ -6,10 +6,358 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 thread_local! {
+    pub(super) static INDEX_RANGE_ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DISTINCT_CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DOCUMENT_KEYS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static SORT_CANDIDATES_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn ordered_integer_index_scan_preserves_ranges_ties_and_int64_values() {
+    let directory = TemporaryDirectory::new("ordered_integer_index_values");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let mut rows = vec![
+        (9007199254740993_u64, 0_i64),
+        (256, 0),
+        (255, 0),
+        (1, i64::MAX),
+        (7, i64::MIN + 1),
+        (8, -9007199254740993),
+        (9, -9007199254740992),
+        (10, 9007199254740992),
+        (11, 9007199254740993),
+        (65536, 0),
+    ];
+    for &(id, score) in &rows {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("same", id as i64, "Name", score),
+                &[],
+            )
+            .unwrap();
+    }
+    rows.sort_unstable_by_key(|&(id, score)| (score, id));
+    for (lower, upper) in [
+        (None, Some(0)),
+        (Some(0), None),
+        (Some(0), Some(0)),
+        (Some(i64::MIN), Some(i64::MAX)),
+        (Some(2), Some(3)),
+        (Some(3), Some(2)),
+    ] {
+        for (offset, limit) in [(0, 1), (1, 3), (0, 0), (20, 2), (0, 20)] {
+            let expected = rows
+                .iter()
+                .copied()
+                .filter(|&(_, score)| {
+                    lower.is_none_or(|value| score >= value)
+                        && upper.is_none_or(|value| score <= value)
+                })
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let plan = WireQueryPlan {
+                source: WireQuerySource::IndexRange {
+                    index_name: "score".into(),
+                    lower: lower.map(WireIndexValue::Int),
+                    upper: upper.map(WireIndexValue::Int),
+                    dedupe: false,
+                },
+                filter: None,
+                sorts: vec![
+                    crate::wire::WireQuerySort {
+                        field: "score".into(),
+                        ascending: true,
+                    },
+                    crate::wire::WireQuerySort {
+                        field: "id".into(),
+                        ascending: true,
+                    },
+                ],
+                distinct_fields: vec![],
+                offset: offset as u32,
+                limit: Some(limit as u32),
+            };
+            assert_eq!(
+                storage.query_plan_ids("users", &plan).unwrap(),
+                expected.iter().map(|&(id, _)| id).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                storage.query_plan_project("users", &plan, "score").unwrap(),
+                encode_projection_rows(&WireProjectionRows {
+                    row_count: expected.len() as u32,
+                    column_count: 1,
+                    cells: expected
+                        .iter()
+                        .map(|&(_, score)| WireValue::Int(score))
+                        .collect(),
+                })
+                .unwrap()
+            );
+            assert_eq!(
+                storage
+                    .query_plan_aggregate("users", &plan, "score", "min")
+                    .unwrap(),
+                encode_scalar(
+                    &expected
+                        .first()
+                        .map_or(WireScalar::Null, |&(_, score)| WireScalar::Int(score))
+                )
+                .unwrap()
+            );
+            let mut unbounded = plan.clone();
+            unbounded.offset = 0;
+            unbounded.limit = None;
+            let full_sorted = storage.query_plan_ids("users", &unbounded).unwrap();
+            assert_eq!(
+                full_sorted
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>(),
+                expected.iter().map(|&(id, _)| id).collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
+fn ordered_integer_index_scan_preserves_ineligible_plans_and_pending_writes() {
+    let directory = TemporaryDirectory::new("ordered_integer_index_fallbacks");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    let schema = schema_manifest().collections.remove(0);
+    storage.register_schemas(&schema_manifest()).unwrap();
+    for (id, score) in [(1, 2), (2, 1), (3, 1)] {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("same", id as i64, "Name", score),
+                &[],
+            )
+            .unwrap();
+    }
+    let plan = WireQueryPlan {
+        source: WireQuerySource::IndexRange {
+            index_name: "score".into(),
+            lower: Some(WireIndexValue::Int(0)),
+            upper: Some(WireIndexValue::Int(3)),
+            dedupe: false,
+        },
+        filter: None,
+        sorts: vec![
+            crate::wire::WireQuerySort {
+                field: "score".into(),
+                ascending: true,
+            },
+            crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending: true,
+            },
+        ],
+        distinct_fields: vec![],
+        offset: 0,
+        limit: Some(2),
+    };
+    let mut descending = plan.clone();
+    descending.sorts[0].ascending = false;
+    let mut reversed_ties = plan.clone();
+    reversed_ties.sorts[1].ascending = false;
+    let mut unbounded = plan.clone();
+    unbounded.limit = None;
+    let mut distinct = plan.clone();
+    distinct.distinct_fields = vec!["score".into()];
+    for (other, expected) in [
+        (descending, vec![1, 2]),
+        (reversed_ties, vec![3, 2]),
+        (unbounded, vec![2, 3, 1]),
+        (distinct, vec![2, 1]),
+    ] {
+        assert!(!can_stream_integer_index_order(&schema, &other));
+        assert_eq!(storage.query_plan_ids("users", &other).unwrap(), expected);
+    }
+    let mut other = plan.clone();
+    other.sorts.pop();
+    assert!(matches!(
+        storage
+            .query_document_reader("users", &other)
+            .unwrap()
+            .unwrap()
+            .source,
+        MdbxQueryCursorSource::Sorted { .. }
+    ));
+    other = plan.clone();
+    other.sorts.swap(0, 1);
+    assert!(!can_stream_integer_index_order(&schema, &other));
+    other = plan.clone();
+    other.source = WireQuerySource::All { dedupe: false };
+    assert!(!can_stream_integer_index_order(&schema, &other));
+    for (dart_type, binary_type, index_type, indexed) in [
+        ("int?", "int", "value", true),
+        ("double", "double", "value", true),
+        ("String", "string", "value", true),
+        ("int", "int", "hash", true),
+        ("int", "int", "value", false),
+        ("DateTime", "int", "value", true),
+    ] {
+        let mut other_schema = schema.clone();
+        let field = other_schema
+            .fields
+            .iter_mut()
+            .find(|field| field.name == "score")
+            .unwrap();
+        field.dart_type = dart_type.into();
+        field.binary_type = binary_type.into();
+        field.index_type = index_type.into();
+        field.is_indexed = indexed;
+        assert!(!can_stream_integer_index_order(&other_schema, &plan));
+    }
+    storage.begin_write_transaction().unwrap();
+    storage
+        .put_indexed("users", 4, &user_document("same", 4, "Name", 0), &[])
+        .unwrap();
+    assert!(storage
+        .query_document_reader("users", &plan)
+        .unwrap()
+        .is_none());
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![4, 2]);
+    storage.rollback_transaction().unwrap();
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![2, 3]);
+}
+
+#[test]
+fn ordered_integer_index_scan_stops_at_the_requested_window() {
+    let directory = TemporaryDirectory::new("ordered_integer_index_window");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    storage.begin_write_transaction().unwrap();
+    for id in (1..=1024).rev() {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("same", id as i64, "Name", ((id - 1) / 4) as i64),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+    for filtered in [false, true] {
+        for (offset, limit) in [(0, 1), (3, 5), (0, 0), (1020, 10), (2000, 1)] {
+            let matching = (1..=1024)
+                .filter(|id| !filtered || *id > 8)
+                .collect::<Vec<_>>();
+            let expected = matching
+                .iter()
+                .copied()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let visited = if limit == 0 {
+                0
+            } else if offset + limit > matching.len() {
+                1024
+            } else {
+                *expected.last().unwrap() as usize
+            };
+            let plan = WireQueryPlan {
+                source: WireQuerySource::IndexRange {
+                    index_name: "score".into(),
+                    lower: Some(WireIndexValue::Int(0)),
+                    upper: Some(WireIndexValue::Int(255)),
+                    dedupe: true,
+                },
+                filter: filtered.then(|| {
+                    crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                        field: "id".into(),
+                        operation: crate::wire::WireFilterOperation::GreaterThan,
+                        value: WireValue::Int(8),
+                    })
+                    .unwrap()
+                }),
+                sorts: vec![
+                    crate::wire::WireQuerySort {
+                        field: "score".into(),
+                        ascending: true,
+                    },
+                    crate::wire::WireQuerySort {
+                        field: "id".into(),
+                        ascending: true,
+                    },
+                ],
+                distinct_fields: vec![],
+                offset: offset as u32,
+                limit: Some(limit as u32),
+            };
+            for consumer in 0..6 {
+                INDEX_RANGE_ROWS_READ.with(|count| count.set(0));
+                SORT_CANDIDATES_PEAK.with(|peak| peak.set(0));
+                SORT_KEY_COMPARISONS.with(|count| count.set(0));
+                match consumer {
+                    0 => {
+                        let mut reader = storage
+                            .query_document_reader("users", &plan)
+                            .unwrap()
+                            .unwrap();
+                        assert!(
+                            matches!(reader.source, MdbxQueryCursorSource::IndexRange { .. }),
+                            "ordered index reads must stream"
+                        );
+                        assert_eq!(INDEX_RANGE_ROWS_READ.with(|count| count.get()), 0);
+                        let mut actual = Vec::new();
+                        while reader.next().unwrap() {
+                            actual.push(reader.document_id(0).unwrap().unwrap());
+                        }
+                        assert_eq!(actual, expected);
+                        assert!(!reader.next().unwrap());
+                    }
+                    1 => assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected),
+                    2 => assert_eq!(
+                        storage.query_plan_count("users", &plan).unwrap(),
+                        expected.len() as u64
+                    ),
+                    3 => assert_eq!(
+                        storage.query_plan_project("users", &plan, "id").unwrap(),
+                        encode_projection_rows(&WireProjectionRows {
+                            row_count: expected.len() as u32,
+                            column_count: 1,
+                            cells: expected
+                                .iter()
+                                .map(|id| WireValue::Int(*id as i64))
+                                .collect()
+                        })
+                        .unwrap()
+                    ),
+                    4 => assert_eq!(
+                        storage
+                            .query_plan_aggregate("users", &plan, "score", "count")
+                            .unwrap(),
+                        encode_scalar(&WireScalar::Int(expected.len() as i64)).unwrap()
+                    ),
+                    _ => assert_eq!(
+                        storage
+                            .execute_query_plan("users", &plan)
+                            .unwrap()
+                            .iter()
+                            .map(|doc| doc.id)
+                            .collect::<Vec<_>>(),
+                        expected
+                    ),
+                }
+                assert_eq!(
+                    INDEX_RANGE_ROWS_READ.with(|count| count.get()),
+                    visited,
+                    "consumer {consumer}, {plan:?}"
+                );
+                assert_eq!(SORT_CANDIDATES_PEAK.with(|peak| peak.get()), 0);
+                assert_eq!(SORT_KEY_COMPARISONS.with(|count| count.get()), 0);
+            }
+        }
+    }
 }
 
 #[test]

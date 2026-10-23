@@ -2,6 +2,7 @@
 
 ## 1.1.2
 
+- Optimized limited MDBX integer-index ranges ordered ascending by field and ID, stopping when the result window is complete.
 - Streamed unsorted MDBX `distinct` queries, retaining only distinct keys and stopping at the requested limit.
 - Fixed Dart-side `distinct` collisions in MDBX and SQLite native/Web queries.
 - Optimized limited MDBX queries with direct ID scans (including filters) and bounded-memory top-k selection when the order includes the ID.

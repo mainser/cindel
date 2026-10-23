@@ -11,6 +11,7 @@ import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
 import 'mdbx_distinct_suite.dart' as distinct;
 import 'mdbx_id_scan_suite.dart' as id_scan;
+import 'mdbx_index_order_suite.dart' as index_order;
 import 'mdbx_partial_selection_suite.dart' as partial_selection;
 import 'migration_suite.dart' as migration;
 import 'query_builder_suite.dart' as query_builder;
@@ -32,6 +33,7 @@ void main() {
   mdbx_contract.main();
   distinct.main();
   id_scan.main();
+  index_order.main();
   partial_selection.main();
   migration.main();
   schema_version.main();

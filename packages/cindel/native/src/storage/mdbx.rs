@@ -297,6 +297,8 @@ impl MdbxQueryDocumentReader {
                     self.current_bytes = None;
                     return Ok(false);
                 }
+                #[cfg(test)]
+                tests::INDEX_RANGE_ROWS_READ.with(|count| count.set(count.get() + 1));
                 let id = decode_u64(&value)?;
                 if let Some(seen) = seen {
                     if !seen.insert(id) {
@@ -939,7 +941,10 @@ impl MdbxStorage {
         let transaction = &snapshot.transaction;
 
         let id_scan_direction = direct_id_scan_direction(&schema, plan);
-        if !plan.sorts.is_empty() && id_scan_direction.is_none() {
+        if !plan.sorts.is_empty()
+            && id_scan_direction.is_none()
+            && !can_stream_integer_index_order(&schema, plan)
+        {
             let documents = {
                 let sort_fields = query_sort_fields(&schema, &plan.sorts)?;
                 let offset = plan.offset as usize;
@@ -1326,6 +1331,7 @@ impl MdbxStorage {
         let schema = self.required_schema(collection)?;
         if self.active_write().is_none()
             && (direct_id_scan_direction(&schema, plan).is_some()
+                || can_stream_integer_index_order(&schema, plan)
                 || (!plan.distinct_fields.is_empty() && plan.sorts.is_empty()))
         {
             if let Some(mut reader) = self.query_document_reader(collection, plan)? {
@@ -3923,6 +3929,48 @@ fn direct_id_scan_direction(
         .iter()
         .any(|field| field.name == sort.field && field.is_id)
         .then_some(sort.ascending)
+}
+
+// Integer value keys sort numerically; DUP_SORT values are big-endian IDs.
+// Require the complete explicit order so equal values keep the same ID ties.
+// The caller excludes active writes before using this read-only cursor path.
+fn can_stream_integer_index_order(schema: &CollectionSchemaManifest, plan: &WireQueryPlan) -> bool {
+    if plan.limit.is_none() || !plan.distinct_fields.is_empty() {
+        return false;
+    }
+    let WireQuerySource::IndexRange {
+        index_name,
+        lower,
+        upper,
+        ..
+    } = &plan.source
+    else {
+        return false;
+    };
+    if (lower.is_none() && upper.is_none())
+        || !matches!(lower, None | Some(WireIndexValue::Int(_)))
+        || !matches!(upper, None | Some(WireIndexValue::Int(_)))
+    {
+        return false;
+    }
+    let [field_sort, id_sort] = plan.sorts.as_slice() else {
+        return false;
+    };
+    field_sort.ascending
+        && id_sort.ascending
+        && field_sort.field == *index_name
+        && schema
+            .fields
+            .iter()
+            .any(|field| field.name == id_sort.field && field.is_id)
+        && schema.fields.iter().any(|field| {
+            field.name == *index_name
+                && !field.is_id
+                && field.is_indexed
+                && field.index_type == "value"
+                && field.dart_type == "int"
+                && field.binary_type == "int"
+        })
 }
 
 fn query_sort_fields(
