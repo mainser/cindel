@@ -117,6 +117,7 @@ enum MdbxQueryCursorSource {
     Documents {
         cursor: Cursor<'static, RO>,
         started: bool,
+        ascending: bool,
     },
     IndexEqual {
         index_cursor: Cursor<'static, RO>,
@@ -162,17 +163,19 @@ impl MdbxQueryDocumentReader {
         }
 
         match &mut self.source {
-            MdbxQueryCursorSource::Documents { cursor, started } => loop {
-                let row = if *started {
-                    cursor
-                        .next::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
-                        .map_err(|error| error.to_string())?
-                } else {
-                    *started = true;
-                    cursor
-                        .first::<Cow<'static, [u8]>, Cow<'static, [u8]>>()
-                        .map_err(|error| error.to_string())?
-                };
+            MdbxQueryCursorSource::Documents {
+                cursor,
+                started,
+                ascending,
+            } => loop {
+                let row = match (*started, *ascending) {
+                    (false, true) => cursor.first::<Cow<'static, [u8]>, Cow<'static, [u8]>>(),
+                    (true, true) => cursor.next::<Cow<'static, [u8]>, Cow<'static, [u8]>>(),
+                    (false, false) => cursor.last::<Cow<'static, [u8]>, Cow<'static, [u8]>>(),
+                    (true, false) => cursor.prev::<Cow<'static, [u8]>, Cow<'static, [u8]>>(),
+                }
+                .map_err(|error| error.to_string())?;
+                *started = true;
                 let Some((key, bytes)) = row else {
                     self.current_present = false;
                     self.current_id = None;
@@ -824,7 +827,8 @@ impl MdbxStorage {
         let snapshot = self.read_transaction()?;
         let transaction = &snapshot.transaction;
 
-        if !plan.sorts.is_empty() {
+        let id_scan_direction = direct_id_scan_direction(&schema, plan);
+        if !plan.sorts.is_empty() && id_scan_direction.is_none() {
             let documents = {
                 let sort_fields = query_sort_fields(&schema, &plan.sorts)?;
                 let offset = plan.offset as usize;
@@ -1018,6 +1022,7 @@ impl MdbxStorage {
                 MdbxQueryCursorSource::Documents {
                     cursor,
                     started: false,
+                    ascending: id_scan_direction.unwrap_or(true),
                 }
             }
             WireQuerySource::IndexEqual {
@@ -1201,6 +1206,25 @@ impl MdbxStorage {
         plan: &WireQueryPlan,
     ) -> Result<Vec<PlannedDocument>, String> {
         let schema = self.required_schema(collection)?;
+        if self.active_write().is_none() && direct_id_scan_direction(&schema, plan).is_some() {
+            if let Some(mut reader) = self.query_document_reader(collection, plan)? {
+                let mut documents = Vec::new();
+                while reader.next()? {
+                    documents.push(PlannedDocument {
+                        id: reader
+                            .current_id
+                            .expect("positioned document cursor has an ID"),
+                        bytes: reader
+                            .current_bytes
+                            .as_deref()
+                            .expect("positioned document cursor has bytes")
+                            .to_vec(),
+                        position: plan.offset as usize + documents.len(),
+                    });
+                }
+                return Ok(documents);
+            }
+        }
         let filter = plan
             .filter
             .as_ref()
@@ -3256,6 +3280,8 @@ fn document_table_key(id: u64) -> [u8; 8] {
 }
 
 fn decode_document_table_key(bytes: &[u8]) -> Result<u64, String> {
+    #[cfg(test)]
+    tests::DOCUMENT_KEYS_READ.with(|count| count.set(count.get() + 1));
     let bytes = bytes
         .try_into()
         .map_err(|_| "MDBX document key must be 8 bytes".to_string())?;
@@ -3736,6 +3762,29 @@ fn sort_planned_documents(
         };
     }
     Ok(())
+}
+
+// INTEGER_KEY document tables already have this order. Restrict the fast path
+// to a bounded, unfiltered window with exactly one ID sort key.
+fn direct_id_scan_direction(
+    schema: &CollectionSchemaManifest,
+    plan: &WireQueryPlan,
+) -> Option<bool> {
+    if plan.limit.is_none()
+        || plan.filter.is_some()
+        || !plan.distinct_fields.is_empty()
+        || !matches!(plan.source, WireQuerySource::All { .. })
+    {
+        return None;
+    }
+    let [sort] = plan.sorts.as_slice() else {
+        return None;
+    };
+    schema
+        .fields
+        .iter()
+        .any(|field| field.name == sort.field && field.is_id)
+        .then_some(sort.ascending)
 }
 
 fn query_sort_fields(

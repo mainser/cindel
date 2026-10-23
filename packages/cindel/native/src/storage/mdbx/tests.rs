@@ -7,6 +7,172 @@ use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManife
 
 thread_local! {
     pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static DOCUMENT_KEYS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn limited_id_scan_visits_only_the_requested_prefix_in_both_directions() {
+    let directory = TemporaryDirectory::new("direct_id_scan");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let ids = [
+        1,
+        7,
+        255,
+        256,
+        65536,
+        9_007_199_254_740_992,
+        9_007_199_254_740_993,
+        i64::MAX as u64,
+    ];
+    storage.begin_write_transaction().unwrap();
+    for id in ids.into_iter().rev() {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document("same", id as i64, "Name", 1),
+                &[],
+            )
+            .unwrap();
+    }
+    storage.commit_transaction().unwrap();
+
+    for ascending in [true, false] {
+        let mut ordered = ids.to_vec();
+        if !ascending {
+            ordered.reverse();
+        }
+        for (offset, limit) in [(0, 1), (2, 3), (0, 0), (6, 9), (0, 8), (20, 1), (20, 0)] {
+            let expected = ordered
+                .iter()
+                .copied()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let expected_reads = if limit == 0 {
+                0
+            } else {
+                ids.len().min(offset + limit)
+            };
+            let plan = WireQueryPlan {
+                source: WireQuerySource::All { dedupe: true },
+                filter: None,
+                sorts: vec![crate::wire::WireQuerySort {
+                    field: "id".into(),
+                    ascending,
+                }],
+                distinct_fields: Vec::new(),
+                offset: offset as u32,
+                limit: Some(limit as u32),
+            };
+            DOCUMENT_KEYS_READ.with(|count| count.set(0));
+            SORT_KEY_COMPARISONS.with(|count| count.set(0));
+            assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+            assert_eq!(
+                DOCUMENT_KEYS_READ.with(|count| count.get()),
+                expected_reads,
+                "materialized: ascending={ascending}, offset={offset}, limit={limit}"
+            );
+            assert_eq!(SORT_KEY_COMPARISONS.with(|count| count.get()), 0);
+
+            DOCUMENT_KEYS_READ.with(|count| count.set(0));
+            let mut reader = storage
+                .query_document_reader("users", &plan)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                DOCUMENT_KEYS_READ.with(|count| count.get()),
+                0,
+                "reader must be lazy"
+            );
+            let mut actual = Vec::new();
+            while reader.next().unwrap() {
+                actual.push(reader.document_id(0).unwrap().unwrap());
+            }
+            assert_eq!(actual, expected);
+            assert_eq!(DOCUMENT_KEYS_READ.with(|count| count.get()), expected_reads);
+            for field in ["id", "name"] {
+                let projected = storage.query_project("users", &expected, field).unwrap();
+                DOCUMENT_KEYS_READ.with(|count| count.set(0));
+                assert_eq!(
+                    storage.query_plan_project("users", &plan, field).unwrap(),
+                    projected
+                );
+                assert_eq!(DOCUMENT_KEYS_READ.with(|count| count.get()), expected_reads);
+            }
+        }
+    }
+}
+
+#[test]
+fn direct_id_readers_retain_the_snapshot_after_transaction_and_handle_close() {
+    for ascending in [true, false] {
+        let directory = TemporaryDirectory::new("direct_id_snapshot");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending,
+            }],
+            distinct_fields: vec![],
+            offset: 0,
+            limit: Some(2),
+        };
+        assert!(storage.query_plan_ids("users", &plan).unwrap().is_empty());
+        let mut empty = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .unwrap();
+        assert!(!empty.next().unwrap());
+        drop(empty);
+        for id in [1, 256] {
+            storage
+                .put("users", id, &user_document("same", id as i64, "Before", 1))
+                .unwrap();
+        }
+        storage.begin_read_transaction().unwrap();
+        let mut cursor = storage
+            .query_document_reader("users", &plan)
+            .unwrap()
+            .unwrap();
+        let mut other = MdbxStorage::open(directory.path()).unwrap();
+        other.delete("users", 1).unwrap();
+        other
+            .put("users", 256, &user_document("same", 256, "After", 2))
+            .unwrap();
+        other
+            .put("users", 512, &user_document("same", 512, "New", 3))
+            .unwrap();
+        let expected = if ascending {
+            vec![1, 256]
+        } else {
+            vec![256, 1]
+        };
+        assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), expected);
+        storage.commit_transaction().unwrap();
+        drop(storage);
+        for id in expected {
+            assert!(cursor.next().unwrap());
+            assert_eq!(cursor.document_id(0).unwrap(), Some(id));
+            assert_eq!(
+                cursor.document_bytes(0).unwrap().unwrap(),
+                user_document("same", id as i64, "Before", 1)
+            );
+        }
+        assert!(!cursor.next().unwrap());
+        assert_eq!(
+            other.query_plan_ids("users", &plan).unwrap(),
+            if ascending {
+                vec![256, 512]
+            } else {
+                vec![512, 256]
+            }
+        );
+    }
 }
 
 #[test]
