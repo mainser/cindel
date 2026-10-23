@@ -9,6 +9,53 @@ import 'schema_generation_fixture.dart';
 
 void main() {
   group('Cindel MDBX typed contract', () {
+    for (final fields in [
+      ['name', 'email'],
+      ['tags'],
+      ['primaryRecipient'],
+      ['recipients'],
+    ]) {
+      test(
+        'distinct preserves value boundaries in ${fields.join(', ')}.',
+        () async {
+          final database = await openTestDatabaseInMemory(
+            schemas: [UserSchema],
+          );
+          addTearDown(database.close);
+          User user(int id, {bool other = false}) {
+            // Native embedded records store fields in name order:
+            // address, metadata, name.
+            const boundary = ',metadata:Null:null,name:String:';
+            final recipient = Recipient()
+              ..name = other ? 'b${boundary}c' : 'c'
+              ..address = other ? 'a' : 'a${boundary}b';
+            return User()
+              ..dbId = id
+              ..name = other ? 'a' : 'a\u0001String:b'
+              ..email = other ? 'b\u0001String:c' : 'c'
+              ..tags = other ? ['a', 'b'] : ['a,String:b']
+              ..primaryRecipient = recipient
+              ..recipients = [recipient];
+          }
+
+          await database.users.putAll([user(1), user(2, other: true), user(3)]);
+          final query = database.users.all().distinctByFields(fields);
+          expect(await query.count(), 2);
+          expect((await query.findAll()).map((value) => value.dbId), [1, 2]);
+          final sorted = query.sortBy(
+            'dbId',
+            order: CindelSortOrder.descending,
+          );
+          expect((await sorted.findAll()).map((value) => value.dbId), [3, 2]);
+          expect(await sorted.property<int>('dbId').findAll(), [3, 2]);
+          expect((await sorted.offset(1).limit(1).findAll()).single.dbId, 2);
+          await database.writeTxn(() async {
+            expect((await sorted.findAll()).map((value) => value.dbId), [3, 2]);
+          });
+        },
+      );
+    }
+
     test('filters and sorts int64 durations without rounding.', () async {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);

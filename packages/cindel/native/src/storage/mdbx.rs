@@ -4046,15 +4046,59 @@ fn distinct_planned_documents(
             .iter()
             .map(|field| {
                 query_binary_field(schema, &document.bytes, document.id, field)
-                    .map(|value| binary_distinct_key(value.as_ref()))
+                    .map(DistinctValue::from)
             })
-            .collect::<Result<Vec<_>, String>>()?
-            .join("\u{1}");
+            .collect::<Result<Vec<_>, String>>()?;
         if seen.insert(key) {
             distinct.push(document);
         }
     }
     Ok(distinct)
+}
+
+// Distinct equality needs structural keys, separate from the textual fallback
+// used by sorting. HashSet also checks equality, so hash collisions cannot
+// merge different values or field tuples.
+#[derive(Eq, Hash, PartialEq)]
+enum DistinctValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Double(u64),
+    String(String),
+    DateTime(i64),
+    Duration(i64),
+    List(Vec<DistinctValue>),
+    Object(Vec<(String, DistinctValue)>),
+}
+
+impl From<Option<BinaryValue>> for DistinctValue {
+    fn from(value: Option<BinaryValue>) -> Self {
+        match value {
+            None => Self::Null,
+            Some(BinaryValue::Bool(value)) => Self::Bool(value),
+            Some(BinaryValue::Int(value)) => Self::Int(value),
+            // Preserve the previous distinction between -0.0 and +0.0 and
+            // the single textual identity for NaN, if encountered.
+            Some(BinaryValue::Double(value)) => Self::Double(if value.is_nan() {
+                f64::NAN.to_bits()
+            } else {
+                value.to_bits()
+            }),
+            Some(BinaryValue::String(value) | BinaryValue::Enum(value)) => Self::String(value),
+            Some(BinaryValue::DateTimeMicros(value)) => Self::DateTime(value),
+            Some(BinaryValue::DurationMicros(value)) => Self::Duration(value),
+            Some(BinaryValue::List(values)) => {
+                Self::List(values.into_iter().map(Self::from).collect())
+            }
+            Some(BinaryValue::Object(entries)) => Self::Object(
+                entries
+                    .into_iter()
+                    .map(|(name, value)| (name, Self::from(value)))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 fn binary_distinct_key(value: Option<&BinaryValue>) -> String {

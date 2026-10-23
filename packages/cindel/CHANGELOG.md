@@ -2,6 +2,10 @@
 
 ## 1.1.2
 
+- Fixed MDBX `distinct` collisions caused by separator-like content in strings,
+  field tuples, lists, and nested objects. Structural keys now preserve value
+  boundaries while retaining the first matching row after sorting. Added
+  regression coverage for counts, projections, and pagination.
 - Fixed MDBX numeric filters and sorting losing precision for 64-bit integers,
   including DateTime and Duration microseconds. Comparisons now preserve exact
   integer values in both optimized and materialized query paths, including

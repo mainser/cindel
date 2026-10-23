@@ -1844,6 +1844,137 @@ fn distinct_query_plan_projection_keeps_materialized_fallback() {
 }
 
 #[test]
+fn distinct_field_tuples_do_not_collide_on_embedded_separators() {
+    let directory = TemporaryDirectory::new("distinct_tuple_boundaries");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    for (id, name, email, score) in [
+        (1, "a\u{1}String:b", "c", 10),
+        (2, "a", "b\u{1}String:c", 20),
+        (3, "a\u{1}String:b", "c", 30),
+    ] {
+        storage
+            .put_indexed(
+                "users",
+                id,
+                &user_document(email, id as i64, name, score),
+                &[],
+            )
+            .unwrap();
+    }
+    let mut plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: Vec::new(),
+        distinct_fields: vec!["name".into(), "email".into()],
+        offset: 0,
+        limit: None,
+    };
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![1, 2]);
+    assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 2);
+    plan.sorts.push(crate::wire::WireQuerySort {
+        field: "score".into(),
+        ascending: false,
+    });
+    // Keep the first row after sorting, and apply the window after distinct.
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![3, 2]);
+    assert_eq!(
+        storage.query_plan_project("users", &plan, "score").unwrap(),
+        encode_projection_rows(&WireProjectionRows {
+            row_count: 2,
+            column_count: 1,
+            cells: vec![WireValue::Int(30), WireValue::Int(20)]
+        })
+        .unwrap()
+    );
+    plan.offset = 1;
+    plan.limit = Some(1);
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![2]);
+    storage.begin_write_transaction().unwrap();
+    assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![2]);
+    storage.rollback_transaction().unwrap();
+}
+
+#[test]
+fn distinct_preserves_list_and_nested_object_boundaries() {
+    let string = |value: &str| Some(BinaryValue::String(value.into()));
+    let list = |values| Some(BinaryValue::List(values));
+    let object = |entries| Some(BinaryValue::Object(entries));
+    let cases = [
+        (vec![string("a,String:b")], vec![string("a"), string("b")]),
+        (vec![string("a,Null:null")], vec![string("a"), None]),
+        (
+            vec![list(vec![string("a],List:[String:b")])],
+            vec![list(vec![string("a")]), list(vec![string("b")])],
+        ),
+        (
+            vec![object(vec![("a".into(), string("x,b:String:y"))])],
+            vec![object(vec![
+                ("a".into(), string("x")),
+                ("b".into(), string("y")),
+            ])],
+        ),
+        (
+            vec![object(vec![("a:String:x,b".into(), string("y"))])],
+            vec![object(vec![
+                ("a".into(), string("x")),
+                ("b".into(), string("y")),
+            ])],
+        ),
+        (vec![], vec![None]),
+        (vec![None], vec![string("")]),
+        (
+            vec![Some(BinaryValue::Int(1))],
+            vec![Some(BinaryValue::Double(1.0))],
+        ),
+        (
+            vec![Some(BinaryValue::Double(-0.0))],
+            vec![Some(BinaryValue::Double(0.0))],
+        ),
+        (
+            vec![Some(BinaryValue::DateTimeMicros(1))],
+            vec![Some(BinaryValue::DurationMicros(1))],
+        ),
+    ];
+    let directory = TemporaryDirectory::new("distinct_structural_values");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    let mut manifest = task_tags_schema_manifest();
+    manifest.collections[0].fields[2].dart_type = "List<dynamic>".into();
+    storage.register_schemas(&manifest).unwrap();
+    let plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: Vec::new(),
+        distinct_fields: vec!["tags".into()],
+        offset: 0,
+        limit: None,
+    };
+    for (left, right) in cases {
+        for (id, values) in [(1, &left), (2, &right), (3, &left)] {
+            let bytes = write_compact_document_for_test(
+                &manifest.collections[0],
+                &[
+                    Some(BinaryValue::Bool(false)),
+                    Some(BinaryValue::Int(id)),
+                    Some(BinaryValue::List(values.clone())),
+                    string("Title"),
+                ],
+            )
+            .unwrap();
+            storage
+                .put_indexed("tasks", id as u64, &bytes, &[])
+                .unwrap();
+        }
+        assert_eq!(
+            storage.query_plan_ids("tasks", &plan).unwrap(),
+            vec![1, 2],
+            "{left:?} vs {right:?}"
+        );
+        assert_eq!(storage.query_plan_count("tasks", &plan).unwrap(), 2);
+    }
+}
+
+#[test]
 fn schema_binary_documents_delete_old_indexes_without_reverse_metadata() {
     // Scenario: Schema-backed binary documents can derive old index entries
     // from the previously stored document bytes.
