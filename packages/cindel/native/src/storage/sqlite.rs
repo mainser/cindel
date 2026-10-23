@@ -1574,8 +1574,14 @@ impl StorageEngine for SqliteStorage {
         field: &str,
     ) -> Result<Vec<u8>, String> {
         let schema = self.required_collection_schema(collection)?;
-        let ids = self.query_plan_ids(collection, plan)?;
-        self.query_native_projection(&schema, &ids, field)
+        let cells = self.query_plan_native_values(&schema, plan, field)?;
+        let row_count =
+            u32::try_from(cells.len()).map_err(|_| "projection row count overflow".to_string())?;
+        encode_projection_rows(&WireProjectionRows {
+            row_count,
+            column_count: 1,
+            cells,
+        })
     }
 
     fn query_plan_aggregate(
@@ -1586,8 +1592,7 @@ impl StorageEngine for SqliteStorage {
         operation: &str,
     ) -> Result<Vec<u8>, String> {
         let schema = self.required_collection_schema(collection)?;
-        let ids = self.query_plan_ids(collection, plan)?;
-        let values = self.query_native_values(&schema, &ids, field)?;
+        let values = self.query_plan_native_values(&schema, plan, field)?;
         encode_scalar(&aggregate_wire_values(&values, operation)?)
     }
 
@@ -1663,6 +1668,34 @@ impl SqliteStorage {
             ));
         }
         Ok(documents)
+    }
+
+    fn query_plan_native_values(
+        &self,
+        schema: &CollectionSchemaManifest,
+        plan: &WireQueryPlan,
+        field: &str,
+    ) -> Result<Vec<WireValue>, String> {
+        if !plan.distinct_fields.is_empty() {
+            // Keep the same representative row selected by the ID query's GROUP BY.
+            let ids = self.query_plan_ids(&schema.name, plan)?;
+            return self.query_native_values(schema, &ids, field);
+        }
+
+        let schema_field = sqlite_schema_field(schema, field)?;
+        let (sql, params) =
+            sqlite_query_plan_sql(schema, plan, SqliteQuerySelect::Field(schema_field))?;
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(params.iter()), |row| {
+                sqlite_row_wire_value(row, 0, schema_field)
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
     }
 
     fn query_native_projection(
@@ -1786,16 +1819,17 @@ fn sqlite_id(id: u64) -> Result<i64, String> {
 }
 
 #[derive(Clone, Copy)]
-enum SqliteQuerySelect {
+enum SqliteQuerySelect<'a> {
     Ids,
     Documents,
     Count,
+    Field(&'a FieldSchemaManifest),
 }
 
 fn sqlite_query_plan_sql(
     schema: &CollectionSchemaManifest,
     plan: &WireQueryPlan,
-    select: SqliteQuerySelect,
+    select: SqliteQuerySelect<'_>,
 ) -> Result<(String, Vec<Value>), String> {
     let fields = native_fields(schema);
     let (predicates, params) = sqlite_query_plan_predicates(schema, plan)?;
@@ -1806,6 +1840,10 @@ fn sqlite_query_plan_sql(
         SqliteQuerySelect::Ids => {
             sql.push_str("SELECT ");
             sql.push_str(SQLITE_ROW_ID_COLUMN);
+        }
+        SqliteQuerySelect::Field(field) => {
+            sql.push_str("SELECT ");
+            sql.push_str(&sqlite_column_for_schema_field(field));
         }
         SqliteQuerySelect::Documents => {
             sql.push_str("SELECT ");
@@ -5552,6 +5590,199 @@ mod tests {
             plan.sorts[0].field = "missing".into();
             plan.limit = Some(0);
             assert!(storage.query_plan_count("users", &plan).is_err());
+        }
+    }
+
+    #[test]
+    fn projects_and_aggregates_with_one_statement_regardless_of_row_count() {
+        use std::cell::Cell;
+        use std::ffi::c_void;
+
+        unsafe extern "C" fn count_statement(
+            _: u32,
+            context: *mut c_void,
+            _: *mut c_void,
+            _: *mut c_void,
+        ) -> i32 {
+            let count = unsafe { &*context.cast::<Cell<usize>>() };
+            count.set(count.get() + 1);
+            0
+        }
+
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("native_projection_statements");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            let documents: Vec<_> = (1..=1000)
+                .map(|id| NativeDocumentWrite {
+                    id,
+                    values: vec![
+                        NativeDocumentValue::Bool(true),
+                        NativeDocumentValue::Int(id as i64),
+                        NativeDocumentValue::Bytes(b"Title".to_vec()),
+                    ],
+                })
+                .collect();
+            storage
+                .put_many_native_documents("users", &documents, true)
+                .unwrap();
+            for limit in [Some(0), Some(1), None] {
+                let plan = WireQueryPlan {
+                    source: WireQuerySource::All { dedupe: false },
+                    filter: None,
+                    sorts: Vec::new(),
+                    distinct_fields: Vec::new(),
+                    offset: 0,
+                    limit,
+                };
+                for field in ["id", "createdAtMicros", "title"] {
+                    for operation in [None, Some("count"), Some("min")] {
+                        let count = Cell::new(0_usize);
+                        // SQLite invokes this callback synchronously. The counter stays
+                        // alive until the trace is removed, before inspecting the result.
+                        let result;
+                        unsafe {
+                            let handle = storage.connection.handle();
+                            assert_eq!(
+                                rusqlite::ffi::sqlite3_trace_v2(
+                                    handle,
+                                    rusqlite::ffi::SQLITE_TRACE_STMT as u32,
+                                    Some(count_statement),
+                                    (&count as *const Cell<usize>).cast_mut().cast(),
+                                ),
+                                rusqlite::ffi::SQLITE_OK
+                            );
+                            result = match operation {
+                                Some(operation) => {
+                                    storage.query_plan_aggregate("users", &plan, field, operation)
+                                }
+                                None => storage.query_plan_project("users", &plan, field),
+                            };
+                            rusqlite::ffi::sqlite3_trace_v2(handle, 0, None, std::ptr::null_mut());
+                        }
+                        result.unwrap();
+                        assert_eq!(
+                            count.get(),
+                            1,
+                            "field={field}, operation={operation:?}, limit={limit:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn projected_query_values_preserve_types_windows_and_aggregate_semantics() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("native_projection_values");
+            let mut schema = native_user_schema();
+            schema
+                .fields
+                .push(native_field("price", "double?", "double", false));
+            schema
+                .fields
+                .sort_by(|left, right| left.name.cmp(&right.name));
+            let manifest = schema_manifest(vec![schema]);
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            let documents: Vec<_> = (1..=6)
+                .map(|id| NativeDocumentWrite {
+                    id,
+                    values: vec![
+                        if id == 1 {
+                            NativeDocumentValue::Null
+                        } else {
+                            NativeDocumentValue::Bool(id % 2 == 0)
+                        },
+                        NativeDocumentValue::Int(9_007_199_254_740_992 + id as i64),
+                        if id % 3 == 0 {
+                            NativeDocumentValue::Null
+                        } else {
+                            NativeDocumentValue::Double(id as f64 + 0.5)
+                        },
+                        if id == 1 {
+                            NativeDocumentValue::Null
+                        } else {
+                            NativeDocumentValue::Bytes("Árbol".as_bytes().to_vec())
+                        },
+                    ],
+                })
+                .collect();
+            storage
+                .put_many_native_documents("users", &documents, true)
+                .unwrap();
+            for source in [
+                WireQuerySource::All { dedupe: false },
+                WireQuerySource::IndexEqual {
+                    index_name: "completed".into(),
+                    value: WireIndexValue::Bool(true),
+                    dedupe: true,
+                },
+                WireQuerySource::IndexRange {
+                    index_name: "createdAtMicros".into(),
+                    lower: Some(WireIndexValue::Int(9_007_199_254_740_994)),
+                    upper: Some(WireIndexValue::Int(9_007_199_254_740_997)),
+                    dedupe: true,
+                },
+            ] {
+                for filter in [
+                    None,
+                    Some(
+                        crate::wire::encode_filter(&WireFilter::Field {
+                            field: "id".into(),
+                            operation: WireFilterOperation::GreaterThan,
+                            value: WireValue::Int(2),
+                        })
+                        .unwrap(),
+                    ),
+                ] {
+                    for (offset, limit) in [(0, None), (1, Some(3)), (0, Some(0)), (99, None)] {
+                        for distinct_fields in [Vec::new(), vec!["completed".into()]] {
+                            let plan = WireQueryPlan {
+                                source: source.clone(),
+                                filter: filter.clone(),
+                                sorts: vec![crate::wire::WireQuerySort {
+                                    field: "createdAtMicros".into(),
+                                    ascending: false,
+                                }],
+                                distinct_fields,
+                                offset,
+                                limit,
+                            };
+                            let ids = storage.query_plan_ids("users", &plan).unwrap();
+                            for field in [
+                                "id",
+                                "createdAtMicros",
+                                "price",
+                                "completed",
+                                "title",
+                                "missing",
+                            ] {
+                                assert_eq!(
+                                    storage.query_plan_project("users", &plan, field),
+                                    storage.query_project("users", &ids, field),
+                                    "projection field={field}, plan={plan:?}",
+                                );
+                                for operation in
+                                    ["count", "min", "max", "sum", "average", "unknown"]
+                                {
+                                    assert_eq!(
+                                        storage.query_plan_aggregate("users", &plan, field, operation),
+                                        storage.query_aggregate("users", &ids, field, operation),
+                                        "aggregate field={field}, operation={operation}, plan={plan:?}",
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

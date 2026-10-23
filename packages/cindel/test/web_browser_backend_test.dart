@@ -8,6 +8,7 @@ import 'bulk_id_suite.dart' as bulk_ids;
 import 'count_suite.dart' as count;
 import 'find_first_suite.dart' as find_first;
 import 'sqlite_id_suite.dart' as ids;
+import 'sqlite_projection_suite.dart' as sqlite_projection;
 import 'web_close_additional_suite.dart' as web_close;
 import 'web_worker_close_suite.dart' as worker_close;
 
@@ -20,6 +21,7 @@ void main() {
   ids.main(includeSameDirectoryHandles: false);
   bulk_ids.main(includeSameDirectoryHandles: false);
   count.main(includeSameDirectoryHandles: false);
+  sqlite_projection.main(includeSameDirectoryHandles: false);
   find_first.main();
   web_close.main();
   worker_close.main();
