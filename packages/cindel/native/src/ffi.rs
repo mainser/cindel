@@ -21,7 +21,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    34
+    35
 }
 
 #[no_mangle]
@@ -188,6 +188,33 @@ pub unsafe extern "C" fn cindel_allocate_id(
     match engine.allocate_id(collection) {
         Ok(id) => {
             *out_id = id;
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_reserve_ids(
+    handle: *mut CindelEngine,
+    collection_ptr: *const u8,
+    collection_len: usize,
+    count: u32,
+    out_first_id: *mut u64,
+) -> i32 {
+    if out_first_id.is_null() {
+        return -1;
+    }
+    *out_first_id = 0;
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let Some(collection) = read_str(collection_ptr, collection_len) else {
+        return -1;
+    };
+    match engine.reserve_ids(collection, count) {
+        Ok(first) => {
+            *out_first_id = first;
             0
         }
         Err(_) => -1,

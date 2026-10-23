@@ -127,6 +127,7 @@ const _nativeAssetFunctionMembers = [
   'rollbackTransaction',
   'put',
   'allocateId',
+  'reserveIds',
   'registerSchemas',
   'registerMigratedSchemas',
   'putIndexed',

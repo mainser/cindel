@@ -3,7 +3,7 @@ part of 'bindings.dart';
 // Cindel FFI contract expected by these Dart bindings. Keep this in sync with
 // `cindel_abi_version` in native/src/ffi.rs when the native ABI changes; it is
 // independent of the MDBX engine version.
-const _expectedNativeAbiVersion = 34;
+const _expectedNativeAbiVersion = 35;
 
 // Require an exact ABI match for both loading strategies. A newer ABI is not
 // assumed compatible with the function signatures expected by these bindings.
@@ -83,6 +83,9 @@ abstract interface class _CindelNativeFunctions {
 
   int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   get allocateId;
+
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint64>)
+  get reserveIds;
 
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas;
 

@@ -74,6 +74,23 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
             ),
             int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
           >('cindel_allocate_id'),
+      reserveIds = library
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              Size,
+              Uint32,
+              Pointer<Uint64>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<Uint8>,
+              int,
+              int,
+              Pointer<Uint64>,
+            )
+          >('cindel_reserve_ids'),
       registerSchemas = library
           .lookupFunction<
             Int32 Function(Pointer<Void>, Pointer<Uint8>, Size),
@@ -1212,6 +1229,10 @@ final class _DynamicCindelNativeFunctions implements _CindelNativeFunctions {
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int, Pointer<Uint64>)
   allocateId;
+
+  @override
+  final int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint64>)
+  reserveIds;
 
   @override
   final int Function(Pointer<Void>, Pointer<Uint8>, int) registerSchemas;

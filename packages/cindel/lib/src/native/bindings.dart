@@ -175,6 +175,20 @@ final class CindelNativeBindings {
     }
   }
 
+  /// Reserves a contiguous range and returns its first ID.
+  int reserveIds(Pointer<Void> handle, String collection, int count) {
+    final outId = calloc<Uint64>();
+    try {
+      final status = _withNativeUtf8Bytes(collection, (pointer, length) {
+        return _functions.reserveIds(handle, pointer, length, count, outId);
+      });
+      _checkStatus(status, 'reserve ids');
+      return outId.value;
+    } finally {
+      calloc.free(outId);
+    }
+  }
+
   /// Registers encoded collection schemas with the native handle.
   void registerSchemas(Pointer<Void> handle, Uint8List schemas) {
     final status = _withNativeBytes(schemas, (schemasPointer, schemasLength) {

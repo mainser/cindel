@@ -2,29 +2,11 @@
 
 ## 1.1.2
 
-- Fixed MDBX `distinct` collisions caused by separator-like content in strings,
-  field tuples, lists, and nested objects. Structural keys now preserve value
-  boundaries while retaining the first matching row after sorting. Added
-  regression coverage for counts, projections, and pagination.
-- Fixed MDBX numeric filters and sorting losing precision for 64-bit integers,
-  including DateTime and Duration microseconds. Comparisons now preserve exact
-  integer values in both optimized and materialized query paths, including
-  comparisons with double bounds. Added regression coverage for integer limits,
-  query windows, and rows selected for updates and deletes.
-- Fixed MDBX `readTxn` isolation so document reads, queries, and cursors share
-  the snapshot captured when the transaction starts.
-- Fixed auto-increment ID collisions across overlapping MDBX transactions and
-  implicit writes on database handles in the same process, preserving rollback
-  behavior and committed counters after reopening.
-- Fixed SQLite typed auto-increment ID collisions between database handles by
-  persisting counters transactionally in the shared native and Web engine.
-  Manual IDs advance the counter, rollbacks restore it, and reopening preserves
-  committed reservations even after deleting rows.
-- Fixed Dart decoding of empty native string lists written by MDBX `putAll`,
-  preventing a `RangeError` when reading those objects with `get()`.
-- Added regression coverage for transaction snapshots, overlapping ID
-  allocations, SQLite counter persistence and rollback, and empty-list decoding
-  through generated serializers.
+- Optimized `putAll` with batch ID reservations in MDBX and SQLite native/Web.
+- Fixed auto-increment ID collisions in MDBX and SQLite native/Web.
+- Fixed MDBX `readTxn` isolation, 64-bit integer filtering/sorting, and `distinct` collisions.
+- Fixed reading empty string lists written by MDBX `putAll`.
+- Added regression tests and bumped the native ABI to 35 (requires matching binaries).
 
 ## 1.1.1
 

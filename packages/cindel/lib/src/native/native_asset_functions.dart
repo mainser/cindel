@@ -73,6 +73,10 @@ final class _NativeAssetCindelNativeFunctions
   get allocateId => _cindelAllocateId;
 
   @override
+  int Function(Pointer<Void>, Pointer<Uint8>, int, int, Pointer<Uint64>)
+  get reserveIds => _cindelReserveIds;
+
+  @override
   int Function(Pointer<Void>, Pointer<Uint8>, int) get registerSchemas =>
       _cindelRegisterSchemas;
 
@@ -835,6 +839,17 @@ external int _cindelAllocateId(
   Pointer<Uint8> collection,
   int collectionLen,
   Pointer<Uint64> outId,
+);
+
+@Native<
+  Int32 Function(Pointer<Void>, Pointer<Uint8>, Size, Uint32, Pointer<Uint64>)
+>(symbol: 'cindel_reserve_ids', assetId: _assetId)
+external int _cindelReserveIds(
+  Pointer<Void> handle,
+  Pointer<Uint8> collection,
+  int collectionLen,
+  int count,
+  Pointer<Uint64> outFirstId,
 );
 
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(

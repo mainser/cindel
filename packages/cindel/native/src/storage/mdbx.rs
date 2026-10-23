@@ -2033,14 +2033,21 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        self.reserve_ids(collection, 1)
+    }
+
+    fn reserve_ids(&mut self, collection: &str, count: u32) -> Result<u64, String> {
         self.ensure_can_write()?;
+        if count == 0 {
+            return Ok(0);
+        }
         self.cached_next_id(collection)?;
         // Serialize selection and reservation, including implicit allocations.
         // No native write transaction remains open while a Dart callback awaits.
         let mut allocator = self.state.ids.lock().map_err(|error| error.to_string())?;
         let next_id = allocator.next_id(collection)?;
         let following = next_id
-            .checked_add(1)
+            .checked_add(u64::from(count))
             .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
         if let Some(transaction) = self.active_write() {
             transaction

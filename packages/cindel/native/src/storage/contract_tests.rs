@@ -27,6 +27,7 @@ pub(super) fn run_storage_engine_contract<S>(
     persists_index_variant_metadata_in_schemas(backend, &open);
     rejects_incompatible_index_option_changes(backend, &open);
     allocates_monotonic_ids_and_advances_after_manual_put(backend, &open);
+    reserves_id_ranges(backend, &open);
     queries_documents_by_index_equality_and_range(backend, &open);
     queries_composite_and_multi_entry_indexes(backend, &open);
     replaces_and_deletes_index_entries_with_documents(backend, &open);
@@ -38,6 +39,32 @@ pub(super) fn run_storage_engine_contract<S>(
     rebuilds_indexes_with_supplied_entries(backend, &open);
     verifies_storage_after_index_rebuild(backend, &open);
     stores_loads_and_validates_links(backend, &open);
+}
+
+fn reserves_id_ranges<S>(backend: &str, open: &impl Fn(&str) -> Result<S, String>)
+where
+    S: StorageEngine,
+{
+    let directory = TemporaryDirectory::new(backend, "id_ranges");
+    let mut storage = open(directory.path()).unwrap();
+    assert_eq!(storage.reserve_ids("users", 0).unwrap(), 0);
+    assert_eq!(storage.reserve_ids("users", 3).unwrap(), 1);
+    assert_eq!(storage.allocate_id("users").unwrap(), 4);
+    assert_eq!(storage.reserve_ids("other", 2).unwrap(), 1);
+    storage.begin_write_transaction().unwrap();
+    assert_eq!(storage.reserve_ids("users", 5).unwrap(), 5);
+    storage.rollback_transaction().unwrap();
+    storage.begin_write_transaction().unwrap();
+    assert_eq!(storage.reserve_ids("users", 2).unwrap(), 5);
+    storage.commit_transaction().unwrap();
+    storage.begin_read_transaction().unwrap();
+    assert!(storage.reserve_ids("users", 2).is_err());
+    storage.rollback_transaction().unwrap();
+    drop(storage);
+    let mut reopened = open(directory.path()).unwrap();
+    assert_eq!(reopened.reserve_ids("users", 2).unwrap(), 7);
+    reopened.put("users", 41, br#"{"name":"Manual"}"#).unwrap();
+    assert_eq!(reopened.reserve_ids("users", 3).unwrap(), 42);
 }
 
 pub(super) fn run_storage_transaction_contract<S>(

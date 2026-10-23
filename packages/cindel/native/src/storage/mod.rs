@@ -258,6 +258,8 @@ pub trait StorageEngine {
     fn commit_transaction(&mut self) -> Result<(), String>;
     fn rollback_transaction(&mut self) -> Result<(), String>;
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String>;
+    /// Reserves `count` consecutive IDs and returns the first, or zero for an empty range.
+    fn reserve_ids(&mut self, collection: &str, count: u32) -> Result<u64, String>;
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String>;
     fn get_many(&self, collection: &str, ids: &[u64]) -> Result<Vec<Option<Vec<u8>>>, String>;
     fn get_stored(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {
@@ -509,6 +511,14 @@ impl StorageEngine for StorageBackend {
             Self::Sqlite(storage) => storage.allocate_id(collection),
             #[cfg(feature = "mdbx")]
             Self::Mdbx(storage) => storage.allocate_id(collection),
+        }
+    }
+
+    fn reserve_ids(&mut self, collection: &str, count: u32) -> Result<u64, String> {
+        match self {
+            Self::Sqlite(storage) => storage.reserve_ids(collection, count),
+            #[cfg(feature = "mdbx")]
+            Self::Mdbx(storage) => storage.reserve_ids(collection, count),
         }
     }
 

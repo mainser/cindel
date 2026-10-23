@@ -553,6 +553,20 @@ class CindelDatabase {
     return _bindings.allocateId(handle, collection);
   }
 
+  /// Reserves consecutive IDs in one native operation.
+  ///
+  /// Reservations join an active write transaction. Outside one, they remain
+  /// consumed even if a later document write fails.
+  Future<List<int>> allocateIds(String collection, int count) async {
+    RangeError.checkValueInInterval(count, 0, 0xffffffff, 'count');
+    final handle = _checkOpen();
+    _checkCanWrite();
+    _checkCollection(collection);
+    if (count == 0) return const [];
+    final first = _bindings.reserveIds(handle, collection, count);
+    return List.generate(count, (index) => first + index, growable: false);
+  }
+
   /// Returns raw generated binary document bytes, or `null`.
   ///
   /// This is used by generated typed code and requires the MDBX binary backend.

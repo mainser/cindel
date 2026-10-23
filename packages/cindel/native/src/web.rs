@@ -133,14 +133,11 @@ impl CindelWebEngine {
 
     #[wasm_bindgen(js_name = allocateIds)]
     pub fn allocate_ids(&mut self, collection: String, count: u32) -> Result<Vec<u8>, JsValue> {
-        let mut ids = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            ids.push(
-                self.inner
-                    .allocate_id(&collection)
-                    .map_err(|error| JsValue::from_str(&error))?,
-            );
-        }
+        let first = self
+            .inner
+            .reserve_ids(&collection, count)
+            .map_err(|error| JsValue::from_str(&error))?;
+        let ids: Vec<_> = (first..first + u64::from(count)).collect();
         encode_id_list(&ids).map_err(|error| JsValue::from_str(&error))
     }
 

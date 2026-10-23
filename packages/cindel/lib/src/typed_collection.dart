@@ -106,11 +106,19 @@ final class CindelTypedCollection<T> {
     final binaryValues = _usesBinaryDocuments ? <int, Uint8List>{} : null;
     final seenIds = <int>{};
     CindelSetId<T>? setId;
+    List<int>? allocatedIds;
+    var allocatedIndex = 0;
     for (final object in objectList) {
       var id = _idFromObject(object);
       if (id == autoIncrement) {
         setId ??= _idSetter();
-        id = await database.allocateId(schema.name);
+        allocatedIds ??= await database.allocateIds(
+          schema.name,
+          objectList
+              .where((value) => _idFromObject(value) == autoIncrement)
+              .length,
+        );
+        id = allocatedIds[allocatedIndex++];
         setId(object, id);
       }
       if (!seenIds.add(id)) {
@@ -154,12 +162,18 @@ final class CindelTypedCollection<T> {
     final seenIds = <int>{};
     final ids = <int>[];
     CindelSetId<T>? setId;
+    List<int>? allocatedIds;
+    var allocatedIndex = 0;
 
     for (final object in objects) {
       var id = getId(object);
       if (id == autoIncrement) {
         setId ??= _idSetter();
-        id = await database.allocateId(schema.name);
+        allocatedIds ??= await database.allocateIds(
+          schema.name,
+          objects.where((value) => getId(value) == autoIncrement).length,
+        );
+        id = allocatedIds[allocatedIndex++];
         setId(object, id);
       }
       if (!seenIds.add(id)) {

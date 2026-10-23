@@ -6,6 +6,59 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 #[test]
+fn overlapping_id_ranges_preserve_committed_high_water_marks() {
+    for reverse_commit in [false, true] {
+        let directory = TemporaryDirectory::new("overlapping_id_ranges");
+        let mut first = MdbxStorage::open(directory.path()).unwrap();
+        let mut second = MdbxStorage::open(directory.path()).unwrap();
+        first.begin_write_transaction().unwrap();
+        second.begin_write_transaction().unwrap();
+        assert_eq!(first.reserve_ids("users", 3).unwrap(), 1);
+        assert_eq!(second.reserve_ids("users", 2).unwrap(), 4);
+        if reverse_commit {
+            second.commit_transaction().unwrap();
+            first.commit_transaction().unwrap();
+        } else {
+            first.commit_transaction().unwrap();
+            second.commit_transaction().unwrap();
+        }
+        first.begin_write_transaction().unwrap();
+        assert_eq!(first.reserve_ids("users", 3).unwrap(), 6);
+        assert_eq!(second.reserve_ids("users", 2).unwrap(), 9);
+        first.rollback_transaction().unwrap();
+        drop(first);
+        drop(second);
+        let mut reopened = MdbxStorage::open(directory.path()).unwrap();
+        assert_eq!(reopened.allocate_id("users").unwrap(), 11);
+    }
+}
+
+#[test]
+fn overflowing_id_range_does_not_consume_ids() {
+    let directory = TemporaryDirectory::new("overflowing_id_range");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage
+        .persist_next_id_at_least("users", u64::MAX - 2)
+        .unwrap();
+    storage
+        .set_cached_next_id_at_least("users", u64::MAX - 2)
+        .unwrap();
+    for transactional in [false, true] {
+        if transactional {
+            storage.begin_write_transaction().unwrap();
+        }
+        assert!(storage.reserve_ids("users", 3).is_err());
+        if transactional {
+            assert_eq!(storage.reserve_ids("users", 2).unwrap(), u64::MAX - 2);
+            assert!(storage.allocate_id("users").is_err());
+            storage.rollback_transaction().unwrap();
+        }
+    }
+    assert_eq!(storage.reserve_ids("users", 2).unwrap(), u64::MAX - 2);
+    assert!(storage.allocate_id("users").is_err());
+}
+
+#[test]
 fn compares_int64_sort_keys_with_double_values_without_rounding() {
     for (integer, double, expected) in [
         (

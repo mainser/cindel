@@ -70,6 +70,8 @@ final class CindelTypedCollection<T> {
     final setId = schema.setId;
     final ids = <int>[];
     final seenIds = <int>{};
+    List<int>? allocatedIds;
+    var allocatedIndex = 0;
     for (final object in objectList) {
       var id = getId(object);
       if (id == autoIncrement) {
@@ -78,7 +80,11 @@ final class CindelTypedCollection<T> {
             'Generated schema `${schema.dartName}` cannot assign autoIncrement ids.',
           );
         }
-        id = await database.allocateId(schema.name);
+        allocatedIds ??= await database.allocateIds(
+          schema.name,
+          objectList.where((value) => getId(value) == autoIncrement).length,
+        );
+        id = allocatedIds[allocatedIndex++];
         setId(object, id);
       }
       if (!seenIds.add(id)) {

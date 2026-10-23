@@ -709,13 +709,20 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
+        self.reserve_ids(collection, 1)
+    }
+
+    fn reserve_ids(&mut self, collection: &str, count: u32) -> Result<u64, String> {
         self.ensure_can_write()?;
+        if count == 0 {
+            return Ok(0);
+        }
         let is_native = self.collection_schema(collection).is_some();
         if self.active_transaction.is_some() {
             if !is_native {
                 ensure_generic_document_tables(&self.connection)?;
             }
-            let id = allocate_id(&self.connection, collection)?;
+            let id = reserve_ids(&self.connection, collection, count)?;
             return u64::try_from(id).map_err(|error| error.to_string());
         }
 
@@ -729,7 +736,7 @@ impl StorageEngine for SqliteStorage {
         if !is_native {
             ensure_generic_document_tables(&transaction)?;
         }
-        let id = allocate_id(&transaction, collection)?;
+        let id = reserve_ids(&transaction, collection, count)?;
 
         transaction.commit().map_err(|error| error.to_string())?;
         u64::try_from(id).map_err(|error| error.to_string())
@@ -2449,7 +2456,7 @@ fn sqlite_index_value(value: &WireIndexValue) -> Result<Value, String> {
     }
 }
 
-fn allocate_id(connection: &Connection, collection: &str) -> Result<i64, String> {
+fn reserve_ids(connection: &Connection, collection: &str, count: u32) -> Result<i64, String> {
     let existing = connection
         .query_row(
             "SELECT next_id FROM id_counters WHERE collection = ?1",
@@ -2462,8 +2469,8 @@ fn allocate_id(connection: &Connection, collection: &str) -> Result<i64, String>
     let Some(next_id) = existing else {
         connection
             .execute(
-                "INSERT INTO id_counters (collection, next_id) VALUES (?1, 2)",
-                params![collection],
+                "INSERT INTO id_counters (collection, next_id) VALUES (?1, ?2)",
+                params![collection, 1 + i64::from(count)],
             )
             .map_err(|error| error.to_string())?;
         return Ok(1);
@@ -2474,7 +2481,7 @@ fn allocate_id(connection: &Connection, collection: &str) -> Result<i64, String>
             "id counter for collection `{collection}` is not positive"
         ));
     }
-    let following_id = next_id.checked_add(1).ok_or_else(|| {
+    let following_id = next_id.checked_add(i64::from(count)).ok_or_else(|| {
         format!("id counter for collection `{collection}` exceeds SQLite INTEGER range")
     })?;
     connection
@@ -5993,6 +6000,48 @@ mod tests {
 
         // Assert.
         assert_eq!(allocated, 11);
+    }
+
+    #[test]
+    fn typed_id_ranges_update_the_counter_once_and_reject_overflow() {
+        for open in [
+            SqliteStorage::open_with_schemas,
+            SqliteStorage::open_with_persisted_schemas,
+        ] {
+            let directory = TemporaryDirectory::new("typed_id_ranges");
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut storage = open(directory.path(), &manifest).unwrap();
+            let before = storage.connection.total_changes();
+            assert_eq!(storage.reserve_ids("users", 1000).unwrap(), 1);
+            assert_eq!(storage.connection.total_changes() - before, 1);
+            assert_eq!(storage.allocate_id("users").unwrap(), 1001);
+            storage
+                .connection
+                .execute(
+                    "UPDATE id_counters SET next_id = ?1 WHERE collection = 'users'",
+                    [i64::MAX - 2],
+                )
+                .unwrap();
+            for transactional in [false, true] {
+                if transactional {
+                    storage.begin_write_transaction().unwrap();
+                }
+                assert!(storage.reserve_ids("users", 3).is_err());
+                if transactional {
+                    assert_eq!(
+                        storage.reserve_ids("users", 2).unwrap(),
+                        (i64::MAX - 2) as u64
+                    );
+                    assert!(storage.allocate_id("users").is_err());
+                    storage.rollback_transaction().unwrap();
+                }
+            }
+            assert_eq!(
+                storage.reserve_ids("users", 2).unwrap(),
+                (i64::MAX - 2) as u64
+            );
+            assert!(storage.allocate_id("users").is_err());
+        }
     }
 
     #[test]

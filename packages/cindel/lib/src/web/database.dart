@@ -403,6 +403,18 @@ class CindelDatabase {
     return ids.single;
   }
 
+  /// Reserves consecutive IDs in one Worker request and storage operation.
+  /// Reservations join an active write transaction; otherwise they remain
+  /// consumed even if a later document write fails.
+  Future<List<int>> allocateIds(String collection, int count) async {
+    RangeError.checkValueInInterval(count, 0, 0xffffffff, 'count');
+    _checkOpen();
+    _checkCanWrite();
+    _checkCollection(collection);
+    if (count == 0) return const [];
+    return _sendIds('allocateIds', {'collection': collection, 'count': count});
+  }
+
   /// Stores generated typed objects through the Web SQLite native row path.
   Future<void> putAllNativeBinaryDocuments<T>(
     String collection,
