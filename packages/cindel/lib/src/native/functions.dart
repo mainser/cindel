@@ -3,7 +3,7 @@ part of 'bindings.dart';
 // Cindel FFI contract expected by these Dart bindings. Keep this in sync with
 // `cindel_abi_version` in native/src/ffi.rs when the native ABI changes; it is
 // independent of the MDBX engine version.
-const _expectedNativeAbiVersion = 36;
+const _expectedNativeAbiVersion = 37;
 
 // Require an exact ABI match for both loading strategies. A newer ABI is not
 // assumed compatible with the function signatures expected by these bindings.
@@ -55,6 +55,9 @@ abstract interface class _CindelNativeFunctions {
     Pointer<Size>,
   )
   get backupCommand;
+
+  int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get cleanupOrphanLinks;
 
   int Function() get abiVersion;
 

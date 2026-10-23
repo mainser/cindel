@@ -65,6 +65,27 @@ const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 /// collection helpers, and the native storage engine. Generated paths use
 /// binary document serializers and native query plans for lower overhead.
 class CindelDatabase {
+  /// Atomically removes persisted links whose source or target no longer exists.
+  ///
+  /// Scans relations in bounded pages. Call outside a transaction. Existing
+  /// links between valid documents are preserved, including links whose old
+  /// identities cannot be distinguished after an ID was reused in older data.
+  Future<({int examinedLinks, int removedLinks})> cleanupOrphanLinks() async {
+    _checkOpen();
+    if (_activeTransaction != null) {
+      throw StateError('Link cleanup must run outside a transaction.');
+    }
+    final counts = decodeIdList(_bindings.cleanupOrphanLinks(_checkOpen()));
+    final changes = _changesFromNative(
+      _takeNativeChangeSets(_checkOpen()),
+      const {},
+    );
+    for (final change in changes) {
+      _notifyWatchers(change);
+    }
+    return (examinedLinks: counts[0], removedLinks: counts[1]);
+  }
+
   /// Internal bounded backup protocol.
   Future<Uint8List> backupCommand(Uint8List bytes) async {
     return _bindings.backupCommand(_checkOpen(), bytes);
@@ -2312,7 +2333,7 @@ class CindelDatabase {
     }
 
     final handle = _checkOpen();
-    if (!_hasWatchers(collection)) {
+    if (_watchersByCollection.isEmpty) {
       _bindings.discardChanges(handle);
       return;
     }
@@ -2329,7 +2350,7 @@ class CindelDatabase {
     Pointer<Void> handle,
     Map<String, CindelChangeSet> localChanges,
   ) {
-    if (!localChanges.keys.any(_hasWatchers)) {
+    if (_watchersByCollection.isEmpty) {
       _bindings.discardChanges(handle);
       return const [];
     }
@@ -2370,6 +2391,16 @@ class CindelDatabase {
     WireChangeSet change,
     CindelChangeSet? localChange,
   ) {
+    if (change.documentIds.isEmpty) {
+      return CindelChangeSet._(
+        collection: change.collection,
+        documentIds: null,
+        documents: const {},
+        hasUnknownDocuments: true,
+        isExternal: false,
+        revision: change.revision,
+      );
+    }
     final nativeIds = change.documentIds.toSet();
     final ids = nativeIds.isEmpty && localChange?.documentIds != null
         ? localChange!.documentIds!.toSet()

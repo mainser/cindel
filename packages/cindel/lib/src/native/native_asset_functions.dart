@@ -21,6 +21,10 @@ final class _NativeAssetCindelNativeFunctions
   )
   get backupCommand => _cindelBackupCommand;
 
+  @override
+  int Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)
+  get cleanupOrphanLinks => _cindelCleanupOrphanLinks;
+
   // ABI/version and database open symbols.
   @override
   int Function() get abiVersion => _cindelAbiVersion;
@@ -2098,6 +2102,16 @@ external int _cindelBackupCommand(
   Pointer<Void> handle,
   Pointer<Uint8> input,
   int length,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Size> outLength,
+);
+
+@Native<Int32 Function(Pointer<Void>, Pointer<Pointer<Uint8>>, Pointer<Size>)>(
+  symbol: 'cindel_cleanup_orphan_links',
+  assetId: _assetId,
+)
+external int _cindelCleanupOrphanLinks(
+  Pointer<Void> handle,
   Pointer<Pointer<Uint8>> out,
   Pointer<Size> outLength,
 );

@@ -51,6 +51,13 @@ final class CindelNativeBindings {
   /// ABI version reported by the loaded native library.
   int get abiVersion => _functions.abiVersion();
 
+  /// Removes legacy orphaned relations and returns examined/removed counts.
+  Uint8List cleanupOrphanLinks(Pointer<Void> handle) => _queryBytes(
+    (out, length) => _functions.cleanupOrphanLinks(handle, out, length),
+    _functions.freeBuffer,
+    'cleanupOrphanLinks',
+  );
+
   /// Internal streaming backup protocol.
   Uint8List backupCommand(Pointer<Void> handle, Uint8List bytes) =>
       _withNativeBytes(

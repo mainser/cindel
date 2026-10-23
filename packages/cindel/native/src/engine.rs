@@ -13,6 +13,17 @@ pub struct CindelEngine {
 }
 
 impl CindelEngine {
+    pub fn cleanup_orphan_links(&mut self) -> Result<(u64, u64), String> {
+        if self.backup.is_some() {
+            return Err("cannot clean links during restore".into());
+        }
+        match &mut self.storage {
+            StorageBackend::Sqlite(s) => s.cleanup_orphan_links(),
+            #[cfg(feature = "mdbx")]
+            StorageBackend::Mdbx(s) => s.cleanup_orphan_links(),
+        }
+    }
+
     pub(crate) fn backup_command(&mut self, request: &[u8]) -> Result<Vec<u8>, String> {
         use crate::backup::{field, integer, string, BackupSpool};
         use crate::wire::{decode_field_updates, encode_id_list, WireValue};

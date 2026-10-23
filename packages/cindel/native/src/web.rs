@@ -28,6 +28,15 @@ pub struct CindelWebEngine {
 
 #[wasm_bindgen]
 impl CindelWebEngine {
+    #[wasm_bindgen(js_name = cleanupOrphanLinks)]
+    pub fn cleanup_orphan_links(&mut self) -> Result<Vec<u8>, JsValue> {
+        let (examined, removed) = self
+            .inner
+            .cleanup_orphan_links()
+            .map_err(|e| JsValue::from_str(&e))?;
+        encode_id_list(&[examined, removed]).map_err(|e| JsValue::from_str(&e))
+    }
+
     #[wasm_bindgen(js_name = backupCommand)]
     pub fn backup_command(&mut self, bytes: &[u8]) -> Vec<u8> {
         match self.inner.backup_command(bytes) {

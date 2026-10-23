@@ -184,6 +184,31 @@ enum _TransactionMode { read, write }
 /// every storage operation is serialized through a browser Worker that owns the
 /// SQLite/Wasm engine. MDBX remains a native backend only.
 class CindelDatabase {
+  /// Atomically removes persisted links whose source or target no longer exists.
+  ///
+  /// Scans relations in bounded pages. Call outside a transaction. Existing
+  /// links between valid documents are preserved, including links whose old
+  /// identities cannot be distinguished after an ID was reused in older data.
+  Future<({int examinedLinks, int removedLinks})> cleanupOrphanLinks() async {
+    _checkOpen();
+    if (_activeTransaction != null) {
+      throw StateError('Link cleanup must run outside a transaction.');
+    }
+    final counts = decodeIdList(
+      await _sendBytes('cleanupOrphanLinks', const {}),
+    );
+    if (!_closed) {
+      final changes = _changesFromNative(
+        await _takeNativeChangeSets(),
+        const {},
+      );
+      for (final change in changes) {
+        _notifyWatchers(change);
+      }
+    }
+    return (examinedLinks: counts[0], removedLinks: counts[1]);
+  }
+
   /// Internal bounded backup protocol.
   Future<Uint8List> backupCommand(Uint8List bytes) =>
       _sendBytes('backupCommand', {'bytes': bytes});
@@ -1526,7 +1551,7 @@ class CindelDatabase {
     }
 
     final nativeChanges = await _takeNativeChangeSets();
-    if (!_hasWatchers(collection)) {
+    if (_watchersByCollection.isEmpty) {
       return;
     }
     final localChange = localChangeFactory();
@@ -1543,7 +1568,8 @@ class CindelDatabase {
   ) async {
     if (_closed) return const [];
     final nativeChanges = await _takeNativeChangeSets();
-    if (!localChanges.keys.any(_hasWatchers)) {
+    if (!localChanges.keys.any(_hasWatchers) &&
+        !nativeChanges.any((change) => _hasWatchers(change.collection))) {
       return const [];
     }
     return _changesFromNative(nativeChanges, localChanges);
@@ -1583,6 +1609,16 @@ class CindelDatabase {
     WireChangeSet change,
     CindelChangeSet? localChange,
   ) {
+    if (change.documentIds.isEmpty) {
+      return CindelChangeSet._(
+        collection: change.collection,
+        documentIds: null,
+        documents: const {},
+        hasUnknownDocuments: true,
+        isExternal: false,
+        revision: change.revision,
+      );
+    }
     final nativeIds = change.documentIds.toSet();
     final localIds = localChange?.documentIds;
     final ids = nativeIds.isEmpty ? localIds?.toSet() : nativeIds;

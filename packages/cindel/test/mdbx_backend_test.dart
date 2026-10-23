@@ -1,3 +1,4 @@
+import 'relation_lifecycle_suite.dart' as relation_lifecycle;
 import 'backup_contract_suite.dart' as backup_contract;
 import 'package:cindel/cindel.dart';
 
@@ -25,6 +26,7 @@ void main() {
   configureTestStorageBackend(CindelStorageBackend.mdbx);
 
   backup.main();
+  relation_lifecycle.main();
   backup_contract.main();
   bulk_ids.main();
   close.main();

@@ -1,4 +1,7 @@
 mod backup;
+mod relations;
+use std::cell::{Cell, RefCell};
+use relations::delete_relations;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -58,6 +61,7 @@ pub struct MdbxStorage {
     state: SharedMdbxState,
     active_transaction: Option<MdbxActiveTransaction>,
     last_change_sets: Vec<StorageChangeSet>,
+    relation_changes: RefCell<HashSet<String>>,
     _temporary_directory: Option<TemporaryDirectoryGuard>,
 }
 
@@ -793,6 +797,7 @@ impl MdbxStorage {
             state,
             active_transaction: None,
             last_change_sets: Vec::new(),
+            relation_changes: RefCell::new(HashSet::new()),
             _temporary_directory: temporary_directory,
         };
         storage.initialize(manifest)?;
@@ -1249,17 +1254,23 @@ impl MdbxStorage {
         &self,
         action: impl for<'txn> FnOnce(
             &'txn Transaction<'_, RW, NoWriteMap>,
-            MdbxTables<'txn>,
+            &MdbxTables<'txn>,
         ) -> Result<T, String>,
     ) -> Result<T, String> {
         let transaction = self
             .state
             .database
             .begin_rw_txn()
-            .map_err(|error| error.to_string())?;
+            .map_err(|e| e.to_string())?;
         let tables = open_tables(&transaction)?;
-        let result = action(&transaction, tables)?;
-        transaction.commit().map_err(|error| error.to_string())?;
+        let result = action(&transaction, &tables)?;
+        let changed = tables.relation_changes.take();
+        for name in &changed {
+            bump_collection_revision(&transaction, &tables, name)?;
+        }
+        drop(tables);
+        transaction.commit().map_err(|e| e.to_string())?;
+        self.relation_changes.borrow_mut().extend(changed);
         Ok(result)
     }
 
@@ -2597,7 +2608,7 @@ impl StorageEngine for MdbxStorage {
         link_name: &str,
         target_collection: &str,
     ) -> Result<Vec<u64>, String> {
-        self.with_read_transaction(|transaction, tables| {
+        let ids = self.with_read_transaction(|transaction, tables| {
             forward_link_ids_mdbx(
                 transaction,
                 &tables,
@@ -2606,7 +2617,15 @@ impl StorageEngine for MdbxStorage {
                 link_name,
                 target_collection,
             )
-        })
+        })?;
+        Ok(self.staged_link_ids(
+            ids,
+            source_collection,
+            source_id,
+            link_name,
+            target_collection,
+            false,
+        ))
     }
 
     fn backlink_source_ids(
@@ -2616,7 +2635,7 @@ impl StorageEngine for MdbxStorage {
         source_collection: &str,
         link_name: &str,
     ) -> Result<Vec<u64>, String> {
-        self.with_read_transaction(|transaction, tables| {
+        let ids = self.with_read_transaction(|transaction, tables| {
             backlink_source_ids_mdbx(
                 transaction,
                 &tables,
@@ -2625,7 +2644,15 @@ impl StorageEngine for MdbxStorage {
                 source_collection,
                 link_name,
             )
-        })
+        })?;
+        Ok(self.staged_link_ids(
+            ids,
+            source_collection,
+            target_id,
+            link_name,
+            target_collection,
+            true,
+        ))
     }
 
     fn query_index_equal(
@@ -3050,7 +3077,16 @@ impl StorageEngine for MdbxStorage {
     }
 
     fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
-        Ok(std::mem::take(&mut self.last_change_sets))
+        let mut changes = std::mem::take(&mut self.last_change_sets);
+        for name in self.relation_changes.take() {
+            changes.retain(|change| change.collection != name);
+            changes.push(StorageChangeSet {
+                revision: self.collection_revision(&name)?,
+                collection: name,
+                document_ids: vec![],
+            });
+        }
+        Ok(changes)
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
@@ -3175,6 +3211,8 @@ impl StorageEngine for MdbxStorage {
 }
 
 struct MdbxTables<'txn> {
+    relation_changes: RefCell<HashSet<String>>,
+    preserve_relations: Cell<bool>,
     document_indexes: Table<'txn>,
     relations_forward: Table<'txn>,
     relations_backlink: Table<'txn>,
@@ -3216,6 +3254,8 @@ where
     K: libmdbx::TransactionKind,
 {
     Ok(MdbxTables {
+        relation_changes: RefCell::new(HashSet::new()),
+        preserve_relations: Cell::new(false),
         document_indexes: transaction
             .open_table(Some(DOCUMENT_INDEXES_TABLE))
             .map_err(|error| error.to_string())?,
@@ -3523,7 +3563,10 @@ fn clear_collection_documents(
     let documents_table = create_documents_table(transaction, collection)?;
     let ids = scan_document_ids(transaction, &documents_table)?;
     if !ids.is_empty() {
-        delete_many_documents(transaction, tables, collection, &ids)?;
+        tables.preserve_relations.set(true);
+        let result = delete_many_documents(transaction, tables, collection, &ids);
+        tables.preserve_relations.set(false);
+        result?;
     }
     MdbxIndex::clear_collection(transaction, tables, collection)?;
     Ok(())
@@ -5455,6 +5498,7 @@ fn delete_document(
     collection: &str,
     id: u64,
 ) -> Result<bool, String> {
+    delete_relations(transaction, tables, collection, id)?;
     let schema = collection_schema(transaction, tables, collection)?;
     let documents_table = create_documents_table(transaction, collection)?;
     let previous_bytes =
@@ -5473,6 +5517,19 @@ fn delete_document(
 }
 
 fn delete_many_documents(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    ids: &[u64],
+) -> Result<Vec<u64>, String> {
+    let deleted = delete_many_documents_only(transaction, tables, collection, ids)?;
+    for id in ids {
+        delete_relations(transaction, tables, collection, *id)?;
+    }
+    Ok(deleted)
+}
+
+fn delete_many_documents_only(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     tables: &MdbxTables<'_>,
     collection: &str,

@@ -11,6 +11,7 @@ export class CindelWebEngine {
     backupCommand(bytes: Uint8Array): Uint8Array;
     beginReadTransaction(): void;
     beginWriteTransaction(): void;
+    cleanupOrphanLinks(): Uint8Array;
     collectionRevision(collection: string): Uint8Array;
     commitTransaction(): void;
     compact(): void;
@@ -52,6 +53,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly cindel_abi_version: () => number;
+    readonly cindel_cleanup_orphan_links: (a: number, b: number, c: number) => number;
     readonly cindel_backup_command: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly cindel_open: (a: number, b: number) => number;
     readonly cindel_open_with_backend: (a: number, b: number, c: number) => number;
@@ -147,6 +149,7 @@ export interface InitOutput {
     readonly cindel_query_plan_update: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly cindel_free_buffer: (a: number, b: number) => void;
     readonly __wbg_cindelwebengine_free: (a: number, b: number) => void;
+    readonly cindelwebengine_cleanupOrphanLinks: (a: number, b: number) => void;
     readonly cindelwebengine_backupCommand: (a: number, b: number, c: number, d: number) => void;
     readonly cindelwebengine_openWithSchemas: (a: number, b: number, c: number, d: number) => number;
     readonly cindelwebengine_schemaVersion: (a: number, b: number, c: number, d: number) => void;
@@ -200,8 +203,8 @@ export interface InitOutput {
     readonly rust_sqlite_wasm_calloc: (a: number, b: number) => number;
     readonly sqlite3_os_init: () => number;
     readonly sqlite3_os_end: () => number;
-    readonly __wasm_bindgen_func_elem_2845: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2870: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2862: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2887: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

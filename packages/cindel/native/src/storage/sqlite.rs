@@ -1,5 +1,7 @@
 #[path = "sqlite_backup.rs"]
 mod backup;
+#[path = "sqlite_relations.rs"]
+mod relations;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fmt::Write as _;
@@ -35,6 +37,7 @@ pub struct SqliteStorage {
     connection: Connection,
     schemas: HashMap<String, RegisteredCollectionSchema>,
     collection_revisions: HashMap<String, u64>,
+    relation_revisions: HashMap<String, u64>,
     persist_schema_metadata: bool,
     active_transaction: Option<TransactionMode>,
     active_change_sets: Vec<StorageChangeSet>,
@@ -544,6 +547,7 @@ impl SqliteStorage {
             connection,
             schemas: HashMap::new(),
             collection_revisions: HashMap::new(),
+            relation_revisions: HashMap::new(),
             persist_schema_metadata,
             active_transaction: None,
             active_change_sets: Vec::new(),
@@ -606,6 +610,7 @@ impl SqliteStorage {
             )?;
         }
         ensure_relation_tables(&self.connection)?;
+        relations::initialize(&self.connection)?;
 
         if let Some(manifest) = manifest {
             for collection in &manifest.collections {
@@ -1302,45 +1307,50 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
-        if self.collection_schema(collection).is_some() {
-            let native_revision = *self.collection_revisions.get(collection).unwrap_or(&0);
-            if !table_exists(&self.connection, "collection_revisions")? {
-                return Ok(native_revision);
-            }
-            let generic_revision = self
-                .connection
+        let persisted = if table_exists(&self.connection, "collection_revisions")? {
+            self.connection
                 .query_row(
-                    "SELECT revision FROM collection_revisions WHERE collection = ?1",
-                    params![collection],
+                    "SELECT revision FROM collection_revisions WHERE collection=?1",
+                    [collection],
                     |row| row.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(|error| error.to_string())?
+                .map_err(|e| e.to_string())?
                 .map(u64::try_from)
                 .transpose()
-                .map_err(|error| error.to_string())?
-                .unwrap_or_default();
-            return Ok(native_revision.max(generic_revision));
-        }
-        if !table_exists(&self.connection, "collection_revisions")? {
-            return Ok(0);
-        }
-        self.connection
-            .query_row(
-                "SELECT revision FROM collection_revisions WHERE collection = ?1",
-                params![collection],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .map(u64::try_from)
-            .transpose()
-            .map_err(|error| error.to_string())
-            .map(Option::unwrap_or_default)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default()
+        } else {
+            0
+        };
+        let documents = persisted.max(*self.collection_revisions.get(collection).unwrap_or(&0));
+        let pending: bool = self.connection.is_autocommit()
+            && self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM temp.cindel_relation_changes WHERE collection=?1)",
+                    [collection],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+        // Keep relation revisions separate: advancing them must not hide the
+        // next document revision from either the typed or generic write path.
+        Ok(documents
+            + self
+                .relation_revisions
+                .get(collection)
+                .copied()
+                .unwrap_or(0)
+            + u64::from(pending))
     }
 
     fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
-        Ok(std::mem::take(&mut self.last_change_sets))
+        self.take_relation_changes()?;
+        let mut changes = std::mem::take(&mut self.last_change_sets);
+        for change in &mut changes {
+            change.revision = self.collection_revision(&change.collection)?;
+        }
+        Ok(changes)
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
@@ -3025,6 +3035,7 @@ fn delete_native_documents(
     let mut deleted_ids = Vec::new();
     for id in ids {
         let id = sqlite_id(*id)?;
+        relations::delete_relations(connection, collection, id)?;
         let deleted = statement
             .execute(params![id])
             .map_err(|error| error.to_string())?;
@@ -3348,6 +3359,7 @@ fn delete_document_with_layout(
     id: i64,
     has_collection_table: bool,
 ) -> Result<bool, String> {
+    relations::delete_relations(connection, collection, id)?;
     let mut deleted = 0usize;
     if has_collection_table {
         let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");

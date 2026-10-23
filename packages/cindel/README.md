@@ -232,7 +232,7 @@ default limit per JSONL record (`maxRecordBytes` can raise it for larger
 documents). Export hydrates one document at a time and pages link IDs. These bounds cover backup buffers, not the engine's database/page cache or
 bytes retained by the caller's stream consumer. Version 1 archives contain no
 relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
-that loss explicitly. Backups require ABI 36 binaries.
+that loss explicitly. Use binaries matching native ABI 37.
 
 Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
 of ids without materializing the whole collection:
@@ -629,6 +629,21 @@ Forward link saves replace the persisted ids for that link. Backlinks load from
 the forward relation and are read-only. In `@Backlink(to: ...)`, pass the Dart
 field name of the forward link on the linked collection; in the example above,
 `Artist.songs` points to `Song.featuredArtists`.
+
+Deleting a document removes its incoming and outgoing links atomically,
+including query/batch deletes and documents evicted by a unique replace index.
+Updating an existing ID preserves its links; deleting and reinserting it does
+not restore old associations. Related collections receive a collection-wide
+notification after commit. Internal migration reconstruction preserves links
+so rewritten documents can keep their identities.
+
+For older databases, run `await db.cleanupOrphanLinks()` outside a transaction.
+It returns `examinedLinks` and `removedLinks`, scans in pages of at most 128
+edges and commits the cleanup atomically. Links with a missing source or target
+are removed; links between valid documents are preserved. Historical links
+that already attached to a reused ID cannot be distinguished without history.
+The page bound covers traversal buffers, not database caches or transaction
+pages retained by the storage engine.
 
 ## Watchers
 

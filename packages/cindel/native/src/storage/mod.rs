@@ -6,6 +6,9 @@ mod backup_tests;
 mod mdbx;
 mod mdbx_key;
 mod metadata;
+mod relations;
+#[cfg(test)]
+mod relations_tests;
 mod sqlite;
 #[cfg(test)]
 mod test_allocations;

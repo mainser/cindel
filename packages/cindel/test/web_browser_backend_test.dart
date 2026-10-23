@@ -1,6 +1,7 @@
 @TestOn('browser')
 library;
 
+import 'relation_lifecycle_suite.dart' as relation_lifecycle;
 import 'backup_contract_suite.dart' as backup_contract;
 import 'package:test/test.dart';
 
@@ -15,6 +16,7 @@ import 'web_close_additional_suite.dart' as web_close;
 import 'web_worker_close_suite.dart' as worker_close;
 
 void main() {
+  relation_lifecycle.main();
   backup_contract.main(includeSameDirectoryHandles: false);
   // The public scenarios run unchanged through Cindel's conditional exports.
   // The OPFS access-handle pool belongs to a Worker and cannot be opened by

@@ -21,7 +21,34 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    36
+    37
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cindel_cleanup_orphan_links(
+    handle: *mut CindelEngine,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if out.is_null() || out_len.is_null() {
+        return -1;
+    }
+    *out = std::ptr::null_mut();
+    *out_len = 0;
+    let Some(engine) = handle.as_mut() else {
+        return -1;
+    };
+    let result = match engine.cleanup_orphan_links() {
+        Ok((examined, removed)) => match encode_id_list(&[examined, removed]) {
+            Ok(bytes) => bytes,
+            Err(_) => return -1,
+        },
+        Err(_) => return -1,
+    };
+    let (pointer, length) = into_raw_bytes(result);
+    *out = pointer;
+    *out_len = length;
+    0
 }
 
 #[no_mangle]
