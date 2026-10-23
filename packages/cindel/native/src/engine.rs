@@ -10,6 +10,7 @@ use crate::wire::WireQueryPlan;
 pub struct CindelEngine {
     storage: StorageBackend,
     backup: Option<crate::backup::BackupSpool>,
+    migration: Option<crate::storage::migration::MigrationOrigin>,
 }
 
 impl CindelEngine {
@@ -39,6 +40,9 @@ impl CindelEngine {
         let text = |name| string(field(&fields, name)?);
         let number = |name| integer(field(&fields, name)?);
         let op = text("op")?;
+        if op.starts_with("migration_") {
+            return self.migration_command(op, &fields, &request[end..]);
+        }
         if op == "links" {
             let link = LinkSave {
                 source_collection: text("collection")?.into(),
@@ -76,7 +80,7 @@ impl CindelEngine {
         }
         match op {
             "begin" => {
-                if self.backup.is_some() {
+                if self.backup.is_some() || self.migration.is_some() {
                     return Err("a restore is already active".into());
                 }
                 let WireValue::List(names) = field(&fields, "collections")? else {
@@ -145,6 +149,53 @@ impl CindelEngine {
         Ok(vec![])
     }
 
+    fn migration_command(&mut self, op: &str, fields: &[(String, crate::wire::WireValue)], payload: &[u8]) -> Result<Vec<u8>, String> {
+        use crate::backup::{field, integer, string};
+        use crate::wire::{WireValue, WireDocumentWrite, encode_document_write_batch};
+        match op {
+            "migration_begin" => {
+                if self.migration.is_some() || self.backup.is_some() { return Err("maintenance already active".into()); }
+                let manifest = crate::storage::schema_manifest_from_wire(payload)?;
+                let token = string(field(fields, "token")?)?;
+                let (stage, revision) = self.storage.migration_fork(token, &manifest)?;
+                let original = std::mem::replace(&mut self.storage, stage);
+                self.migration = Some(crate::storage::migration::MigrationOrigin { storage: original, revision });
+            }
+            "migration_source" => {
+                let source = &self.migration.as_ref().ok_or("no migration active")?.storage;
+                let name = string(field(fields, "collection")?)?;
+                let after = match field(fields, "after")? { WireValue::Null => None, v => Some(integer(v)?) };
+                let limit = usize::try_from(integer(field(fields, "limit")?)?).map_err(|e| e.to_string())?;
+                if limit == 0 || limit > 4096 { return Err("migration page size must be 1..4096".into()); }
+                let ids = source.migration_ids_page(name, after, limit)?;
+                let mut documents = Vec::new();
+                let mut bytes = 0;
+                for id in ids {
+                    let value = source.get_many_stored(name, &[id])?.pop().flatten().ok_or("migration source document missing")?;
+                    bytes += value.len();
+                    documents.push(WireDocumentWrite { id, bytes: value });
+                    if bytes >= 1024 * 1024 { break; }
+                }
+                return encode_document_write_batch(&documents);
+            }
+            "migration_commit" => {
+                let version = integer(field(fields, "version")?)?;
+                let mut origin = self.migration.take().ok_or("no migration active")?;
+                let result = origin.storage.migration_publish(&self.storage, origin.revision, version);
+                self.storage = origin.storage;
+                result?;
+            }
+            "migration_abort" => {
+                if let Some(mut origin) = self.migration.take() {
+                    origin.storage.rollback_transaction()?;
+                    self.storage = origin.storage;
+                }
+            }
+            _ => return Err("unknown migration command".into()),
+        }
+        Ok(vec![])
+    }
+
     pub fn open(directory: &str) -> Result<Self, String> {
         #[cfg(feature = "mdbx")]
         {
@@ -160,6 +211,7 @@ impl CindelEngine {
         Ok(Self {
             storage: StorageBackend::open(backend, directory)?,
             backup: None,
+            migration: None,
         })
     }
 
@@ -171,6 +223,7 @@ impl CindelEngine {
         Ok(Self {
             storage: StorageBackend::open_with_schemas(backend, directory, manifest)?,
             backup: None,
+            migration: None,
         })
     }
 
@@ -181,6 +234,7 @@ impl CindelEngine {
         Ok(Self {
             storage: StorageBackend::open_sqlite_with_persisted_schemas(directory, manifest)?,
             backup: None,
+            migration: None,
         })
     }
 
@@ -538,6 +592,58 @@ mod tests {
         CollectionSchemaManifest, DocumentWrite, FieldSchemaManifest, IndexEntry, IndexValue,
         NativeDocumentValue, NativeDocumentWrite,
     };
+
+    #[test]
+    fn migration_source_pages_bound_bytes_and_visit_each_document_once() {
+        use crate::storage::{migration::MigrationOrigin, test_allocations};
+        use crate::wire::{decode_document_write_batch, WireValue};
+        let kinds = vec![StorageBackendKind::Sqlite];
+        #[cfg(feature = "mdbx")]
+        let kinds = [kinds, vec![StorageBackendKind::Mdbx]].concat();
+        for kind in kinds {
+            let mut engine = CindelEngine::open_with_backend(":memory:", kind).unwrap();
+            let payload = format!("{{\"value\":\"{}\"}}", "x".repeat(4096)).into_bytes();
+            for start in (1..=8192).step_by(128) {
+                engine.storage.begin_write_transaction().unwrap();
+                for id in start..start + 128 {
+                    engine.storage.put("nodes", id, &payload).unwrap();
+                }
+                engine.storage.commit_transaction().unwrap();
+            }
+            let token = format!("page-{}-{:?}", std::process::id(), kind);
+            let (stage, revision) = engine.storage.migration_fork(
+                &token, &SchemaManifest { collections: vec![] },
+            ).unwrap();
+            let source = std::mem::replace(&mut engine.storage, stage);
+            engine.migration = Some(MigrationOrigin { storage: source, revision });
+            let mut after = 0;
+            let mut maximum = 0;
+            loop {
+                let fields = vec![
+                    ("collection".into(), WireValue::String("nodes".into())),
+                    ("after".into(), if after == 0 { WireValue::Null } else { WireValue::Int(after) }),
+                    ("limit".into(), WireValue::Int(4096)),
+                ];
+                let mut bytes = Vec::new();
+                let peak = test_allocations::peak_bytes(|| {
+                    bytes = engine.migration_command("migration_source", &fields, &[]).unwrap();
+                });
+                maximum = maximum.max(peak);
+                assert!(peak < 8 * 1024 * 1024, "migration page heap: {peak}");
+                let documents = decode_document_write_batch(&bytes).unwrap();
+                if documents.is_empty() { break; }
+                assert!(documents.len() < 4096, "byte limit must stop the page first");
+                assert!(documents.len() * payload.len() < 1024 * 1024 + payload.len());
+                for document in documents {
+                    after += 1;
+                    assert_eq!(document.id, after as u64);
+                    assert_eq!(document.bytes, payload);
+                }
+            }
+            assert_eq!(after, 8192);
+            eprintln!("{kind:?}: streamed 8192 rows once, page Rust peak={maximum}");
+        }
+    }
 
     #[test]
     fn opens_sqlite_through_backend_selection_boundary() {

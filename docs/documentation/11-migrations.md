@@ -35,6 +35,50 @@ A migration step usually follows this shape:
 
 After the plan completes, app code uses the current generated API normally.
 
+## Atomic Steps and Memory
+
+MDBX and SQLite native/Web execute each step in a private disk-backed workspace.
+The original stays unchanged until `verifyAfter` succeeds. Cindel then publishes
+data, schemas, indexes, links, ID counters, and `toVersion` in one native
+transaction. An error discards that step; earlier committed steps remain. A
+concurrent write to the original rejects publication instead of overwriting it.
+Callbacks' external effects, such as network requests or other files, are not
+part of the transaction.
+
+Use the streaming helpers for large collections:
+
+```dart
+await context.registerTargetSchemas();
+await context.importObjectStream(
+  UserSchema,
+  context.streamObjects(OldUserSchema, batchSize: 100).map(User.fromLegacy),
+  batchSize: 100,
+);
+```
+
+`streamObjects` and `streamDocuments` always read the original step snapshot,
+including after target schema registration. Reads seek after the last ID,
+retain at most 4,096 records per page, and stop a page once its encoded data
+reaches 1 MiB (one large record may exceed that). Import helpers retain one
+batch. Application buffering and objects retained by callbacks are additional
+memory. Schema metadata and backend caches/dirty pages are outside these buffer
+bounds; this is not a fixed process-RSS guarantee.
+
+Preparing and publishing each step each copy the database once, record by
+record. Temporary disk space for a full copy and the engines' transaction
+storage is required. Normal success, callback failure, or handle closure
+removes the private workspace; abrupt process termination may leave temporary
+files. No live database files are replaced.
+
+Saved links survive schema reconstruction when both identities remain. Links
+to removed identities are cleaned before `verifyAfter`. Preserve IDs when
+relationships should continue referring to the same objects.
+
+Compaction runs after publication. If it fails,
+`CindelMigrationMaintenanceError.committedVersion` identifies the already
+committed step; reopening skips it. Low-level schema registration methods used
+outside a migration plan do not acquire these per-step guarantees.
+
 ## Migration Plans
 
 `CindelMigrationPlan` declares the final data version and the ordered steps
@@ -121,9 +165,9 @@ Use `exportDocuments` when you want map-shaped stored documents:
 final oldDocuments = await context.exportDocuments(OldUserSchema);
 ```
 
-Both export APIs read existing data in id order with bounded batches. This
-lets migration code process data predictably without relying on arbitrary query
-order.
+Both export APIs read the original snapshot in ID order but return a full list,
+so their result memory grows with the collection. Use `streamObjects` or
+`streamDocuments` with the stream import helpers to keep buffers bounded.
 
 Typed exports are easiest when the old model still represents the stored data
 well:
@@ -237,7 +281,8 @@ verifyAfter: (context) async {
 ```
 
 Verification callbacks should throw when the migration should stop. A thrown
-error prevents the step from being marked complete.
+error discards all changes from that step, including batches already written
+to its private workspace.
 
 Useful checks include:
 

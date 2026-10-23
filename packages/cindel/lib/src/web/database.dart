@@ -184,6 +184,24 @@ enum _TransactionMode { read, write }
 /// every storage operation is serialized through a browser Worker that owns the
 /// SQLite/Wasm engine. MDBX remains a native backend only.
 class CindelDatabase {
+  /// Internal preparation for an atomic migration step.
+  Future<void> beginMigrationStep(
+    Iterable<CindelCollectionSchema<dynamic>> schemas,
+    String token,
+  ) async {
+    _checkOpen();
+    if (_activeTransaction != null)
+      throw StateError('Migration requires an idle database.');
+    final selected = _schemasByCollection(schemas);
+    await cindelMigrationCommand(backupCommand, {
+      'op': 'migration_begin',
+      'token': token,
+    }, cindelEncodeWebSchemaManifest(selected.values));
+    _schemas
+      ..clear()
+      ..addAll(selected);
+  }
+
   /// Atomically removes persisted links whose source or target no longer exists.
   ///
   /// Scans relations in bounded pages. Call outside a transaction. Existing

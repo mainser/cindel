@@ -1,7 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
+
+import 'native/wire.dart' if (dart.library.js_interop) 'web/wire.dart';
 
 import 'database.dart' if (dart.library.js_interop) 'web/database.dart';
 import 'schema.dart';
+import 'migration_reader.dart'
+    if (dart.library.js_interop) 'web/migration_reader.dart';
 import 'typed_collection.dart'
     if (dart.library.js_interop) 'web/typed_collection.dart';
 
@@ -111,9 +118,8 @@ final class CindelMigrationPlan {
         );
       }
 
-      final database = await CindelDatabase.openForMigration(
+      final database = await CindelDatabase.open(
         directory: directory,
-        schemas: step.openSchemas,
         backend: storageBackend,
       );
       final context = CindelMigrationContext._(
@@ -123,15 +129,32 @@ final class CindelMigrationPlan {
         targetSchemas: step.targetSchemas ?? targetSchemaList,
       );
       try {
+        final token =
+            '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+        await database.beginMigrationStep(step.openSchemas, token);
+        final snapshotVersion = await database.migrationVersion();
+        if (snapshotVersion != null && snapshotVersion != step.fromVersion) {
+          throw StateError(
+            'Migration source version changed before preparation.',
+          );
+        }
         await step.verifyBefore?.call(context);
         await step.migrate(context);
         if (!context.targetSchemasRegistered) {
           await context.registerTargetSchemas();
         }
+        await database.cleanupOrphanLinks();
         await step.verifyAfter?.call(context);
-        await database.setMigrationVersion(step.toVersion);
+        await cindelMigrationCommand(database.backupCommand, {
+          'op': 'migration_commit',
+          'version': step.toVersion,
+        });
         if (compactOnSuccess) {
-          await database.compact();
+          try {
+            await database.compact();
+          } catch (error) {
+            throw CindelMigrationMaintenanceError(step.toVersion, error);
+          }
         }
       } finally {
         await database.close();
@@ -222,63 +245,113 @@ final class CindelMigrationContext {
     _targetSchemasRegistered = true;
   }
 
-  /// Exports all typed objects in [schema] in id order.
+  /// Reads the original step snapshot in ascending ID order, including after
+  /// target schemas have been registered. Retains at most one native page.
+  /// The caller may retain yielded objects; that memory is outside this bound.
+  Stream<T> streamObjects<T>(
+    CindelCollectionSchema<T> schema, {
+    int batchSize = 100,
+  }) async* {
+    _checkBatchSize(batchSize);
+    int? after;
+    while (true) {
+      final bytes = await cindelMigrationCommand(database.backupCommand, {
+        'op': 'migration_source',
+        'collection': schema.name,
+        'after': after,
+        'limit': batchSize.clamp(1, 4096),
+      });
+      final page = decodeDocumentWriteBatch(bytes);
+      if (page.isEmpty) break;
+      for (final row in page) {
+        final object = cindelReadMigrationObject(
+          schema,
+          row.id,
+          row.bytes,
+          sqlite: database.backend == CindelStorageBackend.sqlite,
+        );
+        schema.bindLinks?.call(database, schema, object);
+        yield object;
+      }
+      after = page.last.id;
+    }
+  }
+
+  /// Streams original documents without retaining the collection.
+  Stream<CindelDocument> streamDocuments<T>(
+    CindelCollectionSchema<T> schema, {
+    int batchSize = 100,
+  }) async* {
+    await for (final object in streamObjects(schema, batchSize: batchSize)) {
+      yield {
+        ...schema.toDocument(object),
+        if (schema.getId != null) schema.idField: schema.getId!(object),
+      };
+    }
+  }
+
+  /// Materializes all original objects. Use [streamObjects] for bounded memory.
   Future<List<T>> exportObjects<T>(
     CindelCollectionSchema<T> schema, {
     int batchSize = 100,
-  }) async {
-    _checkBatchSize(batchSize);
-    final ids = await database.documentIds(schema.name);
-    final objects = <T>[];
-    for (var offset = 0; offset < ids.length; offset += batchSize) {
-      final end = offset + batchSize < ids.length
-          ? offset + batchSize
-          : ids.length;
-      final batch = await database
-          .typedCollection(schema)
-          .getAll(ids.sublist(offset, end));
-      for (final object in batch) {
-        if (object != null) {
-          objects.add(object);
-        }
-      }
-    }
-    return objects;
-  }
+  }) => streamObjects(schema, batchSize: batchSize).toList();
 
-  /// Exports all documents in [schema] as map-shaped Cindel documents.
+  /// Materializes all original documents. Use [streamDocuments] for bounded memory.
   Future<List<CindelDocument>> exportDocuments<T>(
     CindelCollectionSchema<T> schema, {
     int batchSize = 100,
-  }) async {
-    final objects = await exportObjects(schema, batchSize: batchSize);
-    return [
-      for (final object in objects)
-        {
-          if (schema.getId != null) schema.idField: schema.getId!(object),
-          ...schema.toDocument(object),
-        },
-    ];
-  }
+  }) => streamDocuments(schema, batchSize: batchSize).toList();
 
-  /// Imports typed [objects] into [schema] in batches.
+  /// Consumes an iterable lazily, committing only to the private workspace.
   Future<void> importObjects<T>(
     CindelCollectionSchema<T> schema,
     Iterable<T> objects, {
     int batchSize = 100,
+  }) => importObjectStream(
+    schema,
+    Stream<T>.fromIterable(objects),
+    batchSize: batchSize,
+  );
+
+  /// Imports an asynchronous transformation with at most [batchSize] objects
+  /// retained by this helper. The whole step is published only after verification.
+  Future<void> importObjectStream<T>(
+    CindelCollectionSchema<T> schema,
+    Stream<T> objects, {
+    int batchSize = 100,
   }) async {
     _checkBatchSize(batchSize);
-    final list = objects is List<T> ? objects : objects.toList();
-    for (var offset = 0; offset < list.length; offset += batchSize) {
-      final end = offset + batchSize < list.length
-          ? offset + batchSize
-          : list.length;
-      final batch = list.sublist(offset, end);
-      await database.writeTxn(() async {
-        await database.typedCollection(schema).putAll(batch);
-      });
+    var batch = <T>[];
+    Future<void> flush() async {
+      if (batch.isEmpty) return;
+      await database.writeTxn(
+        () => database.typedCollection(schema).putAll(batch),
+      );
+      batch = <T>[];
     }
+
+    await for (final object in objects) {
+      batch.add(object);
+      if (batch.length == batchSize) await flush();
+    }
+    await flush();
   }
+
+  /// Imports documents from a stream without materializing the input.
+  Future<void> importDocumentStream<T>(
+    CindelCollectionSchema<T> schema,
+    Stream<CindelDocument> documents, {
+    int batchSize = 100,
+  }) => importObjectStream(
+    schema,
+    documents.map((document) {
+      final object = schema.fromDocument(document);
+      final id = document[schema.idField];
+      if (id is int) schema.setId?.call(object, id);
+      return object;
+    }),
+    batchSize: batchSize,
+  );
 
   /// Imports map-shaped Cindel [documents] into [schema] in batches.
   Future<void> importDocuments<T>(
@@ -309,4 +382,46 @@ void _checkBatchSize(int batchSize) {
       'Must be greater than zero.',
     );
   }
+}
+
+/// The data migration committed successfully, but subsequent maintenance failed.
+/// Reopening skips the committed step; callers must not repeat its external effects.
+final class CindelMigrationMaintenanceError implements Exception {
+  CindelMigrationMaintenanceError(this.committedVersion, this.cause);
+  final int committedVersion;
+  final Object cause;
+  @override
+  String toString() =>
+      'Migration to $committedVersion committed; compaction failed: $cause';
+}
+
+/// Internal bounded maintenance protocol shared by native and Web facades.
+Future<Uint8List> cindelMigrationCommand(
+  Future<Uint8List> Function(Uint8List) send,
+  Map<String, Object?> args, [
+  Uint8List? payload,
+]) async {
+  WireValue encode(Object? value) => switch (value) {
+    null => const WireValue.nullValue(),
+    int v => WireValue.int(v),
+    String v => WireValue.string(v),
+    _ => throw StateError('Invalid migration argument.'),
+  };
+  final header = encodeFieldUpdates({
+    for (final entry in args.entries) entry.key: encode(entry.value),
+  });
+  final request = Uint8List(4 + header.length + (payload?.length ?? 0));
+  ByteData.sublistView(request).setUint32(0, header.length, Endian.little);
+  request.setRange(4, 4 + header.length, header);
+  if (payload != null)
+    request.setRange(4 + header.length, request.length, payload);
+  final response = await send(request);
+  if (response.isEmpty || response[0] != 0) {
+    throw StateError(
+      response.isEmpty
+          ? 'Empty migration response.'
+          : utf8.decode(response.sublist(1)),
+    );
+  }
+  return Uint8List.sublistView(response, 1);
 }

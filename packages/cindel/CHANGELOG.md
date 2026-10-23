@@ -4,7 +4,8 @@
 
 - Added consistent backups with links/backlinks and atomic, disk-staged restores for MDBX and SQLite native/Web, with regression and memory checks.
 - Removed incoming/outgoing links atomically on document deletion and added bounded orphan-link cleanup across MDBX and SQLite native/Web.
-- Versioned backup schema validation and native ABI 37.
+- Added atomic migration steps with disk staging and bounded streaming for MDBX and SQLite native/Web.
+- Versioned backup schema validation and native ABI 38.
 
 ## 1.1.2
 

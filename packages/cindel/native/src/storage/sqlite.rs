@@ -1,5 +1,7 @@
 #[path = "sqlite_backup.rs"]
 mod backup;
+#[path = "sqlite_migration.rs"]
+mod migration;
 #[path = "sqlite_relations.rs"]
 mod relations;
 use std::collections::{HashMap, HashSet};
@@ -35,6 +37,7 @@ use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, 
 
 pub struct SqliteStorage {
     connection: Connection,
+    migration_path: Option<crate::backup::TemporaryBackupPath>,
     schemas: HashMap<String, RegisteredCollectionSchema>,
     collection_revisions: HashMap<String, u64>,
     relation_revisions: HashMap<String, u64>,
@@ -545,6 +548,7 @@ impl SqliteStorage {
         let connection = open_sqlite_connection(directory)?;
         let storage = Self {
             connection,
+            migration_path: None,
             schemas: HashMap::new(),
             collection_revisions: HashMap::new(),
             relation_revisions: HashMap::new(),

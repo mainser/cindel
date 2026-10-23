@@ -65,6 +65,25 @@ const defaultCindelWatchPollInterval = Duration(milliseconds: 50);
 /// collection helpers, and the native storage engine. Generated paths use
 /// binary document serializers and native query plans for lower overhead.
 class CindelDatabase {
+  /// Internal preparation for an atomic migration step.
+  Future<void> beginMigrationStep(
+    Iterable<CindelCollectionSchema<dynamic>> schemas,
+    String token,
+  ) async {
+    _checkOpen();
+    if (_activeTransaction != null)
+      throw StateError('Migration requires an idle database.');
+    final selected = _schemasByCollection(schemas);
+    await cindelMigrationCommand(backupCommand, {
+      'op': 'migration_begin',
+      'token': token,
+    }, _encodeSchemaManifest(selected.values));
+    _schemas
+      ..clear()
+      ..addAll(selected);
+    _schemasWereRegisteredOnOpen = true;
+  }
+
   /// Atomically removes persisted links whose source or target no longer exists.
   ///
   /// Scans relations in bounded pages. Call outside a transaction. Existing

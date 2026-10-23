@@ -156,11 +156,10 @@ final migrations = CindelMigrationPlan(
         await context.database.documentIds('users');
       },
       migrate: (context) async {
-        final oldUsers = await context.exportObjects(OldUserSchema);
         await context.registerTargetSchemas();
-        await context.importObjects(
+        await context.importObjectStream(
           UserSchema,
-          oldUsers.map((old) => User.fromLegacy(old)),
+          context.streamObjects(OldUserSchema).map(User.fromLegacy),
         );
       },
       verifyAfter: (context) async {
@@ -177,11 +176,18 @@ final db = await Cindel.open(
 );
 ```
 
-Migration steps can use `exportObjects`, `exportDocuments`, `importObjects`,
-and `importDocuments`. `registerTargetSchemas` accepts incompatible schema
-changes only inside the migration step, clears the target collection storage,
-and lets the callback import rewritten target data. SQLite native, MDBX, and
-Web SQLite expose the same migration contract.
+Each step runs in a private disk-backed database and publishes data, schemas,
+indexes, links, IDs, and its version in one transaction after verification.
+A failed step leaves the original intact; earlier successful steps remain
+committed. Concurrent changes to the original cause publication to fail.
+SQLite native, MDBX, and Web SQLite expose the same contract.
+
+`streamObjects`/`streamDocuments` read the original snapshot even after
+`registerTargetSchemas` clears the workspace's target collections.
+`importObjectStream`/`importDocumentStream` consume transformations in bounded
+batches. The older `exportObjects`/`exportDocuments` helpers return full lists.
+Migration needs temporary disk space for a database copy plus transaction
+storage. See [migration details](../../docs/documentation/11-migrations.md).
 
 ## Maintenance Tooling
 
@@ -232,7 +238,7 @@ default limit per JSONL record (`maxRecordBytes` can raise it for larger
 documents). Export hydrates one document at a time and pages link IDs. These bounds cover backup buffers, not the engine's database/page cache or
 bytes retained by the caller's stream consumer. Version 1 archives contain no
 relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
-that loss explicitly. Use binaries matching native ABI 37.
+that loss explicitly. Use binaries matching native ABI 38.
 
 Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
 of ids without materializing the whole collection:

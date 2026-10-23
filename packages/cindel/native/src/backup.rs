@@ -12,7 +12,7 @@ pub(crate) struct BackupSpool {
     _path: TemporaryBackupPath,
 }
 
-struct TemporaryBackupPath(String);
+pub(crate) struct TemporaryBackupPath(String);
 
 impl BackupSpool {
     pub fn document_count(&self, collection: &str) -> Result<u64, String> {
@@ -31,26 +31,7 @@ impl BackupSpool {
         collections: Vec<(String, Option<u64>)>,
         migration_version: u64,
     ) -> Result<Self, String> {
-        if token.is_empty()
-            || token.len() > 100
-            || !token
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        {
-            return Err("invalid backup staging token".into());
-        }
-        #[cfg(not(target_family = "wasm"))]
-        let path = {
-            let directory = std::env::temp_dir().join(format!("cindel-restore-{token}"));
-            std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
-            directory
-                .join("stage.sqlite")
-                .to_string_lossy()
-                .into_owned()
-        };
-        #[cfg(target_family = "wasm")]
-        let path = format!("/cindel-restore-{token}.sqlite");
-        let path = TemporaryBackupPath(path);
+        let path = TemporaryBackupPath::new(token, "restore")?;
         #[cfg(not(target_family = "wasm"))]
         let connection = Connection::open(&path.0).map_err(|e| e.to_string())?;
         #[cfg(target_family = "wasm")]
@@ -194,6 +175,30 @@ impl BackupSpool {
             visit(&link)?;
         }
         Ok(())
+    }
+}
+
+impl TemporaryBackupPath {
+    pub(crate) fn new(token: &str, purpose: &str) -> Result<Self, String> {
+        if token.is_empty() || token.len() > 100 || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err("invalid staging token".into());
+        }
+        #[cfg(not(target_family = "wasm"))]
+        let path = {
+            let directory = std::env::temp_dir().join(format!("cindel-{purpose}-{token}"));
+            std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+            directory.join("cindel.sqlite").to_string_lossy().into_owned()
+        };
+        #[cfg(target_family = "wasm")]
+        let path = format!("/cindel-{purpose}-{token}.sqlite");
+        Ok(Self(path))
+    }
+
+    pub(crate) fn database_directory(&self) -> &str {
+        #[cfg(not(target_family = "wasm"))]
+        { std::path::Path::new(&self.0).parent().unwrap().to_str().unwrap() }
+        #[cfg(target_family = "wasm")]
+        { &self.0 }
     }
 }
 

@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../schema.dart';
-import 'binary_document.dart';
+import '../binary_document.dart'
+    if (dart.library.js_interop) 'binary_document.dart';
 
 const _nativeBoolNull = 0xff;
 const _nativeIntNullBytes = [0, 0, 0, 0, 0, 0, 0, 0x80];
@@ -107,6 +108,11 @@ final class CindelWebNativeDocumentReader
     final payload = _dynamicPayload(documentIndex, fieldIndex);
     if (payload == null) {
       return null;
+    }
+    // An empty list can be stored as SQLite's JSON string-list representation:
+    // it has no elements from which the writer could infer the element type.
+    if (payload.length == 2 && payload[0] == 0x5b && payload[1] == 0x5d) {
+      return [];
     }
     final values = cindelDecodeBinaryList(payload);
     return values
@@ -222,6 +228,11 @@ int _readU24(Uint8List bytes, int offset) {
 int _readSafeInt64(Uint8List bytes, int offset) {
   if (offset < 0 || offset + 8 > bytes.length) {
     throw const FormatException('Native Cindel int64 is out of range.');
+  }
+  // Migration streams reuse this compact SQLite row reader on the VM, where
+  // signed int64 values are exact beyond JavaScript's safe integer range.
+  if (!const bool.fromEnvironment('dart.library.js_interop')) {
+    return ByteData.sublistView(bytes).getInt64(offset, Endian.little);
   }
   final low =
       bytes[offset] +

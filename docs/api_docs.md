@@ -190,18 +190,25 @@ Migration APIs:
 - `CindelMigrationStep`: declares `fromVersion`, `toVersion`, schemas used to
   open legacy data, target schemas, and optional before/after verification
   callbacks.
-- `CindelMigrationContext.exportObjects` and `exportDocuments`: read existing
-  data in id order with bounded batches.
+- `CindelMigrationContext.streamObjects` and `streamDocuments`: read the
+  original snapshot in ID order with bounded pages, including after target
+  schema registration. `exportObjects` and `exportDocuments` materialize lists.
 - `CindelMigrationContext.registerTargetSchemas`: registers the target schemas
   in migrated mode. Incompatible schema changes are accepted only here, and
   target collection storage is cleared before imports.
-- `CindelMigrationContext.importObjects` and `importDocuments`: write rewritten
-  target data in batches.
+- `CindelMigrationContext.importObjects` and `importDocuments`: consume an
+  iterable lazily in batches. `importObjectStream` and `importDocumentStream`
+  do the same for asynchronous streams.
 - `CindelDatabase.migrationVersion`, `setMigrationVersion`,
   `registerMigratedSchemas`, and `compact`: lower-level primitives used by the
   migration plan and available for controlled tooling.
 
 SQLite native, MDBX, and Web SQLite/OPFS expose the same migration contract.
+Each step uses a private disk-backed workspace and publishes its data, schemas,
+indexes, links, IDs and version atomically after verification. Failures leave
+the original unchanged; previous steps stay committed. A concurrent write to
+the original rejects publication. Temporary disk space is required. See
+[memory and failure semantics](documentation/11-migrations.md).
 For SQLite native, migrated schema registration rebuilds the target collection
 table before import so removed, renamed, or type-changed fields cannot leave
 stale columns behind.

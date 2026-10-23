@@ -6,12 +6,15 @@ mod backup_tests;
 mod mdbx;
 mod mdbx_key;
 mod metadata;
+pub(crate) mod migration;
+#[cfg(test)]
+mod migration_tests;
 mod relations;
 #[cfg(test)]
 mod relations_tests;
 mod sqlite;
 #[cfg(test)]
-mod test_allocations;
+pub(crate) mod test_allocations;
 
 use serde::{Deserialize, Serialize};
 

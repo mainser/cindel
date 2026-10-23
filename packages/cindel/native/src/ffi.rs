@@ -21,7 +21,7 @@ use crate::wire::{
 use std::fmt::Write as _;
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    37
+    38
 }
 
 #[no_mangle]
