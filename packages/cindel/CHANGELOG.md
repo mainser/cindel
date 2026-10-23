@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.2
+
+- Fixed MDBX `readTxn` isolation so document reads, queries, and cursors share
+  the snapshot captured when the transaction starts.
+- Fixed auto-increment ID collisions across overlapping MDBX transactions and
+  implicit writes on database handles in the same process, preserving rollback
+  behavior and committed counters after reopening.
+- Fixed Dart decoding of empty native string lists written by MDBX `putAll`,
+  preventing a `RangeError` when reading those objects with `get()`.
+- Added regression coverage for transaction snapshots, overlapping ID
+  allocations, and empty-list decoding through generated serializers.
+
 ## 1.1.1
 
 - Fixed repeated and concurrent database closure across native and Web backends,

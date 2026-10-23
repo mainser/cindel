@@ -1047,6 +1047,43 @@ void main({bool includeMdbxOnlyTests = false}) {
     // - String and List<String> hydration from compact borrowed MDBX rows.
     // Expected: Missing ids remain null and repeated hits hydrate consistently.
     if (includeMdbxOnlyTests) {
+      test('reads empty lists with generated get after MDBX putAll.', () async {
+        final db = await openTestDatabaseInMemory(
+          schemas: [UserSchema],
+          backend: CindelStorageBackend.mdbx,
+        );
+        addTearDown(db.close);
+        final empty = User()
+          ..dbId = 1
+          ..name = 'Empty'
+          ..email = 'empty@example.com'
+          ..tags = []
+          ..scores = []
+          ..recipients = [];
+        final nonEmpty = User()
+          ..dbId = 2
+          ..name = 'Non-empty'
+          ..email = 'nonempty@example.com'
+          ..tags = ['', 'tag'];
+
+        await db.users.putAll([empty, nonEmpty]);
+
+        // get decodes bytes in Dart; getAll uses the native cursor reader.
+        final stored = await db.users.get(1);
+        expect(stored, isNotNull);
+        expect(stored!.tags, isEmpty);
+        expect(stored.scores, isEmpty);
+        expect(stored.recipients, isEmpty);
+        final other = await db.users.get(2);
+        expect(other!.tags, ['', 'tag']);
+        expect(other.scores, isNull);
+        expect(other.recipients, isNull);
+        expect((await db.users.getAll([1, 2])).map((user) => user!.tags), [
+          [],
+          ['', 'tag'],
+        ]);
+      });
+
       test(
         'hydrates generated getAll through the MDBX native cursor reader.',
         () async {

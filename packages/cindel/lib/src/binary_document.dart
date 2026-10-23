@@ -402,7 +402,9 @@ List<Object?>? _tryDecodeNestedStringList(Uint8List bytes) {
     return null;
   }
   final staticSize = _readUint24(bytes, 0);
-  if (staticSize == 0 || staticSize % 3 != 0) {
+  // A zero-sized static section is a valid empty native list. The final
+  // length check keeps generic four-byte empty lists on the fallback path.
+  if (staticSize % 3 != 0) {
     return null;
   }
   final staticEnd = 3 + staticSize;

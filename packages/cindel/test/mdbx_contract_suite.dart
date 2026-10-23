@@ -158,6 +158,156 @@ void main() {
       expect((await database.users.get(1))?.name, 'Ben');
     });
 
+    for (final rollback in [false, true]) {
+      test(
+        'keeps readTxn snapshot isolated until ${rollback ? 'rollback' : 'commit'}.',
+        () async {
+          final (reader, writer, _) = await _openSharedDatabases();
+          await writer.users.put(_user('Before', id: 1));
+          await writer.users.put(_user('Deleted', id: 2));
+
+          Future<void> checkSnapshot() async {
+            // The snapshot must exist before the callback's first read.
+            await writer.writeTxn(() async {
+              await writer.users.put(_user('After', id: 1));
+              await writer.users.delete(2);
+              await writer.users.put(_user('Inserted', id: 3));
+            });
+            expect((await reader.users.get(1))?.name, 'Before');
+            expect(
+              (await reader.users.getAll([1, 2, 3])).map((user) => user?.name),
+              ['Before', 'Deleted', null],
+            );
+            expect(
+              (await reader.users.all().findAll()).map((user) => user.name),
+              ['Before', 'Deleted'],
+            );
+            expect(
+              (await reader.users.all().sortBy('name').findAll()).map(
+                (user) => user.name,
+              ),
+              ['Before', 'Deleted'],
+            );
+            expect(
+              (await reader.users
+                      .where()
+                      .emailEqualTo('Before@example.com')
+                      .findAll())
+                  .single
+                  .name,
+              'Before',
+            );
+            expect(
+              (await reader.users.where().emailBetween('A', 'Z').findAll()).map(
+                (user) => user.name,
+              ),
+              ['Before', 'Deleted'],
+            );
+            expect(await reader.users.all().count(), 2);
+            expect(await reader.users.all().nameProperty().findAll(), [
+              'Before',
+              'Deleted',
+            ]);
+            expect(await reader.users.all().dbIdProperty().sum(), 3);
+            expect(
+              await reader.users
+                  .all()
+                  .distinctBy('name')
+                  .nameProperty()
+                  .findAll(),
+              ['Before', 'Deleted'],
+            );
+            expect(await reader.documentIdsPage('users', limit: 10), [1, 2]);
+            // A second commit must not advance the original snapshot either.
+            await writer.users.put(_user('Latest', id: 1));
+            expect((await reader.users.get(1))?.name, 'Before');
+            if (rollback) throw StateError('rollback snapshot');
+          }
+
+          if (rollback) {
+            await expectLater(reader.readTxn(checkSnapshot), throwsStateError);
+          } else {
+            await reader.readTxn(checkSnapshot);
+          }
+          expect((await reader.users.get(1))?.name, 'Latest');
+          expect(await reader.documentIds('users'), [1, 3]);
+          await reader.readTxn(() async {
+            expect((await reader.users.get(1))?.name, 'Latest');
+          });
+        },
+      );
+    }
+
+    test(
+      'reserves auto IDs across overlapping writeTxn callbacks and implicit writes.',
+      () async {
+        final (first, second, directory) = await _openSharedDatabases();
+        final outer = _user('Outer');
+        final inner = _user('Inner');
+        final implicit = _user('Implicit');
+        final batch = [_user('Batch A'), _user('Batch B')];
+        await first.writeTxn(() async {
+          await first.users.put(outer);
+          await second.writeTxn(() => second.users.put(inner));
+          await second.users.put(implicit);
+          await first.users.putAll(batch);
+        });
+
+        expect(
+          [
+            outer.dbId,
+            inner.dbId,
+            implicit.dbId,
+            ...batch.map((user) => user.dbId),
+          ],
+          [1, 2, 3, 4, 5],
+        );
+        expect((await first.users.all().findAll()).map((user) => user.name), [
+          'Outer',
+          'Inner',
+          'Implicit',
+          'Batch A',
+          'Batch B',
+        ]);
+        await first.close();
+        await second.close();
+        final reopened = await openTestDatabase(
+          directory: directory.path,
+          schemas: [UserSchema],
+        );
+        addTearDown(reopened.close);
+        final next = _user('Next');
+        await reopened.users.put(next);
+        expect(next.dbId, 6);
+        expect(await reopened.users.all().count(), 6);
+      },
+    );
+
+    test(
+      'rollback preserves IDs committed by an overlapping writeTxn.',
+      () async {
+        final (first, second, _) = await _openSharedDatabases();
+        final rolledBack = _user('Rolled back');
+        final committed = _user('Committed');
+        await expectLater(
+          first.writeTxn<void>(() async {
+            await first.users.put(rolledBack);
+            await second.writeTxn(() => second.users.put(committed));
+            throw StateError('rollback');
+          }),
+          throwsStateError,
+        );
+
+        expect(rolledBack.dbId, 1);
+        expect(committed.dbId, 2);
+        expect(await first.users.get(1), isNull);
+        expect((await first.users.get(2))?.name, 'Committed');
+        final next = _user('Next');
+        await first.users.put(next);
+        expect(next.dbId, 3);
+      },
+    );
+
     test('notifies generated typed watchers only after commit.', () async {
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
@@ -214,6 +364,28 @@ void main() {
       expect(objectEvents.last?.email, 'committed@example.com');
     });
   });
+}
+
+User _user(String name, {int id = autoIncrement}) => User()
+  ..dbId = id
+  ..name = name
+  ..email = '$name@example.com';
+
+Future<(CindelDatabase, CindelDatabase, Directory)>
+_openSharedDatabases() async {
+  final directory = await Directory.systemTemp.createTemp('cindel_mdbx_txn_');
+  addTearDown(() => directory.delete(recursive: true));
+  final first = await openTestDatabase(
+    directory: directory.path,
+    schemas: [UserSchema],
+  );
+  addTearDown(first.close);
+  final second = await openTestDatabase(
+    directory: directory.path,
+    schemas: [UserSchema],
+  );
+  addTearDown(second.close);
+  return (first, second, directory);
 }
 
 Future<void> _waitUntil(

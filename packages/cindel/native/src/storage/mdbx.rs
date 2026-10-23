@@ -61,7 +61,7 @@ pub struct MdbxStorage {
 
 pub(crate) struct MdbxCursorDocumentReader {
     cursor: Cursor<'static, RO>,
-    _transaction: Transaction<'static, RO, NoWriteMap>,
+    _transaction: Arc<MdbxReadTransaction>,
     ids: Vec<u64>,
     current_index: Option<usize>,
     current_bytes: Option<Cow<'static, [u8]>>,
@@ -140,7 +140,7 @@ enum MdbxQueryCursorSource {
 
 pub(crate) struct MdbxQueryDocumentReader {
     source: MdbxQueryCursorSource,
-    _transaction: Transaction<'static, RO, NoWriteMap>,
+    _transaction: Arc<MdbxReadTransaction>,
     schema: CollectionSchemaManifest,
     filter: Option<NativeFilter>,
     offset: usize,
@@ -363,8 +363,45 @@ impl MdbxQueryDocumentReader {
 
 struct MdbxSharedState {
     database: Arc<Database<NoWriteMap>>,
-    next_ids: Mutex<HashMap<String, u64>>,
+    ids: Mutex<MdbxIdAllocator>,
     schemas: Mutex<HashMap<String, CollectionSchemaManifest>>,
+}
+
+// The transaction must be dropped before the environment it borrows. Readers
+// share this owner so ending readTxn cannot invalidate an outstanding cursor.
+struct MdbxReadTransaction {
+    transaction: Transaction<'static, RO, NoWriteMap>,
+    _state: SharedMdbxState,
+}
+
+type MdbxReservedIds = Arc<Mutex<HashMap<String, u64>>>;
+
+#[derive(Default)]
+struct MdbxIdAllocator {
+    committed: HashMap<String, u64>,
+    pending: Vec<Weak<Mutex<HashMap<String, u64>>>>,
+}
+
+impl MdbxIdAllocator {
+    fn next_id(&mut self, collection: &str) -> Result<u64, String> {
+        let mut next_id = self.committed.get(collection).copied().unwrap_or(1);
+        // Weak ownership releases reservations on rollback, failed commit and
+        // handle close, without moving the committed high-water mark backwards.
+        self.pending
+            .retain(|reservation| reservation.strong_count() > 0);
+        for reservation in &self.pending {
+            if let Some(reservation) = reservation.upgrade() {
+                if let Some(reserved) = reservation
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .get(collection)
+                {
+                    next_id = next_id.max(*reserved);
+                }
+            }
+        }
+        Ok(next_id)
+    }
 }
 
 struct PlannedDocument {
@@ -413,14 +450,14 @@ type WeakMdbxState = Weak<MdbxSharedState>;
 static MDBX_DATABASES: OnceLock<Mutex<HashMap<PathBuf, WeakMdbxState>>> = OnceLock::new();
 
 enum MdbxActiveTransaction {
-    Read,
+    Read(Arc<MdbxReadTransaction>),
     Write(MdbxWriteTransaction),
 }
 
 #[derive(Default)]
 struct MdbxWriteTransaction {
     operations: Vec<MdbxWriteOperation>,
-    next_ids: HashMap<String, u64>,
+    next_ids: MdbxReservedIds,
 }
 
 enum MdbxWriteOperation {
@@ -694,6 +731,29 @@ impl MdbxStorage {
         Ok(())
     }
 
+    fn read_transaction(&self) -> Result<Arc<MdbxReadTransaction>, String> {
+        if let Some(MdbxActiveTransaction::Read(transaction)) = &self.active_transaction {
+            return Ok(Arc::clone(transaction));
+        }
+        let state = Arc::clone(&self.state);
+        let transaction = state
+            .database
+            .begin_ro_txn()
+            .map_err(|error| error.to_string())?;
+        // The Arc keeps the environment at a stable address until after the
+        // transaction is dropped. The erased lifetime never escapes its owner.
+        let transaction = unsafe {
+            std::mem::transmute::<
+                Transaction<'_, RO, NoWriteMap>,
+                Transaction<'static, RO, NoWriteMap>,
+            >(transaction)
+        };
+        Ok(Arc::new(MdbxReadTransaction {
+            transaction,
+            _state: state,
+        }))
+    }
+
     fn with_read_transaction<T>(
         &self,
         action: impl for<'txn> FnOnce(
@@ -701,6 +761,10 @@ impl MdbxStorage {
             MdbxTables<'txn>,
         ) -> Result<T, String>,
     ) -> Result<T, String> {
+        if let Some(MdbxActiveTransaction::Read(snapshot)) = &self.active_transaction {
+            let tables = open_tables(&snapshot.transaction)?;
+            return action(&snapshot.transaction, tables);
+        }
         let transaction = self
             .state
             .database
@@ -720,12 +784,9 @@ impl MdbxStorage {
         if self.active_write().is_some() {
             return Err("cursor document reader does not support active write transactions".into());
         }
-        let transaction = self
-            .state
-            .database
-            .begin_ro_txn()
-            .map_err(|error| error.to_string())?;
-        let documents_table = open_documents_table(&transaction, collection)?;
+        let snapshot = self.read_transaction()?;
+        let transaction = &snapshot.transaction;
+        let documents_table = open_documents_table(transaction, collection)?;
         let cursor = transaction
             .cursor(&documents_table)
             .map_err(|error| error.to_string())?;
@@ -733,19 +794,9 @@ impl MdbxStorage {
         // Erase the cursor borrow before moving its owning transaction below.
         let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
 
-        // The libmdbx cursor internally owns a cloned transaction handle and
-        // only carries the Rust transaction lifetime as a marker. Keep the
-        // transaction in the reader and drop the cursor before it.
-        let transaction = unsafe {
-            std::mem::transmute::<
-                Transaction<'_, RO, NoWriteMap>,
-                Transaction<'static, RO, NoWriteMap>,
-            >(transaction)
-        };
-
         Ok(MdbxCursorDocumentReader {
             cursor,
-            _transaction: transaction,
+            _transaction: snapshot,
             ids: ids.to_vec(),
             current_index: None,
             current_bytes: None,
@@ -769,18 +820,15 @@ impl MdbxStorage {
                 NativeFilter::decode(bytes).map(|filter| filter.prepare_for_schema(&schema))
             })
             .transpose()?;
-        let transaction = self
-            .state
-            .database
-            .begin_ro_txn()
-            .map_err(|error| error.to_string())?;
+        let snapshot = self.read_transaction()?;
+        let transaction = &snapshot.transaction;
 
         if !plan.sorts.is_empty() {
             let documents = {
                 let sort_fields = query_sort_fields(&schema, &plan.sorts)?;
                 let offset = plan.offset as usize;
                 let limit = plan.limit.map(|value| value as usize);
-                let documents_table = match open_documents_table(&transaction, collection) {
+                let documents_table = match open_documents_table(transaction, collection) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
@@ -834,7 +882,7 @@ impl MdbxStorage {
                             let value = wire_index_value_to_storage(value)?;
                             let key = index_value_key(&value)?;
                             let Ok(index_table) =
-                                open_index_table(&transaction, collection, index_name)
+                                open_index_table(transaction, collection, index_name)
                             else {
                                 return Ok(None);
                             };
@@ -888,7 +936,7 @@ impl MdbxStorage {
                                 .transpose()?;
                             let range = encode_table_index_range(lower.as_ref(), upper.as_ref())?;
                             let Ok(index_table) =
-                                open_index_table(&transaction, collection, index_name)
+                                open_index_table(transaction, collection, index_name)
                             else {
                                 return Ok(None);
                             };
@@ -937,18 +985,12 @@ impl MdbxStorage {
                     Vec<BorrowedPlannedDocument<'static>>,
                 >(documents)
             };
-            let transaction = unsafe {
-                std::mem::transmute::<
-                    Transaction<'_, RO, NoWriteMap>,
-                    Transaction<'static, RO, NoWriteMap>,
-                >(transaction)
-            };
             return Ok(Some(MdbxQueryDocumentReader {
                 source: MdbxQueryCursorSource::Sorted {
                     documents,
                     current_index: 0,
                 },
-                _transaction: transaction,
+                _transaction: snapshot,
                 schema,
                 filter,
                 offset: 0,
@@ -963,7 +1005,7 @@ impl MdbxStorage {
 
         let source = match &plan.source {
             WireQuerySource::All { .. } => {
-                let documents_table = match open_documents_table(&transaction, collection) {
+                let documents_table = match open_documents_table(transaction, collection) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
@@ -984,11 +1026,11 @@ impl MdbxStorage {
             } => {
                 let value = wire_index_value_to_storage(value)?;
                 let key = index_value_key(&value)?;
-                let index_table = match open_index_table(&transaction, collection, index_name) {
+                let index_table = match open_index_table(transaction, collection, index_name) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
-                let documents_table = match open_documents_table(&transaction, collection) {
+                let documents_table = match open_documents_table(transaction, collection) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
@@ -1027,11 +1069,11 @@ impl MdbxStorage {
                     .map(wire_index_value_to_storage)
                     .transpose()?;
                 let range = encode_table_index_range(lower.as_ref(), upper.as_ref())?;
-                let index_table = match open_index_table(&transaction, collection, index_name) {
+                let index_table = match open_index_table(transaction, collection, index_name) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
-                let documents_table = match open_documents_table(&transaction, collection) {
+                let documents_table = match open_documents_table(transaction, collection) {
                     Ok(table) => table,
                     Err(_) => return Ok(None),
                 };
@@ -1058,19 +1100,9 @@ impl MdbxStorage {
             }
         };
 
-        // The libmdbx cursor internally owns a cloned transaction handle and
-        // only carries the Rust transaction lifetime as a marker. Keep the
-        // transaction in the reader and drop the cursor before it.
-        let transaction = unsafe {
-            std::mem::transmute::<
-                Transaction<'_, RO, NoWriteMap>,
-                Transaction<'static, RO, NoWriteMap>,
-            >(transaction)
-        };
-
         Ok(Some(MdbxQueryDocumentReader {
             source,
-            _transaction: transaction,
+            _transaction: snapshot,
             schema,
             filter,
             offset: plan.offset as usize,
@@ -1110,6 +1142,14 @@ impl MdbxStorage {
     where
         K: libmdbx::TransactionKind,
     {
+        // The shared cache can contain a schema committed after this snapshot.
+        // Read its metadata from the same transaction as its documents instead.
+        if matches!(
+            self.active_transaction,
+            Some(MdbxActiveTransaction::Read(_))
+        ) {
+            return Ok(schema_record(transaction, tables, collection)?.map(|record| record.1));
+        }
         if let Some(schema) = self
             .state
             .schemas
@@ -1683,7 +1723,7 @@ impl MdbxStorage {
 
     fn ensure_can_write(&self) -> Result<(), String> {
         match self.active_transaction {
-            Some(MdbxActiveTransaction::Read) => {
+            Some(MdbxActiveTransaction::Read(_)) => {
                 Err("write attempted inside read transaction".into())
             }
             Some(MdbxActiveTransaction::Write(_)) | None => Ok(()),
@@ -1693,14 +1733,14 @@ impl MdbxStorage {
     fn active_write_mut(&mut self) -> Option<&mut MdbxWriteTransaction> {
         match &mut self.active_transaction {
             Some(MdbxActiveTransaction::Write(transaction)) => Some(transaction),
-            Some(MdbxActiveTransaction::Read) | None => None,
+            Some(MdbxActiveTransaction::Read(_)) | None => None,
         }
     }
 
     fn active_write(&self) -> Option<&MdbxWriteTransaction> {
         match &self.active_transaction {
             Some(MdbxActiveTransaction::Write(transaction)) => Some(transaction),
-            Some(MdbxActiveTransaction::Read) | None => None,
+            Some(MdbxActiveTransaction::Read(_)) | None => None,
         }
     }
 
@@ -1710,61 +1750,19 @@ impl MdbxStorage {
 
     fn cached_next_id(&self, collection: &str) -> Result<u64, String> {
         let cached = {
-            let next_ids = self
-                .state
-                .next_ids
-                .lock()
-                .map_err(|error| error.to_string())?;
-            next_ids.get(collection).copied()
+            let next_ids = self.state.ids.lock().map_err(|error| error.to_string())?;
+            next_ids.committed.get(collection).copied()
         };
         if let Some(next_id) = cached {
             return Ok(next_id);
         }
 
         let next_id = self.next_id_from_storage(collection)?;
-        let mut next_ids = self
-            .state
-            .next_ids
-            .lock()
-            .map_err(|error| error.to_string())?;
-        Ok(*next_ids.entry(collection.to_string()).or_insert(next_id))
-    }
-
-    fn allocate_cached_id(&self, collection: &str) -> Result<u64, String> {
-        loop {
-            let cached = {
-                let next_ids = self
-                    .state
-                    .next_ids
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                next_ids.get(collection).copied()
-            };
-            if let Some(next_id) = cached {
-                let following = next_id.checked_add(1).ok_or_else(|| {
-                    format!("id counter for collection `{collection}` overflowed")
-                })?;
-                self.persist_next_id_at_least(collection, following)?;
-                self.set_cached_next_id_at_least(collection, following)?;
-                return Ok(next_id);
-            }
-
-            let next_id = self.next_id_from_storage(collection)?;
-            let mut next_ids = self
-                .state
-                .next_ids
-                .lock()
-                .map_err(|error| error.to_string())?;
-            if next_ids.contains_key(collection) {
-                continue;
-            }
-            let following = next_id
-                .checked_add(1)
-                .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
-            self.persist_next_id_at_least(collection, following)?;
-            next_ids.insert(collection.to_string(), following);
-            return Ok(next_id);
-        }
+        let mut next_ids = self.state.ids.lock().map_err(|error| error.to_string())?;
+        Ok(*next_ids
+            .committed
+            .entry(collection.to_string())
+            .or_insert(next_id))
     }
 
     fn next_id_from_storage(&self, collection: &str) -> Result<u64, String> {
@@ -1780,12 +1778,11 @@ impl MdbxStorage {
     }
 
     fn set_cached_next_id_at_least(&self, collection: &str, next_id: u64) -> Result<(), String> {
-        let mut next_ids = self
-            .state
-            .next_ids
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let current = next_ids.entry(collection.to_string()).or_insert(1);
+        let mut next_ids = self.state.ids.lock().map_err(|error| error.to_string())?;
+        let current = next_ids
+            .committed
+            .entry(collection.to_string())
+            .or_insert(1);
         if *current < next_id {
             *current = next_id;
         }
@@ -1802,20 +1799,28 @@ impl MdbxStorage {
             return Ok(());
         };
         let next_id = id.saturating_add(1);
-        let current = match transaction.next_ids.get(collection).copied() {
+        let mut next_ids = transaction
+            .next_ids
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let current = match next_ids.get(collection).copied() {
             Some(current) => current,
             None => fallback_next_id.unwrap_or(1),
         };
         if current < next_id {
-            transaction.next_ids.insert(collection.to_string(), next_id);
+            next_ids.insert(collection.to_string(), next_id);
         } else {
-            transaction.next_ids.insert(collection.to_string(), current);
+            next_ids.insert(collection.to_string(), current);
         }
         Ok(())
     }
 
     fn commit_staged_write(&mut self, staged: MdbxWriteTransaction) -> Result<(), String> {
-        let counter_updates = staged.next_ids.clone();
+        let counter_updates = staged
+            .next_ids
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
         let mut registered_manifests = Vec::new();
         let mut change_sets = Vec::new();
         self.with_write_transaction(|transaction, tables| {
@@ -1915,6 +1920,8 @@ impl MdbxStorage {
         for (collection, next_id) in counter_updates {
             self.set_cached_next_id_at_least(&collection, next_id)?;
         }
+        // Keep reservations alive until every committed counter is published.
+        drop(staged.next_ids);
         Ok(())
     }
 }
@@ -1949,7 +1956,7 @@ fn open_shared_state(path: &PathBuf) -> Result<SharedMdbxState, String> {
     );
     let state = Arc::new(MdbxSharedState {
         database,
-        next_ids: Mutex::new(HashMap::new()),
+        ids: Mutex::new(MdbxIdAllocator::default()),
         schemas: Mutex::new(HashMap::new()),
     });
     databases.insert(path.clone(), Arc::downgrade(&state));
@@ -1977,7 +1984,7 @@ impl StorageEngine for MdbxStorage {
         if self.active_transaction.is_some() {
             return Err("a transaction is already active".into());
         }
-        self.active_transaction = Some(MdbxActiveTransaction::Read);
+        self.active_transaction = Some(MdbxActiveTransaction::Read(self.read_transaction()?));
         Ok(())
     }
 
@@ -1985,8 +1992,17 @@ impl StorageEngine for MdbxStorage {
         if self.active_transaction.is_some() {
             return Err("a transaction is already active".into());
         }
-        self.active_transaction =
-            Some(MdbxActiveTransaction::Write(MdbxWriteTransaction::default()));
+        let transaction = MdbxWriteTransaction::default();
+        {
+            let mut allocator = self.state.ids.lock().map_err(|error| error.to_string())?;
+            allocator
+                .pending
+                .retain(|reservation| reservation.strong_count() > 0);
+            allocator
+                .pending
+                .push(Arc::downgrade(&transaction.next_ids));
+        }
+        self.active_transaction = Some(MdbxActiveTransaction::Write(transaction));
         Ok(())
     }
 
@@ -1996,12 +2012,11 @@ impl StorageEngine for MdbxStorage {
         };
 
         match active_transaction {
-            MdbxActiveTransaction::Read => Ok(()),
+            MdbxActiveTransaction::Read(_) => Ok(()),
             MdbxActiveTransaction::Write(staged) => match self.commit_staged_write(staged) {
                 Ok(()) => Ok(()),
                 Err(error) => {
-                    self.active_transaction =
-                        Some(MdbxActiveTransaction::Write(MdbxWriteTransaction::default()));
+                    self.begin_write_transaction()?;
                     Err(error)
                 }
             },
@@ -2018,31 +2033,27 @@ impl StorageEngine for MdbxStorage {
 
     fn allocate_id(&mut self, collection: &str) -> Result<u64, String> {
         self.ensure_can_write()?;
-        if let Some(MdbxActiveTransaction::Write(transaction)) = &self.active_transaction {
-            if let Some(next_id) = transaction.next_ids.get(collection).copied() {
-                let following = next_id.checked_add(1).ok_or_else(|| {
-                    format!("id counter for collection `{collection}` overflowed")
-                })?;
-                self.active_write_mut()
-                    .expect("write transaction must still be active")
-                    .next_ids
-                    .insert(collection.to_string(), following);
-                return Ok(next_id);
-            }
-        }
-        if self.active_write_mut().is_some() {
-            let next_id = self.current_next_id(collection)?;
-            let following = next_id
-                .checked_add(1)
-                .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
-            self.active_write_mut()
-                .expect("write transaction must still be active")
+        self.cached_next_id(collection)?;
+        // Serialize selection and reservation, including implicit allocations.
+        // No native write transaction remains open while a Dart callback awaits.
+        let mut allocator = self.state.ids.lock().map_err(|error| error.to_string())?;
+        let next_id = allocator.next_id(collection)?;
+        let following = next_id
+            .checked_add(1)
+            .ok_or_else(|| format!("id counter for collection `{collection}` overflowed"))?;
+        if let Some(transaction) = self.active_write() {
+            transaction
                 .next_ids
+                .lock()
+                .map_err(|error| error.to_string())?
                 .insert(collection.to_string(), following);
-            return Ok(next_id);
+        } else {
+            self.persist_next_id_at_least(collection, following)?;
+            allocator
+                .committed
+                .insert(collection.to_string(), following);
         }
-
-        self.allocate_cached_id(collection)
+        Ok(next_id)
     }
 
     fn get(&self, collection: &str, id: u64) -> Result<Option<Vec<u8>>, String> {

@@ -255,6 +255,32 @@ void main() {
       );
     });
 
+    test('decodes empty native string lists and generic empty lists.', () {
+      // Native putAll emits a three-byte static-size header for an empty
+      // string list. Generic lists still use a four-byte element count.
+      expect(cindelDecodeBinaryList(bytes([0, 0, 0])), isEmpty);
+      expect(cindelDecodeBinaryList(cindelEncodeBinaryList([])), isEmpty);
+      final document = bytes([
+        3, 0, 0, // document static size
+        3, 0, 0, // list payload offset
+        3, 0, 0, // list payload length
+        0, 0, 0, // empty native string list
+      ]);
+      expect(
+        cindelDecodeSchemaBinaryDocument(document, [
+          CindelBinaryFieldType.listValue,
+        ]),
+        [[]],
+      );
+      expect(
+        CindelSchemaBinaryDocumentReader(
+          document,
+          staticSize: 3,
+        ).readList(0, 0),
+        isEmpty,
+      );
+    });
+
     // Scenario: The decoder receives compact string-list payloads produced by
     // optimized native/generated paths.
     // Covers:

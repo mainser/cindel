@@ -24,8 +24,7 @@ fn passes_the_shared_storage_transaction_contract() {
     // - The shared [StorageEngine] explicit transaction contract.
     // - Commit, rollback, read transaction write rejection, nested
     //   transaction rejection, and id allocation rollback.
-    // Expected: MDBX matches SQLite's transaction behavior without storing
-    //   self-referential MDBX transaction handles.
+    // Expected: MDBX matches the shared transaction contract.
     contract_tests::run_storage_transaction_contract("mdbx", MdbxStorage::open);
 }
 
@@ -181,6 +180,260 @@ fn initializes_auto_increment_from_existing_document_ids() {
     let mut reopened = MdbxStorage::open(directory.path()).unwrap();
 
     assert_eq!(reopened.allocate_id("users").unwrap(), 42);
+}
+
+#[test]
+fn read_transaction_keeps_its_initial_snapshot_until_commit_or_rollback() {
+    for rollback in [false, true] {
+        let directory = TemporaryDirectory::new("read_snapshot");
+        let mut reader = MdbxStorage::open(directory.path()).unwrap();
+        let mut writer = MdbxStorage::open(directory.path()).unwrap();
+        reader.register_schemas(&schema_manifest()).unwrap();
+        let before = user_document("before@example.com", 1, "Before", 10);
+        let after = user_document("after@example.com", 1, "After", 20);
+        writer.put("users", 1, &before).unwrap();
+        let revision = reader.collection_revision("users").unwrap();
+
+        reader.begin_read_transaction().unwrap();
+        // The snapshot starts at begin, even before the first document read.
+        writer.put("users", 1, &after).unwrap();
+        writer
+            .put("users", 2, &user_document("two@example.com", 2, "Two", 20))
+            .unwrap();
+        writer.register_schemas(&task_schema_manifest()).unwrap();
+
+        assert!(reader.required_schema("tasks").is_err());
+        assert_eq!(reader.get_stored("users", 1).unwrap(), Some(before.clone()));
+        assert_eq!(
+            reader.get_many_stored("users", &[1, 2]).unwrap(),
+            vec![Some(before.clone()), None]
+        );
+        assert_eq!(reader.document_ids("users").unwrap(), vec![1]);
+        assert_eq!(reader.collection_revision("users").unwrap(), revision);
+        assert_eq!(
+            reader
+                .query_index_equal("users", "score", &IndexValue::Int(10))
+                .unwrap(),
+            vec![1]
+        );
+        let mut cursor = reader.cursor_document_reader("users", &[1, 2]).unwrap();
+        assert_eq!(cursor.document_bytes(0).unwrap(), Some(before.as_slice()));
+        assert!(!cursor.is_present(1).unwrap());
+        drop(cursor);
+        for sorted in [false, true] {
+            let plan = WireQueryPlan {
+                source: WireQuerySource::All { dedupe: false },
+                filter: None,
+                sorts: if sorted {
+                    vec![crate::wire::WireQuerySort {
+                        field: "name".into(),
+                        ascending: true,
+                    }]
+                } else {
+                    vec![]
+                },
+                distinct_fields: vec![],
+                offset: 0,
+                limit: None,
+            };
+            let mut cursor = reader
+                .query_document_reader("users", &plan)
+                .unwrap()
+                .unwrap();
+            assert!(cursor.next().unwrap());
+            assert_eq!(cursor.document_bytes(0).unwrap(), Some(before.as_slice()));
+            assert!(!cursor.next().unwrap());
+        }
+        if rollback {
+            reader.rollback_transaction().unwrap();
+        } else {
+            reader.commit_transaction().unwrap();
+        }
+        assert_eq!(reader.get_stored("users", 1).unwrap(), Some(after));
+        assert_eq!(reader.document_ids("users").unwrap(), vec![1, 2]);
+        assert!(reader.required_schema("tasks").is_ok());
+    }
+}
+
+#[test]
+fn overlapping_transactions_reserve_distinct_ids_in_either_commit_order() {
+    for reverse in [false, true] {
+        let directory = TemporaryDirectory::new("overlapping_ids");
+        let mut first = MdbxStorage::open(directory.path()).unwrap();
+        let mut second = MdbxStorage::open(directory.path()).unwrap();
+        first.begin_write_transaction().unwrap();
+        second.begin_write_transaction().unwrap();
+        let a = first.allocate_id("users").unwrap();
+        let b = second.allocate_id("users").unwrap();
+        let c = first.allocate_id("users").unwrap();
+        assert_eq!([a, b, c], [1, 2, 3]);
+        for id in [a, c] {
+            first.put("users", id, &generic_document()).unwrap();
+        }
+        second.put("users", b, &generic_document()).unwrap();
+        if reverse {
+            second.commit_transaction().unwrap();
+            first.commit_transaction().unwrap();
+        } else {
+            first.commit_transaction().unwrap();
+            second.commit_transaction().unwrap();
+        }
+        assert_eq!(first.document_ids("users").unwrap(), vec![1, 2, 3]);
+        drop(first);
+        drop(second);
+        let mut reopened = MdbxStorage::open(directory.path()).unwrap();
+        assert_eq!(reopened.allocate_id("users").unwrap(), 4);
+    }
+}
+
+#[test]
+fn overlapping_id_reservations_survive_other_rollbacks_and_release_on_drop() {
+    let directory = TemporaryDirectory::new("rollback_reserved_ids");
+    let mut first = MdbxStorage::open(directory.path()).unwrap();
+    let mut second = MdbxStorage::open(directory.path()).unwrap();
+    first.begin_write_transaction().unwrap();
+    second.begin_write_transaction().unwrap();
+    assert_eq!(first.allocate_id("users").unwrap(), 1);
+    assert_eq!(second.allocate_id("users").unwrap(), 2);
+    first.rollback_transaction().unwrap();
+    // An implicit allocation must also respect the still-live reservation.
+    assert_eq!(first.allocate_id("users").unwrap(), 3);
+    second.rollback_transaction().unwrap();
+    assert_eq!(first.allocate_id("users").unwrap(), 4);
+    first.begin_write_transaction().unwrap();
+    assert_eq!(first.allocate_id("users").unwrap(), 5);
+    drop(first);
+    // The abandoned transaction did not persist its reservation.
+    assert_eq!(second.allocate_id("users").unwrap(), 5);
+    assert_eq!(second.allocate_id("other").unwrap(), 1);
+}
+
+#[test]
+fn overlapping_explicit_ids_advance_auto_increment_reservations() {
+    let directory = TemporaryDirectory::new("explicit_reserved_ids");
+    let mut first = MdbxStorage::open(directory.path()).unwrap();
+    let mut second = MdbxStorage::open(directory.path()).unwrap();
+    first.begin_write_transaction().unwrap();
+    first.put("users", 41, &generic_document()).unwrap();
+    second.begin_write_transaction().unwrap();
+    assert_eq!(second.allocate_id("users").unwrap(), 42);
+    second.rollback_transaction().unwrap();
+    first.rollback_transaction().unwrap();
+    assert_eq!(second.allocate_id("users").unwrap(), 1);
+}
+
+#[test]
+fn concurrent_implicit_and_explicit_allocations_never_share_ids() {
+    let directory = TemporaryDirectory::new("concurrent_reserved_ids");
+    let barrier = std::sync::Barrier::new(4);
+    let mut handles: Vec<_> = (0..4)
+        .map(|_| MdbxStorage::open(directory.path()).unwrap())
+        .collect();
+    // Keep the shared allocator alive while all workers finish.
+    let mut observer = MdbxStorage::open(directory.path()).unwrap();
+    let mut ids = std::thread::scope(|scope| {
+        let workers: Vec<_> = handles
+            .iter_mut()
+            .enumerate()
+            .map(|(index, storage)| {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    if index % 2 == 0 {
+                        storage.begin_write_transaction().unwrap();
+                    }
+                    let mut ids = Vec::new();
+                    for _ in 0..16 {
+                        barrier.wait();
+                        ids.push(storage.allocate_id("users").unwrap());
+                    }
+                    if index % 2 == 0 {
+                        storage.commit_transaction().unwrap();
+                    }
+                    ids
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=64).collect::<Vec<_>>());
+    assert_eq!(observer.allocate_id("users").unwrap(), 65);
+}
+
+#[test]
+fn failed_commit_releases_ids_without_rewinding_another_commit() {
+    let directory = TemporaryDirectory::new("failed_reserved_ids");
+    let mut first = MdbxStorage::open(directory.path()).unwrap();
+    let mut second = MdbxStorage::open(directory.path()).unwrap();
+    let mut manifest = schema_manifest();
+    manifest.collections[0].fields[0].is_index_unique = true;
+    first.register_schemas(&manifest).unwrap();
+    first.begin_write_transaction().unwrap();
+    let a = first.allocate_id("users").unwrap();
+    first
+        .put(
+            "users",
+            a,
+            &user_document("same@example.com", a as i64, "First", 1),
+        )
+        .unwrap();
+    second.begin_write_transaction().unwrap();
+    let b = second.allocate_id("users").unwrap();
+    assert_ne!(a, b);
+    second
+        .put(
+            "users",
+            b,
+            &user_document("same@example.com", b as i64, "Second", 2),
+        )
+        .unwrap();
+    second.commit_transaction().unwrap();
+    assert!(first
+        .commit_transaction()
+        .unwrap_err()
+        .contains("Unique index"));
+    first.rollback_transaction().unwrap();
+    assert_eq!(first.document_ids("users").unwrap(), vec![b]);
+    assert_eq!(first.allocate_id("users").unwrap(), b + 1);
+}
+
+#[test]
+fn snapshot_readers_keep_the_environment_alive_after_the_handle_closes() {
+    let directory = TemporaryDirectory::new("snapshot_reader_lifetime");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    let document = user_document("before@example.com", 1, "Before", 10);
+    storage.put("users", 1, &document).unwrap();
+    storage.begin_read_transaction().unwrap();
+    let mut cursor = storage.cursor_document_reader("users", &[1]).unwrap();
+    let plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: None,
+        sorts: vec![crate::wire::WireQuerySort {
+            field: "name".into(),
+            ascending: true,
+        }],
+        distinct_fields: vec![],
+        offset: 0,
+        limit: None,
+    };
+    let mut sorted = storage
+        .query_document_reader("users", &plan)
+        .unwrap()
+        .unwrap();
+    storage.commit_transaction().unwrap();
+    storage.delete("users", 1).unwrap();
+    drop(storage);
+    let reopened = MdbxStorage::open(directory.path()).unwrap();
+    assert!(reopened.document_ids("users").unwrap().is_empty());
+    assert_eq!(cursor.document_bytes(0).unwrap(), Some(document.as_slice()));
+    drop(cursor);
+    assert!(sorted.next().unwrap());
+    assert_eq!(sorted.document_bytes(0).unwrap(), Some(document.as_slice()));
+    assert!(!sorted.next().unwrap());
 }
 
 #[test]
