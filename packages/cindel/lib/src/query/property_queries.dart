@@ -58,7 +58,10 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns the first projected value, or `null`.
   Future<R?> findFirst() async {
-    final values = await findAll();
+    final values = await _query
+        ._limitToFirst()
+        .property<R>(_field, decode: _decode)
+        .findAll();
     if (values.isEmpty) {
       return null;
     }
@@ -256,7 +259,10 @@ final class CindelPropertiesQuery<T> {
 
   /// Returns the first projected document, or `null`.
   Future<CindelDocument?> findFirst() async {
-    final documents = await findAll();
+    final documents = await _query
+        ._limitToFirst()
+        .properties(_fields)
+        .findAll();
     if (documents.isEmpty) {
       return null;
     }

@@ -487,8 +487,15 @@ final class CindelQuery<T> {
 
   /// Returns the first object matching this query, or `null`.
   Future<T?> findFirst() async {
-    final values = await findAll();
+    final values = await _limitToFirst().findAll();
     return values.isEmpty ? null : values.first;
+  }
+
+  CindelQuery<T> _limitToFirst() {
+    final currentLimit = _limit;
+    return _copyWith(
+      limit: currentLimit == null || currentLimit > 1 ? 1 : currentLimit,
+    );
   }
 
   /// Returns the number of objects matching this query.
@@ -1239,7 +1246,10 @@ final class CindelPropertyQuery<T, R> {
 
   /// Returns the first projected value, or `null`.
   Future<R?> findFirst() async {
-    final values = await findAll();
+    final values = await _query
+        ._limitToFirst()
+        .property<R>(_field, decode: _decode)
+        .findAll();
     return values.isEmpty ? null : values.first;
   }
 
@@ -1389,7 +1399,10 @@ final class CindelPropertiesQuery<T> {
 
   /// Returns the first projected document, or `null`.
   Future<CindelDocument?> findFirst() async {
-    final documents = await findAll();
+    final documents = await _query
+        ._limitToFirst()
+        .properties(_fields)
+        .findAll();
     return documents.isEmpty ? null : documents.first;
   }
 }

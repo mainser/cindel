@@ -4,6 +4,7 @@ import 'backup_suite.dart' as backup;
 import 'backend_test_support.dart';
 import 'bulk_id_suite.dart' as bulk_ids;
 import 'close_suite.dart' as close;
+import 'find_first_suite.dart' as find_first;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
 import 'migration_suite.dart' as migration;
@@ -19,6 +20,7 @@ void main() {
   backup.main();
   bulk_ids.main();
   close.main();
+  find_first.main();
   links_backlinks.main();
   mdbx_contract.main();
   migration.main();

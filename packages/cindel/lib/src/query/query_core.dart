@@ -451,11 +451,18 @@ final class CindelQuery<T> {
 
   /// Returns the first object matching this query, or `null`.
   Future<T?> findFirst() async {
-    final objects = await findAll();
+    final objects = await _limitToFirst().findAll();
     if (objects.isEmpty) {
       return null;
     }
     return objects.first;
+  }
+
+  CindelQuery<T> _limitToFirst() {
+    final currentLimit = _limit;
+    return _copyWith(
+      limit: currentLimit == null || currentLimit > 1 ? 1 : currentLimit,
+    );
   }
 
   /// Returns the number of objects matching this query.
