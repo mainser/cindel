@@ -4,6 +4,88 @@ import 'package:test/test.dart';
 
 void main() {
   group('CindelGenerator', () {
+    test(
+      'omits casts for typed list reads and promoted embedded parameters',
+      () async {
+        final generated = await _generate(r'''
+import 'package:cindel/cindel.dart';
+part 'model.g.dart';
+enum Status { first, second }
+@embedded
+class Leaf { String? value; }
+@collection
+class Model {
+  Id dbId = autoIncrement;
+  late List<DateTime> dates;
+  List<DateTime>? optionalDates;
+  late List<DateTime?> nullableDates;
+  late List<Duration> durations;
+  List<Duration>? optionalDurations;
+  late List<Duration?> nullableDurations;
+  late List<Status> statuses;
+  List<Status>? optionalStatuses;
+  late List<Status?> nullableStatuses;
+  late List<Leaf?> children;
+  List<Leaf?>? optionalChildren;
+}
+''');
+        final compact = generated.replaceAll(RegExp(r'\s+'), '');
+        expect(compact, contains('listReader.readInt(0,i)??0'));
+        expect(compact, contains("listReader.readString(0,i)??''"));
+        expect(compact, isNot(contains('??0)asint')));
+        expect(compact, isNot(contains("??'')asString")));
+        expect(
+          compact,
+          contains(r'value==null?null:_$LeafToCindelEmbedded(value)'),
+        );
+        expect(compact, isNot(contains('valueasLeaf')));
+        // Document values are Object? and nullable native reads are not promotable
+        // across repeated calls: their necessary casts must remain.
+        expect(
+          compact,
+          contains('DateTime.fromMicrosecondsSinceEpoch(valueasint,'),
+        );
+        expect(compact, contains('Duration(microseconds:valueasint)'));
+        expect(compact, contains('Status.values.byName(valueasString)'));
+        expect(compact, contains('(listReader.readInt(0,i))asint'));
+      },
+    );
+
+    test('emits shared embedded helpers once per library', () async {
+      final generated = await _generate(r'''
+import 'package:cindel/cindel.dart';
+part 'model.g.dart';
+@embedded
+class Leaf { String? value; }
+@collection
+class First { Id dbId = autoIncrement; late Leaf value; }
+@collection
+class Second { Id dbId = autoIncrement; late List<Leaf?> value; }
+''');
+      expect(
+        RegExp(
+          r'Map<String, Object\?> _\$LeafToCindelEmbedded\(',
+        ).allMatches(generated),
+        hasLength(1),
+      );
+      expect(generated, contains('value == null ? null'));
+    });
+
+    test('keeps explicitly unsupported list annotations rejected', () async {
+      for (final strategy in ['ordinal', 'value']) {
+        await _expectBuildError('''
+import 'package:cindel/cindel.dart';
+part 'model.g.dart';
+enum Status { one, two }
+@collection
+class Model {
+  Id dbId = autoIncrement;
+  @Enumerated(CindelEnumType.$strategy)
+  late List<Status> value;
+}
+''', '@Enumerated can only be used on enum fields.');
+      }
+    });
     // Scenario: A rich mutable collection model uses ids, indexes, composite
     // indexes, ignored fields, binary documents, and native document hooks.
     // Covers:

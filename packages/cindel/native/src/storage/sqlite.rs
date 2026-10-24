@@ -23,7 +23,7 @@ use rusqlite::{
     ffi, params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior,
 };
 
-use crate::document_format::{decode_list, BinaryValue};
+use crate::document_format::{binary_to_wire_value, decode_list, decode_object, BinaryValue};
 use crate::wire::{
     decode_filter, encode_index_value, encode_projection_rows, encode_scalar, WireFilter,
     WireFilterOperation, WireIndexValue, WireProjectionRows, WireQueryPlan, WireQuerySource,
@@ -2228,12 +2228,69 @@ fn sqlite_row_wire_value(
                 })?
                 .to_string(),
         )),
+        ("list" | "object", ValueRef::Text(bytes)) => {
+            let decoded = serde_json::from_slice::<serde_json::Value>(bytes)
+                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+                    index, value.data_type(), Box::new(error)))?;
+            let wire = json_wire_value(decoded).map_err(|error|
+                rusqlite::Error::FromSqlConversionFailure(index, value.data_type(),
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error))))?;
+            match (sqlite_binary_type(&field.binary_type), &wire) {
+                ("list", WireValue::List(_)) | ("object", WireValue::Object(_)) => Ok(wire),
+                _ => Err(rusqlite::Error::InvalidColumnType(index, field.name.clone(), value.data_type())),
+            }
+        }
+        (kind @ ("list" | "object"), ValueRef::Blob(bytes)) => {
+            let decoded = if kind == "list" {
+                decode_list(bytes).map(BinaryValue::List)
+            } else {
+                decode_object(bytes).map(BinaryValue::Object)
+            };
+            decoded.and_then(|value| binary_to_wire_value(Some(&value)))
+                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+                    index, value.data_type(),
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error))))
+        }
         _ => Err(rusqlite::Error::InvalidColumnType(
             index,
             field.name.clone(),
             value.data_type(),
         )),
     }
+}
+
+// Consume decoded strings and containers, preserving integer precision without
+// trial-deserializing every scalar against multiple untagged enum variants.
+fn json_wire_value(value: serde_json::Value) -> Result<WireValue, String> {
+    use serde_json::Value;
+    Ok(match value {
+        Value::Null => WireValue::Null,
+        Value::Bool(value) => WireValue::Bool(value),
+        Value::Number(value) => {
+            if let Some(integer) = value.as_i64() {
+                WireValue::Int(integer)
+            } else if value.is_f64() {
+                WireValue::Double(value.as_f64().ok_or("invalid JSON double")?)
+            } else {
+                return Err("JSON integer is outside signed int64 range".into());
+            }
+        }
+        Value::String(value) => WireValue::String(value),
+        Value::Array(values) => WireValue::List(values.into_iter().map(json_wire_value).collect::<Result<_, _>>()?),
+        Value::Object(values) => WireValue::Object(values.into_iter().map(|(key, value)| Ok((key, json_wire_value(value)?))).collect::<Result<_, String>>()?),
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn json_projection_preserves_exact_integers_and_null_elements() {
+    let value = serde_json::from_str(r#"[9007199254740993,null,"a\n",[true,2.5]]"#).unwrap();
+    assert_eq!(json_wire_value(value).unwrap(), WireValue::List(vec![
+        WireValue::Int(9007199254740993), WireValue::Null, WireValue::String("a\n".into()),
+        WireValue::List(vec![WireValue::Bool(true), WireValue::Double(2.5)]),
+    ]));
+    let overflow = serde_json::from_str("9223372036854775808").unwrap();
+    assert!(json_wire_value(overflow).is_err());
 }
 
 enum StreamingWireAggregate {
@@ -2892,7 +2949,7 @@ fn bind_native_sql_value(
             statement.raw_bind_parameter(parameter_index, text)
         }
         ("list", NativeDocumentValue::Bytes(value)) => {
-            if value.first() == Some(&b'[') {
+            if value.first() == Some(&b'[') && !has_binary_list_payload(value) {
                 let text = std::str::from_utf8(value).map_err(sqlite_diagnostic)?;
                 statement.raw_bind_parameter(parameter_index, text)
             } else if let Ok(text) = native_string_list_json(value) {
@@ -2912,6 +2969,17 @@ fn bind_native_sql_value(
         }
     }
     .map_err(sqlite_diagnostic)
+}
+
+// Most JSON lists cannot have a valid binary count/table header. Reject those
+// cheaply instead of allocating decoder errors on every existing string write.
+fn has_binary_list_payload(bytes: &[u8]) -> bool {
+    let Some(header) = bytes.get(..4) else { return false; };
+    let count = u32::from_le_bytes(header.try_into().unwrap()) as usize;
+    let static_size = count & 0x00ff_ffff;
+    let possible_generic = count <= bytes.len().saturating_sub(4) / 8;
+    let possible_compact = static_size % 3 == 0 && static_size <= bytes.len().saturating_sub(3);
+    (possible_generic || possible_compact) && decode_list(bytes).is_ok()
 }
 
 fn native_string_list_json(bytes: &[u8]) -> Result<String, String> {

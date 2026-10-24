@@ -598,6 +598,9 @@ pub(crate) fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, Stri
         return Ok(values);
     }
     let count = read_u32(bytes, 0)? as usize;
+    if count > bytes.len().saturating_sub(4) / 8 {
+        return Err("binary list count exceeds payload".into());
+    }
     let mut offset = 4;
     let mut values = Vec::with_capacity(count);
     for _ in 0..count {
@@ -609,8 +612,11 @@ pub(crate) fn decode_list(bytes: &[u8]) -> Result<Vec<Option<BinaryValue>>, Stri
     Ok(values)
 }
 
-fn decode_object(bytes: &[u8]) -> Result<Vec<(String, Option<BinaryValue>)>, String> {
+pub(crate) fn decode_object(bytes: &[u8]) -> Result<Vec<(String, Option<BinaryValue>)>, String> {
     let count = read_u32(bytes, 0)? as usize;
+    if count > bytes.len().saturating_sub(4) / 12 {
+        return Err("binary object count exceeds payload".into());
+    }
     let mut offset = 4;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {

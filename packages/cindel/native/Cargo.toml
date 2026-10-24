@@ -15,6 +15,7 @@ web = ["dep:sqlite-wasm-vfs", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
 libmdbx = { version = "0.9.0", optional = true, default-features = false }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 sqlite-wasm-vfs = { version = "0.2", optional = true }

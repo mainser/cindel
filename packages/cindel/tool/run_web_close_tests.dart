@@ -61,6 +61,16 @@ Future<void> main(List<String> arguments) async {
       Directory('${stage.path}/fixtures'),
     );
 
+    // Fault injection belongs only to this disposable test copy. The packaged
+    // Worker and production API stay unchanged, and ordinary databases bypass it.
+    final stagedWorker = File(
+      '${stage.path}/assets/packages/cindel_flutter_libs/web/cindel_worker.js',
+    );
+    final workerSource = await stagedWorker.readAsString();
+    await stagedWorker.writeAsString(
+      "import '../../../../fixtures/watch_failure_hook.js';\n" + workerSource,
+    );
+
     // Execute the resolved package:test entrypoint without another pub get or
     // dependency graph. Dart itself is selected from the active shell PATH.
     final process = await Process.start(

@@ -109,12 +109,9 @@ final class CindelWebNativeDocumentReader
     if (payload == null) {
       return null;
     }
-    // An empty list can be stored as SQLite's JSON string-list representation:
-    // it has no elements from which the writer could infer the element type.
-    if (payload.length == 2 && payload[0] == 0x5b && payload[1] == 0x5d) {
-      return [];
-    }
-    final values = cindelDecodeBinaryList(payload);
+    // Empty and all-null object lists can use SQLite's JSON representation:
+    // neither contains a concrete element from which to infer its type.
+    final values = _listValues(payload);
     return values
         .map(
           (value) =>
@@ -125,7 +122,24 @@ final class CindelWebNativeDocumentReader
 
   @override
   CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) {
-    throw UnsupportedError('Nested native Web list readers are not supported.');
+    _checkFieldType(fieldIndex, 4);
+    final payload = _dynamicPayload(documentIndex, fieldIndex);
+    if (payload == null) return null;
+    return _NativeWebListReader(_listValues(payload));
+  }
+
+  List<Object?> _listValues(Uint8List payload) {
+    // JSON is used by SQLite for string lists, binary records for other types.
+    // A binary count can also start with '[', so validate before selecting JSON.
+    if (payload.isNotEmpty && payload[0] == 0x5b) {
+      try {
+        final json = jsonDecode(utf8.decode(payload));
+        if (json is List) return json.cast<Object?>();
+      } on FormatException {
+        /* Continue with the binary representation. */
+      }
+    }
+    return cindelDecodeBinaryList(payload);
   }
 
   @override
@@ -187,6 +201,45 @@ final class CindelWebNativeDocumentReader
       throw StateError('Native Cindel field type does not match reader call.');
     }
   }
+}
+
+final class _NativeWebListReader implements CindelNativeDocumentReader {
+  _NativeWebListReader(this.values);
+  final List<Object?> values;
+  @override
+  int get length => values.length;
+  @override
+  bool isPresent(int documentIndex) => documentIndex == 0;
+  @override
+  int readId(int documentIndex) =>
+      throw UnsupportedError('List elements have no ID.');
+  @override
+  bool? readBool(int documentIndex, int fieldIndex) =>
+      values[fieldIndex] as bool?;
+  @override
+  int? readInt(int documentIndex, int fieldIndex) => values[fieldIndex] as int?;
+  @override
+  double? readDouble(int documentIndex, int fieldIndex) =>
+      values[fieldIndex] as double?;
+  @override
+  String? readString(int documentIndex, int fieldIndex) =>
+      values[fieldIndex] as String?;
+  @override
+  Map<String, Object?>? readObject(int documentIndex, int fieldIndex) =>
+      values[fieldIndex] as Map<String, Object?>?;
+  @override
+  List<String>? readStringList(int documentIndex, int fieldIndex) =>
+      (values[fieldIndex] as List?)?.cast<String>();
+  @override
+  List<Map<String, Object?>?>? readObjectList(
+    int documentIndex,
+    int fieldIndex,
+  ) => (values[fieldIndex] as List?)?.cast<Map<String, Object?>?>();
+  @override
+  CindelNativeDocumentReader? readList(int documentIndex, int fieldIndex) =>
+      throw UnsupportedError('Nested list fields are not supported.');
+  @override
+  void release() {}
 }
 
 List<int> _fieldOffsets(Uint8List fieldTypes) {

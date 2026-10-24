@@ -712,11 +712,116 @@ final class CindelNativeDocumentWireWriter
 
   @override
   CindelNativeDocumentWriter beginList(int fieldIndex, int length) {
-    throw UnsupportedError('Nested native Web list writers are not supported.');
+    _checkFieldIndex(fieldIndex);
+    return _NativeWireListWriter(this, length);
   }
 
   @override
-  void endList(CindelNativeDocumentWriter listWriter) {}
+  void endList(CindelNativeDocumentWriter listWriter) {
+    if (listWriter is! _NativeWireListWriter || listWriter.owner != this) {
+      throw StateError('Native Web list writer belongs to another document.');
+    }
+    listWriter.finish();
+  }
+}
+
+// Write generic list records directly into the batch, with no per-element
+// buffers or temporary Dart value list. Scalar/compact paths are unchanged.
+final class _NativeWireListWriter implements CindelNativeDocumentWriter {
+  _NativeWireListWriter(this.owner, this.length) {
+    if (length < 0) throw RangeError.value(length, 'length');
+    _writer.writeUint8(wireTagList);
+    _lengthOffset = _writer._offset;
+    _writer.writeLength(0);
+    _writer.writeLength(length);
+  }
+  final CindelNativeDocumentWireWriter owner;
+  final int length;
+  late final int _lengthOffset;
+  _CindelGrowableWireWriter get _writer => owner._writer;
+  int _next = 0;
+  bool _finished = false;
+
+  void _header(int index, int kind) {
+    if (_finished || index != _next || index >= length) {
+      throw StateError(
+        'Native Web list elements must be written once in order.',
+      );
+    }
+    // kind, null flag, and two reserved bytes in the binary record header.
+    _writer.writeUint32(kind == 0 ? 0x100 : kind);
+    _next++;
+  }
+
+  void finish() {
+    if (_finished || _next != length) {
+      throw StateError('Native Web list is incomplete or already finished.');
+    }
+    _finished = true;
+    _writer.writeUint32At(_lengthOffset, _writer._offset - _lengthOffset - 4);
+  }
+
+  @override
+  void writeNull(int index) {
+    _header(index, 0);
+    _writer.writeLength(0);
+  }
+
+  @override
+  void writeBool(int index, bool value) {
+    _header(index, 1);
+    _writer.writeLength(1);
+    _writer.writeBool(value);
+  }
+
+  @override
+  void writeInt(int index, int value) {
+    if (value < -_maxSafeInteger || value > _maxSafeInteger) {
+      throw UnsupportedError(
+        'Cindel Web list integer is outside JavaScript safe integer range.',
+      );
+    }
+    _header(index, 2);
+    _writer.writeLength(8);
+    _writer.writeInt64(value);
+  }
+
+  @override
+  void writeDouble(int index, double value) {
+    if (!value.isFinite) {
+      throw const FormatException(
+        'native document double values must be finite',
+      );
+    }
+    _header(index, 3);
+    _writer.writeLength(8);
+    _writer.writeFloat64(value);
+  }
+
+  @override
+  void writeString(int index, String value) {
+    _header(index, 4);
+    _writer.writeUtf8StringBytes(value);
+  }
+
+  @override
+  void writeObject(int index, Map<String, Object?> value) {
+    _header(index, 10);
+    _writer.writeBytes(cindelEncodeBinaryObject(value));
+  }
+
+  @override
+  void writeObjectList(int index, List<Map<String, Object?>?> value) {
+    _header(index, 7);
+    _writer.writeBytes(cindelEncodeBinaryList(value));
+  }
+
+  @override
+  CindelNativeDocumentWriter beginList(int index, int length) =>
+      throw UnsupportedError('Nested list fields are not supported.');
+  @override
+  void endList(CindelNativeDocumentWriter writer) =>
+      throw UnsupportedError('Nested list fields are not supported.');
 }
 
 /// Callback used by [encodeNativeDocumentWriteBatchDirect].

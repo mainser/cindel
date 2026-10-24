@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.3
+
+- Fixed nullable list serialization and shared embedded helper generation.
+- Removed unnecessary casts from generated list readers and embedded filters.
+
 ## 1.0.0
 
 - Released the first stable Cindel generator package version.

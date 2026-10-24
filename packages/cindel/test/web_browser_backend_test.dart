@@ -2,6 +2,9 @@
 library;
 
 import 'watch_coordinator_suite.dart' as watcher_coordinator;
+import 'package:cindel/cindel.dart';
+import 'type_compatibility_suite.dart';
+import 'web_watch_contract_suite.dart' as watch_contract;
 import 'shared_watchers_suite.dart' as shared_watchers;
 import 'sqlite_revision_suite.dart' as persistent_revisions;
 import 'web_watch_polling_suite.dart' as web_watch_polling;
@@ -24,6 +27,8 @@ import 'web_close_additional_suite.dart' as web_close;
 import 'web_worker_close_suite.dart' as worker_close;
 
 void main() {
+  runTypeCompatibility(CindelStorageBackend.sqlite);
+  watch_contract.main();
   persistent_revisions.main(concurrentHandles: false);
   watcher_coordinator.main();
   shared_watchers.main(includeExternalHandle: false);

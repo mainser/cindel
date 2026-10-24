@@ -1,6 +1,9 @@
 #[cfg(test)]
 #[path = "ffi_error_tests.rs"]
 mod error_tests;
+#[cfg(test)]
+#[path = "ffi_type_compatibility_tests.rs"]
+mod type_compatibility_tests;
 use crate::document_format::{
     write_compact_string_list_records, write_list_records, write_string_value_record,
     write_value_record, BinaryValue,
@@ -3545,6 +3548,9 @@ impl CindelNativeBatchWriter {
         index: usize,
         records: &[Option<Vec<u8>>],
     ) -> Result<bool, String> {
+        if matches!(&self.mode, NativeBatchWriterMode::Batch { .. }) {
+            self.current_mut()?;
+        }
         let NativeBatchWriterMode::Batch {
             layout, current, ..
         } = &mut self.mode
@@ -4606,6 +4612,15 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
     // value, and must not become a decoder error when errors are propagated.
     if bytes == b"[]" {
         return Ok(NativeRawList { bytes: bytes.to_vec(), entries: Vec::new() });
+    }
+
+    // Only JSON-shaped payloads take this path; compact and generic lists keep
+    // their existing readers. SQLite stores nullable string lists as JSON.
+    if bytes.first() == Some(&b'[') {
+        if let Ok(values) = serde_json::from_slice::<Vec<Option<String>>>(bytes) {
+            let values = values.into_iter().map(|value| value.map(BinaryValue::String)).collect::<Vec<_>>();
+            return parse_native_raw_list(&crate::document_format::write_list(&values)?);
+        }
     }
 
     if is_native_compact_string_list(bytes)? {

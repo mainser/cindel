@@ -800,6 +800,9 @@ final class CindelQuery<T> {
           previousIds = documentIds;
           controller.add(documents);
         } while (needsRead && !controller.isClosed);
+      } on CindelDatabaseClosedError {
+        // A queued snapshot can outlive handle retirement. The source stream
+        // completes during close; only this lifecycle error is discarded.
       } catch (error, stackTrace) {
         if (!controller.isClosed) {
           controller.addError(error, stackTrace);
@@ -893,6 +896,9 @@ final class CindelQuery<T> {
           previousIdSet = idSet;
           controller.add(ids);
         } while (needsRead && !controller.isClosed);
+      } on CindelDatabaseClosedError {
+        // A queued snapshot can outlive handle retirement. The source stream
+        // completes during close; only this lifecycle error is discarded.
       } catch (error, stackTrace) {
         if (!controller.isClosed) {
           controller.addError(error, stackTrace);

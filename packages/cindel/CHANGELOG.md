@@ -2,6 +2,8 @@
 
 ## 1.1.3
 
+- Fixed Web watchers emitting closed-database errors from pending snapshots during shutdown.
+- Fixed generated nullable lists, shared embedded types, and list/object reads and projections across MDBX and SQLite native/Web, preserving the same typed API.
 - Fixed inferred backup schema types in MDBX and SQLite native/Web export and import, preserving bounded batches.
 - Persisted SQLite native/Web change revisions atomically with writes, preserving rollback and cross-connection notifications.
 - Shared watcher polling by collection across MDBX and SQLite native/Web, preserving notifications and shutdown behavior.

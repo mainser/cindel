@@ -9,6 +9,54 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel Web wire codec', () {
+    test('streams primitive list records into a bounded batch buffer', () {
+      final bytes = web_wire.encodeNativeDocumentWriteBatchDirect<int>(
+        ids: List.generate(256, (i) => i + 1),
+        objects: List.generate(256, (i) => i),
+        fieldCount: 1,
+        writeDocument: (writer, object) {
+          final list = writer.beginList(0, 91);
+          for (var i = 0; i < 91; i++) {
+            if (i == 0) {
+              list.writeNull(i);
+            } else {
+              list.writeInt(i, object - i);
+            }
+          }
+          writer.endList(list);
+        },
+      );
+      expect(bytes.buffer.lengthInBytes, lessThanOrEqualTo(bytes.length * 2));
+      final rows = web_wire.decodeNativeDocumentWriteBatch(bytes);
+      expect(rows, hasLength(256));
+      for (var i = 0; i < rows.length; i++) {
+        final value = rows[i].values.single as web_wire.WireNativeDocumentBytes;
+        expect(web_binary_document.cindelDecodeBinaryList(value.value), [
+          null,
+          for (var j = 1; j < 91; j++) i - j,
+        ]);
+      }
+      expect(
+        () => web_wire.encodeNativeDocumentWriteBatchDirect<int>(
+          ids: [1],
+          objects: [1],
+          fieldCount: 1,
+          writeDocument: (writer, _) =>
+              writer.beginList(0, 1).writeInt(0, 9007199254740992),
+        ),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => web_wire.encodeNativeDocumentWriteBatchDirect<int>(
+          ids: [1],
+          objects: [1],
+          fieldCount: 1,
+          writeDocument: (writer, _) =>
+              writer.beginList(0, 1).writeDouble(0, double.infinity),
+        ),
+        throwsFormatException,
+      );
+    });
     // Scenario: Web encodes and decodes id lists for Worker requests.
     // Covers:
     // - [web_wire.encodeIdList].
@@ -557,7 +605,13 @@ void main() {
       expect(reader.readString(1, 3), isNull);
       expect(listReader.readStringList(0, 0), ['vip', 'web']);
       expect(listReader.readStringList(1, 0), isNull);
-      expect(() => reader.readList(0, 0), throwsUnsupportedError);
+      expect(() => reader.readList(0, 0), throwsStateError);
+      final elements = listReader.readList(0, 0)!;
+      expect(elements.length, 2);
+      expect(elements.readString(0, 0), 'vip');
+      expect(elements.readString(0, 1), 'web');
+      expect(listReader.readList(1, 0), isNull);
+      elements.release();
       reader.release();
     });
 

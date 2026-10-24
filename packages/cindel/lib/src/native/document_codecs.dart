@@ -138,8 +138,8 @@ List<String>? _decodeNativeStringList(Uint8List bytes) {
         }
       }
       return strings;
-    } catch (_) {
-      return null;
+    } on FormatException {
+      // A generic count or compact table size may also start with '['.
     }
   }
   if (bytes.length >= 9 &&
@@ -156,15 +156,33 @@ List<String>? _decodeNativeStringList(Uint8List bytes) {
     return null;
   }
   final staticSize = _readU24Le(bytes, 0);
-  if (staticSize % 3 != 0) {
-    return null;
+  if (staticSize % 3 == 0) {
+    final compact = _decodeNativeStringListOffsets(
+      bytes,
+      offsetsStart: 3,
+      count: staticSize ~/ 3,
+      offsetBase: 3,
+    );
+    if (compact != null) return compact;
   }
-  return _decodeNativeStringListOffsets(
-    bytes,
-    offsetsStart: 3,
-    count: staticSize ~/ 3,
-    offsetBase: 3,
-  );
+  // Binary put() uses count + typed records, whereas putAll() can write
+  // compact offsets. Decode the generic representation without copying bytes.
+  if (bytes.length < 4) return null;
+  final count = _readU32Le(bytes, 0);
+  if (count > (bytes.length - 4) ~/ 8) return null;
+  final strings = <String>[];
+  var offset = 4;
+  for (var i = 0; i < count; i++) {
+    if (offset + 8 > bytes.length) return null;
+    final kind = bytes[offset];
+    final isNull = bytes[offset + 1] & 1 != 0;
+    final length = _readU32Le(bytes, offset + 4);
+    offset += 8;
+    if (offset + length > bytes.length || isNull || kind != 4) return null;
+    strings.add(_decodeNativeStringBytes(bytes, offset, offset + length));
+    offset += length;
+  }
+  return offset == bytes.length ? strings : null;
 }
 
 // Fast parser for the generated JSON string-list shape.
@@ -178,7 +196,7 @@ List<String>? _decodeGeneratedJsonStringList(Uint8List bytes) {
   }
   var offset = 1;
   if (bytes[offset] == 0x5d) {
-    return const <String>[];
+    return bytes.length == 2 ? const <String>[] : null;
   }
 
   final values = <String>[];
@@ -257,6 +275,7 @@ List<String>? _decodeNativeStringListOffsets(
     return null;
   }
   final list = List<String>.filled(count, '', growable: true);
+  var payloadEnd = offsetsEnd;
   for (var i = 0; i < count; i += 1) {
     final offset = _readU24Le(bytes, offsetsStart + i * 3);
     if (offset == 0) {
@@ -272,9 +291,10 @@ List<String>? _decodeNativeStringListOffsets(
     if (end > bytes.length) {
       return null;
     }
+    if (end > payloadEnd) payloadEnd = end;
     list[i] = _decodeNativeStringBytes(bytes, start, end);
   }
-  return list;
+  return payloadEnd == bytes.length ? list : null;
 }
 
 // Decodes one string from a larger native payload, using a local ASCII scan to

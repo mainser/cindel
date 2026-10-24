@@ -328,6 +328,13 @@ final class CindelTypedCollection<T> {
     T? previous;
     var hasPrevious = false;
     return StreamTransformer<T?, T?>.fromHandlers(
+      // asyncMap can resume a buffered change after close retires the handle.
+      // That read ends with the stream; actual storage errors keep their cause.
+      handleError: (error, stackTrace, sink) {
+        if (error is! CindelDatabaseClosedError) {
+          sink.addError(error, stackTrace);
+        }
+      },
       handleData: (snapshot, sink) {
         if (hasPrevious && _objectsEqual(previous, snapshot)) {
           previous = snapshot;
@@ -343,6 +350,13 @@ final class CindelTypedCollection<T> {
   StreamTransformer<List<T>, List<T>> _distinctCollectionSnapshots() {
     List<T>? previous;
     return StreamTransformer<List<T>, List<T>>.fromHandlers(
+      // asyncMap can resume a buffered change after close retires the handle.
+      // That read ends with the stream; actual storage errors keep their cause.
+      handleError: (error, stackTrace, sink) {
+        if (error is! CindelDatabaseClosedError) {
+          sink.addError(error, stackTrace);
+        }
+      },
       handleData: (snapshot, sink) {
         final last = previous;
         if (last != null && _objectListsEqual(last, snapshot)) {

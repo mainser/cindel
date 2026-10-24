@@ -72,11 +72,29 @@ final class CindelGenerator extends GeneratorForAnnotation<Collection> {
     }
 
     final collection = _CollectionInfo.from(element, annotation);
-    return _emitCollection(collection);
+    // Helpers belong to the library, even when several collections reach the
+    // same embedded type. Use declaration order, not generator instance state.
+    final emittedEmbedded = <String>{};
+    for (final other in element.library.classes) {
+      if (other == element) break;
+      final value = _collectionChecker.firstAnnotationOf(other);
+      if (value != null) {
+        emittedEmbedded.addAll(
+          _CollectionInfo.from(
+            other,
+            ConstantReader(value),
+          ).embeddedTypes.map((type) => type.dartName),
+        );
+      }
+    }
+    return _emitCollection(collection, emittedEmbedded);
   }
 }
 
-String _emitCollection(_CollectionInfo collection) {
+String _emitCollection(
+  _CollectionInfo collection,
+  Set<String> emittedEmbedded,
+) {
   final buffer = StringBuffer()
     ..writeln('// ignore_for_file: non_constant_identifier_names')
     ..writeln()
@@ -437,7 +455,9 @@ String _emitCollection(_CollectionInfo collection) {
   }
 
   for (final embedded in collection.embeddedTypes) {
-    _emitEmbeddedHelpers(buffer, embedded);
+    if (emittedEmbedded.add(embedded.dartName)) {
+      _emitEmbeddedHelpers(buffer, embedded);
+    }
   }
 
   return buffer.toString();
@@ -1921,7 +1941,9 @@ $writeValue      }
       }
       return '($expression ?? $emptyListExpression).cast<${element.dartTypeWithoutNull}>()';
     }
-    if (element.binaryType == 'string' && !element.isNullable) {
+    if (element.kind == _PersistedTypeKind.primitive &&
+        element.binaryType == 'string' &&
+        !element.isNullable) {
       if (isNullable) {
         return '''
 reader.readStringList(documentIndex, $index)
@@ -1955,7 +1977,26 @@ reader.readStringList(documentIndex, $index) ?? const <String>[]
         : 'listReader.$method(0, i) ?? $storedDefault';
     final readValue = element.kind == _PersistedTypeKind.primitive
         ? storedValue
-        : element.fromStoredExpression('($storedValue)');
+        : element.fromStoredExpression(
+            '($storedValue)',
+            castInput: element.isNullable,
+          );
+    if (element.kind != _PersistedTypeKind.primitive) {
+      return '''
+(() {
+  final listReader = reader.readList(documentIndex, $index);
+  if (listReader == null) {
+    return ${isNullable ? 'null' : 'const <${element.dartType}>[]'};
+  }
+  try {
+    return List<${element.dartType}>.generate(
+      listReader.length, (i) => $readValue, growable: true);
+  } finally {
+    listReader.release();
+  }
+})()
+''';
+    }
     if (isNullable) {
       return '''
 (() {
@@ -2488,7 +2529,8 @@ final class _PersistedType {
     if (element == null) {
       throw StateError('Not a list type.');
     }
-    return element.toStoredExpression(expression);
+    // Query parameters are local variables, promoted by the generated null check.
+    return element.toStoredExpression(expression, nullableCast: false);
   }
 
   bool get supportsCaseInsensitiveIndex {
@@ -2596,7 +2638,7 @@ final class _PersistedType {
         '_\$${embeddedInfo!.dartName}ToCindelEmbedded($expression)',
       _PersistedTypeKind.list =>
         '$expression.map((value) => '
-            '${elementType!._toStoredExpressionNonNull('value')})'
+            '${elementType!.toStoredExpression('value', nullableCast: false)})'
             '.toList(growable: false)',
     };
   }
@@ -2621,28 +2663,35 @@ final class _PersistedType {
             '$embeddedExpression)',
       _PersistedTypeKind.list =>
         '$expression?.map((value) => '
-            '${elementType!._toStoredExpressionNonNull('value')})'
+            '${elementType!.toStoredExpression('value', nullableCast: false)})'
             '.toList(growable: false)',
     };
   }
 
-  String fromStoredExpression(String expression) {
-    final decoded = _fromStoredExpressionNonNull(expression);
+  String fromStoredExpression(String expression, {bool castInput = true}) {
+    final decoded = _fromStoredExpressionNonNull(
+      expression,
+      castInput: castInput,
+    );
     if (!isNullable) {
       return decoded;
     }
     return '$expression == null ? null : $decoded';
   }
 
-  String _fromStoredExpressionNonNull(String expression) {
+  String _fromStoredExpressionNonNull(
+    String expression, {
+    required bool castInput,
+  }) {
+    final integerValue = castInput ? '$expression as int' : expression;
     return switch (kind) {
       _PersistedTypeKind.primitive => '$expression as $dartType',
       _PersistedTypeKind.dateTime =>
-        'DateTime.fromMicrosecondsSinceEpoch($expression as int, isUtc: true)',
-      _PersistedTypeKind.duration =>
-        'Duration(microseconds: $expression as int)',
+        'DateTime.fromMicrosecondsSinceEpoch($integerValue, isUtc: true)',
+      _PersistedTypeKind.duration => 'Duration(microseconds: $integerValue)',
       _PersistedTypeKind.enumeration => enumInfo!._fromStoredExpression(
         expression,
+        castInput: castInput,
       ),
       _PersistedTypeKind.embedded =>
         '_\$${embeddedInfo!.dartName}FromCindelEmbedded('
@@ -2650,7 +2699,7 @@ final class _PersistedType {
       _PersistedTypeKind.list =>
         '($expression as List<Object?>)'
             '.map((value) => '
-            '${elementType!._fromStoredExpressionNonNull('value')})'
+            '${elementType!.fromStoredExpression('value')})'
             '.toList(growable: false)',
     };
   }
@@ -2803,10 +2852,12 @@ final class _EnumInfo {
     };
   }
 
-  String _fromStoredExpression(String expression) {
+  String _fromStoredExpression(String expression, {required bool castInput}) {
+    final stringValue = castInput ? '$expression as String' : expression;
+    final integerValue = castInput ? '$expression as int' : expression;
     return switch (strategy) {
-      CindelEnumType.name => '$enumType.values.byName($expression as String)',
-      CindelEnumType.ordinal => '$enumType.values[$expression as int]',
+      CindelEnumType.name => '$enumType.values.byName($stringValue)',
+      CindelEnumType.ordinal => '$enumType.values[$integerValue]',
       CindelEnumType.value =>
         '$enumType.values.firstWhere((enumValue) => '
             'enumValue.$valueField == $expression)',

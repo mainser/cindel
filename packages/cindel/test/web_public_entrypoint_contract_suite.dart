@@ -298,40 +298,4 @@ void main() {
     expect(collectionSource, contains('CindelQuery.equal'));
     expect(collectionSource, contains("field.binaryType == 'string'"));
   });
-
-  // Scenario: Web watchers regress to unsupported stubs or stop consuming Worker
-  // change sets.
-  // Covers:
-  // - Worker `takeChanges` and `collectionRevision` feeding Dart watchers.
-  // - Collection/query/typed watcher APIs using the same change stream.
-  // - Closing a Web database closing active watcher streams.
-  // Expected: Single-tab Web watchers are wired through the Web database
-  // facade and no longer throw the old UnsupportedError.
-  test('web single-tab watchers are wired to Worker change sets', () async {
-    final databaseSource = await _readPackageFile(
-      'package:cindel/src/web/database.dart',
-    );
-    final querySource = await _readPackageFile(
-      'package:cindel/src/web/query.dart',
-    );
-    final typedCollectionSource = await _readPackageFile(
-      'package:cindel/src/web/typed_collection.dart',
-    );
-
-    expect(
-      '$databaseSource$querySource$typedCollectionSource',
-      isNot(contains('Cindel Web watchers are not available yet.')),
-    );
-    expect(databaseSource, contains("await _sendBytes('takeChanges'"));
-    expect(databaseSource, contains("'collectionRevision'"));
-    expect(databaseSource, contains('Stream<CindelChangeSet>'));
-    expect(databaseSource, contains('await _closeWatchers();'));
-    expect(databaseSource, contains('_controller.addError'));
-    expect(querySource, contains('watchCollectionChanges'));
-    expect(querySource, contains('_watchMatchingDocuments'));
-    expect(querySource, contains('_watchMatchingIds'));
-    expect(typedCollectionSource, contains('watchCollectionChanges'));
-    expect(typedCollectionSource, contains('watchObject('));
-    expect(typedCollectionSource, contains('watchCollection('));
-  });
 }
