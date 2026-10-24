@@ -78,9 +78,35 @@ final class CindelBackupReport {
 /// Typed collection included in a Cindel backup archive.
 final class CindelBackupCollection<T> {
   /// Creates backup access for a generated [schema].
-  CindelBackupCollection(this.schema);
+  CindelBackupCollection(this.schema)
+    : _typed = schema.withType<_TypedBackupCollection<dynamic>>(
+        <S>(schema) => _TypedBackupCollection<S>(schema),
+      );
 
   /// Generated collection schema.
+  final CindelCollectionSchema<T> schema;
+
+  // The public wrapper may infer dynamic from the backup's heterogeneous list.
+  // Dispatch through the schema itself so all model callbacks keep its real T.
+  final _TypedBackupCollection<dynamic> _typed;
+
+  String get _name => schema.name;
+  Map<String, Object?> get _manifest => _typed._manifest;
+
+  Stream<_BackupDocumentRecord> _exportPage(
+    CindelDatabase database,
+    List<int> ids,
+  ) => _typed._exportPage(database, ids);
+
+  Future<void> _stage(
+    CindelDatabase database,
+    List<_BackupDocumentRecord> records,
+  ) => _typed._stage(database, records);
+}
+
+final class _TypedBackupCollection<T> {
+  _TypedBackupCollection(this.schema);
+
   final CindelCollectionSchema<T> schema;
 
   String get _name => schema.name;

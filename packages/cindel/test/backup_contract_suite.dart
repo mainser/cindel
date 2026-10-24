@@ -6,12 +6,14 @@ import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
 import 'backup_contract_fixture.dart';
+import 'backup_typing_suite.dart' as backup_typing;
 import 'dart_distinct_fixture.dart';
 import 'schema_generation_fixture.dart' show Recipient, RecipientMetadata;
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 
 void main({bool includeSameDirectoryHandles = true}) {
+  backup_typing.main();
   group('Cindel backup atomic contract', () {
     final collections = [CindelBackupCollection(backupNodeSchema)];
 

@@ -370,6 +370,12 @@ final class CindelCollectionSchema<T> {
 
   /// Binds generated link fields after an object is hydrated or opened.
   final CindelBindLinks<T>? bindLinks;
+
+  /// Runs [action] with this schema's concrete model type, even when the schema
+  /// is held in a heterogeneous collection as `CindelCollectionSchema<dynamic>`.
+  /// This lets adapters retain typed callbacks without widening their inputs.
+  R withType<R>(R Function<S>(CindelCollectionSchema<S> schema) action) =>
+      action<T>(this);
 }
 
 /// Generated metadata for a persisted field.
