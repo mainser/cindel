@@ -135,6 +135,49 @@ class ApplePackagingTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 check_success(output)
 
+    @unittest.skipUnless(shutil.which("dart"), "Dart is required for the smoke output regression")
+    def test_smoke_markers_bypass_print_and_flush_before_exit(self):
+        helper = (ROOT / "tool/prebuilt/apple/smoke_output.dart").as_uri()
+        with tempfile.TemporaryDirectory(prefix="cindel smoke output ") as temp:
+            script = Path(temp) / "output.dart"
+            script.write_text(
+                "import 'dart:async';\nimport 'dart:io';\n"
+                f"import '{helper}';\n" + r'''
+Future<void> main(List<String> args) async {
+  await runZoned(() async {
+    final failed = args.single == 'failure';
+    await writeSmokeOutput('CINDEL_APPLE_METRIC transport');
+    final marker = failed
+        ? 'CINDEL_APPLE_FAIL controlled failure'
+        : 'CINDEL_APPLE_PASS ABI=39';
+    await writeSmokeOutput('${'x' * (128 * 1024)}\n$marker', failure: failed);
+    exit(failed ? 1 : 0);
+  }, zoneSpecification: ZoneSpecification(
+    // Model Flutter iOS routing print() to syslog instead of process stdio.
+    print: (self, parent, zone, message) {},
+  ));
+}
+''', encoding="utf-8")
+            for failed in (False, True):
+                with self.subTest(failure=failed):
+                    result = subprocess.run(
+                        [shutil.which("dart"), str(script), "failure" if failed else "success"],
+                        capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, int(failed), result.stdout + result.stderr)
+                    marker = "CINDEL_APPLE_FAIL controlled failure" if failed else "CINDEL_APPLE_PASS ABI=39"
+                    output = result.stderr if failed else result.stdout
+                    expected = "x" * (128 * 1024) + "\n" + marker + "\n"
+                    self.assertEqual(result.stdout if failed else result.stderr,
+                                     "CINDEL_APPLE_METRIC transport\n" if failed else "")
+                    expected_output = expected if failed else "CINDEL_APPLE_METRIC transport\n" + expected
+                    self.assertEqual(len(output), len(expected_output))
+                    self.assertTrue(output == expected_output, "Smoke output was not preserved")
+                    if failed:
+                        with self.assertRaises(RuntimeError):
+                            check_success(result.stdout + result.stderr)
+                    else:
+                        check_success(result.stdout + result.stderr)
+
     def test_consumer_keeps_runtime_dependencies_without_workspace_dev_constraints(self):
         with tempfile.TemporaryDirectory() as source_temp, tempfile.TemporaryDirectory() as destination_temp:
             source, destination = Path(source_temp), Path(destination_temp)
@@ -150,6 +193,8 @@ class ApplePackagingTests(unittest.TestCase):
             fixture = source / "tool/prebuilt/apple/smoke.dart"
             fixture.parent.mkdir(parents=True)
             fixture.write_text("void main() {}")
+            output_fixture = fixture.with_name("smoke_output.dart")
+            output_fixture.write_text("// Smoke output fixture\n")
             (destination / "app/lib").mkdir(parents=True)
             with patch("prepare_apple_smoke.ROOT", source):
                 prepare(destination)
@@ -160,6 +205,7 @@ class ApplePackagingTests(unittest.TestCase):
                 self.assertNotIn("resolution:", pubspec)
                 self.assertNotIn("dev_dependencies:", pubspec)
             self.assertIn("build_native_assets: false", (destination / "app/pubspec.yaml").read_text())
+            self.assertEqual((destination / "app/lib/smoke_output.dart").read_text(), output_fixture.read_text())
 
 
 if __name__ == "__main__":

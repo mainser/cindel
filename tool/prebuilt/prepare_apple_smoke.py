@@ -53,6 +53,7 @@ flutter:
             "  config:\n"
             f"    enable-swift-package-manager: {str(manager == 'swiftpm').lower()}"), encoding="utf-8")
     shutil.copyfile(ROOT / "tool/prebuilt/apple/smoke.dart", app / "lib/main.dart")
+    shutil.copyfile(ROOT / "tool/prebuilt/apple/smoke_output.dart", app / "lib/smoke_output.dart")
     (app / "analysis_options.yaml").unlink(missing_ok=True)
     # The generated template test refers to the default counter app.
     shutil.rmtree(app / "test", ignore_errors=True)

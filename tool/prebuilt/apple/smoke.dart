@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:cindel/cindel.dart';
 import 'package:cindel/src/native/bindings.dart';
 
+import 'smoke_output.dart';
+
 // This fixture exercises the same typed serialization hooks as generated code,
 // without bringing the generator or its dev dependencies into a consumer app.
 final class AppleRow {
@@ -103,7 +105,7 @@ Future<void> main() async {
           await db.typedCollection(schema).get(2) == null,
           '$backend delete',
         );
-        print(
+        await writeSmokeOutput(
           'CINDEL_APPLE_METRIC $backend ${timer.elapsedMicroseconds}us RSS=${ProcessInfo.currentRss}',
         );
       } finally {
@@ -111,10 +113,12 @@ Future<void> main() async {
         await directory.delete(recursive: true);
       }
     }
-    print('CINDEL_APPLE_PASS ABI=39 MDBX SQLite CRUD rollback reopen all-FFI');
+    await writeSmokeOutput(
+      'CINDEL_APPLE_PASS ABI=39 MDBX SQLite CRUD rollback reopen all-FFI',
+    );
     exit(0);
   } catch (error, stack) {
-    print('CINDEL_APPLE_FAIL $error\n$stack');
+    await writeSmokeOutput('CINDEL_APPLE_FAIL $error\n$stack', failure: true);
     exit(1);
   }
 }
