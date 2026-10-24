@@ -6,8 +6,10 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
+import zipfile
 
 from apple_symbols import ROOT, ffi_symbols
 from verify_native import verify
@@ -85,6 +87,37 @@ def dump_manifest(package):
                           "--package-path", str(package), "dump-package"))
 
 
+def check_macos_archive(archive):
+    # Check the transport itself, before any extraction could repair its links.
+    with zipfile.ZipFile(archive) as package:
+        prefix = "CindelNative.xcframework"
+        info = plistlib.loads(package.read(f"{prefix}/Info.plist"))
+        for library in info["AvailableLibraries"]:
+            framework = f'{prefix}/{library["LibraryIdentifier"]}/{library["LibraryPath"]}'
+            links = {"Versions/Current": "A"}
+            links.update({name: f"Versions/Current/{name}"
+                          for name in ("CindelNative", "Headers", "Modules", "Resources")})
+            for name, target in links.items():
+                entry = f"{framework}/{name}"
+                if (not stat.S_ISLNK(package.getinfo(entry).external_attr >> 16)
+                        or package.read(entry).decode() != target):
+                    raise RuntimeError(f"macOS archive must preserve symbolic link {entry} -> {target}")
+            for name in ("CindelNative", "Headers/CindelNative.h", "Modules/module.modulemap",
+                         "Resources/Info.plist"):
+                package.getinfo(f"{framework}/Versions/A/{name}")
+
+
+def verify_macos_archive(archive):
+    check_macos_archive(archive)
+    with tempfile.TemporaryDirectory(prefix="cindel-macos-archive-") as temp:
+        # Unlike ZipFile.extractall, unzip preserves Unix symbolic links.
+        run("unzip", "-q", str(archive), "-d", temp)
+        binaries = verify_bundle(Path(temp) / "CindelNative.xcframework", {
+            ("macos", "", frozenset(["arm64", "x86_64"])),
+        })
+        verify(binaries[0])
+
+
 def verify_manifests():
     for platform in ("ios", "macos"):
         package = LIBS / platform / "cindel_flutter_libs"
@@ -129,6 +162,7 @@ def main():
     })
     verify(binaries[0])
     verify(LIBS / "macos/libcindel_native.dylib")
+    verify_macos_archive(LIBS / "macos/cindel_flutter_libs/CindelNative.xcframework.zip")
     print("PASS Apple manifests, slices, headers, exports and host ABI/database opening")
 
 

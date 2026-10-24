@@ -94,7 +94,7 @@ Current packaged binary locations:
 - Android: `android/src/main/jniLibs/<abi>/libcindel_native.so`
 - Linux: `linux/libcindel_native.so`
 - iOS: `ios/cindel_flutter_libs/cindel.xcframework` (static).
-- macOS: `macos/cindel_flutter_libs/CindelNative.xcframework` (dynamic).
+- macOS: `macos/cindel_flutter_libs/CindelNative.xcframework.zip` (dynamic; preserves framework symlinks through Pub). SwiftPM consumes the ZIP directly; CocoaPods extracts it during installation.
 - Web: `web/cindel_worker.js`, `web/pkg/cindel_native.js`, and
   `web/pkg/cindel_native_bg.wasm`
 - Windows: `windows/cindel_native.dll`

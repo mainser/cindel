@@ -12,5 +12,10 @@ Pod::Spec.new do |s|
   s.dependency 'FlutterMacOS'
   s.platform = :osx, '10.15'
   s.swift_version = '5.3'
-  s.vendored_frameworks = 'cindel_flutter_libs/CindelNative.xcframework'
+  # Flutter installs this pod via :path, which skips CocoaPods prepare_command.
+  unless system('bash', File.join(__dir__, 'prepare_framework.sh'))
+    raise 'Failed to extract the bundled CindelNative XCFramework'
+  end
+  s.preserve_paths = 'cindel_flutter_libs/CindelNative.xcframework.zip', 'prepare_framework.sh'
+  s.vendored_frameworks = 'build/CindelNative.xcframework'
 end

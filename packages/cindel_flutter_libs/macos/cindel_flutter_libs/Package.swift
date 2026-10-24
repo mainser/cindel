@@ -14,7 +14,7 @@ let package = Package(
     dependencies: hasFlutterPackage
         ? [.package(name: "FlutterFramework", path: "../FlutterFramework")] : [],
     targets: [
-        .binaryTarget(name: "CindelNative", path: "CindelNative.xcframework"),
+        .binaryTarget(name: "CindelNative", path: "CindelNative.xcframework.zip"),
         .target(
             name: "cindel_flutter_libs",
             dependencies: [.target(name: "CindelNative")] + (hasFlutterPackage

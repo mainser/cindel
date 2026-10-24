@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 
 from prepare_apple_smoke import prepare
-from verify_apple import check_application_symbols
+from verify_apple import check_application_symbols, verify_macos_archive
 
 
 def run(*args, cwd=None, timeout=900, capture=False):
@@ -32,8 +32,8 @@ def check_success(output):
 
 
 def round_trip_plugin_archive(destination):
-    # Exercise pub's actual file selection and symlink transport, not merely a
-    # directory copy. This writes a local archive only; it never uploads to pub.
+    # Exercise Pub's actual file selection and ZIP transport, not merely a
+    # directory copy. This writes a local archive only; it never uploads to Pub.
     archive = destination / "cindel_flutter_libs.tar.gz"
     run("dart", "pub", "publish", f"--to-archive={archive}", "--skip-validation",
         cwd=destination / "packages/cindel_flutter_libs")
@@ -44,15 +44,17 @@ def round_trip_plugin_archive(destination):
             "ios/cindel_flutter_libs/Package.swift",
             "macos/cindel_flutter_libs/Package.swift",
             "ios/cindel_flutter_libs/cindel.xcframework/Info.plist",
-            "macos/cindel_flutter_libs/CindelNative.xcframework/Info.plist",
+            "macos/cindel_flutter_libs/CindelNative.xcframework.zip",
+            "macos/prepare_framework.sh",
             "ios/cindel_flutter_libs/Sources/cindel_flutter_libs/CindelNativeRetention.c",
         }
         if not required.issubset(names) or "macos/libcindel_native.dylib" in names:
             raise RuntimeError(f"Invalid published Apple layout: missing {required - names}")
+        loose_framework = "macos/cindel_flutter_libs/CindelNative.xcframework"
+        if any(name == loose_framework or name.startswith(loose_framework + "/") for name in names):
+            raise RuntimeError("Pub package must contain the macOS ZIP, not the loose XCFramework")
         package.extractall(published, filter="data")
-    framework = next((published / "macos").rglob("CindelNative.framework"))
-    if not (framework / "CindelNative").is_file() or not (framework / "Versions/Current").is_symlink():
-        raise RuntimeError("pub archive did not preserve the versioned macOS framework")
+    verify_macos_archive(published / "macos/cindel_flutter_libs/CindelNative.xcframework.zip")
     app_pubspec = destination / "app/pubspec.yaml"
     app_pubspec.write_text(app_pubspec.read_text().replace(
         "path: ../packages/cindel_flutter_libs", "path: ../published_libs"), encoding="utf-8")

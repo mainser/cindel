@@ -44,7 +44,8 @@ jobs:
         run: |
           tar -czf "${RUNNER_TEMP}/apple-validation.tar.gz" \
             packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework \
-            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework
+            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework \
+            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework.zip
       - uses: actions/upload-artifact@v7
         with:
           name: cindel-apple-validation

@@ -276,6 +276,7 @@ jobs:
           tar -czf release-artifacts/cindel-apple-packages.tar.gz \
             packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework \
             packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework \
+            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework.zip \
             packages/cindel_flutter_libs/macos/libcindel_native.dylib
 
       - name: Upload Apple binaries
@@ -420,6 +421,7 @@ jobs:
           test -f packages/cindel_flutter_libs/windows/cindel_native.dll
           test -d packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework
           test -d packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework
+          test -f packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework.zip
           test -f packages/cindel_flutter_libs/web/cindel_worker.js
           test -f packages/cindel_flutter_libs/web/pkg/cindel_native.js
           test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm

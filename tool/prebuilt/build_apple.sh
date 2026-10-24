@@ -36,6 +36,7 @@ require_command lipo
 require_command xcodebuild
 require_command xcrun
 require_command python3
+require_command ditto
 
 python3 "${SCRIPT_DIR}/apple_symbols.py" --check
 
@@ -137,5 +138,11 @@ codesign --force --sign - "${FRAMEWORK}"
 rm -rf "${MACOS_PACKAGE}/CindelNative.xcframework"
 xcodebuild -create-xcframework -framework "${FRAMEWORK}" \
   -output "${MACOS_PACKAGE}/CindelNative.xcframework"
+
+# Pub dereferences loose symlinks. Keep the versioned framework intact inside
+# a local ZIP, consumed directly by SwiftPM and extracted by CocoaPods.
+rm -f "${MACOS_PACKAGE}/CindelNative.xcframework.zip"
+ditto -c -k --keepParent --norsrc "${MACOS_PACKAGE}/CindelNative.xcframework" \
+  "${MACOS_PACKAGE}/CindelNative.xcframework.zip"
 
 echo "Wrote iOS/macOS XCFrameworks and standalone macOS dylib (ABI 39, MDBX and SQLite)"

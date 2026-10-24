@@ -2,5 +2,7 @@ ios/build/
 macos/build/
 # The Flutter package embeds the framework; direct dylib downloads remain in GitHub releases.
 macos/libcindel_native.dylib
+# Distribute the ZIP so Pub cannot turn framework symlinks into duplicate files.
+macos/cindel_flutter_libs/CindelNative.xcframework/
 **/.build/
 **/.swiftpm/
