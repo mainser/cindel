@@ -1,0 +1,84 @@
+name: Apple package validation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: apple-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN: 1.90.0
+
+jobs:
+  apple-binaries:
+    name: Build and inspect Apple integration binaries
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Inspect Xcode and select Rust
+        run: |
+          xcodebuild -version
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-apple
+          workspaces: packages/cindel/native -> target
+      - name: Check packaging regressions and build Apple binaries
+        run: |
+          python -m unittest discover -s tool/prebuilt -p 'test_apple*.py' -v
+          bash tool/prebuilt/build_apple.sh
+          python tool/prebuilt/verify_apple.py
+      - name: Archive integration binaries
+        run: |
+          tar -czf "${RUNNER_TEMP}/apple-validation.tar.gz" \
+            packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework \
+            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cindel-apple-validation
+          path: ${{ runner.temp }}/apple-validation.tar.gz
+          if-no-files-found: error
+
+  apple-consumers:
+    name: Apple / Flutter ${{ matrix.flutter }} / ${{ matrix.manager }}
+    needs: apple-binaries
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Check both the declared minimum and the current validation SDK.
+        flutter: ['3.41.0', '3.47.8']
+        manager: [swiftpm, cocoapods]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ matrix.flutter }}
+          cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: cindel-apple-validation
+          path: ${{ runner.temp }}/cindel-apple-validation
+      - name: Restore binaries and run isolated consumers
+        run: |
+          xcodebuild -version
+          tar -xzf "${RUNNER_TEMP}/cindel-apple-validation/apple-validation.tar.gz"
+          # The smoke script creates a local pub archive; it never publishes.
+          python tool/prebuilt/run_apple_smoke.py --manager "${{ matrix.manager }}"
