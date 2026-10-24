@@ -41,9 +41,8 @@ Future<void> main(List<String> arguments) async {
       'name: cindel_release_smoke\npublish_to: none\n'
       'environment:\n  sdk: ^3.11.0\n',
     );
-    await File(
-      '${tools.path}/web_runtime_smoke_test.dart',
-    ).copy('${stage.path}/web_runtime_smoke_test.dart');
+    await File('${tools.path}/web_runtime_smoke_test.dart')
+        .copy('${stage.path}/web_runtime_smoke_test.dart');
     final stagedRuntime = Directory(
       '${stage.path}/assets/packages/cindel_flutter_libs/web',
     );

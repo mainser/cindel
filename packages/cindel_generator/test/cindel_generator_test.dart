@@ -63,9 +63,8 @@ class First { Id dbId = autoIncrement; late Leaf value; }
 class Second { Id dbId = autoIncrement; late List<Leaf?> value; }
 ''');
       expect(
-        RegExp(
-          r'Map<String, Object\?> _\$LeafToCindelEmbedded\(',
-        ).allMatches(generated),
+        RegExp(r'Map<String, Object\?> _\$LeafToCindelEmbedded\(')
+            .allMatches(generated),
         hasLength(1),
       );
       expect(generated, contains('value == null ? null'));
@@ -183,51 +182,48 @@ class Model {
     // - Optional, anyOf, and allOf query combinators.
     // Expected: Generated query helpers expose the complete typed query API for
     // the model without requiring manual document predicates.
-    test(
-      'generates query helpers for indexes, filters, lists, and embedded objects.',
-      () async {
-        final generated = await _generate(_richModelSource);
+    test('generates query helpers for indexes, filters, lists, and embedded objects.', () async {
+      final generated = await _generate(_richModelSource);
 
-        _expectAll(generated, [
-          'final class RichUserQueryWhere',
-          'CindelQuery<RichUser> emailEqualTo(String value)',
-          'CindelQuery<RichUser> emailStartsWith(String value)',
-          'CindelQuery<RichUser> emailBetween(String? lower, String? upper)',
-          'CindelQuery<RichUser> emailActiveEqualTo(',
-          'CindelQuery<RichUser> tagsContains(String value)',
-          'CindelQuery<RichUser> bioWordEqualTo(String word)',
-          'CindelQuery<RichUser> bioWordStartsWith(String prefix)',
-          'CindelQuery<RichUser> bioWordsContain(String word)',
-          'Future<void> putByEmail(RichUser object)',
-          'Future<void> putAllByEmail(Iterable<RichUser> objects)',
-          'indexName: "email"',
-          'isComposite: false',
-          'Future<void> putByEmailActive(RichUser object)',
-          'Future<void> putAllByEmailActive(Iterable<RichUser> objects)',
-          'indexName: "email_active"',
-          'values: <Object?>[object.email, object.active]',
-          'isComposite: true',
-          'final class RichUserQueryFilter',
-          'CindelQuery<RichUser> optional(',
-          'CindelQuery<RichUser> anyOf<E>(',
-          'CindelQuery<RichUser> allOf<E>(',
-          'CindelQuery<RichUser> tagsElementEqualTo(String value)',
-          'CindelQuery<RichUser> tagsIsEmpty()',
-          'CindelQuery<RichUser> tagsIsNotEmpty()',
-          'CindelQuery<RichUser> tagsLengthEqualTo(int length)',
-          'CindelQuery<RichUser> tagsLengthLessThan(int length, {bool include = false})',
-          'CindelQuery<RichUser> tagsLengthGreaterThan(',
-          'CindelQuery<RichUser> tagsLengthBetween(',
-          'CindelQuery<RichUser> recipient(',
-          'CindelQuery<RichUser> recipientsElement(',
-          'final class RichUserRecipientCindelEmbeddedFilter',
-          'CindelFilterPredicate addressEqualTo(String? value)',
-          'CindelFilterPredicate metadata(',
-          'final class RichUserRecipientMetadataCindelEmbeddedFilter',
-          'CindelFilterPredicate labelsLengthBetween(',
-        ]);
-      },
-    );
+      _expectAll(generated, [
+        'final class RichUserQueryWhere',
+        'CindelQuery<RichUser> emailEqualTo(String value)',
+        'CindelQuery<RichUser> emailStartsWith(String value)',
+        'CindelQuery<RichUser> emailBetween(String? lower, String? upper)',
+        'CindelQuery<RichUser> emailActiveEqualTo(',
+        'CindelQuery<RichUser> tagsContains(String value)',
+        'CindelQuery<RichUser> bioWordEqualTo(String word)',
+        'CindelQuery<RichUser> bioWordStartsWith(String prefix)',
+        'CindelQuery<RichUser> bioWordsContain(String word)',
+        'Future<void> putByEmail(RichUser object)',
+        'Future<void> putAllByEmail(Iterable<RichUser> objects)',
+        'indexName: "email"',
+        'isComposite: false',
+        'Future<void> putByEmailActive(RichUser object)',
+        'Future<void> putAllByEmailActive(Iterable<RichUser> objects)',
+        'indexName: "email_active"',
+        'values: <Object?>[object.email, object.active]',
+        'isComposite: true',
+        'final class RichUserQueryFilter',
+        'CindelQuery<RichUser> optional(',
+        'CindelQuery<RichUser> anyOf<E>(',
+        'CindelQuery<RichUser> allOf<E>(',
+        'CindelQuery<RichUser> tagsElementEqualTo(String value)',
+        'CindelQuery<RichUser> tagsIsEmpty()',
+        'CindelQuery<RichUser> tagsIsNotEmpty()',
+        'CindelQuery<RichUser> tagsLengthEqualTo(int length)',
+        'CindelQuery<RichUser> tagsLengthLessThan(int length, {bool include = false})',
+        'CindelQuery<RichUser> tagsLengthGreaterThan(',
+        'CindelQuery<RichUser> tagsLengthBetween(',
+        'CindelQuery<RichUser> recipient(',
+        'CindelQuery<RichUser> recipientsElement(',
+        'final class RichUserRecipientCindelEmbeddedFilter',
+        'CindelFilterPredicate addressEqualTo(String? value)',
+        'CindelFilterPredicate metadata(',
+        'final class RichUserRecipientMetadataCindelEmbeddedFilter',
+        'CindelFilterPredicate labelsLengthBetween(',
+      ]);
+    });
 
     // Scenario: A collection has no indexed or composite-indexed fields.
     // Covers:
@@ -256,30 +252,27 @@ class Model {
     // - Embedded object and embedded list mapping.
     // Expected: Generated conversion code is explicit and deterministic for
     // every supported persisted value shape.
-    test(
-      'generates conversion code for enums, date/time, duration, and embedded lists.',
-      () async {
-        final generated = await _generate(_richModelSource);
+    test('generates conversion code for enums, date/time, duration, and embedded lists.', () async {
+      final generated = await _generate(_richModelSource);
 
-        _expectAll(generated, [
-          '"createdAt": object.createdAt.microsecondsSinceEpoch',
-          'object.createdAt = DateTime.fromMicrosecondsSinceEpoch(',
-          '"sessionLength": object.sessionLength?.inMicroseconds',
-          'object.sessionLength = document["sessionLength"] == null',
-          '"status": object.status.index',
-          'UserStatus.values[document["status"] as int]',
-          '"plan": object.plan.code',
-          'UserPlan.values.firstWhere(',
-          '(enumValue) => enumValue.code == document["plan"],',
-          '_\$RecipientToCindelEmbedded(',
-          'object.recipient as Recipient',
-          ': _\$RecipientFromCindelEmbedded(',
-          '(document["recipient"] as Map).cast<String, Object?>(),',
-          '_\$RecipientToCindelEmbedded(value)',
-          '(value as Map).cast<String, Object?>(),',
-        ]);
-      },
-    );
+      _expectAll(generated, [
+        '"createdAt": object.createdAt.microsecondsSinceEpoch',
+        'object.createdAt = DateTime.fromMicrosecondsSinceEpoch(',
+        '"sessionLength": object.sessionLength?.inMicroseconds',
+        'object.sessionLength = document["sessionLength"] == null',
+        '"status": object.status.index',
+        'UserStatus.values[document["status"] as int]',
+        '"plan": object.plan.code',
+        'UserPlan.values.firstWhere(',
+        '(enumValue) => enumValue.code == document["plan"],',
+        '_\$RecipientToCindelEmbedded(',
+        'object.recipient as Recipient',
+        ': _\$RecipientFromCindelEmbedded(',
+        '(document["recipient"] as Map).cast<String, Object?>(),',
+        '_\$RecipientToCindelEmbedded(value)',
+        '(value as Map).cast<String, Object?>(),',
+      ]);
+    });
 
     // Scenario: The generator emits native document readers and writers for
     // values that can use Cindel's typed native row path.
@@ -371,22 +364,19 @@ class Model {
     // - Generated extension getter naming.
     // Expected: Generated code calls the positional constructor and derives the
     // default collection accessor from the class name.
-    test(
-      'supports positional constructors and default collection names.',
-      () async {
-        final generated = await _generate(_positionalConstructorSource);
+    test('supports positional constructors and default collection names.', () async {
+      final generated = await _generate(_positionalConstructorSource);
 
-        _expectAll(generated, [
-          'final PositionalUserSchema = CindelCollectionSchema<PositionalUser>(',
-          'name: "positionalUser"',
-          'CindelTypedCollection<PositionalUser> get positionalUser',
-          'return PositionalUser(',
-          'document["dbId"] as int',
-          'document["name"] as String',
-          'document["active"] as bool',
-        ]);
-      },
-    );
+      _expectAll(generated, [
+        'final PositionalUserSchema = CindelCollectionSchema<PositionalUser>(',
+        'name: "positionalUser"',
+        'CindelTypedCollection<PositionalUser> get positionalUser',
+        'return PositionalUser(',
+        'document["dbId"] as int',
+        'document["name"] as String',
+        'document["active"] as bool',
+      ]);
+    });
 
     // Scenario: A persisted collection name cannot be used directly as a Dart
     // getter identifier.
@@ -670,27 +660,37 @@ class Model {
     // - Embedded and unannotated classes cannot be link targets.
     // - Persisted link names cannot collide with persisted field names.
     // Expected: The build fails before emitting unusable relation metadata.
-    test('rejects invalid link declarations.', () async {
+    test('rejects non-final link fields.', () async {
       await _expectBuildError(
         _nonFinalLinkSource,
         'Link field `authors` must be final.',
       );
+    });
+    test('rejects void link targets.', () async {
       await _expectBuildError(
         _voidLinkTargetSource,
         'Link field `authors` must target a collection type.',
       );
+    });
+    test('rejects enum link targets.', () async {
       await _expectBuildError(
         _enumLinkTargetSource,
         'Link field `status` must target a class.',
       );
+    });
+    test('rejects embedded link targets.', () async {
       await _expectBuildError(
         _embeddedLinkTargetSource,
         'Link field `embedded` cannot target an embedded object.',
       );
+    });
+    test('rejects unannotated link targets.', () async {
       await _expectBuildError(
         _plainClassLinkTargetSource,
         'Link field `plain` must target a @collection class.',
       );
+    });
+    test('rejects conflicting persisted link names.', () async {
       await _expectBuildError(
         _linkNameConflictSource,
         'Persisted link name `author` conflicts with another field.',
@@ -705,19 +705,25 @@ class Model {
     // - Non-primitive enum value fields.
     // Expected: The build fails with diagnostics that identify the invalid enum
     // configuration.
-    test('rejects invalid enum annotations.', () async {
+    test('rejects enum annotations on non-enum fields.', () async {
       await _expectBuildError(
         _enumeratedNonEnumSource,
         '@Enumerated can only be used on enum fields.',
       );
+    });
+    test('rejects value enums without valueField.', () async {
       await _expectBuildError(
         _enumValueWithoutValueFieldSource,
         'uses CindelEnumType.value but does not declare valueField.',
       );
+    });
+    test('rejects unknown enum value fields.', () async {
       await _expectBuildError(
         _enumValueUnknownFieldSource,
         'does not declare a `missing` field.',
       );
+    });
+    test('rejects non-primitive enum value fields.', () async {
       await _expectBuildError(
         _enumValueNonPrimitiveFieldSource,
         'must be int, double, String, or bool.',
