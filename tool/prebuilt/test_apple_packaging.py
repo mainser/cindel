@@ -1,5 +1,6 @@
 """Regression checks for the Apple packaging gates (no Xcode required)."""
 
+import json
 from pathlib import Path
 import plistlib
 import re
@@ -12,10 +13,67 @@ from unittest.mock import patch
 from apple_symbols import OUTPUT, ROOT, ffi_symbols, retention_source
 from prepare_apple_smoke import prepare
 from run_apple_smoke import check_success
-from verify_apple import check_application_symbols, check_symbols, verify_bundle
+from verify_apple import check_application_symbols, check_symbols, verify_bundle, verify_manifests
 
 
 class ApplePackagingTests(unittest.TestCase):
+    def copy_manifests(self, root):
+        for platform in ("ios", "macos"):
+            relative = Path(platform) / "cindel_flutter_libs/Package.swift"
+            destination = root / relative
+            destination.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / "packages/cindel_flutter_libs" / relative, destination)
+
+    def test_manifest_gate_reevaluates_after_flutter_framework_is_created(self):
+        cache = {}
+        observations = []
+
+        def dump_package(*args):
+            package = Path(args[args.index("--package-path") + 1])
+            has_flutter = (package.parent / "FlutterFramework/Package.swift").is_file()
+            # Model SwiftPM's evaluated-manifest cache: changing a sibling file
+            # does not change the package location or manifest contents.
+            key = (package, (package / "Package.swift").read_bytes())
+            uncached = "--manifest-cache" in args and args[args.index("--manifest-cache") + 1] == "none"
+            if uncached or key not in cache:
+                cache[key] = json.dumps({
+                    "products": [{"name": "cindel-flutter-libs"}],
+                    "targets": [{"name": "CindelNative", "type": "binary"}],
+                    "dependencies": [{"name": "FlutterFramework"}] if has_flutter else [],
+                })
+            observations.append(has_flutter)
+            return cache[key]
+
+        with tempfile.TemporaryDirectory() as temp:
+            libs = Path(temp)
+            self.copy_manifests(libs)
+            with patch("verify_apple.LIBS", libs), patch("verify_apple.run", side_effect=dump_package):
+                verify_manifests()
+        self.assertEqual(observations, [False, False, True, False, False, True])
+
+    def test_manifest_gate_still_rejects_missing_flutter_dependency(self):
+        manifest = json.dumps({
+            "products": [{"name": "cindel-flutter-libs"}],
+            "targets": [{"name": "CindelNative", "type": "binary"}],
+            "dependencies": [],
+        })
+        with tempfile.TemporaryDirectory() as temp:
+            libs = Path(temp)
+            self.copy_manifests(libs)
+            with patch("verify_apple.LIBS", libs), patch("verify_apple.run", return_value=manifest):
+                with self.assertRaisesRegex(RuntimeError, "must depend on FlutterFramework"):
+                    verify_manifests()
+
+    @unittest.skipUnless(shutil.which("swift"), "Swift is required to evaluate the real manifests")
+    def test_real_manifests_with_and_without_flutter_framework(self):
+        # dump-package evaluates the real manifests without compiling native
+        # targets, so this also runs before XCFrameworks are built on macOS.
+        with tempfile.TemporaryDirectory() as temp:
+            libs = Path(temp)
+            self.copy_manifests(libs)
+            with patch("verify_apple.LIBS", libs):
+                verify_manifests()
+
     @unittest.skipUnless(shutil.which("clang"), "Clang is required for the optimized link-root check")
     def test_optimized_retention_object_references_every_ffi_symbol(self):
         with tempfile.TemporaryDirectory() as temp:

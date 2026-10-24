@@ -77,10 +77,18 @@ def verify_bundle(path, expected):
     return binaries
 
 
+def dump_manifest(package):
+    # These checks change sibling files without changing Package.swift.
+    # SwiftPM's manifest cache does not track those filesystem reads, so each
+    # fixture state must be evaluated anew. This only affects this verifier.
+    return json.loads(run("swift", "package", "--manifest-cache", "none",
+                          "--package-path", str(package), "dump-package"))
+
+
 def verify_manifests():
     for platform in ("ios", "macos"):
         package = LIBS / platform / "cindel_flutter_libs"
-        manifest = json.loads(run("swift", "package", "--package-path", str(package), "dump-package"))
+        manifest = dump_manifest(package)
         if manifest["products"][0]["name"] != "cindel-flutter-libs":
             raise RuntimeError(f"Incorrect Flutter product name in {package}")
         if not any(target["name"] == "CindelNative" and target["type"] == "binary"
@@ -93,7 +101,7 @@ def verify_manifests():
             copied = root / "cindel_flutter_libs"
             shutil.copytree(package, copied, symlinks=True,
                             ignore=shutil.ignore_patterns(".build", ".swiftpm"))
-            without = json.loads(run("swift", "package", "--package-path", str(copied), "dump-package"))
+            without = dump_manifest(copied)
             if without["dependencies"]:
                 raise RuntimeError("Legacy Flutter must not require a sibling FlutterFramework")
             flutter = root / "FlutterFramework"
@@ -105,7 +113,7 @@ def verify_manifests():
                 'products: [.library(name: "FlutterFramework", targets: ["FlutterFramework"])], '
                 'targets: [.target(name: "FlutterFramework")])\n'
             )
-            with_flutter = json.loads(run("swift", "package", "--package-path", str(copied), "dump-package"))
+            with_flutter = dump_manifest(copied)
             if len(with_flutter["dependencies"]) != 1 or "FlutterFramework" not in json.dumps(with_flutter["dependencies"]):
                 raise RuntimeError("New Flutter integration must depend on FlutterFramework")
 
