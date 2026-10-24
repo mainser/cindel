@@ -12,9 +12,15 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel native document codecs', () {
-    test('does not read a binary count starting with brackets as empty JSON', () {
-      expect(_decodeStringList(Uint8List.fromList([0x5b, 0x5d, 0, 0])), isNull);
-    });
+    test(
+      'does not read a binary count starting with brackets as empty JSON',
+      () {
+        expect(
+          _decodeStringList(Uint8List.fromList([0x5b, 0x5d, 0, 0])),
+          isNull,
+        );
+      },
+    );
     // Scenario: The reusable native byte scratch buffer receives values larger
     // than its current capacity.
     // Covers:

@@ -123,7 +123,10 @@ fn backup_rolls_back_failed_publication_and_rejects_unique_replace_data_loss() {
                 .unwrap();
             let result = restore(&mut storage, &spool);
             assert!(result.is_err(), "{kind:?} replace={replace}: {result:?}");
-            assert!(storage.document_ids_page("nodes", None, 1).unwrap().is_empty());
+            assert!(storage
+                .document_ids_page("nodes", None, 1)
+                .unwrap()
+                .is_empty());
             assert_eq!(storage.migration_version().unwrap(), Some(9));
             assert_eq!(storage.allocate_id("nodes").unwrap(), 1);
             drop(spool);

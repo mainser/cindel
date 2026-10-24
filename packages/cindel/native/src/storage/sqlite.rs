@@ -1,11 +1,11 @@
-#[path = "sqlite_revisions.rs"]
-mod revisions;
 #[path = "sqlite_backup.rs"]
 mod backup;
 #[path = "sqlite_migration.rs"]
 mod migration;
 #[path = "sqlite_relations.rs"]
 mod relations;
+#[path = "sqlite_revisions.rs"]
+mod revisions;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fmt::Write as _;
@@ -1191,10 +1191,7 @@ impl StorageEngine for SqliteStorage {
                 return Ok(());
             }
 
-            let transaction = self
-                .connection
-                .transaction()
-                .map_err(sqlite_diagnostic)?;
+            let transaction = self.connection.transaction().map_err(sqlite_diagnostic)?;
             for collection in &manifest.collections {
                 register_persisted_collection_schema(&transaction, collection)?;
             }
@@ -1257,10 +1254,7 @@ impl StorageEngine for SqliteStorage {
             return Ok(());
         }
 
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
+        let transaction = self.connection.transaction().map_err(sqlite_diagnostic)?;
         for collection in &manifest.collections {
             register_migrated_collection_schema(&transaction, collection)?;
         }
@@ -1334,10 +1328,7 @@ impl StorageEngine for SqliteStorage {
             return rebuild_indexes_on_connection(&self.connection, collection, documents);
         }
 
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
+        let transaction = self.connection.transaction().map_err(sqlite_diagnostic)?;
         rebuild_indexes_on_connection(&transaction, collection, documents)?;
         transaction.commit().map_err(sqlite_diagnostic)
     }
@@ -1430,10 +1421,7 @@ impl StorageEngine for SqliteStorage {
         let schema_field = sqlite_schema_field(&schema, field)?;
         let (sql, params) =
             sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Field(schema_field))?;
-        let mut statement = self
-            .connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = self.connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 sqlite_row_wire_value(row, 0, schema_field)
@@ -1509,10 +1497,7 @@ impl SqliteStorage {
         let schema = self.required_collection_schema(collection)?;
         let fields = native_fields(&schema);
         let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Documents)?;
-        let mut statement = self
-            .connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = self.connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 Ok((
@@ -1524,10 +1509,7 @@ impl SqliteStorage {
         let mut documents = Vec::new();
         for row in rows {
             let (id, document) = row.map_err(sqlite_diagnostic)?;
-            documents.push((
-                u64::try_from(id).map_err(sqlite_diagnostic)?,
-                document,
-            ));
+            documents.push((u64::try_from(id).map_err(sqlite_diagnostic)?, document));
         }
         Ok(documents)
     }
@@ -1547,10 +1529,7 @@ impl SqliteStorage {
         let schema_field = sqlite_schema_field(schema, field)?;
         let (sql, params) =
             sqlite_query_plan_sql(schema, plan, SqliteQuerySelect::Field(schema_field))?;
-        let mut statement = self
-            .connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = self.connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
                 sqlite_row_wire_value(row, 0, schema_field)
@@ -1600,10 +1579,7 @@ impl SqliteStorage {
             "SELECT {column} FROM {} WHERE {SQLITE_ROW_ID_COLUMN} = ?1",
             schema.name
         );
-        let mut statement = self
-            .connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = self.connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let mut values = Vec::new();
         for id in ids {
             let id = sqlite_id(*id)?;
@@ -2229,15 +2205,23 @@ fn sqlite_row_wire_value(
                 .to_string(),
         )),
         ("list" | "object", ValueRef::Text(bytes)) => {
-            let decoded = serde_json::from_slice::<serde_json::Value>(bytes)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
-                    index, value.data_type(), Box::new(error)))?;
-            let wire = json_wire_value(decoded).map_err(|error|
-                rusqlite::Error::FromSqlConversionFailure(index, value.data_type(),
-                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error))))?;
+            let decoded = serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(index, value.data_type(), Box::new(error))
+            })?;
+            let wire = json_wire_value(decoded).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    value.data_type(),
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+                )
+            })?;
             match (sqlite_binary_type(&field.binary_type), &wire) {
                 ("list", WireValue::List(_)) | ("object", WireValue::Object(_)) => Ok(wire),
-                _ => Err(rusqlite::Error::InvalidColumnType(index, field.name.clone(), value.data_type())),
+                _ => Err(rusqlite::Error::InvalidColumnType(
+                    index,
+                    field.name.clone(),
+                    value.data_type(),
+                )),
             }
         }
         (kind @ ("list" | "object"), ValueRef::Blob(bytes)) => {
@@ -2246,10 +2230,15 @@ fn sqlite_row_wire_value(
             } else {
                 decode_object(bytes).map(BinaryValue::Object)
             };
-            decoded.and_then(|value| binary_to_wire_value(Some(&value)))
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
-                    index, value.data_type(),
-                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error))))
+            decoded
+                .and_then(|value| binary_to_wire_value(Some(&value)))
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        index,
+                        value.data_type(),
+                        Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+                    )
+                })
         }
         _ => Err(rusqlite::Error::InvalidColumnType(
             index,
@@ -2276,8 +2265,18 @@ fn json_wire_value(value: serde_json::Value) -> Result<WireValue, String> {
             }
         }
         Value::String(value) => WireValue::String(value),
-        Value::Array(values) => WireValue::List(values.into_iter().map(json_wire_value).collect::<Result<_, _>>()?),
-        Value::Object(values) => WireValue::Object(values.into_iter().map(|(key, value)| Ok((key, json_wire_value(value)?))).collect::<Result<_, String>>()?),
+        Value::Array(values) => WireValue::List(
+            values
+                .into_iter()
+                .map(json_wire_value)
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Object(values) => WireValue::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| Ok((key, json_wire_value(value)?)))
+                .collect::<Result<_, String>>()?,
+        ),
     })
 }
 
@@ -2285,10 +2284,15 @@ fn json_wire_value(value: serde_json::Value) -> Result<WireValue, String> {
 #[test]
 fn json_projection_preserves_exact_integers_and_null_elements() {
     let value = serde_json::from_str(r#"[9007199254740993,null,"a\n",[true,2.5]]"#).unwrap();
-    assert_eq!(json_wire_value(value).unwrap(), WireValue::List(vec![
-        WireValue::Int(9007199254740993), WireValue::Null, WireValue::String("a\n".into()),
-        WireValue::List(vec![WireValue::Bool(true), WireValue::Double(2.5)]),
-    ]));
+    assert_eq!(
+        json_wire_value(value).unwrap(),
+        WireValue::List(vec![
+            WireValue::Int(9007199254740993),
+            WireValue::Null,
+            WireValue::String("a\n".into()),
+            WireValue::List(vec![WireValue::Bool(true), WireValue::Double(2.5)]),
+        ])
+    );
     let overflow = serde_json::from_str("9223372036854775808").unwrap();
     assert!(json_wire_value(overflow).is_err());
 }
@@ -2677,9 +2681,7 @@ fn put_native_documents_cached_chunk_statement(
     let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let sql = native_insert_sql(&schema.name, fields, remainder.len());
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         execute_native_insert_chunk(&mut statement, schema, fields, remainder, &mut max_seen_id)?;
     }
 
@@ -2833,9 +2835,7 @@ fn enforce_native_unique_index(
         sql.push_str(" = ?");
         sql.push_str(&(index + 1).to_string());
     }
-    let mut statement = connection
-        .prepare(&sql)
-        .map_err(sqlite_diagnostic)?;
+    let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
     for (index, (_, value)) in values.iter().enumerate() {
         bind_native_unique_value(&mut statement, index + 1, value)?;
     }
@@ -2910,16 +2910,12 @@ fn delete_native_documents(
     ids: &[u64],
 ) -> Result<Vec<u64>, String> {
     let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
-    let mut statement = connection
-        .prepare(&sql)
-        .map_err(sqlite_diagnostic)?;
+    let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
     let mut deleted_ids = Vec::new();
     for id in ids {
         let id = sqlite_id(*id)?;
         relations::delete_relations(connection, collection, id)?;
-        let deleted = statement
-            .execute(params![id])
-            .map_err(sqlite_diagnostic)?;
+        let deleted = statement.execute(params![id]).map_err(sqlite_diagnostic)?;
         if deleted > 0 {
             deleted_ids.push(id as u64);
         }
@@ -2974,7 +2970,9 @@ fn bind_native_sql_value(
 // Most JSON lists cannot have a valid binary count/table header. Reject those
 // cheaply instead of allocating decoder errors on every existing string write.
 fn has_binary_list_payload(bytes: &[u8]) -> bool {
-    let Some(header) = bytes.get(..4) else { return false; };
+    let Some(header) = bytes.get(..4) else {
+        return false;
+    };
     let count = u32::from_le_bytes(header.try_into().unwrap()) as usize;
     let static_size = count & 0x00ff_ffff;
     let possible_generic = count <= bytes.len().saturating_sub(4) / 8;
@@ -3040,17 +3038,13 @@ fn get_many_generic_documents(
         let mut params = Vec::with_capacity(chunk.len() + 1);
         params.push(Value::Text(collection.to_string()));
         params.extend(chunk.iter().copied().map(Value::Integer));
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let mut rows = statement
             .query(params_from_iter(params.iter()))
             .map_err(sqlite_diagnostic)?;
         while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
             let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
-            let document = row
-                .get::<_, Vec<u8>>(1)
-                .map_err(sqlite_diagnostic)?;
+            let document = row.get::<_, Vec<u8>>(1).map_err(sqlite_diagnostic)?;
             found.insert(id, document);
         }
     }
@@ -3103,16 +3097,13 @@ fn get_many_native_documents(
     let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
     for chunk in sqlite_ids.chunks(batch_limit) {
         let sql = format!("{select}{}", sqlite_placeholders(chunk.len()));
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(sqlite_diagnostic)?;
+        let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let mut rows = statement
             .query(params_from_iter(chunk.iter()))
             .map_err(sqlite_diagnostic)?;
         while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
             let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
-            let document =
-                native_document_from_row(row, &fields).map_err(sqlite_diagnostic)?;
+            let document = native_document_from_row(row, &fields).map_err(sqlite_diagnostic)?;
             found.insert(id, document);
         }
     }
@@ -4092,9 +4083,7 @@ fn register_migrated_collection_schema(
 
     if table_exists(connection, &collection.name)? {
         let sql = format!("DROP TABLE {}", collection.name);
-        connection
-            .execute(&sql, [])
-            .map_err(sqlite_diagnostic)?;
+        connection.execute(&sql, []).map_err(sqlite_diagnostic)?;
     }
     connection
         .execute(
@@ -4315,9 +4304,7 @@ fn create_collection_table(
         sql.push_str(sql_type_for_field(field));
     }
     sql.push(')');
-    connection
-        .execute(&sql, [])
-        .map_err(sqlite_diagnostic)?;
+    connection.execute(&sql, []).map_err(sqlite_diagnostic)?;
     // Bootstrap databases written before typed IDs had persisted counters.
     // Reopening or registering schemas must never lower an existing counter.
     let max_id = connection
@@ -4680,10 +4667,15 @@ mod tests {
     #[test]
     fn errors_sqlite_prepare_keeps_cause_before_rollback() {
         let schema = user_schema(vec![field("value", "int", false, false)]);
-        let mut storage = SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
-        storage.connection.execute_batch("DROP TABLE users").unwrap();
+        let mut storage =
+            SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
+        storage
+            .connection
+            .execute_batch("DROP TABLE users")
+            .unwrap();
         let error = match storage.native_document_cursor("users", &[1]) {
-            Err(error) => error, _ => panic!("missing table must fail preparation"),
+            Err(error) => error,
+            _ => panic!("missing table must fail preparation"),
         };
         assert!(error.contains("no such table: users"), "{error}");
         assert!(error.contains("SQLite code 1"), "{error}");
@@ -4694,21 +4686,45 @@ mod tests {
     #[test]
     fn errors_sqlite_interrupt_after_rows_keeps_code_and_releases_statement() {
         let schema = user_schema(vec![field("value", "int", false, false)]);
-        let mut storage = SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
-        storage.put_many_native_documents("users", &(1..=10).map(|id| NativeDocumentWrite {
-            id, values: vec![NativeDocumentValue::Int(id as i64)],
-        }).collect::<Vec<_>>(), true).unwrap();
-        let plan = WireQueryPlan { source: WireQuerySource::All { dedupe: false }, filter: None,
-            sorts: vec![], distinct_fields: vec![], offset: 0, limit: None };
-        let mut cursor = storage.query_plan_native_cursor("users", &plan).unwrap().unwrap();
+        let mut storage =
+            SqliteStorage::open_with_schemas(":memory:", &schema_manifest(vec![schema])).unwrap();
+        storage
+            .put_many_native_documents(
+                "users",
+                &(1..=10)
+                    .map(|id| NativeDocumentWrite {
+                        id,
+                        values: vec![NativeDocumentValue::Int(id as i64)],
+                    })
+                    .collect::<Vec<_>>(),
+                true,
+            )
+            .unwrap();
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![],
+            distinct_fields: vec![],
+            offset: 0,
+            limit: None,
+        };
+        let mut cursor = storage
+            .query_plan_native_cursor("users", &plan)
+            .unwrap()
+            .unwrap();
         assert!(cursor.next().unwrap());
         assert!(cursor.next().unwrap());
-        unsafe { ffi::sqlite3_interrupt(storage.connection.handle()); }
+        unsafe {
+            ffi::sqlite3_interrupt(storage.connection.handle());
+        }
         let error = cursor.next().unwrap_err();
         assert!(error.contains("SQLite code 9"), "{error}");
         assert!(error.contains("interrupted"), "{error}");
         drop(cursor);
-        assert!(unsafe { ffi::sqlite3_next_stmt(storage.connection.handle(), ptr::null_mut()) }.is_null());
+        assert!(
+            unsafe { ffi::sqlite3_next_stmt(storage.connection.handle(), ptr::null_mut()) }
+                .is_null()
+        );
         storage.begin_write_transaction().unwrap();
         storage.commit_transaction().unwrap();
         assert_eq!(storage.query_plan_count("users", &plan).unwrap(), 10);
@@ -4719,12 +4735,21 @@ mod tests {
         let mut storage = SqliteStorage::open(":memory:").unwrap();
         storage.connection.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE child(id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)").unwrap();
         storage.begin_write_transaction().unwrap();
-        storage.connection.execute("INSERT INTO child VALUES(1)", []).unwrap();
+        storage
+            .connection
+            .execute("INSERT INTO child VALUES(1)", [])
+            .unwrap();
         let error = storage.commit_transaction().unwrap_err();
         assert!(error.contains("SQLite code 787"), "{error}");
         assert!(error.contains("FOREIGN KEY constraint failed"), "{error}");
         storage.rollback_transaction().unwrap();
-        assert_eq!(storage.connection.query_row("SELECT count(*) FROM child", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            storage
+                .connection
+                .query_row("SELECT count(*) FROM child", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
         storage.begin_write_transaction().unwrap();
         storage.commit_transaction().unwrap();
     }

@@ -100,6 +100,7 @@ foreach ($entry in $targets) {
   $env:RUSTFLAGS = $rustFlags
 
   cargo build `
+    --locked `
     --release `
     --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
     --target $($entry.RustTarget)

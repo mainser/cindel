@@ -20,6 +20,7 @@ build_target() {
   export SDKROOT
   SDKROOT="$(xcrun --sdk "${sdk}" --show-sdk-path)"
   cargo build \
+    --locked \
     --release \
     --manifest-path "${NATIVE_DIR}/Cargo.toml" \
     --target "${target}"

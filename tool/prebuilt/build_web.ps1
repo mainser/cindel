@@ -36,6 +36,7 @@ try {
 
   Set-Location $repoRoot
   cargo build `
+    --locked `
     --release `
     --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
     --target $target `

@@ -1,9 +1,9 @@
 mod backup;
 mod migration;
 mod relations;
-use std::cell::{Cell, RefCell};
 use relations::delete_relations;
 use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -3571,24 +3571,40 @@ fn clear_collection_documents(
     let result: Result<(), String> = (|| {
         loop {
             let ids = scan_document_ids_page(transaction, &documents_table, None, 128)?;
-            if ids.is_empty() { break; }
+            if ids.is_empty() {
+                break;
+            }
             delete_many_documents(transaction, tables, collection, &ids)?;
         }
         // Clear any legacy index metadata without retaining all document keys.
         let prefix = encode_collection_key(collection);
         loop {
-            let mut cursor = transaction.cursor(&tables.document_indexes).map_err(|e| e.to_string())?;
+            let mut cursor = transaction
+                .cursor(&tables.document_indexes)
+                .map_err(|e| e.to_string())?;
             let mut keys = Vec::new();
             for row in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&prefix) {
                 let (key, _) = row.map_err(|e| e.to_string())?;
-                if !key.starts_with(&prefix) { break; }
+                if !key.starts_with(&prefix) {
+                    break;
+                }
                 keys.push(key.into_owned());
-                if keys.len() == 128 { break; }
+                if keys.len() == 128 {
+                    break;
+                }
             }
             drop(cursor);
-            if keys.is_empty() { break; }
+            if keys.is_empty() {
+                break;
+            }
             for key in keys {
-                MdbxIndex::delete_document(transaction, tables, collection, decode_key_document_id(&key)?, None)?;
+                MdbxIndex::delete_document(
+                    transaction,
+                    tables,
+                    collection,
+                    decode_key_document_id(&key)?,
+                    None,
+                )?;
             }
         }
         Ok(())

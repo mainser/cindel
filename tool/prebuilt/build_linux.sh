@@ -21,6 +21,7 @@ fi
 cd "${REPO_ROOT}"
 
 cargo build \
+  --locked \
   --release \
   --manifest-path "${NATIVE_DIR}/Cargo.toml" \
   --target "${TARGET}"

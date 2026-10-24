@@ -66,7 +66,9 @@ jobs:
   dart-package-tests:
     name: Dart package tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
 
     steps:
       - name: Checkout
@@ -90,14 +92,26 @@ jobs:
       - name: Install Flutter workspace dependencies
         run: flutter pub get
 
-      - name: Run backend-neutral package tests and collect coverage
+      - name: Set up Rust for native asset tests
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-sqlite-only
+          workspaces: |
+            packages/cindel/native -> target
+
+      - name: Build native library for core tests
+        run: cargo +${{ env.RUST_TOOLCHAIN }} build --locked --no-default-features --manifest-path packages/cindel/native/Cargo.toml
+
+      - name: Run core and backend-neutral package tests and collect coverage
         shell: bash
         run: |
           rm -rf coverage/dart-packages
           mkdir -p coverage/dart-packages/raw
 
-          dart test packages/cindel/test/core_dart_test.dart \
-            -r expanded \
+          dart run packages/cindel/tool/run_core_tests.dart \
             --coverage=coverage/dart-packages/raw/packages_cindel_core
 
           mapfile -t test_dirs < <(find packages -path '*/test' -type d -not -path '*/.dart_tool/*' -not -path 'packages/cindel/test' | sort)
@@ -199,6 +213,10 @@ jobs:
             -r expanded \
             --coverage=coverage/mdbx/raw
 
+          dart test packages/cindel/test/type_compatibility_test.dart \
+            --name '^mdbx\b' -r expanded \
+            --coverage=coverage/mdbx/raw
+
           dart run coverage:format_coverage \
             --lcov \
             --in=coverage/mdbx/raw \
@@ -274,6 +292,10 @@ jobs:
             -r expanded \
             --coverage=coverage/sqlite/raw
 
+          dart test packages/cindel/test/type_compatibility_test.dart \
+            --name '^sqlite\b|^direct SQLite\b' -r expanded \
+            --coverage=coverage/sqlite/raw
+
           dart run coverage:format_coverage \
             --lcov \
             --in=coverage/sqlite/raw \
@@ -294,7 +316,7 @@ jobs:
   web-backend:
     name: Web backend tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -336,7 +358,43 @@ jobs:
             --base-directory=. \
             --report-on=packages/cindel/lib
 
-      - name: Run Web closure integration tests in Chrome
+      - name: Install Clang for Web compilation
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Set up Rust for Web
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Rust Web build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-web
+          workspaces: |
+            packages/cindel/native -> target
+
+      - name: Install matching wasm-bindgen CLI
+        shell: bash
+        run: |
+          wasm_bindgen_version="$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3; exit }' packages/cindel/native/Cargo.lock)"
+          test -n "${wasm_bindgen_version}"
+          cargo +${{ env.RUST_TOOLCHAIN }} install wasm-bindgen-cli --version "${wasm_bindgen_version}" --locked
+
+      - name: Check Web test compilation and build current runtime
+        env:
+          CC: clang
+        run: |
+          cargo +${{ env.RUST_TOOLCHAIN }} check --locked \
+            --manifest-path packages/cindel/native/Cargo.toml \
+            --target wasm32-unknown-unknown --no-default-features --features web --tests
+          cargo +${{ env.RUST_TOOLCHAIN }} build --locked --release \
+            --manifest-path packages/cindel/native/Cargo.toml \
+            --target wasm32-unknown-unknown --no-default-features --features web
+          wasm-bindgen packages/cindel/native/target/wasm32-unknown-unknown/release/cindel_native.wasm \
+            --target web --out-dir packages/cindel_flutter_libs/web/pkg --out-name cindel_native
+          cp packages/cindel/web/cindel_worker.js packages/cindel_flutter_libs/web/cindel_worker.js
+
+      - name: Run Web integration tests in Chrome
         run: dart run packages/cindel/tool/run_web_close_tests.dart
 
       - name: Upload Web backend coverage to Codecov

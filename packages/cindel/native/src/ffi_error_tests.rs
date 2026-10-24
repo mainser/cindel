@@ -260,7 +260,10 @@ fn errors_ffi_diagnostics_belong_to_results_across_threads_and_connections() {
 #[test]
 fn errors_ffi_distinguishes_empty_lists_from_malformed_payloads() {
     assert!(parse_native_raw_list(b"[]").unwrap().entries.is_empty());
-    assert!(parse_native_raw_list(&[0, 0, 0, 0]).unwrap().entries.is_empty());
+    assert!(parse_native_raw_list(&[0, 0, 0, 0])
+        .unwrap()
+        .entries
+        .is_empty());
     assert!(parse_native_raw_list(&[255; 4]).is_err());
     assert!(parse_native_raw_object(&[255; 4], vec![]).is_err());
     assert!(decode_native_field_names(&[255; 4]).is_err());

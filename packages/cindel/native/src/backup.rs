@@ -180,14 +180,22 @@ impl BackupSpool {
 
 impl TemporaryBackupPath {
     pub(crate) fn new(token: &str, purpose: &str) -> Result<Self, String> {
-        if token.is_empty() || token.len() > 100 || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        if token.is_empty()
+            || token.len() > 100
+            || !token
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
             return Err("invalid staging token".into());
         }
         #[cfg(not(target_family = "wasm"))]
         let path = {
             let directory = std::env::temp_dir().join(format!("cindel-{purpose}-{token}"));
             std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
-            directory.join("cindel.sqlite").to_string_lossy().into_owned()
+            directory
+                .join("cindel.sqlite")
+                .to_string_lossy()
+                .into_owned()
         };
         #[cfg(target_family = "wasm")]
         let path = format!("/cindel-{purpose}-{token}.sqlite");
@@ -196,9 +204,17 @@ impl TemporaryBackupPath {
 
     pub(crate) fn database_directory(&self) -> &str {
         #[cfg(not(target_family = "wasm"))]
-        { std::path::Path::new(&self.0).parent().unwrap().to_str().unwrap() }
+        {
+            std::path::Path::new(&self.0)
+                .parent()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        }
         #[cfg(target_family = "wasm")]
-        { &self.0 }
+        {
+            &self.0
+        }
     }
 }
 

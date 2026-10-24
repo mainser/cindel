@@ -18,6 +18,7 @@ if (-not $env:LIBCLANG_PATH) {
 
 Set-Location $repoRoot
 cargo build `
+  --locked `
   --release `
   --manifest-path (Join-Path $nativeDir 'Cargo.toml') `
   --target x86_64-pc-windows-msvc

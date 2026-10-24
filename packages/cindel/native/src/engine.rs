@@ -149,39 +149,68 @@ impl CindelEngine {
         Ok(vec![])
     }
 
-    fn migration_command(&mut self, op: &str, fields: &[(String, crate::wire::WireValue)], payload: &[u8]) -> Result<Vec<u8>, String> {
+    fn migration_command(
+        &mut self,
+        op: &str,
+        fields: &[(String, crate::wire::WireValue)],
+        payload: &[u8],
+    ) -> Result<Vec<u8>, String> {
         use crate::backup::{field, integer, string};
-        use crate::wire::{WireValue, WireDocumentWrite, encode_document_write_batch};
+        use crate::wire::{encode_document_write_batch, WireDocumentWrite, WireValue};
         match op {
             "migration_begin" => {
-                if self.migration.is_some() || self.backup.is_some() { return Err("maintenance already active".into()); }
+                if self.migration.is_some() || self.backup.is_some() {
+                    return Err("maintenance already active".into());
+                }
                 let manifest = crate::storage::schema_manifest_from_wire(payload)?;
                 let token = string(field(fields, "token")?)?;
                 let (stage, revision) = self.storage.migration_fork(token, &manifest)?;
                 let original = std::mem::replace(&mut self.storage, stage);
-                self.migration = Some(crate::storage::migration::MigrationOrigin { storage: original, revision });
+                self.migration = Some(crate::storage::migration::MigrationOrigin {
+                    storage: original,
+                    revision,
+                });
             }
             "migration_source" => {
-                let source = &self.migration.as_ref().ok_or("no migration active")?.storage;
+                let source = &self
+                    .migration
+                    .as_ref()
+                    .ok_or("no migration active")?
+                    .storage;
                 let name = string(field(fields, "collection")?)?;
-                let after = match field(fields, "after")? { WireValue::Null => None, v => Some(integer(v)?) };
-                let limit = usize::try_from(integer(field(fields, "limit")?)?).map_err(|e| e.to_string())?;
-                if limit == 0 || limit > 4096 { return Err("migration page size must be 1..4096".into()); }
+                let after = match field(fields, "after")? {
+                    WireValue::Null => None,
+                    v => Some(integer(v)?),
+                };
+                let limit = usize::try_from(integer(field(fields, "limit")?)?)
+                    .map_err(|e| e.to_string())?;
+                if limit == 0 || limit > 4096 {
+                    return Err("migration page size must be 1..4096".into());
+                }
                 let ids = source.migration_ids_page(name, after, limit)?;
                 let mut documents = Vec::new();
                 let mut bytes = 0;
                 for id in ids {
-                    let value = source.get_many_stored(name, &[id])?.pop().flatten().ok_or("migration source document missing")?;
+                    let value = source
+                        .get_many_stored(name, &[id])?
+                        .pop()
+                        .flatten()
+                        .ok_or("migration source document missing")?;
                     bytes += value.len();
                     documents.push(WireDocumentWrite { id, bytes: value });
-                    if bytes >= 1024 * 1024 { break; }
+                    if bytes >= 1024 * 1024 {
+                        break;
+                    }
                 }
                 return encode_document_write_batch(&documents);
             }
             "migration_commit" => {
                 let version = integer(field(fields, "version")?)?;
                 let mut origin = self.migration.take().ok_or("no migration active")?;
-                let result = origin.storage.migration_publish(&self.storage, origin.revision, version);
+                let result =
+                    origin
+                        .storage
+                        .migration_publish(&self.storage, origin.revision, version);
                 self.storage = origin.storage;
                 result?;
             }
@@ -613,28 +642,51 @@ mod tests {
                 engine.storage.commit_transaction().unwrap();
             }
             let token = format!("page-{}-{:?}", std::process::id(), kind);
-            let (stage, revision) = engine.storage.migration_fork(
-                &token, &SchemaManifest { collections: vec![] },
-            ).unwrap();
+            let (stage, revision) = engine
+                .storage
+                .migration_fork(
+                    &token,
+                    &SchemaManifest {
+                        collections: vec![],
+                    },
+                )
+                .unwrap();
             let source = std::mem::replace(&mut engine.storage, stage);
-            engine.migration = Some(MigrationOrigin { storage: source, revision });
+            engine.migration = Some(MigrationOrigin {
+                storage: source,
+                revision,
+            });
             let mut after = 0;
             let mut maximum = 0;
             loop {
                 let fields = vec![
                     ("collection".into(), WireValue::String("nodes".into())),
-                    ("after".into(), if after == 0 { WireValue::Null } else { WireValue::Int(after) }),
+                    (
+                        "after".into(),
+                        if after == 0 {
+                            WireValue::Null
+                        } else {
+                            WireValue::Int(after)
+                        },
+                    ),
                     ("limit".into(), WireValue::Int(4096)),
                 ];
                 let mut bytes = Vec::new();
                 let peak = test_allocations::peak_bytes(|| {
-                    bytes = engine.migration_command("migration_source", &fields, &[]).unwrap();
+                    bytes = engine
+                        .migration_command("migration_source", &fields, &[])
+                        .unwrap();
                 });
                 maximum = maximum.max(peak);
                 assert!(peak < 8 * 1024 * 1024, "migration page heap: {peak}");
                 let documents = decode_document_write_batch(&bytes).unwrap();
-                if documents.is_empty() { break; }
-                assert!(documents.len() < 4096, "byte limit must stop the page first");
+                if documents.is_empty() {
+                    break;
+                }
+                assert!(
+                    documents.len() < 4096,
+                    "byte limit must stop the page first"
+                );
                 assert!(documents.len() * payload.len() < 1024 * 1024 + payload.len());
                 for document in documents {
                     after += 1;

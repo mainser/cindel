@@ -1,9 +1,7 @@
 #[cfg(test)]
-pub(crate) mod test_faults;
+mod backup_tests;
 #[cfg(test)]
 mod contract_tests;
-#[cfg(test)]
-mod backup_tests;
 #[cfg(feature = "mdbx")]
 mod mdbx;
 mod mdbx_key;
@@ -17,6 +15,8 @@ mod relations_tests;
 mod sqlite;
 #[cfg(test)]
 pub(crate) mod test_allocations;
+#[cfg(test)]
+pub(crate) mod test_faults;
 
 use serde::{Deserialize, Serialize};
 

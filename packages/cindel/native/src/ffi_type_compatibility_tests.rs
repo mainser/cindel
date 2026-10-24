@@ -5,7 +5,8 @@ fn nullable_string_list_can_be_the_first_field_in_both_writer_modes() {
     for native in [false, true] {
         let mut writer = CindelNativeBatchWriter::new(&[4], 1, native).unwrap();
         let mut list = writer.begin_list(0, 2).unwrap();
-        list.write_typed_bytes(0, b"a", NativeValueKind::String).unwrap();
+        list.write_typed_bytes(0, b"a", NativeValueKind::String)
+            .unwrap();
         list.write_null(1).unwrap();
         writer.end_list(list).unwrap();
         writer.save_document(1).unwrap();
@@ -19,7 +20,10 @@ fn json_string_list_reader_preserves_unicode_escapes_null_and_empty() {
     assert!(list.entries[1].is_null);
     assert_eq!(list.entries[2].payload_len, 0);
     let entry = &list.entries[3];
-    assert_eq!(&list.bytes[entry.payload_start..entry.payload_start + entry.payload_len], "🚀".as_bytes());
+    assert_eq!(
+        &list.bytes[entry.payload_start..entry.payload_start + entry.payload_len],
+        "🚀".as_bytes()
+    );
 }
 
 #[test]

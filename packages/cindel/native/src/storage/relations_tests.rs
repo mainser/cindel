@@ -74,7 +74,15 @@ fn relation_deletes_are_atomic_in_both_directions_and_notify_related_collections
         let after_cleanup = s.collection_revision("b").unwrap();
         s.put("b", 1, br#"{"name":"later update"}"#).unwrap();
         assert!(s.collection_revision("b").unwrap() > after_cleanup);
-        assert_eq!(s.take_change_sets().unwrap().iter().find(|c|c.collection=="b").unwrap().revision, s.collection_revision("b").unwrap());
+        assert_eq!(
+            s.take_change_sets()
+                .unwrap()
+                .iter()
+                .find(|c| c.collection == "b")
+                .unwrap()
+                .revision,
+            s.collection_revision("b").unwrap()
+        );
     }
 }
 

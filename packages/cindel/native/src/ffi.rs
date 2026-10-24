@@ -4611,14 +4611,20 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
     // SQLite serializes an empty object list as JSON. It is a valid empty
     // value, and must not become a decoder error when errors are propagated.
     if bytes == b"[]" {
-        return Ok(NativeRawList { bytes: bytes.to_vec(), entries: Vec::new() });
+        return Ok(NativeRawList {
+            bytes: bytes.to_vec(),
+            entries: Vec::new(),
+        });
     }
 
     // Only JSON-shaped payloads take this path; compact and generic lists keep
     // their existing readers. SQLite stores nullable string lists as JSON.
     if bytes.first() == Some(&b'[') {
         if let Ok(values) = serde_json::from_slice::<Vec<Option<String>>>(bytes) {
-            let values = values.into_iter().map(|value| value.map(BinaryValue::String)).collect::<Vec<_>>();
+            let values = values
+                .into_iter()
+                .map(|value| value.map(BinaryValue::String))
+                .collect::<Vec<_>>();
             return parse_native_raw_list(&crate::document_format::write_list(&values)?);
         }
     }
