@@ -203,8 +203,9 @@ String? _readNativeDiagnostic(Pointer<Uint8> Function(Pointer<Size>) read) {
     if (pointer == nullptr) return null;
     return utf8.decode(pointer.asTypedList(length.value));
   } finally {
-    if (pointer != nullptr)
+    if (pointer != nullptr) {
       CindelNativeBindings._resolvedFunctions.freeBuffer(pointer, length.value);
+    }
     calloc.free(length);
   }
 }
@@ -221,8 +222,9 @@ Pointer<Void> _checkedNativePointer(
     final cause =
         _takeNativeError(status.value) ??
         'Native operation returned no handle.';
-    if (operation == 'open')
+    if (operation == 'open') {
       throw CindelOpenError(backend: backend!, cause: cause);
+    }
     throw cindelOperationError(operation, cause, backend: backend);
   } finally {
     calloc.free(status);

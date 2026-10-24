@@ -7,10 +7,10 @@ import 'package:test/test.dart';
 import 'backend_test_support.dart';
 import 'backup_contract_fixture.dart';
 import 'backup_typing_suite.dart' as backup_typing;
-import 'dart_distinct_fixture.dart';
-import 'schema_generation_fixture.dart' show Recipient, RecipientMetadata;
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
+import 'dart_distinct_fixture.dart';
+import 'schema_generation_fixture.dart' show Recipient, RecipientMetadata;
 
 void main({bool includeSameDirectoryHandles = true}) {
   backup_typing.main();
@@ -398,8 +398,9 @@ void main({bool includeSameDirectoryHandles = true}) {
               compression: CindelBackupCompression.none,
               onProgress: progressFailure
                   ? (p) {
-                      if (p.documents == 3)
+                      if (p.documents == 3) {
                         throw StateError('Progress failed.');
+                      }
                     }
                   : null,
             ),
@@ -501,8 +502,9 @@ void main({bool includeSameDirectoryHandles = true}) {
         records[1].remove('manifest');
         records.last.remove('links');
         for (final record in records) {
-          if (record['collection'] == 'backup_nodes')
+          if (record['collection'] == 'backup_nodes') {
             record['collection'] = 'backup_leaves';
+          }
         }
         _checksum(records);
         final target = await open(null, [backupNodeSchema, backupLeafSchema]);

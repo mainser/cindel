@@ -38,7 +38,7 @@ class FadeSlideAnimation extends HookWidget {
         unawaited(
           Future<void>.delayed(delay, () {
             if (!cancelled) {
-              unawaited(controller.forward());
+              controller.forward();
             }
           }),
         );

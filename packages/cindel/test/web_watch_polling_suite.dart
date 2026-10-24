@@ -48,8 +48,9 @@ void main() {
         await clock.advance(Duration(milliseconds: cycle == 0 ? 0 : 50));
         final deadline = DateTime.now().add(const Duration(seconds: 5));
         while (responses < cycle + 1) {
-          if (DateTime.now().isAfter(deadline))
+          if (DateTime.now().isAfter(deadline)) {
             throw TimeoutException('Worker response missing.');
+          }
           await Future<void>.delayed(const Duration(milliseconds: 1));
         }
       }

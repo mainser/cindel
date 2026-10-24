@@ -33,7 +33,7 @@ class FadeScaleAnimation extends HookWidget {
         unawaited(
           Future<void>.delayed(delay, () {
             if (!cancelled) {
-              unawaited(controller.forward());
+              controller.forward();
             }
           }),
         );

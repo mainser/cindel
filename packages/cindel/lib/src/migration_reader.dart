@@ -8,16 +8,18 @@ T cindelReadMigrationObject<T>(
   Uint8List bytes, {
   required bool sqlite,
 }) {
-  if (sqlite)
+  if (sqlite) {
     return sqlite_reader.cindelReadMigrationObject(
       schema,
       id,
       bytes,
       sqlite: true,
     );
+  }
   final decode = schema.fromBinaryDocument;
-  if (decode == null)
+  if (decode == null) {
     throw StateError('Migration requires a generated binary reader.');
+  }
   var object = decode(bytes);
   if (schema.setId != null) {
     schema.setId!(object, id);
@@ -27,7 +29,8 @@ T cindelReadMigrationObject<T>(
       schema.idField: id,
     });
   }
-  if (schema.getId?.call(object) != id)
+  if (schema.getId?.call(object) != id) {
     throw StateError('Migration reader did not preserve the document ID.');
+  }
   return object;
 }

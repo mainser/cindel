@@ -72,8 +72,9 @@ class CindelDatabase {
     String token,
   ) async {
     _checkOpen();
-    if (_activeTransaction != null)
+    if (_activeTransaction != null) {
       throw StateError('Migration requires an idle database.');
+    }
     final selected = _schemasByCollection(schemas);
     await cindelMigrationCommand(backupCommand, {
       'op': 'migration_begin',

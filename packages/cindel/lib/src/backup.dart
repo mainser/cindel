@@ -119,8 +119,9 @@ final class _TypedBackupCollection<T> {
     final collection = database.typedCollection(schema);
     for (final id in ids) {
       final object = await collection.get(id);
-      if (object == null)
+      if (object == null) {
         throw StateError('Document disappeared from the backup snapshot.');
+      }
       yield _BackupDocumentRecord(
         id: id,
         document: {...schema.toDocument(object), schema.idField: id},
@@ -145,8 +146,9 @@ final class _TypedBackupCollection<T> {
     final Uint8List payload;
     if (native) {
       final write = schema.writeNativeDocument;
-      if (write == null)
+      if (write == null) {
         throw StateError('Backup requires generated native serializers.');
+      }
       final fields = schema.fields.where((f) => !f.isId).toList()
         ..sort((a, b) => a.name.compareTo(b.name));
       payload = encodeNativeDocumentWriteBatch([
@@ -165,8 +167,9 @@ final class _TypedBackupCollection<T> {
       ]);
     } else {
       final encode = schema.toBinaryDocument;
-      if (encode == null)
+      if (encode == null) {
         throw StateError('Backup requires generated binary serializers.');
+      }
       payload = encodeDocumentWriteBatch([
         for (var i = 0; i < objects.length; i++)
           WireDocumentWrite(id: records[i].id, bytes: encode(objects[i])),
@@ -228,12 +231,13 @@ abstract final class CindelBackup {
     CindelBackupProgressCallback? onProgress,
   }) async {
     _checkBatchSize(batchSize);
-    if (maxRecordBytes <= 0)
+    if (maxRecordBytes <= 0) {
       throw ArgumentError.value(
         maxRecordBytes,
         'maxRecordBytes',
         'Must be positive.',
       );
+    }
     final collectionList = _collectionList(collections);
     _checkLinkClosure(collectionList);
     final selectedCompression =
@@ -247,8 +251,9 @@ abstract final class CindelBackup {
     String record(Map<String, Object?> json, {bool checksummed = true}) {
       final line = jsonEncode(json);
       final bytes = utf8.encode(line);
-      if (bytes.length > maxRecordBytes)
+      if (bytes.length > maxRecordBytes) {
         throw StateError('Backup record exceeds $maxRecordBytes bytes.');
+      }
       if (checksummed) {
         checksum = checksum.add(bytes);
       }
@@ -408,12 +413,13 @@ abstract final class CindelBackup {
     bool allowLegacyWithoutLinks = false,
   }) async {
     _checkBatchSize(batchSize);
-    if (maxRecordBytes <= 0)
+    if (maxRecordBytes <= 0) {
       throw ArgumentError.value(
         maxRecordBytes,
         'maxRecordBytes',
         'Must be positive.',
       );
+    }
     final collectionList = _collectionList(collections);
     final byName = {for (final c in collectionList) c._name: c};
     final selectedCompression =
@@ -475,12 +481,14 @@ abstract final class CindelBackup {
         final bytes = utf8.encode(line);
         uncompressedBytes += bytes.length + 1;
         if (type != 'footer') checksum = checksum.add(bytes);
-        if (version == null && type != 'header')
+        if (version == null && type != 'header') {
           throw StateError('Backup header must be first.');
+        }
         switch (type) {
           case 'header':
-            if (version != null)
+            if (version != null) {
               throw StateError('Backup contains duplicate header records.');
+            }
             if (json['format'] != 'cindel.backup.jsonl' ||
                 (json['version'] != 1 && json['version'] != 2)) {
               throw StateError('Unsupported Cindel backup archive.');
@@ -498,10 +506,12 @@ abstract final class CindelBackup {
           case 'schema':
             final name = json['collection'] as String;
             final collection = byName[name];
-            if (collection == null)
+            if (collection == null) {
               throw StateError('Backup contains unknown collection `$name`.');
-            if (dataStarted || !seenSchemas.add(name))
+            }
+            if (dataStarted || !seenSchemas.add(name)) {
               throw StateError('Duplicate or misplaced backup schema `$name`.');
+            }
             if (version == 2 &&
                 jsonEncode(_canonical(json['manifest'])) !=
                     jsonEncode(_canonical(collection._manifest))) {
@@ -513,18 +523,22 @@ abstract final class CindelBackup {
             }
           case 'doc':
             dataStarted = true;
-            if (linksStarted || seenSchemas.length != byName.length)
+            if (linksStarted || seenSchemas.length != byName.length) {
               throw StateError('Misplaced backup document.');
+            }
             final name = json['collection'] as String;
-            if (!byName.containsKey(name))
+            if (!byName.containsKey(name)) {
               throw StateError('Backup contains unknown collection `$name`.');
+            }
             final id = _nonNegativeInt(json['id']);
             final document = Map<String, Object?>.from(json['document'] as Map);
-            if (document[byName[name]!.schema.idField] != id)
+            if (document[byName[name]!.schema.idField] != id) {
               throw StateError('Backup document ID mismatch.');
+            }
             if (pendingCollection != name ||
-                pendingBytes + bytes.length > _backupBatchBytes)
+                pendingBytes + bytes.length > _backupBatchBytes) {
               await flush();
+            }
             pendingCollection = name;
             pending.add(_BackupDocumentRecord(id: id, document: document));
             pendingBytes += bytes.length;
@@ -537,13 +551,15 @@ abstract final class CindelBackup {
               ),
             );
             if (pending.length >= batchSize ||
-                pendingBytes >= _backupBatchBytes)
+                pendingBytes >= _backupBatchBytes) {
               await flush();
+            }
           case 'link':
             dataStarted = true;
             linksStarted = true;
-            if (version != 2 || seenSchemas.length != byName.length)
+            if (version != 2 || seenSchemas.length != byName.length) {
               throw StateError('Misplaced backup link.');
+            }
             await flush();
             final name = json['collection'] as String;
             final candidates = byName[name]?.schema.links.where(
@@ -552,11 +568,13 @@ abstract final class CindelBackup {
                   l.name == json['name'] &&
                   l.targetCollection == json['target'],
             );
-            if (candidates == null || candidates.length != 1)
+            if (candidates == null || candidates.length != 1) {
               throw StateError('Unknown backup relationship.');
+            }
             final link = candidates.single;
-            if (pendingLinkBytes + bytes.length > _backupBatchBytes)
+            if (pendingLinkBytes + bytes.length > _backupBatchBytes) {
               await flushLinks();
+            }
             pendingLinks.add([
               name,
               _nonNegativeInt(json['id']),
@@ -567,19 +585,23 @@ abstract final class CindelBackup {
             ]);
             pendingLinkBytes += bytes.length;
             if (pendingLinks.length >= batchSize ||
-                pendingLinkBytes >= _backupBatchBytes)
+                pendingLinkBytes >= _backupBatchBytes) {
               await flushLinks();
+            }
             links++;
           case 'footer':
-            if (seenSchemas.length != byName.length)
+            if (seenSchemas.length != byName.length) {
               throw StateError(
                 'Backup schema list does not match restore schemas.',
               );
+            }
             if (json['documents'] != documents ||
-                (version == 2 && json['links'] != links))
+                (version == 2 && json['links'] != links)) {
               throw StateError('Backup record count mismatch.');
-            if (json['checksum'] != checksum.value)
+            }
+            if (json['checksum'] != checksum.value) {
               throw StateError('Backup checksum mismatch.');
+            }
             footer = true;
           default:
             throw StateError('Unknown backup record type `$type`.');
@@ -722,12 +744,13 @@ Future<Uint8List> _command(
   bytes.setRange(4, 4 + header.length, header);
   if (payload != null) bytes.setRange(4 + header.length, bytes.length, payload);
   final response = await database.backupCommand(bytes);
-  if (response.isEmpty || response[0] != 0)
+  if (response.isEmpty || response[0] != 0) {
     throw StateError(
       response.isEmpty
           ? 'Empty backup response.'
           : utf8.decode(response.sublist(1)),
     );
+  }
   return Uint8List.sublistView(response, 1);
 }
 
@@ -740,8 +763,9 @@ Stream<String> _backupLines(
     var start = 0;
     for (var i = 0; i <= chunk.length; i++) {
       if (i < chunk.length && chunk[i] != 10) continue;
-      if (pending.length + i - start > maxRecordBytes)
+      if (pending.length + i - start > maxRecordBytes) {
         throw StateError('Backup record exceeds $maxRecordBytes bytes.');
+      }
       if (i > start) pending.add(chunk.sublist(start, i));
       if (i < chunk.length) yield utf8.decode(pending.takeBytes());
       start = i + 1;

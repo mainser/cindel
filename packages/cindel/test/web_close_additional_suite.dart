@@ -22,8 +22,9 @@ void main() {
         Future<void> callback() async {
           callbackRan = true;
           await fixture.database.apiProducts.get(1);
-          if (write)
+          if (write) {
             await fixture.database.apiProducts.put(_product(2, 'pending'));
+          }
         }
 
         // Act. Keep these calls in the same synchronous turn.
@@ -156,8 +157,9 @@ Future<void> _stored(
 }) async {
   final reopened = await _open(directory);
   expect((await reopened.apiProducts.get(1))?.name, 'original');
-  if (pendingId != null)
+  if (pendingId != null) {
     expect(await reopened.apiProducts.get(pendingId), isNull);
+  }
   if (committedId != null) {
     expect((await reopened.apiProducts.get(committedId))?.name, 'committed');
   }

@@ -5,11 +5,11 @@ import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
 import 'backup_contract_fixture.dart';
-import 'schema_generation_fixture.dart'
-    show ImmutableUser, ImmutableUserSchema, Recipient, RecipientMetadata;
-import 'dart_distinct_fixture.dart';
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
+import 'dart_distinct_fixture.dart';
+import 'schema_generation_fixture.dart'
+    show ImmutableUser, ImmutableUserSchema, Recipient, RecipientMetadata;
 
 void main({bool concurrentHandles = true}) {
   group('Cindel atomic migrations', () {
@@ -158,8 +158,9 @@ void main({bool concurrentHandles = true}) {
                   backupNodeSchema,
                   batchSize: 2,
                 )) {
-                  if (++seen == 5 && failure == 'batch')
+                  if (++seen == 5 && failure == 'batch') {
                     throw StateError('injected');
+                  }
                   yield BackupNode(
                     node.dbId,
                     code: failure == 'unique' && node.dbId == 5 ? 1 : node.dbId,

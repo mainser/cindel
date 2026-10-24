@@ -290,8 +290,9 @@ void main({bool concurrentHandles = true}) {
 Future<void> _until(bool Function() condition) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!condition()) {
-    if (DateTime.now().isAfter(deadline))
+    if (DateTime.now().isAfter(deadline)) {
       throw TimeoutException('Revision event missing.');
+    }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
 }

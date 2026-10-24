@@ -11,8 +11,9 @@ T cindelReadMigrationObject<T>(
   required bool sqlite,
 }) {
   final decode = schema.readNativeDocument;
-  if (decode == null)
+  if (decode == null) {
     throw StateError('Migration requires a generated native reader.');
+  }
   final types = _types[schema] ??= () {
     final fields = schema.fields.where((f) => !f.isId).toList()
       ..sort((a, b) => a.name.compareTo(b.name));

@@ -413,8 +413,9 @@ Future<Uint8List> cindelMigrationCommand(
   final request = Uint8List(4 + header.length + (payload?.length ?? 0));
   ByteData.sublistView(request).setUint32(0, header.length, Endian.little);
   request.setRange(4, 4 + header.length, header);
-  if (payload != null)
+  if (payload != null) {
     request.setRange(4 + header.length, request.length, payload);
+  }
   final response = await send(request);
   if (response.isEmpty || response[0] != 0) {
     throw StateError(

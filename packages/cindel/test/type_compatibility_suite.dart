@@ -1,8 +1,9 @@
 import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
-import 'type_compatibility_fixture.dart';
+
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
+import 'type_compatibility_fixture.dart';
 
 void runTypeCompatibility(CindelStorageBackend backend) {
   _runControls(backend);
@@ -2743,8 +2744,9 @@ void runTypeCompatibility(CindelStorageBackend backend) {
 }
 
 Object? _normalize(Object? value) {
-  if (value is DateTime)
+  if (value is DateTime) {
     return {'dateTimeMicros': value.microsecondsSinceEpoch};
+  }
   if (value is Duration) return {'durationMicros': value.inMicroseconds};
   if (value is Enum) return value.toString();
   if (value is ProbeLeaf) return {'label': value.label};
