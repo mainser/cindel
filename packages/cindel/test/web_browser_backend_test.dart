@@ -3,6 +3,7 @@ library;
 
 import 'watch_coordinator_suite.dart' as watcher_coordinator;
 import 'shared_watchers_suite.dart' as shared_watchers;
+import 'sqlite_revision_suite.dart' as persistent_revisions;
 import 'web_watch_polling_suite.dart' as web_watch_polling;
 import 'web_error_propagation_suite.dart' as web_errors;
 import 'error_propagation_suite.dart' as errors;
@@ -23,6 +24,7 @@ import 'web_close_additional_suite.dart' as web_close;
 import 'web_worker_close_suite.dart' as worker_close;
 
 void main() {
+  persistent_revisions.main(concurrentHandles: false);
   watcher_coordinator.main();
   shared_watchers.main(includeExternalHandle: false);
   errors.main();

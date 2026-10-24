@@ -125,11 +125,12 @@ impl SqliteStorage {
             Ok(())
         })?;
         write_migration_version(&transaction, version)?;
+        for (name, _) in &spool.collections {
+            revisions::mark(&transaction, name)?;
+        }
+        revisions::flush(&transaction)?;
         transaction.commit().map_err(sqlite_diagnostic)?;
         self.last_change_sets.clear();
-        for (name, _) in &spool.collections {
-            self.bump_collection_revision_in_memory(name);
-        }
         Ok(())
     }
 }

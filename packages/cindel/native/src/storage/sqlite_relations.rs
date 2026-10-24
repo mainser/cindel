@@ -20,13 +20,19 @@ fn row_edge(row: &Row<'_>) -> rusqlite::Result<Edge> {
 fn remove_edge(connection: &Connection, edge: &Edge) -> Result<(), String> {
     connection.execute("DELETE FROM cindel_relations WHERE source_collection=?1 AND source_id=?2 AND link_name=?3 AND target_collection=?4 AND target_id=?5", params![edge.0,edge.1,edge.2,edge.3,edge.4]).map_err(|e|e.to_string())?;
     for name in [&edge.0, &edge.3] {
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO temp.cindel_relation_changes VALUES (?1)",
-                [name],
-            )
-            .map_err(sqlite_diagnostic)?;
+        mark_change(connection, name)?;
     }
+    Ok(())
+}
+
+pub(super) fn mark_change(connection: &Connection, name: &str) -> Result<(), String> {
+    revisions::mark(connection, name)?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO temp.cindel_relation_changes VALUES (?1)",
+            [name],
+        )
+        .map_err(sqlite_diagnostic)?;
     Ok(())
 }
 
@@ -175,6 +181,7 @@ impl SqliteStorage {
                 }
             }
         }
+        revisions::flush(&txn)?;
         txn.commit().map_err(sqlite_diagnostic)?;
         self.last_change_sets.clear();
         Ok((examined, removed))
@@ -194,7 +201,6 @@ impl SqliteStorage {
             .map_err(sqlite_diagnostic)?;
         for name in names {
             let current = self.collection_revision(&name)?;
-            *self.relation_revisions.entry(name.clone()).or_default() += 1;
             self.last_change_sets.retain(|c| c.collection != name);
             self.last_change_sets.push(StorageChangeSet {
                 collection: name,

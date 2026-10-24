@@ -1,4 +1,5 @@
 import 'shared_watchers_suite.dart' as shared_watchers;
+import 'sqlite_revision_suite.dart' as persistent_revisions;
 import 'error_propagation_suite.dart' as errors;
 import 'native_error_propagation_suite.dart' as native_errors;
 import 'relation_lifecycle_suite.dart' as relation_lifecycle;
@@ -25,6 +26,7 @@ import 'sync_suite.dart' as sync;
 import 'typed_collection_suite.dart' as typed_collection;
 
 void main() {
+  persistent_revisions.main();
   configureTestStorageBackend(CindelStorageBackend.sqlite);
 
   shared_watchers.main();

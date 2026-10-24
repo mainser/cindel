@@ -132,8 +132,6 @@ impl SqliteStorage {
             copy_tables(&self.connection, &txn)?;
             txn.commit().map_err(sqlite_diagnostic)?;
             stage.register_schemas(manifest)?;
-            stage.collection_revisions = self.collection_revisions.clone();
-            stage.relation_revisions = self.relation_revisions.clone();
             for schema in &manifest.collections {
                 let version =
                     persisted_schema_version(&self.connection, &schema.name)?.unwrap_or(1);
@@ -182,8 +180,6 @@ impl SqliteStorage {
         write_migration_version(&txn, version)?;
         txn.commit().map_err(sqlite_diagnostic)?;
         self.schemas = stage.schemas.clone();
-        self.collection_revisions = stage.collection_revisions.clone();
-        self.relation_revisions = stage.relation_revisions.clone();
         self.last_change_sets.clear();
         Ok(())
     }

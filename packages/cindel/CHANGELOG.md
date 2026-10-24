@@ -2,6 +2,7 @@
 
 ## 1.1.3
 
+- Persisted SQLite native/Web change revisions atomically with writes, preserving rollback and cross-connection notifications.
 - Shared watcher polling by collection across MDBX and SQLite native/Web, preserving notifications and shutdown behavior.
 - Added consistent backups with links/backlinks and atomic, disk-staged restores for MDBX and SQLite native/Web, with regression and memory checks.
 - Removed incoming/outgoing links atomically on document deletion and added bounded orphan-link cleanup across MDBX and SQLite native/Web.

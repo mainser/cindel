@@ -1,3 +1,5 @@
+#[path = "sqlite_revisions.rs"]
+mod revisions;
 #[path = "sqlite_backup.rs"]
 mod backup;
 #[path = "sqlite_migration.rs"]
@@ -39,8 +41,6 @@ pub struct SqliteStorage {
     connection: Connection,
     migration_path: Option<crate::backup::TemporaryBackupPath>,
     schemas: HashMap<String, RegisteredCollectionSchema>,
-    collection_revisions: HashMap<String, u64>,
-    relation_revisions: HashMap<String, u64>,
     persist_schema_metadata: bool,
     active_transaction: Option<TransactionMode>,
     active_change_sets: Vec<StorageChangeSet>,
@@ -578,8 +578,6 @@ impl SqliteStorage {
             connection,
             migration_path: None,
             schemas: HashMap::new(),
-            collection_revisions: HashMap::new(),
-            relation_revisions: HashMap::new(),
             persist_schema_metadata,
             active_transaction: None,
             active_change_sets: Vec::new(),
@@ -617,6 +615,7 @@ impl SqliteStorage {
 
     fn initialize_transaction(&mut self, manifest: Option<&SchemaManifest>) -> Result<(), String> {
         ensure_id_counters_table(&self.connection)?;
+        revisions::initialize(&self.connection)?;
         if self.persist_schema_metadata {
             ensure_base_tables(&self.connection)?;
             ensure_binary_schema_collections_table(&self.connection)?;
@@ -696,13 +695,18 @@ impl SqliteStorage {
         Ok(())
     }
 
-    fn bump_collection_revision_in_memory(&mut self, collection: &str) -> u64 {
-        let revision = self
-            .collection_revisions
-            .entry(collection.to_string())
-            .or_default();
-        *revision += 1;
-        *revision
+    // A savepoint also works inside an explicit transaction. If a revision
+    // write fails, callers cannot catch the error and commit unversioned data.
+    fn revision_write<T>(
+        &mut self,
+        action: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.ensure_can_write()?;
+        let savepoint = self.connection.savepoint().map_err(sqlite_diagnostic)?;
+        let result = action(&savepoint)?;
+        revisions::flush(&savepoint)?;
+        savepoint.commit().map_err(sqlite_diagnostic)?;
+        Ok(result)
     }
 }
 
@@ -910,23 +914,10 @@ impl StorageEngine for SqliteStorage {
         bytes: &[u8],
         indexes: &[IndexEntry],
     ) -> Result<(), String> {
-        self.ensure_can_write()?;
-        if self.active_transaction.is_some() {
-            put_document_with_indexes(&self.connection, collection, id, bytes, indexes)?;
-            let revision = bump_collection_revision(&self.connection, collection)?;
-            self.record_change(collection, revision, [id]);
-            return Ok(());
-        }
-
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-
-        put_document_with_indexes(&transaction, collection, id, bytes, indexes)?;
-        let revision = bump_collection_revision(&transaction, collection)?;
-
-        transaction.commit().map_err(sqlite_diagnostic)?;
+        let revision = self.revision_write(|connection| {
+            put_document_with_indexes(connection, collection, id, bytes, indexes)?;
+            bump_collection_revision(connection, collection)
+        })?;
         self.record_change(collection, revision, [id]);
         Ok(())
     }
@@ -961,52 +952,21 @@ impl StorageEngine for SqliteStorage {
             }
             return Ok(());
         }
-        self.ensure_can_write()?;
-        if self.active_transaction.is_some() {
+        let revision = self.revision_write(|connection| {
             for document in documents {
                 put_document_with_indexes(
-                    &self.connection,
+                    connection,
                     collection,
                     document.id,
                     &document.bytes,
                     &document.indexes,
                 )?;
             }
-            let revision = bump_collection_revision(&self.connection, collection)?;
-            if track_changes {
-                self.record_change(
-                    collection,
-                    revision,
-                    documents.iter().map(|document| document.id),
-                );
-            }
-            return Ok(());
-        }
-
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-
-        for document in documents {
-            put_document_with_indexes(
-                &transaction,
-                collection,
-                document.id,
-                &document.bytes,
-                &document.indexes,
-            )?;
-        }
-        let revision = bump_collection_revision(&transaction, collection)?;
-
-        transaction.commit().map_err(sqlite_diagnostic)?;
+            bump_collection_revision(connection, collection)
+        })?;
         if track_changes {
-            self.record_change(
-                collection,
-                revision,
-                documents.iter().map(|document| document.id),
-            );
-        } else {
+            self.record_change(collection, revision, documents.iter().map(|d| d.id));
+        } else if self.active_transaction.is_none() {
             self.last_change_sets.clear();
         }
         Ok(())
@@ -1027,153 +987,51 @@ impl StorageEngine for SqliteStorage {
             }
             return Ok(true);
         }
-        self.ensure_can_write()?;
-        if self.active_transaction.is_some() {
-            let max_id = put_native_documents(&self.connection, &schema, documents)?;
-            if let Some(max_id) = max_id {
-                advance_id_counter(&self.connection, collection, max_id)?;
+        let revision = self.revision_write(|connection| {
+            if let Some(max_id) = put_native_documents(connection, &schema, documents)? {
+                advance_id_counter(connection, collection, max_id)?;
             }
-            let revision = self.bump_collection_revision_in_memory(collection);
-            if track_changes {
-                self.record_change(
-                    collection,
-                    revision,
-                    documents.iter().map(|document| document.id),
-                );
-            }
-            return Ok(true);
-        }
-
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-        let max_id = put_native_documents(&transaction, &schema, documents)?;
-        if let Some(max_id) = max_id {
-            advance_id_counter(&transaction, collection, max_id)?;
-        }
-        transaction.commit().map_err(sqlite_diagnostic)?;
-        let revision = self.bump_collection_revision_in_memory(collection);
+            bump_collection_revision(connection, collection)
+        })?;
         if track_changes {
-            self.record_change(
-                collection,
-                revision,
-                documents.iter().map(|document| document.id),
-            );
-        } else {
+            self.record_change(collection, revision, documents.iter().map(|d| d.id));
+        } else if self.active_transaction.is_none() {
             self.last_change_sets.clear();
         }
         Ok(true)
     }
 
     fn delete(&mut self, collection: &str, id: u64) -> Result<(), String> {
-        self.ensure_can_write()?;
-        let id = sqlite_id(id)?;
-        let has_collection_table = self.collection_schema(collection).is_some();
-        if self.active_transaction.is_some() {
-            let deleted = delete_document_with_layout(
-                &self.connection,
-                collection,
-                id,
-                has_collection_table,
-            )?;
-            if deleted {
-                let revision = if has_collection_table {
-                    self.bump_collection_revision_in_memory(collection)
-                } else {
-                    bump_collection_revision(&self.connection, collection)?
-                };
-                self.record_change(collection, revision, [id as u64]);
-            }
-            return Ok(());
-        }
-
-        self.last_change_sets.clear();
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-
-        let deleted =
-            delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
-        let mut revision = None;
-        if deleted && !has_collection_table {
-            revision = Some(bump_collection_revision(&transaction, collection)?);
-        }
-
-        transaction.commit().map_err(sqlite_diagnostic)?;
-        if deleted && has_collection_table {
-            revision = Some(self.bump_collection_revision_in_memory(collection));
-        }
-        if let Some(revision) = revision {
-            self.record_change(collection, revision, [id as u64]);
-        }
-        Ok(())
+        self.delete_many(collection, &[id])
     }
 
     fn delete_many(&mut self, collection: &str, ids: &[u64]) -> Result<(), String> {
+        if self.active_transaction.is_none() {
+            self.last_change_sets.clear();
+        }
         if ids.is_empty() {
-            if self.active_transaction.is_none() {
-                self.last_change_sets.clear();
-            }
             return Ok(());
         }
-        self.ensure_can_write()?;
         let has_collection_table = self.collection_schema(collection).is_some();
-        if self.active_transaction.is_some() {
+        let (deleted_ids, revision) = self.revision_write(|connection| {
             let mut deleted_ids = Vec::new();
             for id in ids {
-                let id = sqlite_id(*id)?;
-                let deleted = delete_document_with_layout(
-                    &self.connection,
+                if delete_document_with_layout(
+                    connection,
                     collection,
-                    id,
+                    sqlite_id(*id)?,
                     has_collection_table,
-                )?;
-                if deleted {
-                    deleted_ids.push(id as u64);
+                )? {
+                    deleted_ids.push(*id);
                 }
             }
-            if !deleted_ids.is_empty() {
-                let revision = if has_collection_table {
-                    self.bump_collection_revision_in_memory(collection)
-                } else {
-                    bump_collection_revision(&self.connection, collection)?
-                };
-                self.record_change(collection, revision, deleted_ids);
-            }
-            return Ok(());
-        }
-
-        self.last_change_sets.clear();
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-
-        let mut deleted_ids = Vec::new();
-        for id in ids {
-            let id = sqlite_id(*id)?;
-            let deleted =
-                delete_document_with_layout(&transaction, collection, id, has_collection_table)?;
-            if deleted {
-                deleted_ids.push(id as u64);
-            }
-        }
-        let revision = if deleted_ids.is_empty() {
-            None
-        } else if has_collection_table {
-            None
-        } else {
-            Some(bump_collection_revision(&transaction, collection)?)
-        };
-
-        transaction.commit().map_err(sqlite_diagnostic)?;
-        let revision = if !deleted_ids.is_empty() && has_collection_table {
-            Some(self.bump_collection_revision_in_memory(collection))
-        } else {
-            revision
-        };
+            let revision = if deleted_ids.is_empty() {
+                None
+            } else {
+                Some(bump_collection_revision(connection, collection)?)
+            };
+            Ok((deleted_ids, revision))
+        })?;
         if let Some(revision) = revision {
             self.record_change(collection, revision, deleted_ids);
         }
@@ -1185,74 +1043,36 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<bool, String> {
-        let Some(schema) = self.collection_schema(collection).cloned() else {
+        if self.collection_schema(collection).is_none() {
             return Ok(false);
-        };
+        }
+        if self.active_transaction.is_none() {
+            self.last_change_sets.clear();
+        }
         if ids.is_empty() {
-            if self.active_transaction.is_none() {
-                self.last_change_sets.clear();
-            }
             return Ok(true);
         }
-        self.ensure_can_write()?;
-
-        if self.active_transaction.is_some() {
-            let deleted_ids = delete_native_documents(&self.connection, &schema.name, ids)?;
-            if !deleted_ids.is_empty() {
-                let revision = self.bump_collection_revision_in_memory(collection);
-                self.record_change(collection, revision, deleted_ids);
-            }
-            return Ok(true);
-        }
-
-        self.last_change_sets.clear();
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-        let deleted_ids = delete_native_documents(&transaction, &schema.name, ids)?;
-        let has_deleted_ids = !deleted_ids.is_empty();
-
-        transaction.commit().map_err(sqlite_diagnostic)?;
-        if has_deleted_ids {
-            let revision = self.bump_collection_revision_in_memory(collection);
+        let (deleted_ids, revision) = self.revision_write(|connection| {
+            let ids = delete_native_documents(connection, collection, ids)?;
+            let revision = if ids.is_empty() {
+                None
+            } else {
+                Some(bump_collection_revision(connection, collection)?)
+            };
+            Ok((ids, revision))
+        })?;
+        if let Some(revision) = revision {
             self.record_change(collection, revision, deleted_ids);
         }
         Ok(true)
     }
 
     fn replace_links(&mut self, links: &LinkSave) -> Result<(), String> {
-        self.ensure_can_write()?;
         let target_ids = dedupe_sorted_ids(&links.target_ids);
-        if self.active_transaction.is_some() {
-            replace_links_sqlite(&self.connection, links, &target_ids)?;
-            let revision = if self.collection_schema(&links.source_collection).is_some() {
-                self.bump_collection_revision_in_memory(&links.source_collection)
-            } else {
-                bump_collection_revision(&self.connection, &links.source_collection)?
-            };
-            self.record_change(&links.source_collection, revision, [links.source_id]);
-            return Ok(());
-        }
-
-        self.last_change_sets.clear();
-        let has_source_schema = self.collection_schema(&links.source_collection).is_some();
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(sqlite_diagnostic)?;
-        replace_links_sqlite(&transaction, links, &target_ids)?;
-        let revision = if has_source_schema {
-            None
-        } else {
-            Some(bump_collection_revision(
-                &transaction,
-                &links.source_collection,
-            )?)
-        };
-        transaction.commit().map_err(sqlite_diagnostic)?;
-        let revision = revision
-            .unwrap_or_else(|| self.bump_collection_revision_in_memory(&links.source_collection));
+        let revision = self.revision_write(|connection| {
+            replace_links_sqlite(connection, links, &target_ids)?;
+            bump_collection_revision(connection, &links.source_collection)
+        })?;
         self.record_change(&links.source_collection, revision, [links.source_id]);
         Ok(())
     }
@@ -1339,41 +1159,7 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn collection_revision(&self, collection: &str) -> Result<u64, String> {
-        let persisted = if table_exists(&self.connection, "collection_revisions")? {
-            self.connection
-                .query_row(
-                    "SELECT revision FROM collection_revisions WHERE collection=?1",
-                    [collection],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()
-                .map_err(sqlite_diagnostic)?
-                .map(u64::try_from)
-                .transpose()
-                .map_err(sqlite_diagnostic)?
-                .unwrap_or_default()
-        } else {
-            0
-        };
-        let documents = persisted.max(*self.collection_revisions.get(collection).unwrap_or(&0));
-        let pending: bool = self.connection.is_autocommit()
-            && self
-                .connection
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM temp.cindel_relation_changes WHERE collection=?1)",
-                    [collection],
-                    |row| row.get(0),
-                )
-                .map_err(sqlite_diagnostic)?;
-        // Keep relation revisions separate: advancing them must not hide the
-        // next document revision from either the typed or generic write path.
-        Ok(documents
-            + self
-                .relation_revisions
-                .get(collection)
-                .copied()
-                .unwrap_or(0)
-            + u64::from(pending))
+        revisions::read(&self.connection, collection)
     }
 
     fn take_change_sets(&mut self) -> Result<Vec<StorageChangeSet>, String> {
@@ -1686,11 +1472,17 @@ impl StorageEngine for SqliteStorage {
         updates: &[(String, WireValue)],
         collect_changes: bool,
     ) -> Result<usize, String> {
-        self.ensure_can_write()?;
         let schema = self.required_collection_schema(collection)?;
-        let count = update_native_query_plan(&self.connection, &schema, plan, updates)?;
-        if count > 0 {
-            let revision = self.bump_collection_revision_in_memory(collection);
+        let (count, revision) = self.revision_write(|connection| {
+            let count = update_native_query_plan(connection, &schema, plan, updates)?;
+            let revision = if count == 0 {
+                None
+            } else {
+                Some(bump_collection_revision(connection, collection)?)
+            };
+            Ok((count, revision))
+        })?;
+        if let Some(revision) = revision {
             if collect_changes {
                 self.record_change(collection, revision, std::iter::empty::<u64>());
             }
@@ -3818,25 +3610,14 @@ fn parse_document_format(value: &str) -> Result<DocumentFormatVersion, String> {
 }
 
 fn bump_collection_revision(connection: &Connection, collection: &str) -> Result<u64, String> {
-    connection
-        .execute(
-            r#"
-            INSERT INTO collection_revisions (collection, revision)
-            VALUES (?1, 1)
-            ON CONFLICT(collection) DO UPDATE SET
-                revision = collection_revisions.revision + 1
-            "#,
-            params![collection],
-        )
-        .map_err(sqlite_diagnostic)?;
-    connection
-        .query_row(
-            "SELECT revision FROM collection_revisions WHERE collection = ?1",
-            params![collection],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(sqlite_diagnostic)
-        .and_then(|revision| u64::try_from(revision).map_err(sqlite_diagnostic))
+    // revision_write flushes the marked collections before releasing its
+    // savepoint. Return that revision for the local committed change metadata.
+    let next = revisions::read(connection, collection)?
+        .checked_add(1)
+        .filter(|v| *v <= i64::MAX as u64)
+        .ok_or("SQLite collection revision overflow")?;
+    revisions::mark(connection, collection)?;
+    Ok(next)
 }
 
 fn merge_change_set(
@@ -3993,7 +3774,7 @@ fn replace_links_sqlite(
         )?;
     }
 
-    connection
+    let removed = connection
         .execute(
             r#"
             DELETE FROM cindel_relations
@@ -4010,6 +3791,9 @@ fn replace_links_sqlite(
             ],
         )
         .map_err(sqlite_diagnostic)?;
+    if removed > 0 || !target_ids.is_empty() {
+        relations::mark_change(connection, &links.target_collection)?;
+    }
     let mut statement = connection
         .prepare(
             r#"
@@ -4815,6 +4599,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 
 #[cfg(test)]
 mod tests {
+    include!("sqlite_revision_tests.rs");
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};

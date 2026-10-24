@@ -134,10 +134,7 @@ void main({bool includeExternalHandle = true}) {
       },
     );
 
-    // SQLite typed writes currently keep revisions per handle (pre-existing
-    // storage behavior). External typed revision polling is supported by MDBX.
-    if (includeExternalHandle &&
-        testStorageBackend == CindelStorageBackend.mdbx) {
+    if (includeExternalHandle) {
       // Scenario: Another native handle commits while 100 observers share polls.
       // Covers: External revisions, mixed intervals, cancellation and remaining listener.
       // Expected: Every observer sees external changes; canceled observers stay quiet.
