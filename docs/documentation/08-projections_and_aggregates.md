@@ -3,9 +3,10 @@
 Most queries return full typed objects. That is the right choice when the app
 needs to display, edit, or write those objects back.
 
-Projection queries are different: they read selected fields instead of
-hydrating full objects. Aggregate queries calculate summary values such as
-counts, minimums, maximums, sums, and averages.
+Projection queries return selected fields instead of full objects. Aggregate
+queries calculate summary values such as counts, minimums, maximums, sums, and
+averages. Internal hydration depends on the execution path; a smaller public
+result does not by itself guarantee that no full objects are read.
 
 Use projections when a screen only needs a small part of each object. Use
 aggregates when the app needs a summary value rather than the matching records.
@@ -159,6 +160,35 @@ final openEstimate = await db.todos
 
 Use property aggregates when you need a summary of matching data without
 reading every full object into application code.
+
+## Windows, Nulls, And Execution Cost
+
+Property projections preserve generated types, including nullable lists and
+embedded values. `findFirst()` caps the underlying result window at one, keeps
+its offset, and respects a zero limit. For nullable properties, a null result
+can mean either no row or a null value in the first row.
+
+Aggregates apply to the query's filtered, distinct, offset/limit window. Property
+`count()` ignores null values; object-query `count()` counts rows. `min`, `max`,
+`sum`, and `average` skip null values and return null when there are no non-null
+values. Use numeric fields for sums and averages; floating-point accumulation
+can round large integer totals.
+
+Current execution paths differ internally while keeping the same typed API:
+
+| Path | Current behavior |
+| --- | --- |
+| MDBX planned single-property queries | Use native projection/aggregate operations. |
+| SQLite native generated property queries | The current Dart path hydrates matching typed objects before extracting properties; Dart aggregates can materialize projected values. |
+| SQLite Web planned single-property queries | Use Worker/native projection and aggregate operations. Non-distinct SQLite engine aggregates accumulate progressively; distinct needs additional materialization. |
+| Multi-property queries | Materialize matching data and select fields in Dart. |
+
+The SQLite engine's non-distinct projection/aggregate operations use one query
+rather than an ID lookup followed by a query for each document. Those engine
+optimizations do not imply that every public SQLite native property query
+currently takes that path. Do not assume constant-memory aggregation across all
+backends. Query planning, distinct, ordering, returned lists, and backend caches
+also contribute to memory use.
 
 ## Common Use Cases
 

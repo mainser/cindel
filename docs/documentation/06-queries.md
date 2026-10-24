@@ -227,11 +227,20 @@ if (todo == null) {
 ```
 
 Use `findFirst()` for single-result lookups and screens that only need one
-matching object.
+matching object. It requests at most one result, including for property and
+multi-property projections. Existing offset and distinct are preserved;
+`limit(0).findFirst()` returns null. A filter or sort may still require examining
+many candidates before that first result is known.
 
 ### `count`
 
-`count()` returns the number of matching objects.
+`count()` returns the number of matching objects **in the query window**:
+filters, distinct, offset, and limit still apply. It is not the total count
+before pagination. Remove the window modifiers when that is what you need.
+Generated native plans use the backend count operation instead of hydrating
+all returned objects; distinct and less direct execution paths can need
+additional tracking or materialization. Property `count()` instead counts
+non-null projected values.
 
 ```dart
 final openCount = await db.todos
@@ -348,6 +357,49 @@ final latestByTitle = await db.todos
     .distinctByTitle()
     .findAll();
 ```
+
+### Distinct Equality And Ordering
+
+Distinct compares structured field values and tuples, including list contents.
+Field boundaries and nulls are preserved; delimiter-like strings or a hash
+collision do not make unrelated tuples equal. Case-insensitive modifiers still
+apply where requested.
+
+Sorting happens before distinct, then offset and limit. Add the ID as a final
+sort key when ties need a deterministic representative or stable pagination:
+
+```dart
+final latestByTitle = await db.todos
+    .all()
+    .sortByCreatedAt(order: CindelSortOrder.descending)
+    .thenByDbId()
+    .distinctByTitle()
+    .limit(20)
+    .findAll();
+```
+
+### Execution And Memory
+
+These are internal optimizations; applications keep using generated queries:
+
+- MDBX can scan the ID cursor in either direction for limited `all()` queries
+  ordered only by ID, including filters, without distinct. It stops after the
+  requested matching window is complete or the cursor is exhausted.
+- MDBX can stream a limited integer-index range ordered ascending by the
+  indexed field and then ID, without distinct. This is not a general ordered
+  scan for arbitrary indexes or descending composite orders.
+- Eligible limited MDBX sorts that include the ID retain at most
+  `offset + limit` candidates using top-k selection. They can still scan all
+  candidates; a large offset increases retained memory.
+- Unsorted MDBX distinct processes candidates progressively, retains distinct
+  keys rather than discarded documents, and can stop at the limit. The key set
+  still grows with the number of distinct values examined.
+- MDBX ID-only result plans avoid copying full documents. Filters and ordering
+  may still require reading document fields.
+
+The selected path depends on the complete query. A limit bounds returned rows,
+not necessarily scanned rows or total backend memory. Result lists, distinct
+keys, and backend caches have costs beyond any bounded candidate buffer.
 
 ## Dynamic Query Modifiers
 

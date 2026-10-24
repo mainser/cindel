@@ -10,105 +10,129 @@ collections such as `db.users`.
 
 ## `CindelBackup`
 
-`CindelBackup` exports and imports full typed database archives.
+`CindelBackup` exports typed archives and imports them into an empty target
+opened with matching schemas. MDBX, SQLite native, and SQLite Web use the same
+public API and generated schemas. Include the target collections of every
+forward link in the collection set, even if a collection currently has no rows.
 
-The archive format is JSONL after decompression and includes:
+### Export And Import
 
-- a header,
-- schema records,
-- document records,
-- a footer with document count and checksum.
-
-Native Dart uses gzip by default. Web-compatible callers can pass
-`compression: CindelBackupCompression.none` and store or transport the same
-JSONL bytes without gzip.
-
-### Exporting A Database
-
-Use `CindelBackup.exportDatabase` to stream a backup archive to a
-`StreamConsumer<List<int>>`.
+Supply a `StreamConsumer<List<int>>` for output and a `Stream<List<int>>` for
+input. This keeps file, browser download, and transport handling in the caller:
 
 ```dart
+final collections = [
+  CindelBackupCollection(UserSchema),
+  CindelBackupCollection(OrderSchema),
+];
+
 final report = await CindelBackup.exportDatabase(
   database: db,
-  collections: [
-    CindelBackupCollection(UserSchema),
-    CindelBackupCollection(OrderSchema),
-  ],
-  output: File('backup.cindelbak').openWrite(),
-);
-```
-
-The returned `CindelBackupReport` reports:
-
-- document count,
-- archive size,
-- checksum,
-- compression.
-
-Example:
-
-```dart
-print('Exported ${report.documentCount} documents');
-print('Archive size: ${report.archiveSizeBytes}');
-```
-
-For Web-compatible uncompressed export:
-
-```dart
-final report = await CindelBackup.exportDatabase(
-  database: db,
-  collections: [
-    CindelBackupCollection(UserSchema),
-  ],
-  compression: CindelBackupCompression.none,
+  collections: collections,
   output: output,
+  compression: CindelBackupCompression.none,
+  batchSize: 1000,
+  onProgress: (progress) {
+    print('${progress.phase}: ${progress.documents} documents');
+  },
 );
-```
 
-### Importing A Database
+print('Documents: ${report.documents}');
+print('JSONL bytes: ${report.uncompressedBytes}');
+print('Archive bytes: ${report.archiveBytes}');
 
-Use `CindelBackup.importDatabase` to stream an archive into an empty database.
-
-```dart
 await CindelBackup.importDatabase(
   database: restoredDb,
-  collections: [
-    CindelBackupCollection(UserSchema),
-    CindelBackupCollection(OrderSchema),
-  ],
-  input: File('backup.cindelbak').openRead(),
+  collections: collections,
+  input: input,
+  compression: CindelBackupCompression.none,
+  batchSize: 1000,
 );
 ```
 
-Restore targets must be opened with matching schemas and must be empty.
+`restoredDb` must be opened separately with those generated schemas. The
+heterogeneous `collections` list preserves each schema's model type without
+requiring explicit type arguments on each `CindelBackupCollection`.
 
-```dart
-final restoredDb = await Cindel.open(
-  directory: restoredDirectory.path,
-  schemas: [UserSchema, OrderSchema],
-);
-```
+For native file I/O, `output` can be `File(path).openWrite()` and `input` can be
+`File(path).openRead()`, using `dart:io`. Web callers provide browser-compatible
+streams instead; the backup calls remain the same.
 
-Use the same collection schemas during import that were used to export the
-archive.
+Compression defaults to gzip on native and none on Web. Choose `none`
+explicitly on both for a portable uncompressed archive. Web does not provide
+the built-in gzip codec. Import must use the archive's compression; there is
+no automatic compression detection.
 
-### Backup Supporting Types
+### Archive Contents And Compatibility
 
-Backup APIs include:
+Version 2 archives contain newline-delimited JSON records after decompression:
 
-- `CindelBackup.exportDatabase`: streams a backup archive to a
-  `StreamConsumer<List<int>>`.
-- `CindelBackup.importDatabase`: streams an archive into an empty database.
-- `CindelBackupCollection`: keeps generated schema typing intact for backup.
-- `CindelBackupProgress`: reports phase, collection, and document count.
-- `CindelBackupReport`: reports document count, archive size, checksum, and
-  compression.
+- a header with archive version, backend, creation time, and migration version,
+- schema manifests,
+- typed document records with their IDs,
+- saved forward-link records,
+- a footer with document/link counts and a checksum.
 
-Use backup APIs for full database archive flows. Do not use them as a
-replacement for normal application reads and writes.
+Import rebuilds indexes and backlinks from the restored data and forward links,
+restores ID allocation state from the imported IDs, and restores the migration
+version. An archive is not a copy of in-memory loaded relationship objects.
+Use compatible generated schemas and values supported by the destination
+runtime, including [Web numeric limits](03-data_modeling.md#value-representation-and-portable-limits).
+The same API does not bypass schema validation.
 
-## `allocateId`
+`CindelBackupReport` exposes `documents`, `uncompressedBytes`, `archiveBytes`,
+`checksum`, and `compression`. Progress callbacks receive `phase`, `collection`
+(which can be null for metadata), and `documents`. Progress counts processed
+documents; it does not mean an import has committed.
+
+The checksum is FNV-1a over non-footer JSONL records. It detects accidental
+corruption; it does not authenticate or encrypt an archive.
+
+### Snapshot And Atomic Restore
+
+Export holds one read snapshot while reading schemas, documents, and links.
+Later writes do not produce a mixed-time archive. The snapshot remains open
+while the caller consumes the stream, so a slow output prolongs its lifetime.
+Do not start backup operations inside an application transaction.
+
+Import validates archive structure, schema compatibility, record limits,
+counts, and checksum while staging data on disk. It publishes documents,
+indexes, links, ID counters, and migration metadata atomically after validation.
+Failure before publication leaves the target unchanged; a failed batch is not
+a partially restored live database. The target's emptiness is checked as part
+of restoration. Wait for `importDatabase` to complete before using restored
+contents.
+
+Version 1 archives do not contain relationships. Restoring such an archive
+with linked schemas requires `allowLegacyWithoutLinks: true`; this explicitly
+accepts a documents-only restore and cannot reconstruct the missing links.
+There is no incremental backup or merge-restore into existing data.
+
+### Batching, Memory, And Temporary Storage
+
+Both operations accept:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `batchSize` | `1000` | Maximum batch/page record count; valid range is 1 through 100000. |
+| `maxRecordBytes` | `16 * 1024 * 1024` | Maximum size of an individual uncompressed JSONL record. Must be positive. |
+
+Export pages through IDs and links and serializes documents progressively.
+Import additionally bounds document/link batches by a 1 MiB encoded-data
+budget; one larger record is handled on its own, up to `maxRecordBytes`.
+It does not retain all imported documents until publication.
+
+These are application-buffer bounds, not a fixed process-memory guarantee.
+Schema metadata, decoded objects, one record's encoding, compression buffers,
+engine caches, and transaction pages also consume memory. A caller that
+collects the complete stream into a list defeats streaming's memory benefit.
+
+Restoration requires temporary disk space for staging and engine transaction
+storage; on Web this uses browser storage quota. Staging is cleaned up on
+normal completion, failure, or handle closure. Abrupt process termination may
+leave temporary files. No live database file replacement is required.
+
+## `allocateId` And `allocateIds`
 
 `allocateId` allocates the next id for a collection.
 
@@ -128,7 +152,18 @@ await db.todos.put(todo);
 print(todo.dbId);
 ```
 
-Most application code should not call `allocateId` directly. Use it for
+For a reserved range, use one call:
+
+```dart
+final ids = await db.allocateIds('todos', 100);
+```
+
+`allocateIds` returns the reserved IDs as a list. A zero count returns an empty
+list; a negative count is invalid. Allocation changes database state and is
+not allowed inside `readTxn`. Reservations are not gapless numbering: see
+[bulk ID allocation](04-generated_typed_api.md#automatic-ids-in-bulk-writes).
+
+Most application code should not call these helpers directly. Use it for
 advanced tooling that needs to reserve ids before constructing documents.
 
 When calling `allocateId`, pass the persisted collection name:
@@ -203,7 +238,18 @@ while (true) {
 Use `documentIdsPage` for backup/export tooling, verification jobs, copy flows,
 or maintenance tasks where reading every id at once may be too large.
 
-SQLite native, MDBX, and Web SQLite expose the same API.
+SQLite native, MDBX, and Web SQLite expose the same API. When all pages must
+represent one consistent view, run the complete loop inside `db.readTxn`.
+Separate calls outside a transaction can observe intervening writes. Keep
+processing incremental rather than accumulating every page in memory.
+
+## Orphan-Link Maintenance
+
+`cleanupOrphanLinks()` checks persisted relationship edges in bounded pages and
+atomically removes those whose source or target document no longer exists.
+Normal deletion already removes incoming and outgoing links transactionally.
+Use this helper outside explicit transactions for older data or maintenance;
+see [relationships](05-relationships.md#deletion-and-orphan-cleanup).
 
 ## Maintenance Metadata
 
@@ -225,14 +271,17 @@ screens usually should not depend on it.
 
 ### `compact`
 
-`compact` asks the storage backend to reclaim space after maintenance work such
-as a completed migration.
+`compact` invokes backend maintenance after work such as a completed migration.
+Call it outside any explicit transaction:
 
 ```dart
-await db.writeTxn(() async {
-  await db.compact();
-});
+await db.compact();
 ```
+
+SQLite executes `VACUUM`. MDBX's current helper completes an empty write
+transaction through its configured storage policy; it does not create a
+separate compacted database copy or promise a smaller file. Do not depend on
+identical physical file-size changes across backends.
 
 Most apps should let `CindelMigrationPlan` handle compaction through its
 `compactOnSuccess` option. Call `compact` directly only from maintenance code

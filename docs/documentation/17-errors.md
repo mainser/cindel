@@ -1,12 +1,13 @@
 # Errors
 
-Cindel-specific errors extend `StateError`. Catch specific Cindel errors when
+Errors in the `CindelError` family extend `StateError`. Catch specific errors when
 the application can recover or show a targeted message. Let unexpected errors
 surface to your normal logging and error-reporting path.
 
-All Cindel-specific runtime errors also share the `CindelError` base class.
-Use that base class only when you intentionally want to handle every Cindel
-runtime failure the same way.
+Storage runtime errors share the `CindelError` base class. Catch it when you
+intentionally want to handle that family of failures together. Maintenance
+also has separate exceptions, including `CindelMigrationMaintenanceError`;
+backup validation can throw ordinary Dart errors.
 
 ## Error Overview
 
@@ -34,6 +35,40 @@ try {
 Cindel can also throw normal Dart errors such as `ArgumentError` when a caller
 passes an invalid value, for example an empty directory, an empty collection
 name, a negative id, or an invalid page limit.
+
+## Preserved Diagnostics
+
+Engine failures carry their original cause through native and Web boundaries.
+`CindelError` has optional `operation`, `backend`, `code`, and `cause` fields in
+addition to its message. Not every validation error supplies all of them.
+
+```dart
+try {
+  await db.todos.all().findAll();
+} on CindelError catch (error) {
+  print('${error.operation} / ${error.backend} / ${error.code}');
+  print(error.cause ?? error.message);
+  rethrow;
+}
+```
+
+A failed read must not be interpreted as an empty collection, a zero count, or
+a successful partial result. Catch failures separately from a valid not-found
+result. Keep the diagnostic context when reporting an error instead of
+replacing it with a generic message.
+
+Errors from an explicit transaction callback are preserved even when rollback
+or concurrent closure also needs handling. Do not swallow them inside the
+callback if rollback is required. Asynchronous watcher failures arrive on the
+stream; use its `onError` handler as shown in [watchers](10-watchers.md).
+
+### A Migration Committed But Maintenance Failed
+
+`CindelMigrationMaintenanceError` implements `Exception` separately from
+`CindelError`. Its `committedVersion` identifies a migration step already
+published before post-step maintenance failed, and `cause` preserves that
+failure. Do not report that step as rolled back or repeat its external side
+effects. See [migrations](11-migrations.md#atomic-steps-and-memory).
 
 ## `CindelOpenError`
 

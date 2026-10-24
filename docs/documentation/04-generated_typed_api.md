@@ -207,6 +207,30 @@ Duplicate ids inside the same batch are rejected before the batch is written.
 Make sure objects with explicit ids are distinct, or let Cindel allocate ids
 for objects that still use `autoIncrement`.
 
+### Automatic IDs In Bulk Writes
+
+`putAll` reserves the IDs needed by objects whose ID is `autoIncrement` in one
+batch, then assigns them in input order. Explicit IDs remain unchanged. This
+reduces allocation calls on MDBX, SQLite native, and Web without changing the
+public API. An empty batch or a batch containing only explicit IDs does not
+need an automatic-ID reservation.
+
+Allocation uses transactional database state, including when separate native
+handles write to the same database. IDs are unique reservations, not a promise
+of gapless numbering. A reservation outside an explicit write transaction can
+survive a later failed write. Inside `writeTxn`, the counter and stored data
+roll back together; IDs already assigned to Dart objects do not roll back.
+Account for that before retrying those objects.
+
+Duplicate IDs in one batch are rejected. Mixing explicit and automatic IDs is
+allowed, but an explicit ID can overlap the reserved range; the allocator does
+not search around IDs supplied in the same input batch.
+
+`putAll` processes a materialized input list. Split very large inputs into
+application batches when memory matters. Use `writeTxn` around those batches
+only if they must commit together, allowing for the backend's transaction
+storage. See [transactions](09-transactions.md).
+
 ## Natural-Key Writes: `putBy...`
 
 When a model has a unique index with `replace: true`, the generator creates

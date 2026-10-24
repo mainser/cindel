@@ -126,6 +126,21 @@ await CindelBackup.exportDatabase(
 );
 ```
 
+## Models And Maintenance
+
+Use the same generated models and query helpers as on native. Nullable lists,
+nullable elements, enums, and embedded values follow the same declared types.
+Account for JavaScript's safe-integer range when sharing data; see the
+[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+
+Backups and migrations use the same public APIs. Backups default to
+uncompressed JSONL on Web; explicitly choose `CindelBackupCompression.none` on
+both platforms for portable archive code. Native gzip archives must be
+decompressed before supplying an uncompressed input stream to Web. Disk-staged
+restoration and migration workspaces consume browser storage quota as well as
+the live database. See [backups](14-backup_and_advanced_helpers.md) and
+[migrations](11-migrations.md).
+
 ## Current Limitations
 
 Current Web limits:

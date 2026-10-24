@@ -26,10 +26,10 @@ final db = await Cindel.open(
 A migration step usually follows this shape:
 
 1. Open existing data with schemas that can read the old stored shape.
-2. Export old objects or stored documents.
-3. Register the target schemas.
-4. Convert old data into the new model shape.
-5. Import converted objects or documents.
+2. Register target schemas in the private workspace.
+3. Stream old objects or documents from the original step snapshot.
+4. Convert each value into the new model shape.
+5. Import the converted stream in batches.
 6. Verify the result.
 7. Let Cindel mark the step as complete.
 
@@ -51,7 +51,7 @@ Use the streaming helpers for large collections:
 await context.registerTargetSchemas();
 await context.importObjectStream(
   UserSchema,
-  context.streamObjects(OldUserSchema, batchSize: 100).map(User.fromLegacy),
+  context.streamObjects(OldUserSchema, batchSize: 100).map(UserMigration.fromLegacy),
   batchSize: 100,
 );
 ```
@@ -130,7 +130,7 @@ final migrateUsersFrom1To2 = CindelMigrationStep(
 
     await context.importObjects(
       UserSchema,
-      oldUsers.map(User.fromLegacy),
+      oldUsers.map(UserMigration.fromLegacy),
     );
   },
 );
@@ -175,7 +175,7 @@ well:
 ```dart
 final oldUsers = await context.exportObjects(OldUserSchema);
 
-final newUsers = oldUsers.map(User.fromLegacy);
+final newUsers = oldUsers.map(UserMigration.fromLegacy);
 ```
 
 Document exports are useful when fields are being renamed heavily or when you
@@ -203,16 +203,13 @@ await context.registerTargetSchemas();
 This registers the target schemas in migrated mode and prepares the target
 collections for imported data.
 
-The usual order is:
+For a streaming conversion, register first and keep reading the original snapshot:
 
 ```dart
-final oldUsers = await context.exportObjects(OldUserSchema);
-
 await context.registerTargetSchemas();
-
-await context.importObjects(
+await context.importObjectStream(
   UserSchema,
-  oldUsers.map(User.fromLegacy),
+  context.streamObjects(OldUserSchema).map(UserMigration.fromLegacy),
 );
 ```
 
@@ -262,7 +259,7 @@ Use `verifyBefore` to check assumptions before modifying data.
 
 ```dart
 verifyBefore: (context) async {
-  final ids = await context.database.documentIds('users');
+  final ids = await context.database.documentIdsPage('users', limit: 1);
   if (ids.isEmpty) {
     return;
   }
@@ -308,16 +305,13 @@ final migrations = CindelMigrationPlan(
       openSchemas: [OldUserSchema],
       targetSchemas: [UserSchema],
       verifyBefore: (context) async {
-        await context.database.documentIds('users');
+        await context.database.documentIdsPage('users', limit: 1);
       },
       migrate: (context) async {
-        final oldUsers = await context.exportObjects(OldUserSchema);
-
         await context.registerTargetSchemas();
-
-        await context.importObjects(
+        await context.importObjectStream(
           UserSchema,
-          oldUsers.map(User.fromLegacy),
+          context.streamObjects(OldUserSchema).map(UserFromLegacy.fromLegacy),
         );
       },
       verifyAfter: (context) async {

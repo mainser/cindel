@@ -37,8 +37,8 @@
 ## Status
 
 Cindel provides a generated typed API: application code works with typed
-collections such as `db.users`, and each backend adapts internally to that same
-app code.
+collections such as `db.users`. The same models and generated application code
+work on MDBX, SQLite native, and SQLite Web; each backend adapts internally.
 
 ## Features
 
@@ -103,7 +103,10 @@ class User {
 
   bool active = true;
 
+  @Index()
   DateTime createdAt = DateTime.now().toUtc();
+
+  List<String> tags = const [];
 }
 ```
 
@@ -114,7 +117,7 @@ dart run build_runner build --delete-conflicting-outputs
 ```
 
 The generator creates the schema, serializers, typed collection getter, and
-query helpers.
+query helpers. Regenerate model code after upgrading the generator.
 
 ### 4. Open And Use
 
@@ -142,7 +145,15 @@ Pass a `CindelMigrationPlan` to `Cindel.open` on every app start. Cindel stores
 the database data version inside the database, skips completed steps, and opens
 the final handle with the target schemas after successful migration.
 
+The conversion below assumes the old model has `dbId`, `email`, and
+`fullName` fields:
+
 ```dart
+User migrateUser(OldUser old) => User()
+  ..dbId = old.dbId
+  ..email = old.email
+  ..name = old.fullName;
+
 final migrations = CindelMigrationPlan(
   targetVersion: 2,
   baselineVersion: 1,
@@ -153,13 +164,13 @@ final migrations = CindelMigrationPlan(
       openSchemas: [OldUserSchema],
       targetSchemas: [UserSchema],
       verifyBefore: (context) async {
-        await context.database.documentIds('users');
+        await context.database.documentIdsPage('users', limit: 1);
       },
       migrate: (context) async {
         await context.registerTargetSchemas();
         await context.importObjectStream(
           UserSchema,
-          context.streamObjects(OldUserSchema).map(User.fromLegacy),
+          context.streamObjects(OldUserSchema).map(migrateUser),
         );
       },
       verifyAfter: (context) async {
@@ -187,21 +198,21 @@ SQLite native, MDBX, and Web SQLite expose the same contract.
 `importObjectStream`/`importDocumentStream` consume transformations in bounded
 batches. The older `exportObjects`/`exportDocuments` helpers return full lists.
 Migration needs temporary disk space for a database copy plus transaction
-storage. See [migration details](../../docs/documentation/11-migrations.md).
+storage. Migration details are in `docs/documentation/11-migrations.md`.
 
 ## Maintenance Tooling
 
 Most application code should use generated typed collections and queries.
 Tooling that needs full database backup can stream a typed archive through
-`CindelBackup`:
+`CindelBackup`. This example uses native file streams (`dart:io`):
 
 ```dart
 final output = File('backup.cindelbak').openWrite();
 await CindelBackup.exportDatabase(
   database: db,
   collections: [
-    CindelBackupCollection<User>(UserSchema),
-    CindelBackupCollection<Order>(OrderSchema),
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
   ],
   output: output,
 );
@@ -213,16 +224,18 @@ Restore targets must be opened with matching schemas and must be empty:
 await CindelBackup.importDatabase(
   database: restoredDb,
   collections: [
-    CindelBackupCollection<User>(UserSchema),
-    CindelBackupCollection<Order>(OrderSchema),
+    CindelBackupCollection(UserSchema),
+    CindelBackupCollection(OrderSchema),
   ],
   input: File('backup.cindelbak').openRead(),
 );
 ```
 
 The archive is JSONL after decompression. Native Dart uses gzip by default;
-Web-compatible code can pass `compression: CindelBackupCompression.none` and
-store or transport the same JSONL bytes.
+Web defaults to uncompressed JSONL. For portable archives, pass
+`compression: CindelBackupCompression.none` to both export and import and
+provide platform-appropriate streams. Schema types are preserved even when the
+collection list contains different model types.
 
 Version 2 exports documents, saved forward links, and migration metadata from
 one read snapshot; restoration reconstructs backlinks. Include every collection
@@ -233,12 +246,13 @@ leave the target unchanged. Temporary storage is released on completion, error,
 or handle closure. A process crash can leave an unused temporary file; target
 recovery follows the storage engine's transaction durability.
 
-Import batches are capped by record count and a 1 MiB JSON budget, with a 16 MiB
-default limit per JSONL record (`maxRecordBytes` can raise it for larger
-documents). Export hydrates one document at a time and pages link IDs. These bounds cover backup buffers, not the engine's database/page cache or
-bytes retained by the caller's stream consumer. Version 1 archives contain no
-relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
-that loss explicitly. Use binaries matching native ABI 38.
+Import batches are capped by record count and a 1 MiB JSON budget; a larger
+record is processed on its own, up to the default 16 MiB per-record limit
+(`maxRecordBytes` can raise it). Export hydrates one document at a time and
+pages link IDs. These bounds cover backup buffers, not the engine's
+database/page cache or bytes retained by the caller's stream consumer.
+Version 1 archives contain no relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
+that loss explicitly. Use binaries matching native ABI 39.
 
 Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
 of ids without materializing the whole collection:
@@ -256,7 +270,8 @@ while (true) {
 }
 ```
 
-`documentIds()` remains available when a full id list is acceptable.
+`documentIds()` remains available when a full id list is acceptable. Wrap the
+paged scan in `readTxn` when all pages must share one consistent snapshot.
 
 ## Models
 
@@ -302,6 +317,16 @@ Cindel persists:
 - embedded objects
 - lists of supported non-list values
 - lists of embedded objects
+- nullable lists and nullable list elements
+
+For supported element types `T`, `List<T>`, `List<T>?`, `List<T?>`, and
+`List<T?>?` use the same generated API on all three backends. Null lists, empty
+lists, and lists containing nulls remain distinct values through individual
+and bulk writes, reads, and property projections.
+
+`DateTime` is stored as epoch microseconds and read in UTC; `Duration` uses
+microseconds. For data shared with Web, keep integers and integer-backed
+values within the JavaScript safe range of ±9007199254740991. Use finite doubles.
 
 Ignore transient fields with `@ignore`:
 
@@ -332,6 +357,8 @@ class Subscription {
   Plan plan = Plan.free;
 }
 ```
+
+Enum lists use name-based storage; `@Enumerated` applies to scalar enum fields.
 
 ### Freezed
 
@@ -401,7 +428,8 @@ final saved = await db.users.get(ada.dbId);
 await db.users.delete(ada.dbId);
 ```
 
-Bulk operations preserve input order and return `null` for missing ids:
+Use `putAll` and `deleteAll` for bulk writes and deletes. `getAll` preserves
+input order and returns `null` for missing ids:
 
 ```dart
 await db.users.putAll([ada, grace, linus]);
@@ -410,6 +438,11 @@ final users = await db.users.getAll([ada.dbId, 404, grace.dbId]);
 
 await db.users.deleteAll([ada.dbId, grace.dbId]);
 ```
+
+`putAll` reserves automatic IDs in one batch on all three backends, assigning
+them in input order and preserving explicit IDs. Duplicate IDs in the same
+batch are rejected. IDs are not guaranteed to be gapless. Split very large
+inputs into batches when memory matters; `putAll` materializes its input.
 
 Unique indexes with `replace: true` generate natural-key upsert helpers:
 
@@ -523,6 +556,15 @@ final deleted = await db.users
     .deleteAll();
 ```
 
+`findFirst()` requests at most one result, including projections, while
+preserving offset and distinct. `count()` counts the query window after
+filtering, distinct, offset, and limit; property `count()` counts non-null values.
+
+MDBX preserves 64-bit integer precision in filters and ordering. Distinct uses
+structured value equality across all backends. Limited MDBX queries can use
+direct ID/index scans or bounded top-k selection when their ordering allows it;
+a limit does not guarantee that only that many candidates are scanned.
+
 ## Indexes
 
 Add `@Index` to fields that should be queryable through generated `where()`
@@ -586,7 +628,14 @@ final users = await db.readTxn(() {
 });
 ```
 
-If a write transaction throws, Cindel rolls back the pending writes.
+If a write transaction throws, Cindel rolls back the pending writes and ID
+reservations made inside that transaction. Dart object mutations, including
+assigned IDs, are not rolled back. Writes and ID allocation are rejected inside
+`readTxn`.
+
+Storage failures preserve diagnostic context through `CindelError.operation`,
+`backend`, `code`, and `cause` when available. A failed read is an error, not an
+empty result or successful partial result.
 
 ## Links And Backlinks
 
@@ -688,6 +737,20 @@ Lazy watchers emit invalidation signals without returning objects:
 final sub = db.users.watchCollectionLazy().listen((_) {
   // Refresh cached state.
 });
+```
+
+Polling is shared by collection within each database handle. SQLite revisions
+are persisted in the same transaction as writes, so rolled-back changes do not
+publish revisions. Snapshot reads remain specific to each watcher.
+
+Handle stream errors with `onError` and cancel subscriptions when their owner
+is disposed. Closing the database stops polling and completes watcher streams;
+pending Web snapshot reads do not emit a spurious closed-database error during
+shutdown.
+
+```dart
+await sub.cancel();
+await db.close();
 ```
 
 ## Sync

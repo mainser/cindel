@@ -56,6 +56,25 @@ Freezed classic classes and single primary-factory models are supported. If a
 model needs several union cases, keep that union outside the persisted Cindel
 collection model or persist an explicit field such as `type` instead.
 
+## Value And Memory Limits
+
+Supported model shapes are shared across all backends, but portable values must
+fit the destination runtime. JavaScript Web requires safe integers, including
+integer-backed dates and durations. Enum-list storage uses names; annotated
+ordinal/value enum lists are not supported. See the
+[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+
+Bounded query candidates and maintenance batches do not bound the entire
+process's memory. `findAll`, multi-property results, and `putAll` inputs can
+materialize full lists. Distinct needs keys for seen values, and backend
+transactions/caches use additional memory. Current projection and aggregate
+execution costs are described in
+[projections and aggregates](08-projections_and_aggregates.md#windows-nulls-and-execution-cost).
+
+Backups reject records beyond `maxRecordBytes`. Atomic restores and migration
+steps require temporary disk storage, so check native disk capacity or browser
+quota before large maintenance operations.
+
 ## Web Limitations
 
 Current Web limits:

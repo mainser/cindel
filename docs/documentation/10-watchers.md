@@ -247,6 +247,55 @@ Most apps should prefer typed object, collection, and query watchers. Use
 change-set watchers when you need to integrate with a custom cache, diagnostic
 tool, or advanced invalidation layer.
 
+## Shared Polling And Commit Revisions
+
+A database handle schedules polling through a shared coordinator. Subscriptions
+due for the same collection share its revision read for that polling cycle,
+while retaining their requested intervals. This reduces redundant revision
+checks; it does not share all hydrated snapshots between subscribers.
+
+Local commits notify watchers directly. SQLite native/Web stores revisions in
+the same transaction as the writes, so rollback does not publish a revision and
+reopening does not reset it. Separate native connections can detect committed
+changes through polling. This does not extend Web's delivery scope described
+in the [Web guide](13-web.md).
+
+Watchers report state changes, not a durable event log with one event for every
+write. Changes can be coalesced. A collection snapshot can still load the whole
+collection; prefer a filtered or limited query for large datasets. A lazy
+watcher's void payload does not guarantee that its implementation performs no
+reads to detect a change.
+
+## Errors And Shutdown
+
+Handle asynchronous errors on the stream, not only around subscription setup:
+
+```dart
+final sub = db.todos.watchCollection().listen(
+  (todos) {
+    // Render the current collection.
+  },
+  onError: (Object error, StackTrace stack) {
+    // Report a storage/read failure without treating it as an empty result.
+  },
+);
+
+await sub.cancel();
+await db.close();
+```
+
+Polling failures are delivered to listeners and can be retried on subsequent
+polls. They are not silently converted into an unchanged revision or empty
+snapshot. Closing a database stops polling and completes watcher streams.
+Pending Web snapshot reads that encounter the retired handle do not emit a
+spurious closed-database error during that shutdown; other failures are still
+reported. An explicit operation after close continues to throw
+`CindelDatabaseClosedError`.
+
+Cancel subscriptions when disposing their owner. A paused subscription can
+delay delivery of the done event and completion of stream cleanup until it is
+resumed or cancelled.
+
 ## UI Usage Patterns
 
 Create watchers at the same lifecycle level as the UI state they update.

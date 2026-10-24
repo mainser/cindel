@@ -22,6 +22,25 @@ Do not import files from `package:cindel/src/...`. Those files are
 implementation details and can change without being part of the application
 contract.
 
+## Runtime Compatibility
+
+Cindel 1.1.3 requires native ABI **39**. The binding checks for an exact ABI match
+before opening a native database and rejects older or newer incompatible
+libraries. An ABI mismatch is not a schema migration error.
+
+Use compatible versions of `cindel`, `cindel_flutter_libs`, and
+`cindel_generator`, then regenerate model code. The Flutter libraries package
+provides platform binaries and the Worker/Wasm assets for Web. Remove stale
+custom runtime overrides when switching back to packaged libraries.
+
+Pure Dart tools or custom native builds can select a library through
+`CINDEL_NATIVE_LIBRARY`; that library must implement the required ABI. Updating
+the Dart package alone does not rebuild a custom native binary.
+
+The ABI is an internal runtime boundary. Application models and calls remain
+the same across MDBX, SQLite native, and Web; applications should not branch on
+ABI numbers or construct wire payloads themselves.
+
 ## Generator-Oriented Exports
 
 Generator-oriented exports are public because generated code needs stable

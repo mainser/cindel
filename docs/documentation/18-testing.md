@@ -152,6 +152,29 @@ final count = await db.todos
 expect(count, 1);
 ```
 
+## Cross-Backend Model Regressions
+
+Run the same typed-model assertions against MDBX, SQLite native, and a real Web
+runtime. Selecting SQLite in a native test does not exercise Dart-to-JavaScript
+serialization or the Worker boundary. Keep backend selection in test setup,
+not in the model or expected public results.
+
+Useful round-trip coverage includes:
+
+- `put` and `putAll`, followed by `get`, `getAll`, and queries;
+- nullable values, null/empty lists, nullable elements, embedded values, and
+  multiple collections sharing an embedded type;
+- single-property projections and `findFirst`, including a zero limit;
+- closing and reopening persistent storage;
+- backup export/import with multiple generated schema types and small batches;
+- failed transactions and restored ID/revision state;
+- watcher cancellation and close while a snapshot read is pending.
+
+Use values within the documented portable numeric domain when asserting
+cross-platform equality. Test platform numeric limits separately, rather than
+changing expected types for each backend. Consult the
+[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+
 ## Sync Tests
 
 For sync tests, use a small fake adapter. The fake should let the test control

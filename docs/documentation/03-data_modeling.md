@@ -241,6 +241,58 @@ class Matrix {
 For structured child values, use embedded objects. For independently stored
 objects, use another root collection.
 
+## Type Compatibility Across Backends
+
+One annotated model and its generated code serve all three backends. No
+backend-specific field declarations or application serializers are needed for
+the supported shapes below.
+
+| Field family | MDBX | SQLite native | SQLite Web |
+| --- | --- | --- | --- |
+| `bool`, `int`, `double`, `String` | Supported | Supported | Supported |
+| `DateTime`, `Duration` | Supported | Supported | Supported |
+| Enum stored by name, ordinal, or a supported value field | Supported | Supported | Supported |
+| Embedded object | Supported | Supported | Supported |
+| Nullable forms of the above | Supported | Supported | Supported |
+| Lists of scalar values, name-based enums, or embedded objects | Supported | Supported | Supported |
+| Nullable lists and nullable list elements | Supported | Supported | Supported |
+
+For each supported list element type `T`, the generator supports `List<T>`,
+`List<T>?`, `List<T?>`, and `List<T?>?`. A null list, an empty list, and a list
+containing null elements remain different values. This applies to root fields
+and embedded fields, individual and bulk writes, reads, and generated property
+projections. Multiple collections in one model library can share embedded types.
+
+```dart
+// Fields inside an annotated model:
+List<String?>? labels;
+List<Duration?> delays = [];
+```
+
+`@Enumerated` configures scalar enum fields. Enum lists use the default
+name-based representation; putting `@Enumerated` on a list is not supported.
+Nested lists and indexes inside embedded objects remain unsupported.
+
+### Value Representation And Portable Limits
+
+- `DateTime` stores epoch microseconds and is reconstructed in UTC. The instant
+  is preserved, not the original local timezone representation.
+- `Duration` stores microseconds.
+- Native integer fields use signed 64-bit values. MDBX integer filtering and
+  sorting compare integer values without converting them to doubles.
+- For code and data shared with JavaScript-compiled Web, keep integer values
+  within `-9007199254740991` through `9007199254740991`. This also constrains
+  integer-backed representations such as date/duration microseconds and enum
+  numeric values. IDs must additionally satisfy the ID rules above.
+- Use finite `double` values; NaN and infinity are not portable stored values.
+  Numeric sums and averages use floating-point arithmetic and are not an
+  arbitrary-precision integer accumulator.
+
+Type parity does not remove the host runtime's numeric limits. Validate these
+limits at the application's input boundary when the same data will be used on
+native and Web. See [projections](08-projections_and_aggregates.md) for result
+semantics and execution costs.
+
 ## Ignored Fields
 
 Use `@ignore` for fields that should exist in Dart but should not be stored.

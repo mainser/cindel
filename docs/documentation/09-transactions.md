@@ -55,6 +55,19 @@ await db.readTxn(() async {
 
 Use `readTxn` for grouped reads, not for changes.
 
+### Snapshots And Allocation
+
+Reads issued through an active `readTxn` use that transaction's snapshot,
+including MDBX query and paged-ID reads. A later commit through another native
+handle does not become visible midway through the snapshot. Keep related page
+reads inside one `readTxn` when the scan must be consistent.
+
+Allocating IDs changes persisted state and is not allowed inside `readTxn`.
+In a write transaction, ID reservations use the active transactional counter;
+separate native handles do not rely on a stale per-handle counter. The storage
+engine coordinates their writes. This does not permit nesting or overlapping
+explicit transactions on the same Cindel handle.
+
 ## Write Transactions
 
 `writeTxn` runs writes atomically.
@@ -123,7 +136,12 @@ When a write transaction rolls back:
 
 - writes made inside the transaction are not committed,
 - watcher notifications for those rolled-back writes are not emitted,
-- the error from the callback is returned to the caller.
+- the error from the callback is returned to the caller,
+- transactional ID counters and SQLite change revisions are rolled back.
+
+Dart object mutations, assigned IDs, and external side effects are not rolled
+back. If a retry needs fresh automatic IDs, reset or recreate those objects
+explicitly rather than assuming rollback changed them in memory.
 
 Use normal Dart error handling to decide whether the caller should retry, show
 an error message, or abandon the operation.

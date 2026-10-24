@@ -400,6 +400,32 @@ Use normal collection fields for values that belong directly to the object. Use
 `CindelLink<T>` and `CindelLinks<T>` only for relationships to other root
 collection objects.
 
+## Deletion And Orphan Cleanup
+
+Deleting an object removes its persisted incoming and outgoing links in the
+same transaction on all three backends. Bulk and query deletions follow the
+same rule. This removes relationship edges, not the other linked documents.
+Rollback restores both the deleted documents and their links.
+
+Already loaded Dart relationship objects are application state; load the
+relationship again when you need a fresh persisted view.
+
+For maintenance of older data that may contain links to missing objects:
+
+```dart
+final result = await db.cleanupOrphanLinks();
+print('Examined ${result.examinedLinks} links');
+print('Removed ${result.removedLinks} orphan links');
+```
+
+Run this outside an explicit transaction. It checks persisted links in bounded
+pages and removes orphan edges atomically. It does not hydrate the entire
+database or delete surviving documents. Backend transaction/cache memory is
+separate from those page buffers.
+
+Backups include forward links and restore the corresponding backlinks. See
+[backup requirements](14-backup_and_advanced_helpers.md).
+
 ## Backend Behavior
 
 SQLite native, MDBX, and SQLite Web/OPFS share the same relationship behavior:

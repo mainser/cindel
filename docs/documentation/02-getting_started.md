@@ -9,6 +9,25 @@ It assumes you already have at least one annotated model and generated code. If
 you are still deciding how to model data, start with the Data Modeling guide
 first.
 
+## Package Compatibility
+
+Use compatible versions of `cindel`, `cindel_generator`, and
+`cindel_flutter_libs`. Regenerate all model libraries after updating the
+generator:
+
+```sh
+dart run build_runner build --delete-conflicting-outputs
+```
+
+The generated code includes schema serializers and shared embedded-type helpers.
+Regenerating only one selected output can leave other model libraries stale.
+Do not edit `.g.dart` files manually. The native runtime must match the Dart
+bindings; see [runtime compatibility](19-advanced_reference.md#runtime-compatibility).
+
+The public model and collection API is the same for MDBX, SQLite native, and
+SQLite Web. Backend selection belongs at database opening; the rest of the
+application uses the same generated code.
+
 ## Before You Open A Database
 
 A Cindel database is opened with generated schemas. That means these pieces
