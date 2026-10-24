@@ -149,6 +149,15 @@ jobs:
       - name: Build Linux prebuilt library
         run: ./tool/prebuilt/build_linux.sh
 
+      - name: Set up Python for binary validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate Linux release ABI and database opening
+        timeout-minutes: 2
+        run: python tool/prebuilt/verify_native.py packages/cindel_flutter_libs/linux/libcindel_native.so
+
       - name: Collect Linux binary
         run: |
           mkdir -p release-artifacts/packages/cindel_flutter_libs/linux
@@ -186,6 +195,16 @@ jobs:
       - name: Build Windows prebuilt library
         shell: pwsh
         run: .\tool\prebuilt\build_windows.ps1
+
+      - name: Set up Python for binary validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate Windows release ABI and database opening
+        timeout-minutes: 2
+        shell: pwsh
+        run: python tool/prebuilt/verify_native.py packages/cindel_flutter_libs/windows/cindel_native.dll
 
       - name: Collect Windows binary
         shell: pwsh
@@ -226,6 +245,16 @@ jobs:
 
       - name: Build Apple prebuilt libraries
         run: ./tool/prebuilt/build_apple.sh
+
+      - name: Set up Python for binary validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # Executes the universal dylib's host slice. iOS archives cannot run here.
+      - name: Validate macOS release ABI and database opening
+        timeout-minutes: 2
+        run: python tool/prebuilt/verify_native.py packages/cindel_flutter_libs/macos/libcindel_native.dylib
 
       - name: Collect Apple binaries
         run: |
@@ -283,6 +312,20 @@ jobs:
       - name: Build Web prebuilt runtime
         shell: pwsh
         run: .\tool\prebuilt\build_web.ps1
+
+      - name: Set up Flutter for Web runtime validation
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Web smoke test dependencies
+        run: flutter pub get
+
+      - name: Validate Web release ABI and database opening
+        timeout-minutes: 2
+        run: dart run tool/prebuilt/verify_web_runtime.dart packages/cindel_flutter_libs/web
 
       - name: Collect Web runtime
         shell: pwsh
