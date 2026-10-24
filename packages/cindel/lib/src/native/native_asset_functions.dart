@@ -754,10 +754,23 @@ List<String> _candidateLibraryNames() {
 
   final current = Directory.current.path;
   return [
+    if (Platform.isMacOS)
+      ..._macOSFrameworkCandidates(Platform.resolvedExecutable),
     _joinPath(current, 'packages/cindel_flutter_libs/$packagePath'),
     _joinPath(current, '../cindel_flutter_libs/$packagePath'),
     _joinPath(current, '../../packages/cindel_flutter_libs/$packagePath'),
     platformName,
+  ];
+}
+
+// Resolve relative to the executable, not the working directory: an installed
+// macOS app can be launched from Finder, a terminal, or an unrelated directory.
+List<String> _macOSFrameworkCandidates(String executable) {
+  final frameworks = File(executable).parent.parent.uri.resolve('Frameworks/');
+  return [
+    frameworks.resolve('CindelNative.framework/CindelNative').toFilePath(),
+    // Retain support for applications bundled by older CocoaPods releases.
+    frameworks.resolve('libcindel_native.dylib').toFilePath(),
   ];
 }
 

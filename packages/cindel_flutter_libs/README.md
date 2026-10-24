@@ -93,6 +93,8 @@ Current packaged binary locations:
 
 - Android: `android/src/main/jniLibs/<abi>/libcindel_native.so`
 - Linux: `linux/libcindel_native.so`
+- iOS: `ios/cindel_flutter_libs/cindel.xcframework` (static).
+- macOS: `macos/cindel_flutter_libs/CindelNative.xcframework` (dynamic).
 - Web: `web/cindel_worker.js`, `web/pkg/cindel_native.js`, and
   `web/pkg/cindel_native_bg.wasm`
 - Windows: `windows/cindel_native.dll`
@@ -100,6 +102,20 @@ Current packaged binary locations:
 The iOS and macOS podspecs are versioned with this package. Their vendored
 Apple binaries must be generated on macOS with Xcode before publishing Apple
 runtime support.
+
+iOS and macOS support both Swift Package Manager and CocoaPods with the same
+public Cindel API. Flutter selects the integration; no extra Dart imports or
+manual linker settings are needed. The plugin targets iOS 13 and macOS 10.15
+or later, subject to the minimum required by the application's Flutter SDK.
+Prebuilt slices cover iOS ARM64 devices, ARM64/x64 simulators, and ARM64/x64 Macs.
+
+Maintainers build Apple artifacts with `tool/prebuilt/build_apple.sh` on macOS
+with Xcode. CI is configured to validate both managers with Flutter 3.41.0 and 3.47.8;
+release repeats consumer checks against the binaries being published. These
+checks include all FFI symbols, ABI 39, and MDBX/SQLite persistence. iOS device
+Release builds are checked without signing; runtime checks use the simulator.
+Consumer checks use a locally archived and extracted pub package, including
+the macOS framework symlinks, without uploading anything to pub.dev.
 
 Android ABIs currently included:
 

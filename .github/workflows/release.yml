@@ -251,25 +251,38 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Executes the universal dylib's host slice. iOS archives cannot run here.
-      - name: Validate macOS release ABI and database opening
-        timeout-minutes: 2
-        run: python tool/prebuilt/verify_native.py packages/cindel_flutter_libs/macos/libcindel_native.dylib
+      - name: Validate Apple release artifacts
+        timeout-minutes: 5
+        run: python tool/prebuilt/verify_apple.py
+
+      - name: Set up Flutter for Apple consumer validation
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # Exercise the freshly built release artifacts, not CI's earlier copies.
+      - name: Validate release consumers with SwiftPM and CocoaPods
+        timeout-minutes: 45
+        run: |
+          python tool/prebuilt/run_apple_smoke.py --manager swiftpm
+          python tool/prebuilt/run_apple_smoke.py --manager cocoapods
 
       - name: Collect Apple binaries
         run: |
-          mkdir -p release-artifacts/packages/cindel_flutter_libs/ios
-          mkdir -p release-artifacts/packages/cindel_flutter_libs/macos
-          cp -R packages/cindel_flutter_libs/ios/cindel.xcframework \
-            release-artifacts/packages/cindel_flutter_libs/ios/cindel.xcframework
-          cp packages/cindel_flutter_libs/macos/libcindel_native.dylib \
-            release-artifacts/packages/cindel_flutter_libs/macos/libcindel_native.dylib
+          mkdir -p release-artifacts
+          # Preserve versioned framework symlinks and executable permissions.
+          tar -czf release-artifacts/cindel-apple-packages.tar.gz \
+            packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework \
+            packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework \
+            packages/cindel_flutter_libs/macos/libcindel_native.dylib
 
       - name: Upload Apple binaries
         uses: actions/upload-artifact@v7
         with:
           name: cindel-prebuilt-apple
-          path: release-artifacts/packages
+          path: release-artifacts/cindel-apple-packages.tar.gz
           if-no-files-found: error
 
   build_web:
@@ -388,6 +401,7 @@ jobs:
 
       - name: Install prebuilt binaries into package
         run: |
+          tar -xzf release-artifacts/cindel-apple-packages.tar.gz -C release-artifacts
           if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
             artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
           elif [ -d release-artifacts/cindel_flutter_libs ]; then
@@ -404,8 +418,8 @@ jobs:
           test -f packages/cindel_flutter_libs/android/src/main/jniLibs/x86_64/libcindel_native.so
           test -f packages/cindel_flutter_libs/linux/libcindel_native.so
           test -f packages/cindel_flutter_libs/windows/cindel_native.dll
-          test -d packages/cindel_flutter_libs/ios/cindel.xcframework
-          test -f packages/cindel_flutter_libs/macos/libcindel_native.dylib
+          test -d packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework
+          test -d packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework
           test -f packages/cindel_flutter_libs/web/cindel_worker.js
           test -f packages/cindel_flutter_libs/web/pkg/cindel_native.js
           test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm
@@ -574,6 +588,7 @@ jobs:
       - name: Prepare GitHub release assets
         shell: bash
         run: |
+          tar -xzf release-artifacts/cindel-apple-packages.tar.gz -C release-artifacts
           if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
             artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
           elif [ -d release-artifacts/cindel_flutter_libs ]; then
@@ -605,9 +620,15 @@ jobs:
           )
 
           (
-            cd "${artifact_libs_dir}/ios"
+            cd "${artifact_libs_dir}/ios/cindel_flutter_libs"
             zip -qr "${GITHUB_WORKSPACE}/github-release-assets/cindel_native_ios.xcframework.zip" \
               cindel.xcframework
+          )
+
+          (
+            cd "${artifact_libs_dir}/macos/cindel_flutter_libs"
+            zip -qry "${GITHUB_WORKSPACE}/github-release-assets/cindel_native_macos.xcframework.zip" \
+              CindelNative.xcframework
           )
 
           ls -lh github-release-assets

@@ -2,6 +2,7 @@
 
 ## 1.1.3
 
+- Added macOS framework loading for SwiftPM/CocoaPods while preserving the public API and legacy dylib loading.
 - Fixed Web watchers emitting closed-database errors from pending snapshots during shutdown.
 - Fixed generated nullable lists, shared embedded types, and list/object reads and projections across MDBX and SQLite native/Web, preserving the same typed API.
 - Fixed inferred backup schema types in MDBX and SQLite native/Web export and import, preserving bounded batches.

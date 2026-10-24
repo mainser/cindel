@@ -2,6 +2,7 @@
 
 ## 1.1.3
 
+- Added iOS/macOS Swift Package Manager packaging alongside CocoaPods, with Apple consumer validation in CI and release.
 - Released in lockstep with `cindel` 1.1.3 for the native ABI 39.
 
 ## 1.1.2

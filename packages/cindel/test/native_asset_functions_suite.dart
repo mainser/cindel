@@ -12,6 +12,27 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel native asset functions', () {
+    test(
+      'resolves macOS frameworks from the executable, including spaces.',
+      () {
+        final executable = File(
+          '${Directory.systemTemp.path}/Cindel App.app/Contents/MacOS/Runner',
+        );
+        final candidates = _invokePrivate<List<String>>(
+          '_macOSFrameworkCandidates',
+          [executable.path],
+        );
+        final frameworks = executable.parent.parent.uri.resolve('Frameworks/');
+        expect(candidates, [
+          frameworks
+              .resolve('CindelNative.framework/CindelNative')
+              .toFilePath(),
+          frameworks.resolve('libcindel_native.dylib').toFilePath(),
+        ]);
+        expect(candidates.any((path) => path.contains('%20')), isFalse);
+      },
+    );
+
     test('executes ABI 39 error ownership through native assets.', () {
       final functions = reflect(_nativeAssetFunctions());
       final abi =

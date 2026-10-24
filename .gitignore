@@ -19,6 +19,7 @@ target/
 !packages/cindel_flutter_libs/ios/**/*.framework/**
 !packages/cindel_flutter_libs/ios/**/*.xcframework/**
 !packages/cindel_flutter_libs/macos/**/*.dylib
+!packages/cindel_flutter_libs/macos/**/*.xcframework/**
 !packages/cindel_flutter_libs/windows/*.dll
 !packages/cindel_flutter_libs/linux/*.so
 
@@ -37,3 +38,8 @@ Thumbs.db
 
 # Flutter/Dart/Pub related
 /coverage/
+
+# Swift Package Manager local state
+**/.build/
+**/.swiftpm/
+tool/prebuilt/__pycache__/
