@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'cindel_flutter_libs'
-  s.version          = '1.1.3'
+  s.version          = '1.1.4'
   s.summary          = 'Prebuilt native libraries for Cindel.'
   s.description      = 'Bundles Cindel native libraries for Flutter apps.'
   s.homepage         = 'https://github.com/mainser/Cindel'

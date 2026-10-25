@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.4
+
+- Fixed release artifact assembly so every platform ships the freshly built ABI 39 binaries, verified against the final Pub archive.
+
 ## 1.1.3
 
 - Added iOS/macOS Swift Package Manager packaging alongside CocoaPods, with Apple consumer validation in CI and release.

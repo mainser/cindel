@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.4
+
+- Released alongside corrected ABI 39 binaries in `cindel_flutter_libs` 1.1.4.
+
 ## 1.1.3
 
 - Fixed MDBX `getAll` inside `writeTxn`, preserving pending writes, deletions, ordering, and generated types with SQLite native/Web parity regressions.

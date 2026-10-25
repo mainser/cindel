@@ -921,17 +921,8 @@ test('stores users', () async {
 Benchmarks are a rough signal rather than a performance guarantee. They are
 useful for tracking whether changes move Cindel in the right direction.
 
-### Small Payloads
+![Cindel and Isar benchmark results](../../docs/benchmarks/app-benchmark.svg)
 
-`big=false`
-
-<img src="https://raw.githubusercontent.com/mainser/cindel/main/.github/assets/benchmarks.png" alt="Cindel benchmark chart for small payloads"/>
-
-### Larger Payloads
-
-`big=true`
-
-<img src="https://raw.githubusercontent.com/mainser/cindel/main/.github/assets/benchmarks-big.png" alt="Cindel benchmark chart for larger payloads"/>
 
 ## License
 

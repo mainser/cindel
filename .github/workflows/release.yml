@@ -69,6 +69,14 @@ jobs:
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Set up Python for packaging regressions
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Test release artifact assembly and package validation
+        run: python -m unittest discover -s tool/prebuilt -p test_release_artifacts.py -v
+
   ci:
     name: Run CI checks
     needs: validate
@@ -110,6 +118,17 @@ jobs:
       - name: Build Android prebuilt libraries
         shell: pwsh
         run: .\tool\prebuilt\build_android.ps1
+
+      - name: Set up Python for binary validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate Android release ABI for all architectures
+        shell: pwsh
+        run: |
+          $objdump = Join-Path $env:ANDROID_NDK_HOME 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-objdump.exe'
+          python tool/prebuilt/verify_android.py packages/cindel_flutter_libs/android/src/main/jniLibs --objdump $objdump
 
       - name: Collect Android binaries
         shell: pwsh
@@ -394,39 +413,25 @@ jobs:
           test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
           test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
 
+      - name: Set up Python for package validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Download prebuilt binaries
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
-          merge-multiple: true
+          pattern: cindel-prebuilt-*
+          merge-multiple: false
 
       - name: Install prebuilt binaries into package
         run: |
-          tar -xzf release-artifacts/cindel-apple-packages.tar.gz -C release-artifacts
-          if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
-            artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
-          elif [ -d release-artifacts/cindel_flutter_libs ]; then
-            artifact_libs_dir=release-artifacts/cindel_flutter_libs
-          else
-            echo "::error::Could not find cindel_flutter_libs in downloaded artifacts."
-            find release-artifacts -maxdepth 4 -type d -print
-            exit 1
-          fi
-
-          rsync -a "${artifact_libs_dir}/" packages/cindel_flutter_libs/
-          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/arm64-v8a/libcindel_native.so
-          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/armeabi-v7a/libcindel_native.so
-          test -f packages/cindel_flutter_libs/android/src/main/jniLibs/x86_64/libcindel_native.so
-          test -f packages/cindel_flutter_libs/linux/libcindel_native.so
-          test -f packages/cindel_flutter_libs/windows/cindel_native.dll
-          test -d packages/cindel_flutter_libs/ios/cindel_flutter_libs/cindel.xcframework
-          test -d packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework
-          test -f packages/cindel_flutter_libs/macos/cindel_flutter_libs/CindelNative.xcframework.zip
-          test -f packages/cindel_flutter_libs/web/cindel_worker.js
-          test -f packages/cindel_flutter_libs/web/pkg/cindel_native.js
-          test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm
-          test -f packages/cindel_flutter_libs/web/pkg/cindel_native.d.ts
-          test -f packages/cindel_flutter_libs/web/pkg/cindel_native_bg.wasm.d.ts
+          python tool/prebuilt/release_artifacts.py assemble \
+            --artifacts release-artifacts \
+            --destination packages/cindel_flutter_libs \
+            --manifest "${RUNNER_TEMP}/cindel-runtime-manifest.json"
+          python tool/prebuilt/verify_native.py packages/cindel_flutter_libs/linux/libcindel_native.so
 
       - name: Install workspace dependencies
         run: dart pub get
@@ -523,7 +528,20 @@ jobs:
             local package_dir="$1"
             shift
 
-            (cd "${package_dir}" && dart pub get && dart pub publish "$@")
+            (
+              cd "${package_dir}"
+              dart pub get
+              if [ "${package_dir}" = "packages/cindel_flutter_libs" ]; then
+                # Generate a local Pub archive; this command does not publish.
+                # Check exact build bytes, not just file existence or the ABI.
+                dart pub publish --to-archive="${RUNNER_TEMP}/cindel_flutter_libs.tar.gz" --skip-validation
+                python "${GITHUB_WORKSPACE}/tool/prebuilt/release_artifacts.py" verify-package \
+                  --archive "${RUNNER_TEMP}/cindel_flutter_libs.tar.gz" \
+                  --manifest "${RUNNER_TEMP}/cindel-runtime-manifest.json" \
+                  --version "${RELEASE_VERSION}"
+              fi
+              dart pub publish "$@"
+            )
           }
 
           dry_run_package() {
@@ -581,25 +599,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set up Python for artifact assembly
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Download prebuilt binaries
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
-          merge-multiple: true
+          pattern: cindel-prebuilt-*
+          merge-multiple: false
 
       - name: Prepare GitHub release assets
         shell: bash
         run: |
-          tar -xzf release-artifacts/cindel-apple-packages.tar.gz -C release-artifacts
-          if [ -d release-artifacts/packages/cindel_flutter_libs ]; then
-            artifact_libs_dir=release-artifacts/packages/cindel_flutter_libs
-          elif [ -d release-artifacts/cindel_flutter_libs ]; then
-            artifact_libs_dir=release-artifacts/cindel_flutter_libs
-          else
-            echo "::error::Could not find cindel_flutter_libs in downloaded artifacts."
-            find release-artifacts -maxdepth 4 -type d -print
-            exit 1
-          fi
+          artifact_libs_dir=release-runtime/cindel_flutter_libs
+          python tool/prebuilt/release_artifacts.py assemble \
+            --artifacts release-artifacts \
+            --destination "${artifact_libs_dir}" \
+            --manifest "${RUNNER_TEMP}/cindel-runtime-manifest.json"
 
           mkdir -p github-release-assets
           cp "${artifact_libs_dir}/android/src/main/jniLibs/arm64-v8a/libcindel_native.so" \
