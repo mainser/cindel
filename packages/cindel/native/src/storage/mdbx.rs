@@ -5563,6 +5563,15 @@ fn delete_document(
     id: u64,
 ) -> Result<bool, String> {
     delete_relations(transaction, tables, collection, id)?;
+    delete_document_only(transaction, tables, collection, id)
+}
+
+fn delete_document_only(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    id: u64,
+) -> Result<bool, String> {
     let schema = collection_schema(transaction, tables, collection)?;
     let documents_table = create_documents_table(transaction, collection)?;
     let previous_bytes =
@@ -5587,9 +5596,7 @@ fn delete_many_documents(
     ids: &[u64],
 ) -> Result<Vec<u64>, String> {
     let deleted = delete_many_documents_only(transaction, tables, collection, ids)?;
-    for id in ids {
-        delete_relations(transaction, tables, collection, *id)?;
-    }
+    relations::delete_many_relations(transaction, tables, collection, ids)?;
     Ok(deleted)
 }
 
@@ -5606,7 +5613,7 @@ fn delete_many_documents_only(
     let Some(schema) = collection_schema(transaction, tables, collection)? else {
         let mut deleted_ids = Vec::new();
         for id in ids {
-            if delete_document(transaction, tables, collection, *id)? {
+            if delete_document_only(transaction, tables, collection, *id)? {
                 deleted_ids.push(*id);
             }
         }

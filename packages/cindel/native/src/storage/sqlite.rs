@@ -1016,9 +1016,10 @@ impl StorageEngine for SqliteStorage {
         }
         let has_collection_table = self.collection_schema(collection).is_some();
         let (deleted_ids, revision) = self.revision_write(|connection| {
+            relations::delete_many_relations(connection, collection, ids)?;
             let mut deleted_ids = Vec::new();
             for id in ids {
-                if delete_document_with_layout(
+                if delete_document_with_layout_only(
                     connection,
                     collection,
                     sqlite_id(*id)?,
@@ -2912,12 +2913,12 @@ fn delete_native_documents(
     collection: &str,
     ids: &[u64],
 ) -> Result<Vec<u64>, String> {
+    relations::delete_many_relations(connection, collection, ids)?;
     let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
     let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
     let mut deleted_ids = Vec::new();
     for id in ids {
         let id = sqlite_id(*id)?;
-        relations::delete_relations(connection, collection, id)?;
         let deleted = statement.execute(params![id]).map_err(sqlite_diagnostic)?;
         if deleted > 0 {
             deleted_ids.push(id as u64);
@@ -3246,6 +3247,15 @@ fn delete_document_with_layout(
     has_collection_table: bool,
 ) -> Result<bool, String> {
     relations::delete_relations(connection, collection, id)?;
+    delete_document_with_layout_only(connection, collection, id, has_collection_table)
+}
+
+fn delete_document_with_layout_only(
+    connection: &Connection,
+    collection: &str,
+    id: i64,
+    has_collection_table: bool,
+) -> Result<bool, String> {
     let mut deleted = 0usize;
     if has_collection_table {
         let sql = format!("DELETE FROM {collection} WHERE {SQLITE_ROW_ID_COLUMN} = ?1");
@@ -6421,6 +6431,78 @@ mod tests {
         )
         .unwrap()
         .is_none());
+    }
+
+    // Scenario: A native batch removes incident relations before a later row
+    // deletion fails, both with and without an explicit outer transaction.
+    // Covers:
+    // - Savepoint rollback of earlier rows, links, revisions and notifications.
+    // - Catching a batch error and committing the surrounding transaction.
+    // Expected: The failed batch leaves both rows and their links unchanged;
+    // removing the fault permits a successful retry without stale links.
+    #[test]
+    fn relation_batch_native_delete_rolls_back_after_row_failure() {
+        // Arrange.
+        for outer in [false, true] {
+            let manifest = schema_manifest(vec![native_user_schema()]);
+            let mut storage = SqliteStorage::open_with_schemas(":memory:", &manifest).unwrap();
+            storage
+                .put_many_native_documents(
+                    "users",
+                    &[1, 2].map(|id| NativeDocumentWrite {
+                        id,
+                        values: vec![
+                            NativeDocumentValue::Bool(true),
+                            NativeDocumentValue::Int(42),
+                            NativeDocumentValue::Bytes(b"Name".to_vec()),
+                        ],
+                    }),
+                    true,
+                )
+                .unwrap();
+            storage
+                .replace_links(&LinkSave {
+                    source_collection: "users".into(),
+                    source_id: 1,
+                    link_name: "children".into(),
+                    target_collection: "users".into(),
+                    target_ids: vec![1, 2],
+                })
+                .unwrap();
+            storage.take_change_sets().unwrap();
+            let revision = storage.collection_revision("users").unwrap();
+            storage.connection.execute_batch("CREATE TEMP TRIGGER fail_delete BEFORE DELETE ON users WHEN OLD._rowid_=2 BEGIN SELECT RAISE(ABORT,'controlled batch failure'); END;").unwrap();
+            if outer {
+                storage.begin_write_transaction().unwrap();
+            }
+            // Act.
+            let error = storage
+                .delete_many_native_documents("users", &[1, 2])
+                .unwrap_err();
+            if outer {
+                storage.commit_transaction().unwrap();
+            }
+            // Assert.
+            assert!(error.contains("controlled batch failure"));
+            assert_eq!(storage.document_ids("users").unwrap(), vec![1, 2]);
+            assert_eq!(
+                storage
+                    .forward_link_ids("users", 1, "children", "users")
+                    .unwrap(),
+                vec![1, 2]
+            );
+            assert_eq!(storage.collection_revision("users").unwrap(), revision);
+            assert!(storage.take_change_sets().unwrap().is_empty());
+            storage
+                .connection
+                .execute_batch("DROP TRIGGER fail_delete")
+                .unwrap();
+            storage
+                .delete_many_native_documents("users", &[1, 2])
+                .unwrap();
+            assert!(storage.document_ids("users").unwrap().is_empty());
+            assert_eq!(storage.relation_counts(), (0, 0));
+        }
     }
 
     #[test]

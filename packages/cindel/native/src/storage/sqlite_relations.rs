@@ -46,6 +46,8 @@ pub(super) fn delete_relations(
         let sql = format!("SELECT source_collection,source_id,link_name,target_collection,target_id FROM cindel_relations WHERE {endpoint}_collection=?1 AND {endpoint}_id=?2 LIMIT {PAGE}");
         loop {
             let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
+            #[cfg(test)]
+            super::super::relations::observe_resource();
             let page = statement
                 .query_map(params![collection, id], row_edge)
                 .map_err(sqlite_diagnostic)?
@@ -64,6 +66,63 @@ pub(super) fn delete_relations(
             }
             for edge in page {
                 remove_edge(connection, &edge)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// Check the persisted endpoints in this transaction, not schema declarations:
+// collections without outgoing links can still be backlink targets.
+pub(super) fn delete_many_relations(
+    connection: &Connection,
+    collection: &str,
+    ids: &[u64],
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    for endpoint in ["source", "target"] {
+        let probe_sql =
+            format!("SELECT EXISTS(SELECT 1 FROM cindel_relations WHERE {endpoint}_collection=?1)");
+        let mut probe = connection.prepare(&probe_sql).map_err(sqlite_diagnostic)?;
+        #[cfg(test)]
+        super::super::relations::observe_resource();
+        #[cfg(test)]
+        super::super::relations::observe_collection_check();
+        let present = probe
+            .query_row([collection], |row| row.get::<_, bool>(0))
+            .map_err(sqlite_diagnostic)?;
+        #[cfg(test)]
+        assert_eq!(probe.get_status(rusqlite::StatementStatus::FullscanStep), 0);
+        drop(probe);
+        if !present {
+            continue;
+        }
+        let sql = format!("SELECT source_collection,source_id,link_name,target_collection,target_id FROM cindel_relations WHERE {endpoint}_collection=?1 AND {endpoint}_id=?2 LIMIT {PAGE}");
+        let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
+        #[cfg(test)]
+        super::super::relations::observe_resource();
+        for id in ids {
+            let id = sqlite_id(*id)?;
+            loop {
+                let page = statement
+                    .query_map(params![collection, id], row_edge)
+                    .map_err(sqlite_diagnostic)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sqlite_diagnostic)?;
+                #[cfg(test)]
+                assert_eq!(
+                    statement.get_status(rusqlite::StatementStatus::FullscanStep),
+                    0
+                );
+                super::super::relations::observe_page(page.len());
+                if page.is_empty() {
+                    break;
+                }
+                for edge in page {
+                    remove_edge(connection, &edge)?;
+                }
             }
         }
     }

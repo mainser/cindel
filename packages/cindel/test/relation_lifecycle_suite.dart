@@ -66,6 +66,70 @@ void main() {
       );
     }
 
+    for (final rollback in [false, true]) {
+      // Scenario: A link-free batch is followed by newly created self/incoming
+      // links and another batch inside the same write transaction.
+      // Covers:
+      // - Fresh relation checks for each batch, duplicate/missing IDs and no-ops.
+      // - Read-your-writes and atomic commit/rollback of documents and links.
+      // Expected: Only incident links disappear; rollback restores the original
+      // rows and empty graph, while commit keeps the unrelated targets.
+      test(
+        'batch relation checks follow transaction writes, rollback=$rollback.',
+        () async {
+          // Arrange.
+          final schema = _nodeSchema(indexed: false);
+          final db = await open(schema: schema);
+          final nodes = db.typedCollection(schema);
+          final leaves = db.typedCollection(backupLeafSchema);
+          await nodes.putAll([for (var id = 1; id <= 4; id++) BackupNode(id)]);
+          await leaves.put(BackupNode(1));
+          final failure = StateError('rollback batched links');
+          Future<void> mutate() => db.writeTxn(() async {
+            await nodes.deleteAll([]);
+            await nodes.deleteAll([4, 4, 404]);
+            await link(db, 'backup_nodes', 1, 'children', [1, 2]);
+            await link(db, 'backup_leaves', 1, 'children', [2, 3]);
+            await nodes.deleteAll([2, 2, 999]);
+            final node = (await nodes.get(1))!;
+            final leaf = (await leaves.get(1))!;
+            await node.children.load();
+            await leaf.children.load();
+            expect(node.children.map((row) => row.dbId), [1]);
+            expect(leaf.children.map((row) => row.dbId), [3]);
+            expect(await nodes.get(2), isNull);
+            if (rollback) throw failure;
+          });
+          // Act / Assert.
+          if (rollback) {
+            await expectLater(mutate(), throwsA(same(failure)));
+          } else {
+            await mutate();
+          }
+          expect(
+            await db.documentIds('backup_nodes'),
+            rollback ? [1, 2, 3, 4] : [1, 3],
+          );
+          final node = (await nodes.get(1))!;
+          final leaf = (await leaves.get(1))!;
+          await node.children.load();
+          await leaf.children.load();
+          expect(
+            node.children.map((row) => row.dbId),
+            rollback ? <int>[] : [1],
+          );
+          expect(
+            leaf.children.map((row) => row.dbId),
+            rollback ? <int>[] : [3],
+          );
+          expect(await db.cleanupOrphanLinks(), (
+            examinedLinks: rollback ? 0 : 2,
+            removedLinks: 0,
+          ));
+        },
+      );
+    }
+
     for (final indexed in [false, true]) {
       for (final operation in ['single', 'batch', 'query']) {
         // Scenario: A linked identity is deleted individually, in a batch or

@@ -65,6 +65,16 @@ fn edge_page(
     after: Option<&[u8]>,
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut cursor = transaction.cursor(table).map_err(|e| e.to_string())?;
+    #[cfg(test)]
+    super::super::relations::observe_resource();
+    edge_page_with_cursor(&mut cursor, prefix, after)
+}
+
+fn edge_page_with_cursor(
+    cursor: &mut libmdbx::Cursor<'_, RW>,
+    prefix: &[u8],
+    after: Option<&[u8]>,
+) -> Result<Vec<Vec<u8>>, String> {
     let mut page = Vec::new();
     for item in cursor.iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(after.unwrap_or(prefix)) {
         let (key, _) = item.map_err(|e| e.to_string())?;
@@ -143,6 +153,57 @@ pub(super) fn delete_relations(
     Ok(())
 }
 
+pub(super) fn delete_many_relations(
+    transaction: &Transaction<'_, RW, NoWriteMap>,
+    tables: &MdbxTables<'_>,
+    collection: &str,
+    ids: &[u64],
+) -> Result<(), String> {
+    if ids.is_empty() || tables.preserve_relations.get() {
+        return Ok(());
+    }
+    let mut collection_prefix = Vec::new();
+    push_relation_segment(&mut collection_prefix, collection);
+    let mut prefix = collection_prefix.clone();
+    for (table, reverse) in [
+        (&tables.relations_forward, false),
+        (&tables.relations_backlink, true),
+    ] {
+        let mut cursor = transaction.cursor(table).map_err(|e| e.to_string())?;
+        #[cfg(test)]
+        super::super::relations::observe_resource();
+        #[cfg(test)]
+        super::super::relations::observe_collection_check();
+        let present = match cursor
+            .iter_from::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&collection_prefix)
+            .next()
+        {
+            Some(result) => result
+                .map_err(|e| e.to_string())?
+                .0
+                .starts_with(&collection_prefix),
+            None => false,
+        };
+        if !present {
+            continue;
+        }
+        for id in ids {
+            prefix.truncate(collection_prefix.len());
+            prefix.extend_from_slice(&id.to_be_bytes());
+            loop {
+                let page = edge_page_with_cursor(&mut cursor, &prefix, None)?;
+                if page.is_empty() {
+                    break;
+                }
+                for key in page {
+                    remove_edge(transaction, tables, &decode_edge(&key, reverse)?)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn exists(
     transaction: &Transaction<'_, RW, NoWriteMap>,
     collection: &str,
@@ -159,6 +220,42 @@ fn exists(
         .get::<Cow<'_, [u8]>>(&table, &document_table_key(id))
         .map_err(|e| e.to_string())?
         .is_some())
+}
+
+// Scenario: A malformed legacy relation is reached after documents and earlier
+// valid relation pages have already been deleted by a batch.
+// Covers:
+// - Native batch rollback on relation-decoding errors.
+// - Restoration of documents, both relation tables, revisions and notifications.
+// Expected: The error publishes no partial deletion or collection changes.
+#[test]
+fn relation_batch_rolls_back_documents_and_earlier_edges_on_failure() {
+    // Arrange.
+    let mut storage = MdbxStorage::open(":memory:").unwrap();
+    for id in 1..=5 {
+        storage.put("nodes", id, br#"{}"#).unwrap();
+    }
+    storage.seed_legacy_edges(256);
+    storage
+        .with_write_transaction(|txn, tables| {
+            let mut invalid = endpoint_prefix("nodes", 3);
+            invalid.push(255);
+            txn.put(&tables.relations_forward, invalid, [], WriteFlags::UPSERT)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+    storage.take_change_sets().unwrap();
+    let before = storage.relation_counts();
+    let revision = storage.collection_revision("nodes").unwrap();
+    // Act.
+    let result = storage.delete_many("nodes", &[1, 3]);
+    // Assert.
+    assert!(result.is_err());
+    assert_eq!(storage.document_ids("nodes").unwrap(), vec![1, 2, 3, 4, 5]);
+    assert_eq!(storage.relation_counts(), before);
+    assert_eq!(storage.collection_revision("nodes").unwrap(), revision);
+    assert!(storage.take_change_sets().unwrap().is_empty());
 }
 
 #[test]
