@@ -921,7 +921,7 @@ test('stores users', () async {
 Benchmarks are a rough signal rather than a performance guarantee. They are
 useful for tracking whether changes move Cindel in the right direction.
 
-![Cindel and Isar benchmark results](../../docs/benchmarks/app-benchmark.svg)
+![Cindel and Isar benchmark results](https://raw.githubusercontent.com/mainser/cindel/main/docs/benchmarks/app-benchmark.svg)
 
 
 ## License
