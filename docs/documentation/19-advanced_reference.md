@@ -41,6 +41,32 @@ The ABI is an internal runtime boundary. Application models and calls remain
 the same across MDBX, SQLite native, and Web; applications should not branch on
 ABI numbers or construct wire payloads themselves.
 
+## Native Build Hooks
+
+The Rust native-assets build hook is opt-in. By default it does not compile
+Rust when resolving or running the Dart package. Flutter applications normally
+receive prebuilts from `cindel_flutter_libs`.
+
+For a controlled source build, the consuming app or workspace can enable the
+hook in its `pubspec.yaml`:
+
+```yaml
+hooks:
+  user_defines:
+    cindel:
+      build_native_assets: true
+```
+
+This requires the Rust and platform toolchains for the target. It changes how
+the native binary is supplied, not the generated application API. Pure Dart
+tools can instead load an existing matching binary through
+`CINDEL_NATIVE_LIBRARY`. Compiling a library into `native/target/release` alone
+does not guarantee that the running process loads that file; check the selected
+asset or override when diagnosing an ABI mismatch.
+
+Web uses the packaged JavaScript/Worker/Wasm assets, not a Windows DLL or this
+native build hook.
+
 ## Generator-Oriented Exports
 
 Generator-oriented exports are public because generated code needs stable

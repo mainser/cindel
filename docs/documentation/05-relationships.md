@@ -145,6 +145,25 @@ await song.featuredArtists.save();
 stored relationship has those two artists. If you remove one and save again,
 the stored relationship is updated to match.
 
+To add to an existing saved relationship, load it before editing. A newly
+hydrated object's unloaded container is not a copy of the saved set:
+
+```dart
+await db.writeTxn(() async {
+  final song = await db.songs.get(songId);
+  if (song == null) {
+    throw StateError('Song no longer exists.');
+  }
+  await song.featuredArtists.load();
+  song.featuredArtists.add(secondArtist); // Already persisted in artists.
+  await song.featuredArtists.save();
+});
+```
+
+Loading and saving within the write transaction keeps the read/modify/write
+operation together. Calling `save()` on an unloaded or reset empty container
+intentionally replaces the saved relationship with an empty set.
+
 Load a to-many relationship explicitly:
 
 ```dart

@@ -42,6 +42,16 @@ Create watchers at the same lifecycle level as the state they update. For
 example, a screen-level watcher should be cancelled when that screen is
 disposed.
 
+| Watcher | Default `fireImmediately` | Payload |
+| --- | --- | --- |
+| `watchObject` | `true` | Current object or null. |
+| `watchCollection`, query `watch` | `true` | Current result list. |
+| `watchObjectLazy`, `watchCollectionLazy`, query `watchLazy` | `false` | Invalidation signal (`void`). |
+
+`pollInterval` must be positive. `fireImmediately` controls the initial
+emission, not the promise of one event per write. For an initial UI snapshot,
+use the default eager watcher rather than waiting for the first modification.
+
 ## Object Watchers
 
 Use `watchObject` to watch one typed object by id.

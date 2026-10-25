@@ -31,7 +31,10 @@ For the example above, the result is:
 
 Punctuation and whitespace act as separators. Repeated words are returned only
 once, keeping the order in which they first appeared. By default, tokens are
-lowercased so they match the default case-insensitive word index behavior.
+lowercased. `@Index` itself defaults to `caseSensitive: true`, including word
+indexes. Set `caseSensitive: false` explicitly on the index when using the
+utility's lowercase default, or pass `true` to the utility to match a
+case-sensitive index.
 
 Use this helper when working with `CindelIndexType.words`:
 
@@ -55,6 +58,11 @@ final queryWords = Cindel.splitWords(
 ```
 
 Use the same `caseSensitive` value that the word index uses.
+
+Tokens consist of letters and numbers; punctuation separates them. This helper
+does not stem words or expand synonyms. The generated `WordsContain` and
+`WordsStartWith` helpers use the first token from their argument, so pass one
+word or prefix at a time rather than treating them as phrase-search methods.
 
 ## Practical Guidance
 

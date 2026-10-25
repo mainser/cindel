@@ -4,9 +4,10 @@ Use `Cindel.openInMemory` for package tests, widget tests, and small examples.
 It gives each test a temporary database while keeping the same generated typed
 API used by application code.
 
-On native platforms this is a temporary runtime database. On Web, Cindel uses a
-unique browser database name for temporary work, so tests should still close the
-database when they finish.
+SQLite native uses RAM; MDBX uses a temporary directory removed on normal close.
+Web uses a unique persisted OPFS name, and closing it does not delete browser
+files. Use disposable browser storage for isolated Web tests. In every case,
+close the database when the test finishes.
 
 ## Tests With `openInMemory`
 
@@ -154,6 +155,28 @@ expect(count, 1);
 
 ## Cross-Backend Model Regressions
 
+For native coverage, parameterize setup and reuse the same assertions:
+
+```dart
+for (final backend in CindelStorageBackend.values) {
+  test('typed round trip on ${backend.name}', () async {
+    final db = await Cindel.openInMemory(
+      backend: backend,
+      schemas: [UserSchema],
+    );
+    addTearDown(db.close);
+    final user = User()
+      ..email = 'ada@example.com'
+      ..name = 'Ada';
+    await db.users.put(user);
+    expect((await db.users.get(user.dbId))?.name, 'Ada');
+  });
+}
+```
+
+The loop selects both native engines only on native. Web always uses SQLite,
+so running it in a browser twice does not add MDBX coverage.
+
 Run the same typed-model assertions against MDBX, SQLite native, and a real Web
 runtime. Selecting SQLite in a native test does not exercise Dart-to-JavaScript
 serialization or the Worker boundary. Keep backend selection in test setup,
@@ -217,6 +240,24 @@ Use short intervals in tests, but avoid relying on arbitrary sleeps when the
 fake adapter can expose deterministic hooks.
 
 ## Flutter Tests
+
+### Runtime Setup
+
+`openInMemory` still needs the native library or Web Worker/Wasm runtime. It
+does not replace storage with a Dart mock. A pure Dart native test can use a
+matching binary through `CINDEL_NATIVE_LIBRARY`; a stale binary fails the ABI
+check before CRUD assertions run. See [native runtime setup](19-advanced_reference.md#native-build-hooks).
+
+Repository Web lifecycle tests have a dedicated runner that stages the packaged
+assets and starts Chrome with an isolated profile. From the repository root:
+
+```sh
+dart run packages/cindel/tool/run_web_close_tests.dart
+```
+
+That runner tests Web lifecycle scenarios; it is not the complete test suite.
+For application Web tests, serve the packaged Worker/Wasm assets in a browser
+supporting OPFS. A native `dart test` run alone cannot validate that boundary.
 
 For Flutter apps, keep `cindel_flutter_libs` in dependencies even when tests
 mostly use in-memory databases.

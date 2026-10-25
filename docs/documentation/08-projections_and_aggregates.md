@@ -99,7 +99,38 @@ model uses `@Name`, the persisted name can differ from the Dart field name.
 Generated single-property helpers avoid that naming issue when the field is
 known at compile time.
 
+### Typed Values And Stored Values
+
+Generated single-property helpers decode the declared Dart type. In contrast,
+`properties(...)` returns maps containing stored values and uses persisted
+field names. For a `DateTime createdAt` field:
+
+```dart
+final DateTime? firstDate = await db.todos.all().createdAtProperty().findFirst();
+final row = await db.todos.all().properties(['createdAt']).findFirst();
+final int? storedMicroseconds = row?['createdAt'] as int?;
+```
+
+The map contains UTC microseconds, not a `DateTime`. Durations are also stored
+as microseconds, enums use their configured representation, and embedded values
+use document maps. Prefer generated property helpers when you want decoded
+model types. A generic type argument on dynamic `property<T>(...)` is a cast,
+not an automatic converter; provide its `decode` callback when needed.
+
 ## Aggregates
+
+| Method | Result | Empty window or all-null property |
+| --- | --- | --- |
+| Object query `count()` | Number of selected objects | `0` |
+| Property `count()` | Number of non-null selected values | `0` |
+| Property `min()` / `max()` | Smallest/largest comparable value | `null` |
+| Property `sum()` | `num?` for numeric values | `null` |
+| Property `average()` | `double?` for numeric values | `null` |
+
+For selected property values `[null, 2, 4]`, object count is `3`, property count
+is `2`, sum is `6`, and average is `3.0`. A list-valued property counts as one
+non-null value per row, not as the number of elements. These aggregates do not
+flatten lists. Use numeric scalar fields for `sum` and `average`.
 
 Aggregate helpers are available from property queries.
 

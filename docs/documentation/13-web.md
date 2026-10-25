@@ -44,6 +44,10 @@ final db = await Cindel.openInMemory(
 );
 ```
 
+On Web this allocates a unique persisted OPFS database name, not a RAM-only
+SQLite database. `close()` releases the handle without deleting those files.
+Use disposable browser storage for repeated tests that must reclaim their data.
+
 ## Required Dependencies
 
 Flutter Web apps should depend on both `cindel` and `cindel_flutter_libs`.
@@ -78,7 +82,9 @@ OPFS is the browser storage area used by the Web SQLite runtime. If a browser,
 privacy mode, or embedded WebView blocks those features, opening the database
 can fail.
 
-MDBX is not used in browsers. Do not select MDBX as a Web backend.
+MDBX is not used in browsers. The Web implementation always uses SQLite and
+ignores the `backend` selection. The default shared opening code therefore
+works without a platform branch, even though native defaults to MDBX.
 
 ## Supported APIs
 

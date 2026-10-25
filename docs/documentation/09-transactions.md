@@ -208,6 +208,36 @@ Use one transaction for the complete local change that must remain consistent.
 
 ## Common Mistakes
 
+### Await Every Operation And Control Handle Ownership
+
+The active transaction belongs to the database handle. It is not an isolated
+Dart zone for the callback: another asynchronous task using the same handle
+while the callback is suspended can join its active transaction. Serialize
+access during an explicit transaction instead of letting unrelated work use
+that handle concurrently.
+
+Await every database future before the callback returns. A fire-and-forget
+write can outlive the transaction and its errors will not reliably control
+rollback. Prepare slow external inputs before starting the transaction, then
+keep its database work together:
+
+```dart
+await db.writeTxn(() async {
+  await db.todos.putAll(todos);
+  for (final todo in todos) {
+    final saved = await db.todos.get(todo.dbId);
+    if (saved == null) {
+      throw StateError('A written todo could not be read.');
+    }
+  }
+});
+```
+
+The individual reads above work across backends. The current MDBX typed
+`getAll` path has a confirmed failure inside an active `writeTxn`; see
+[the current transaction defect](20-current_limits.md#known-transaction-defect).
+This is an implementation defect, not a different intended public contract.
+
 ### Writing Inside `readTxn`
 
 `readTxn` is for reads only.

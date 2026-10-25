@@ -74,7 +74,8 @@ class Project {
 ```
 
 When no name is provided, the generator derives the collection name from the
-Dart class name. This is convenient for simple apps and tests. Use
+Dart class name by lowercasing its first letter: `Project` becomes `project`,
+with getter `db.project`, not `db.projects`. Use
 `@Collection(name: ...)` when you want the stored name to be explicit.
 
 ### `@Name`
@@ -106,7 +107,7 @@ different from the Dart API.
 Every root collection needs one persisted id field named `dbId`.
 
 ```dart
-@collection
+@Collection(name: 'tasks')
 class Task {
   Id dbId = autoIncrement;
   late String title;
@@ -152,7 +153,7 @@ object. This is the usual style for mutable model classes.
 Use an explicit id when your app already owns the id value.
 
 ```dart
-@collection
+@Collection(name: 'categories')
 class Category {
   Category({required this.dbId, required this.name});
 
@@ -166,6 +167,81 @@ await db.categories.put(category);
 
 Explicit ids are useful for imported data, deterministic fixtures, or app
 domains where another layer already assigns stable local ids.
+
+Stored IDs must be non-negative: zero is valid, while `autoIncrement` is the
+special input sentinel `-1`. Native IDs must fit a signed 64-bit integer. For
+the same values on Web, stay within JavaScript's exact integer range, up to
+`9007199254740991`. A collection's ID is distinct from a business key such as
+an email or SKU.
+
+### IDs In Immutable Models
+
+Automatic assignment requires a writable `dbId`. A final field, including a
+Freezed immutable model's ID, has no generated setter; passing `autoIncrement`
+to `put` or `putAll` therefore fails. Allocate the ID before constructing such
+an object, using the same API on every backend:
+
+```dart
+await db.writeTxn(() async {
+  final id = await db.allocateId('categories');
+  final category = Category(dbId: id, name: 'Books');
+  await db.categories.put(category);
+});
+```
+
+Use `allocateIds(collection, count)` before constructing an immutable batch.
+Keeping reservation and writes in one `writeTxn` rolls back database allocation
+state if a write fails. Rollback does not modify Dart objects already created.
+For an update, construct a replacement with the existing ID (or use the model's
+`copyWith`), then call `put`.
+
+## Indexes
+
+Declare indexes on root collection fields. They generate `where()` helpers;
+unindexed fields still have generated `filter()` helpers.
+
+| Declaration | Intended lookup |
+| --- | --- |
+| `@Index()` | Equality and supported range lookups. |
+| `@Index(type: CindelIndexType.hash)` | Equality; no ordered range helpers. |
+| `@Index(type: CindelIndexType.words)` | String word/token and token-prefix lookup. |
+| `@Index(type: CindelIndexType.multiEntry)` | Membership in a primitive list. |
+| `@Index(unique: true)` | Reject conflicting values. |
+| `@Index(unique: true, replace: true)` | Replace conflicts; generated natural-key helpers can reuse the existing ID. |
+
+For example:
+
+```dart
+@Collection(name: 'articles')
+class Article {
+  Id dbId = autoIncrement;
+
+  @Index(unique: true)
+  late String slug;
+
+  @Index(type: CindelIndexType.words, caseSensitive: false)
+  late String title;
+
+  @Index(type: CindelIndexType.multiEntry)
+  List<String> tags = [];
+}
+
+final matches = await db.articles.where().titleWordsContain('database').findAll();
+final tagged = await db.articles.where().tagsContains('dart').findAll();
+```
+
+`caseSensitive` defaults to `true`; explicitly opt out for case-insensitive
+string indexes. A word index matches tokens, not arbitrary substrings: use a
+generated string filter for substring matching. Indexes add storage and write
+work, so declare them for actual query patterns. An index does not guarantee
+that every filter or sort uses an index-only execution path.
+
+For a composite key, declare `indexes: [CompositeIndex(['tenantId', 'sku'],
+unique: true)]` on `@Collection`, with matching root scalar fields on the model.
+Field order defines the composite key. See generated helpers in
+[queries](06-queries.md) and metadata in [schema metadata](15-schema_metadata.md).
+Changing an index is a schema change; handle existing stored schemas through
+the [migration plan](11-migrations.md).
 
 ## Persisted Fields
 

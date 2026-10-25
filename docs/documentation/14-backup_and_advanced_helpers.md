@@ -58,6 +58,12 @@ For native file I/O, `output` can be `File(path).openWrite()` and `input` can be
 `File(path).openRead()`, using `dart:io`. Web callers provide browser-compatible
 streams instead; the backup calls remain the same.
 
+Export pipes its stream into the supplied consumer and closes that consumer
+when the pipe completes. Give each export its own output and await the export
+future before reading or sharing the archive. Do not write more data or flush
+an already closed file sink afterward. If export fails, the output can contain
+an incomplete archive; completion of `exportDatabase` is the success signal.
+
 Compression defaults to gzip on native and none on Web. Choose `none`
 explicitly on both for a portable uncompressed archive. Web does not provide
 the built-in gzip codec. Import must use the archive's compression; there is
@@ -102,6 +108,12 @@ Failure before publication leaves the target unchanged; a failed batch is not
 a partially restored live database. The target's emptiness is checked as part
 of restoration. Wait for `importDatabase` to complete before using restored
 contents.
+
+The emptiness requirement concerns the selected restore collections. A separate
+empty database is the simplest restore destination: it also avoids changing
+database-wide migration metadata alongside unrelated existing collections.
+Keep every forward-link target in the selected set. Progress notifications
+during staging are not permission to expose partially restored data to the UI.
 
 Version 1 archives do not contain relationships. Restoring such an archive
 with linked schemas requires `allowLegacyWithoutLinks: true`; this explicitly
@@ -163,8 +175,10 @@ list; a negative count is invalid. Allocation changes database state and is
 not allowed inside `readTxn`. Reservations are not gapless numbering: see
 [bulk ID allocation](04-generated_typed_api.md#automatic-ids-in-bulk-writes).
 
-Most application code should not call these helpers directly. Use it for
-advanced tooling that needs to reserve ids before constructing documents.
+Mutable models normally use automatic assignment. These helpers are also
+useful for immutable models that need their final ID at construction time;
+see [immutable IDs](03-data_modeling.md#ids-in-immutable-models). Use them for
+advanced tooling that needs to reserve IDs before constructing documents.
 
 When calling `allocateId`, pass the persisted collection name:
 

@@ -324,6 +324,31 @@ Future<List<Todo>> loadTodoPage({
 
 Offsets and limits must not be negative.
 
+### Stable Pages And Totals
+
+Add the ID as a tie-breaker when the first sort field can repeat. Deriving a
+page does not mutate its base query:
+
+```dart
+final base = db.todos
+    .filter()
+    .completedEqualTo(false)
+    .sortByCreatedAt(order: CindelSortOrder.descending)
+    .thenByDbId();
+
+await db.readTxn(() async {
+  final total = await base.count();
+  final page = await base.offset(20).limit(10).findAll();
+  // total and page describe the same database snapshot.
+});
+```
+
+Count before adding the page window when you want the total number of matches;
+`base.offset(20).limit(10).count()` counts only that window. A stable sort does
+not freeze data between separate calls: inserts or deletes can shift later
+offset pages. For a consistent maintenance scan, keep the loop inside a
+`readTxn` and use [ID cursor pages](14-backup_and_advanced_helpers.md#documentidspage).
+
 ## Distinct
 
 Use `distinct` when the query should keep only the first result for each

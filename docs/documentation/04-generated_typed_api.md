@@ -84,10 +84,11 @@ Most application code should use generated getters like `db.todos`,
 `db.users`, or `db.orders`. They are easier to read and keep the code tied to
 the model type.
 
-The collection getter exists after two things are true:
+Two separate steps are needed:
 
-1. the model has generated code,
-2. the generated schema is registered when the database opens.
+1. Generate and import the model library so the getter exists in Dart code.
+2. Register its generated schema when opening the database so that handle can
+   use the collection.
 
 ```dart
 final db = await Cindel.open(
@@ -100,6 +101,19 @@ await db.todos.put(Todo()..title = 'Create project');
 
 If `TodoSchema` or `db.todos` is missing, check the model's `part` directive
 and run code generation.
+
+### Operation Results
+
+| Method | Result |
+| --- | --- |
+| `put`, `putAll`, `putMany` | `Future<void>`; auto-assigned IDs are written into mutable objects. |
+| `get(id)` | `Future<T?>`; null means the ID was not found. |
+| `getAll(ids)` | `Future<List<T?>>`; input order and missing entries are preserved. |
+| `delete(id)`, `deleteAll(ids)` | `Future<void>`, not a deleted-row count. |
+
+Query deletion is a different API: query `deleteFirst()` returns `bool` and
+query `deleteAll()` returns the number of deleted matches. For immutable
+objects, [reserve IDs before construction](03-data_modeling.md#ids-in-immutable-models).
 
 ## Query Entry Point: `all`
 
@@ -269,6 +283,11 @@ await db.accounts.putByUsername(account);
 
 The exact helper name depends on the field name. A field named `username`
 generates names such as `putByUsername` and `putAllByUsername`.
+
+Natural-key helpers may need to assign an existing ID to the supplied object.
+An immutable object must already carry that ID; the helper cannot rewrite a
+final `dbId`. Read the existing row and construct its replacement with the same
+ID when working with immutable natural-key models.
 
 ## Reading One Object: `get`
 

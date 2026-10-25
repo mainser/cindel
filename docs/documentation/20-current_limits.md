@@ -40,6 +40,9 @@ await CindelBackup.exportDatabase(
 
 Restore into an empty database opened with matching schemas.
 
+The restore implementation requires the selected collections to be empty;
+using a separate empty database also isolates restored migration metadata.
+
 ## Modeling Limitations
 
 Current modeling limits:
@@ -58,6 +61,11 @@ collection model or persist an explicit field such as `type` instead.
 
 ## Value And Memory Limits
 
+`openInMemory` has the same public entrypoint across backends but does not
+promise RAM-only storage: MDBX uses temporary files, SQLite native uses RAM,
+and Web uses a unique persisted OPFS name. Web close does not delete that
+database. See [temporary databases](02-getting_started.md#temporary-databases).
+
 Supported model shapes are shared across all backends, but portable values must
 fit the destination runtime. JavaScript Web requires safe integers, including
 integer-backed dates and durations. Enum-list storage uses names; annotated
@@ -74,6 +82,21 @@ execution costs are described in
 Backups reject records beyond `maxRecordBytes`. Atomic restores and migration
 steps require temporary disk storage, so check native disk capacity or browser
 quota before large maintenance operations.
+
+## Known Transaction Defect
+
+Typed `getAll` with a non-empty ID list currently fails inside an active MDBX
+`writeTxn`, reporting `cursor document reader does not support active write
+transactions`. The generated path requests a native cursor reader that rejects
+an active writer. This was reproduced with the current native binary and is
+also present in the Rust implementation. The same scenario passes on SQLite
+native; Web execution was not part of this reproduction.
+
+This is a defect in the current implementation, not an intentional difference
+in the public API. Until corrected, use awaited individual `get(id)` calls
+inside the write transaction when that read-back is necessary. That code also
+works with the other backends and preserves the transaction boundary. Moving
+the reads outside the transaction changes consistency guarantees.
 
 ## Web Limitations
 

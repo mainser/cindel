@@ -53,13 +53,11 @@ work on MDBX, SQLite native, and SQLite Web; each backend adapts internally.
 - Sorting, pagination, distinct, projections, and aggregates.
 - Read and write transactions.
 - Typed object, collection, query, and lazy watchers.
-- Open-time data migrations with versioning, verification, export/import, and
-  compaction hooks.
-- Bounded document-id page reads for backup/export tooling on SQLite native,
-  MDBX, and Web SQLite.
-- Full typed backup/export/import streams with JSONL archives, checksum
-  verification, native gzip compression, and Web-compatible uncompressed
-  fallback.
+- Atomic migration steps at open time, with versioning, verification,
+  streaming import/export, and optional compaction.
+- Paged document IDs for backup/export tooling on all three backends.
+- Streaming typed backups with links, checksums, atomic restores, native gzip,
+  and portable uncompressed JSONL.
 - Experimental local-first sync configured at open time with an internal
   durable outbox and backend-neutral adapter contract.
 - Embedded objects and embedded object lists.
@@ -68,6 +66,10 @@ work on MDBX, SQLite native, and SQLite Web; each backend adapts internally.
 ## Quickstart
 
 ### 1. Add Dependencies
+
+Use Dart 3.13 or newer for the current generator and this quickstart. The
+runtime itself requires Dart 3.11 or newer; `cindel_flutter_libs` requires
+Flutter 3.41 or newer.
 
 Flutter apps should depend on `cindel` and `cindel_flutter_libs`:
 
@@ -120,6 +122,9 @@ The generator creates the schema, serializers, typed collection getter, and
 query helpers. Regenerate model code after upgrading the generator.
 
 ### 4. Open And Use
+
+On native platforms, choose a writable application directory for
+`directory.path`. On Web, pass a stable database name instead, as shown below.
 
 ```dart
 final db = await Cindel.open(
@@ -187,18 +192,15 @@ final db = await Cindel.open(
 );
 ```
 
-Each step runs in a private disk-backed database and publishes data, schemas,
-indexes, links, IDs, and its version in one transaction after verification.
-A failed step leaves the original intact; earlier successful steps remain
-committed. Concurrent changes to the original cause publication to fail.
-SQLite native, MDBX, and Web SQLite expose the same contract.
+Each step is atomic on all three backends: data, schemas, indexes, links, IDs,
+and the version commit together after verification. A failed step leaves the
+original intact; earlier successful steps stay committed. Concurrent writes
+to the original prevent the step from committing.
 
-`streamObjects`/`streamDocuments` read the original snapshot even after
-`registerTargetSchemas` clears the workspace's target collections.
-`importObjectStream`/`importDocumentStream` consume transformations in bounded
-batches. The older `exportObjects`/`exportDocuments` helpers return full lists.
-Migration needs temporary disk space for a database copy plus transaction
-storage. Migration details are in `docs/documentation/11-migrations.md`.
+The streaming helpers read the original snapshot and import in bounded batches,
+including after `registerTargetSchemas`. The `exportObjects`/`exportDocuments`
+helpers return full lists. Allow temporary disk space for the migration copy
+and its transaction. Verification callbacks and compaction are optional.
 
 ## Maintenance Tooling
 
@@ -237,22 +239,16 @@ Web defaults to uncompressed JSONL. For portable archives, pass
 provide platform-appropriate streams. Schema types are preserved even when the
 collection list contains different model types.
 
-Version 2 exports documents, saved forward links, and migration metadata from
-one read snapshot; restoration reconstructs backlinks. Include every collection
-referenced by a forward link. Restore validates matching schema manifests and
-stages data in temporary disk storage (OPFS on Web), then applies documents,
-indexes, links, IDs, and migration metadata in one transaction. Failed imports
-leave the target unchanged. Temporary storage is released on completion, error,
-or handle closure. A process crash can leave an unused temporary file; target
-recovery follows the storage engine's transaction durability.
+Backups include documents, links, and migration metadata from one consistent
+snapshot. Include every collection referenced by a forward link; restore
+reconstructs backlinks and validates schemas and checksums before committing
+atomically. Failed imports leave the target unchanged.
 
-Import batches are capped by record count and a 1 MiB JSON budget; a larger
-record is processed on its own, up to the default 16 MiB per-record limit
-(`maxRecordBytes` can raise it). Export hydrates one document at a time and
-pages link IDs. These bounds cover backup buffers, not the engine's
-database/page cache or bytes retained by the caller's stream consumer.
-Version 1 archives contain no relationships; linked schemas require `allowLegacyWithoutLinks: true` to accept
-that loss explicitly. Use binaries matching native ABI 39.
+Export and import use bounded buffers. Restore also needs temporary disk space
+(OPFS on Web); database caches and buffers retained by your streams are separate.
+Records are limited to 16 MiB by default; raise `maxRecordBytes` on both export
+and import for larger documents. Legacy version 1 archives contain no links;
+linked schemas require `allowLegacyWithoutLinks: true` to accept that loss.
 
 Lower-level tooling can use `documentIdsPage` to read a bounded, ascending page
 of ids without materializing the whole collection:
@@ -364,6 +360,9 @@ Enum lists use name-based storage; `@Enumerated` applies to scalar enum fields.
 
 Cindel supports Freezed classic classes and single primary factories:
 
+Add `freezed_annotation` as a dependency and `freezed` as a dev dependency
+alongside the Cindel generator.
+
 ```dart
 import 'package:cindel/cindel.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -406,11 +405,15 @@ final db = await Cindel.open(
 );
 ```
 
-Use an in-memory database for tests:
+Use `openInMemory` for tests:
 
 ```dart
 final db = await Cindel.openInMemory(schemas: [UserSchema]);
 ```
+
+Storage depends on the backend: SQLite native uses RAM, MDBX uses a temporary
+directory cleaned up on close, and Web uses SQLite/OPFS under a unique database
+name. The same test API does not imply RAM-only storage on every platform.
 
 ## CRUD
 
@@ -439,10 +442,9 @@ final users = await db.users.getAll([ada.dbId, 404, grace.dbId]);
 await db.users.deleteAll([ada.dbId, grace.dbId]);
 ```
 
-`putAll` reserves automatic IDs in one batch on all three backends, assigning
-them in input order and preserving explicit IDs. Duplicate IDs in the same
-batch are rejected. IDs are not guaranteed to be gapless. Split very large
-inputs into batches when memory matters; `putAll` materializes its input.
+`putAll` assigns automatic IDs in input order and preserves explicit IDs.
+Duplicate IDs in a batch are rejected, and IDs are not guaranteed to be gapless.
+Split very large inputs into batches; `putAll` materializes its input.
 
 Unique indexes with `replace: true` generate natural-key upsert helpers:
 
@@ -556,14 +558,12 @@ final deleted = await db.users
     .deleteAll();
 ```
 
-`findFirst()` requests at most one result, including projections, while
-preserving offset and distinct. `count()` counts the query window after
-filtering, distinct, offset, and limit; property `count()` counts non-null values.
-
-MDBX preserves 64-bit integer precision in filters and ordering. Distinct uses
-structured value equality across all backends. Limited MDBX queries can use
-direct ID/index scans or bounded top-k selection when their ordering allows it;
-a limit does not guarantee that only that many candidates are scanned.
+`findFirst()` returns at most one result, including projections, and respects
+offset and distinct. `count()` counts the filtered, distinct, paginated window;
+property `count()` counts non-null values. Distinct uses structured value
+equality. MDBX preserves 64-bit integer precision in filters and ordering.
+Indexes and ordering affect query cost; a limit bounds results, not necessarily
+the number of candidates scanned.
 
 ## Indexes
 
@@ -685,20 +685,16 @@ the forward relation and are read-only. In `@Backlink(to: ...)`, pass the Dart
 field name of the forward link on the linked collection; in the example above,
 `Artist.songs` points to `Song.featuredArtists`.
 
-Deleting a document removes its incoming and outgoing links atomically,
-including query/batch deletes and documents evicted by a unique replace index.
-Updating an existing ID preserves its links; deleting and reinserting it does
-not restore old associations. Related collections receive a collection-wide
-notification after commit. Internal migration reconstruction preserves links
-so rewritten documents can keep their identities.
+Deleting a document, including batch/query deletes and unique-index evictions,
+removes its incoming and outgoing links atomically and notifies related
+collections after commit. Updating an existing ID preserves its links;
+deleting and reinserting it does not restore them.
+Migration reconstruction preserves links for rewritten documents.
 
-For older databases, run `await db.cleanupOrphanLinks()` outside a transaction.
-It returns `examinedLinks` and `removedLinks`, scans in pages of at most 128
-edges and commits the cleanup atomically. Links with a missing source or target
-are removed; links between valid documents are preserved. Historical links
-that already attached to a reused ID cannot be distinguished without history.
-The page bound covers traversal buffers, not database caches or transaction
-pages retained by the storage engine.
+For older databases, `await db.cleanupOrphanLinks()` removes links whose source
+or target is missing. Run it outside a transaction; cleanup is atomic and paged,
+and returns `examinedLinks` and `removedLinks`. Links to an already reused ID
+cannot be identified as historical orphans.
 
 ## Watchers
 
@@ -739,14 +735,13 @@ final sub = db.users.watchCollectionLazy().listen((_) {
 });
 ```
 
-Polling is shared by collection within each database handle. SQLite revisions
-are persisted in the same transaction as writes, so rolled-back changes do not
-publish revisions. Snapshot reads remain specific to each watcher.
+Watchers share polling per collection and react to committed changes; rolled-back
+writes do not publish changes. Object, collection, and query watchers emit an
+initial snapshot by default; lazy watchers do not. Use `fireImmediately` to
+change this behavior.
 
 Handle stream errors with `onError` and cancel subscriptions when their owner
-is disposed. Closing the database stops polling and completes watcher streams;
-pending Web snapshot reads do not emit a spurious closed-database error during
-shutdown.
+is disposed. Closing the database stops polling and completes watcher streams.
 
 ```dart
 await sub.cancel();
@@ -888,7 +883,12 @@ Current Web behavior:
 ## Native Binaries
 
 Flutter apps should include `cindel_flutter_libs` so native and Web runtime
-assets are bundled automatically.
+assets are bundled automatically; no Dart import from that package is needed.
+Keep it compatible with `cindel`, since native libraries must match the ABI
+expected by the Dart runtime.
+
+iOS and macOS support both Swift Package Manager and CocoaPods. Flutter handles
+the integration with the same public Cindel API and no manual linker settings.
 
 For custom local native builds, set `CINDEL_NATIVE_LIBRARY` before running Dart
 tests or tools:

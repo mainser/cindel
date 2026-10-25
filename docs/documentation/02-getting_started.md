@@ -11,6 +11,20 @@ first.
 
 ## Package Compatibility
 
+The current package SDK requirements are:
+
+| Package | Minimum SDK |
+| --- | --- |
+| `cindel` | Dart 3.11 |
+| `cindel_generator` | Dart 3.13 |
+| `cindel_flutter_libs` | Dart 3.11 and Flutter 3.41 |
+
+An app that generates models must satisfy the generator's Dart requirement too.
+Flutter supplies its own Dart SDK; check `flutter --version` before resolving
+dependencies. The repository validates generation with Flutter 3.47.8. The
+Flutter 3.41 minimum for the binaries package does not lower the generator's
+requirement.
+
 Use compatible versions of `cindel`, `cindel_generator`, and
 `cindel_flutter_libs`. Regenerate all model libraries after updating the
 generator:
@@ -79,10 +93,13 @@ final db = await Cindel.open(
 );
 ```
 
-The two required values are:
+For normal typed application use, supply:
 
 - `directory`: where this database is stored.
 - `schemas`: the generated collection schemas this database handle can use.
+
+Only `directory` is required by the method signature. `schemas` defaults to an
+empty list for low-level tooling; that does not register your model collections.
 
 On native platforms, `directory` is a filesystem directory. Use a stable
 application-data directory, not a temporary path, for real user data.
@@ -138,8 +155,34 @@ test('stores a user', () async {
 });
 ```
 
-On native platforms this opens a temporary runtime database. On Web it creates
-a unique browser database name for temporary use.
+The storage behind this method depends on the runtime:
+
+| Backend | Storage | On normal `close()` |
+| --- | --- | --- |
+| MDBX | A temporary filesystem directory | The temporary directory is removed. |
+| SQLite native | SQLite in-memory database | The in-memory database is discarded. |
+| SQLite Web | A unique persisted OPFS database name | The handle closes; persisted browser files are not deleted. |
+
+The model and CRUD code stays the same. Do not use the method name as a promise
+of RAM-only storage or automatic Web quota reclamation. Always close the handle;
+use an isolated browser profile/storage context for disposable Web tests.
+
+## iOS And macOS Integration
+
+Add `cindel_flutter_libs` alongside `cindel` in the Flutter application's
+dependencies. The package supports both Swift Package Manager and CocoaPods;
+Flutter integrates the plugin using the application's selected mechanism. No
+additional Dart initialization is needed for either mechanism.
+
+The packaged Apple binaries include iOS device and simulator slices and macOS
+Intel/Apple Silicon support. The package declares iOS 13 and macOS 10.15 minimum
+deployment targets; the Flutter SDK or other dependencies can require higher
+targets. Building Apple applications still requires macOS and Xcode.
+
+Use the published package's binaries instead of pointing the app at an unpacked
+repository checkout without its release assets. A missing framework is a
+packaging/integration problem; an ABI mismatch means the loaded binary and Dart
+bindings are incompatible. See [runtime compatibility](19-advanced_reference.md#runtime-compatibility).
 
 ## Choosing A Backend
 

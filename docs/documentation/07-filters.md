@@ -31,6 +31,9 @@ class Todo {
 
   late String title;
   bool completed = false;
+  int priority = 0;
+
+  @Index(type: CindelIndexType.multiEntry)
   List<String> tags = const [];
 }
 ```
@@ -70,7 +73,7 @@ Use `CindelFilter.field(...)` when the field name or predicate is selected at
 runtime:
 
 ```dart
-CindelFilter buildTodoPredicate(String field, Object? value) {
+CindelFilterPredicate buildTodoPredicate(String field, Object? value) {
   return CindelFilter.field(field).equalTo(value);
 }
 ```
@@ -78,6 +81,12 @@ CindelFilter buildTodoPredicate(String field, Object? value) {
 When using `CindelFilter`, pass persisted field names. If a model uses `@Name`,
 the persisted field name may be different from the Dart field name. Generated
 helpers avoid that problem in normal app code.
+
+`CindelFilter` is a factory namespace. Its methods return
+`CindelFilterPredicate`, which is the type to use for a function result or a
+list of predicates. Numeric dynamic predicates accept stored numbers; for a
+date use its UTC microseconds, or prefer the generated date helper that performs
+the conversion.
 
 ## Field Predicates
 

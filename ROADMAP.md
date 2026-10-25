@@ -13,6 +13,10 @@ and SQLite Web/OPFS as the browser backend.
 
 ## Status
 
+Delivered items describe the current `dev` implementation, including the 1.1.3
+development line; they do not imply that a package version is already published.
+Next and Later are remaining validation work or candidates, not release promises.
+
 The current development line is focused on a typed-only public contract:
 application code should use generated collections, generated queries, typed
 transactions, typed watchers, and open-time sync configuration. MDBX, SQLite
@@ -55,13 +59,17 @@ Current public API policy:
 - `Cindel.open` and `Cindel.openInMemory`.
 - Open-time sync opt-in with `CindelSyncConfig`.
 - Generated typed collections.
-- Native auto-increment ids with `Id` and `autoIncrement`.
+- Auto-increment ids with `Id` and `autoIncrement` on all three backends,
+  including batch ID reservations for `putAll` and overlapping-transaction
+  regression coverage.
 - Typed `put`, `putAll`, `putMany`, `get`, `getAll`, `delete`, and
   `deleteAll`.
 - Typed unique replace helpers generated from unique indexes.
 - Query-based `deleteFirst`, `deleteAll`, `updateFirst`, and `updateAll`.
-- Explicit `readTxn` and `writeTxn`.
-- In-memory databases for typed tests and short-lived typed work.
+- Explicit `readTxn` and `writeTxn`, with read-only enforcement and rollback of
+  writes and ID reservations.
+- `openInMemory` for typed tests: SQLite native uses RAM, MDBX uses a temporary
+  directory cleaned up on close, and Web uses a unique SQLite/OPFS database name.
 - Typed-only runtime paths for MDBX, SQLite native, and SQLite Web.
 
 ### Models And Schemas
@@ -84,6 +92,9 @@ Current public API policy:
   - embedded objects
   - nullable supported values
   - lists of supported non-list values
+- Nullable lists and nullable elements, preserving null, empty, and populated
+  lists through single/bulk writes, reads, and projections on all three backends.
+- Shared embedded types and nested list/object hydration through generated code.
 - Schema metadata persistence.
 - Compatible additive schema version bumps.
 - Rejection of unsafe type, id, and index option changes.
@@ -111,6 +122,19 @@ Current public API policy:
 - Native query-plan execution for supported typed queries on MDBX, SQLite, and
   Web SQLite.
 - Typed native-reader materialization when a query needs Dart-side filtering.
+- Limited `findFirst`, including property projections, and optimized
+  non-distinct object counts across all three backends.
+- SQLite engine projection and aggregate operations avoid intermediate
+  full-object hydration, with progressive aggregation without distinct. Web
+  planned property queries use these operations; the current SQLite native
+  public property-query path still hydrates typed objects in Dart.
+- Exact MDBX 64-bit integer filtering and ordering, plus collision-safe distinct
+  equality in the native and Dart query paths.
+- MDBX direct ID scans in both directions, including filters; bounded-memory
+  top-k for eligible limited sorts; progressive unsorted distinct; and ascending
+  integer-index range scans ordered by field and ID for eligible limited queries.
+- MDBX ID-only query results without copying document payloads, with regression
+  checks for retained candidates, discarded payloads, and window completion.
 
 ### Indexes
 
@@ -128,6 +152,8 @@ Current public API policy:
 ### Storage And Native Runtime
 
 - Rust native core behind Dart FFI.
+- Vendored MDBX 0.14.4 integration, preserving the configured storage parameters.
+- Native ABI 39 with explicit mismatch rejection before database opening.
 - MDBX storage backend for generated typed binary documents.
 - SQLite storage backend for generated typed app data, including schema
   collection tables, open-time schema registration, typed batch writes, ordered
@@ -150,6 +176,28 @@ Current public API policy:
 - Native string-list reader for generated typed hydration.
 - Current-document native dynamic bytes and list readers for generated MDBX
   typed hydration after the cursor has selected a document.
+- Engine error propagation through MDBX and SQLite native/Web, retaining
+  operation, backend, code, and cause when available instead of returning
+  partial reads as successful results.
+- Dart error types for open, closed-database, transaction, schema, query,
+  unique-index, and native failures, with controlled-failure regression tests.
+
+### Relationships And Maintenance
+
+- Typed links/backlinks with explicit `load`/`save` operations.
+- Atomic removal of incoming/outgoing links on deletes and unique-index
+  evictions, including query and batch operations.
+- Paged, atomic `cleanupOrphanLinks` for existing databases.
+- Versioned open-time migrations with verification callbacks, streaming
+  transformations, and optional compaction across all three backends.
+- Atomic migration steps using temporary disk storage and bounded batches;
+  data, schemas, indexes, links, IDs, and version commit together.
+- Bounded `documentIdsPage` scans for maintenance tooling.
+- Typed JSONL backups from a consistent snapshot, including links and migration
+  metadata, checksum verification, native gzip, and portable uncompressed output.
+- Schema-validated, atomic restores into empty selected collections using
+  temporary disk storage (OPFS on Web), with bounded batches and typed
+  multi-collection export/import regression coverage.
 
 ### Watchers
 
@@ -162,6 +210,10 @@ Current public API policy:
 - Native committed change sets with changed document ids.
 - Local watcher notifications after commit only.
 - Single-tab Web watcher path through Worker change sets.
+- Shared polling per collection within each database handle.
+- Persistent SQLite native/Web revisions committed atomically with writes.
+- Safe watcher shutdown, including pending Web snapshot reads, with regressions
+  for polling cost, rolled-back writes, and closure.
 
 ### Platforms
 
@@ -169,8 +221,11 @@ Current public API policy:
   - `arm64-v8a`
   - `armeabi-v7a`
   - `x86_64`
-- iOS prebuilt `xcframework`.
-- macOS universal prebuilt library.
+- iOS static XCFramework for ARM64 devices and ARM64/x64 simulators.
+- macOS universal dynamic XCFramework, distributed as a ZIP to preserve
+  framework symlinks through Pub packaging.
+- Swift Package Manager and CocoaPods support on iOS/macOS with the same public
+  Cindel API; macOS framework loading retains legacy dylib support.
 - Windows prebuilt library.
 - Linux prebuilt library.
 - Web SQLite Wasm runtime assets for browser Worker execution.
@@ -180,22 +235,20 @@ Current public API policy:
 - `Cindel.open(...)` routes Web callers through the packaged
   `cindel_flutter_libs` Worker/Wasm runtime while native callers keep MDBX as
   the default backend.
-- Tag-based GitHub release workflow that builds Android, Apple, Linux, and
-  Windows prebuilts before publishing coordinated package releases.
+- Release workflow that builds Android, Apple, Linux, Windows, and Web artifacts
+  before publishing matching-version packages, with ABI/opening checks where
+  binaries can execute on the runner.
 - Android release build validation.
 - Windows desktop validation.
 - Linux native prebuilt generation through WSL.
 - Web SQLite/OPFS validation through browser probes for the Worker/Wasm
   runtime.
-- Public open-time data migration tooling with database-level versions,
-  before/after verification callbacks, paged export/import helpers, migrated
-  schema registration, and backend compact requests across SQLite native, MDBX,
-  and Web SQLite.
-- Bounded `documentIdsPage` scans for maintenance tooling that needs to walk
-  large collections without reading every id at once.
-- Full typed backup/export/import streams with JSONL archives, checksum
-  verification, native gzip compression, empty-target restore, and cross-backend
-  SQLite/MDBX coverage.
+- Separate manual Apple workflow on macOS/Xcode for SwiftPM and CocoaPods with
+  Flutter 3.41.0 and 3.47.8. Validation on 2026-10-24 passed macOS Debug/Release,
+  iOS Release compilation, and iOS simulator ABI/CRUD/rollback/reopen checks
+  in all four combinations using locally archived and extracted Pub packages.
+- Apple packaging regressions for FlutterFramework manifest evaluation,
+  framework symlink preservation, and smoke-test stdout/stderr capture.
 
 ### Sync
 
@@ -241,20 +294,22 @@ Current public API policy:
 
 ### Typed Backend Parity
 
-- Keep MDBX as the reference backend for the typed API.
+- Keep the shared generated Dart API as the contract for all three backends.
 - Keep SQLite native aligned with the same typed operations, result ordering,
   errors, transaction behavior, and watcher behavior.
-- Keep SQLite Web aligned with the same typed app code wherever the browser
-  platform can support the behavior.
+- Keep SQLite Web aligned with the same typed application code; document browser
+  storage and numeric limits without introducing a separate public API.
 - Classify unsupported Web behavior explicitly and make it fail clearly instead
   of falling back to untyped storage.
 - Keep parity labs focused on observable public typed API behavior.
 
 ### Runtime Improvements
 
-- Keep the MDBX typed insert path close to Isar's streaming write model.
-- Continue reducing extra work in MDBX generated binary serialization and batch
-  writes.
+- Measure remaining serialization, batch-write, and hydration costs before
+  selecting further optimizations; batch IDs and query improvements listed in
+  Delivered are already implemented.
+- Compare time and retained memory against the current implementation. Preserve
+  existing performance, and justify any correctness-related cost with measurements.
 - Keep SQLite behavior aligned with the typed app benchmark while MDBX remains
   the default backend.
 - Continue Web SQLite/OPFS work on the shared SQLite engine, keeping the Web
@@ -279,6 +334,11 @@ Current public API policy:
 ## Next
 
 ### Release Hardening
+
+These are repeatable checks for each release, not missing implementations.
+Apple consumer validation and the local `cindel_flutter_libs` publication-payload
+audit have passed on the current development line; final release artifacts
+still need their own checks.
 
 - Run package analysis and tests from a clean release state.
 - Run `dart pub publish --dry-run` or `flutter pub publish --dry-run` for
@@ -345,17 +405,17 @@ Current public API policy:
 
 ### Diagnostics
 
-- Improve native error reporting across FFI.
-- Add clearer Dart exception types for validation, schema, transaction, Web
-  storage, and native storage failures.
-- Improve generator errors for unsupported field shapes and invalid indexes.
+- Refine generator messages for unsupported field shapes and invalid indexes
+  where concrete cases remain unclear. Runtime error propagation and Dart
+  exception types are already delivered.
 
 ## Later
 
 ### Migration And Storage Stability
 
 - Add rollback guidance for production migration rollouts.
-- Add richer migration diagnostics and native error details.
+- Improve migration-specific recovery guidance beyond the delivered atomic
+  steps and engine error details.
 - Add database statistics around migrated collection sizes and compaction
   effects.
 
@@ -406,12 +466,20 @@ Near-term quality goals:
 - Keep Web build and packaged asset checks passing.
 - Keep package docs synchronized with the real typed API.
 
-Future CI goals:
+Implemented validation infrastructure:
 
-- Dart analyzer and tests.
-- Rust tests.
-- Android build smoke test.
-- Windows desktop smoke test.
-- Linux native/prebuilt validation.
-- Web Worker/Wasm asset validation.
-- Apple build smoke tests when macOS runner access is available.
+- `ci.yml`: Dart format/analyze, package and generator tests, Rust tests, and
+  dedicated MDBX, SQLite, and Web backend jobs. It has reusable/manual entry
+  points and no push trigger.
+- `apple-validation.yml`: independent manual Apple build, packaging, and
+  consumer checks. It does not call CI, release, or package publication.
+- `release.yml`: invokes CI, builds current artifacts with locked Cargo
+  dependencies, verifies ABI/opening and Apple consumers, and checks package
+  archives before publishing. It remains separate from manual Apple validation.
+- Local Pana audit on 2026-10-24 of the complete `cindel_flutter_libs` 1.1.3 publication
+  payload: 160/160, all 5 public API elements documented, and a publication
+  dry-run with no warnings. Pub.dev performs its own analysis after publication.
+
+Remaining validation work includes broader Flutter consumer coverage on Android,
+Windows, and Linux, plus browser coverage beyond the current Web probes.
+Existing tests and packaging checks must continue to pass as the code evolves.

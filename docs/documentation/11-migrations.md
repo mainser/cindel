@@ -97,8 +97,15 @@ final migrations = CindelMigrationPlan(
 Use `targetVersion` for the version the current app expects after all required
 steps run.
 
-Use `baselineVersion` for databases that do not yet have a stored migration
-version.
+`baselineVersion` defaults to `0`. It applies when a database has no stored
+migration version but already has schema metadata for a collection named in
+the plan or target schemas. Keep the old persisted collection names in the
+plan so those databases can be recognized.
+
+A fresh database with neither a migration version nor those schemas starts at
+`targetVersion` and does not run the historical steps. Do not put first-install
+seed data exclusively in a migration callback. A database newer than the
+requested target is rejected; plans do not perform downgrades.
 
 Pass the same plan every time the app opens the database:
 
@@ -124,13 +131,11 @@ final migrateUsersFrom1To2 = CindelMigrationStep(
   openSchemas: [OldUserSchema],
   targetSchemas: [UserSchema],
   migrate: (context) async {
-    final oldUsers = await context.exportObjects(OldUserSchema);
-
     await context.registerTargetSchemas();
 
-    await context.importObjects(
+    await context.importObjectStream(
       UserSchema,
-      oldUsers.map(UserMigration.fromLegacy),
+      context.streamObjects(OldUserSchema).map(UserMigration.fromLegacy),
     );
   },
 );
@@ -151,6 +156,21 @@ several small steps over one large step that tries to handle every old shape at
 once.
 
 ## Exporting Old Data
+
+Choose helpers according to whether the caller already holds a collection in
+memory or can process it incrementally:
+
+| Read original step snapshot | Write private target workspace |
+| --- | --- |
+| `streamObjects(schema, batchSize: 100)` | `importObjectStream(schema, stream, batchSize: 100)` |
+| `streamDocuments(schema, batchSize: 100)` | `importDocumentStream(schema, stream, batchSize: 100)` |
+| `exportObjects(schema)` returns a full list | `importObjects(schema, iterable)` consumes batches |
+| `exportDocuments(schema)` returns a full list | `importDocuments(schema, iterable)` consumes batches |
+
+Batch sizes must be positive. Stream reads cap each native page at 4,096
+records; increasing the requested size beyond that does not increase that
+page cap. `context.database` operates on the working database; only the source
+stream/export helpers promise reads from the original step snapshot.
 
 Use `exportObjects` when the old generated schema can hydrate useful old typed
 objects:

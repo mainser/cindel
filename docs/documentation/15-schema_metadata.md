@@ -93,6 +93,15 @@ final restored = UserSchema.fromDocument(document);
 Most application code should prefer typed collection methods over direct schema
 conversion.
 
+`toDocument` produces the stored representation, not an arbitrary application
+JSON format. Dates and durations use microseconds, enums use their configured
+encoding, and embedded objects become nested maps. Forward links are stored
+separately and are not included by converting the owner object. Use
+`CindelBackup` to archive documents together with saved relationships.
+
+`setId` is optional: the generator omits it for immutable IDs. Metadata tooling
+must not assume that every generated model can be mutated after construction.
+
 ## `CindelFieldSchema`
 
 `CindelFieldSchema` describes one persisted field.
@@ -202,6 +211,11 @@ Use the persisted collection name:
 ```dart
 final userVersion = await db.schemaVersion('users');
 ```
+
+The returned schema version is storage metadata, not the app's migration-plan
+version. Use `migrationVersion()` for the latter. A non-null schema version
+confirms registration; it does not verify that every migrated row contains the
+expected business values.
 
 This is useful in diagnostics and controlled tooling:
 
