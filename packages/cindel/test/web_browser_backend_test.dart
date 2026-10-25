@@ -21,6 +21,7 @@ import 'bulk_id_suite.dart' as bulk_ids;
 import 'count_suite.dart' as count;
 import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
+import 'get_all_transaction_suite.dart' as get_all_transactions;
 import 'sqlite_id_suite.dart' as ids;
 import 'sqlite_projection_suite.dart' as sqlite_projection;
 import 'web_close_additional_suite.dart' as web_close;
@@ -49,6 +50,7 @@ void main() {
   dart_distinct.main();
   sqlite_projection.main(includeSameDirectoryHandles: false);
   find_first.main();
+  get_all_transactions.main();
   web_close.main();
   worker_close.main();
 }

@@ -83,20 +83,18 @@ Backups reject records beyond `maxRecordBytes`. Atomic restores and migration
 steps require temporary disk storage, so check native disk capacity or browser
 quota before large maintenance operations.
 
-## Known Transaction Defect
+## Transactional Bulk Reads
 
-Typed `getAll` with a non-empty ID list currently fails inside an active MDBX
-`writeTxn`, reporting `cursor document reader does not support active write
-transactions`. The generated path requests a native cursor reader that rejects
-an active writer. This was reproduced with the current native binary and is
-also present in the Rust implementation. The same scenario passes on SQLite
-native; Web execution was not part of this reproduction.
+Typed `getAll` supports active write transactions on all three backends. MDBX
+combines its committed cursor with the requested pending values, including
+deletions. It retains one copy per unique requested pending document for the
+reader's lifetime; untouched committed documents still use the cursor without
+copying their payloads. Pending data for unrequested IDs is not copied into the
+reader. Returned Dart objects and lists also consume memory.
 
-This is a defect in the current implementation, not an intentional difference
-in the public API. Until corrected, use awaited individual `get(id)` calls
-inside the write transaction when that read-back is necessary. That code also
-works with the other backends and preserves the transaction boundary. Moving
-the reads outside the transaction changes consistency guarantees.
+Use a native binary built with the 1.1.3 correction. The former MDBX error about
+an active write transaction is fixed without changing the public API or ABI 39;
+an older binary with the same ABI can still contain the defect.
 
 ## Web Limitations
 

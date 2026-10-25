@@ -340,6 +340,11 @@ Use `getAll` when you already have a list of ids and need to preserve that
 order, such as ids from a relationship, a search result, an import step, or a
 selection list.
 
+Inside `writeTxn`, `getAll` includes the handle's pending writes and returns
+null for pending deletions, with the same ordering and duplicate-ID behavior.
+This also applies to generated models with final IDs. See
+[transactional reads](09-transactions.md#await-every-operation-and-control-handle-ownership).
+
 ## Deleting One Object: `delete`
 
 `delete` removes one object by id.

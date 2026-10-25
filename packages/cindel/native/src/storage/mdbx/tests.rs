@@ -2638,6 +2638,98 @@ fn cursor_document_reader_handles_hits_misses_and_reloads() {
 }
 
 #[test]
+fn cursor_document_reader_merges_requested_pending_values_without_copying_committed_rows() {
+    // Scenario: An ID reader mixes committed rows with an active write overlay.
+    // Covers: Inserts, updates, tombstones, duplicates, reader ownership across
+    // commit/rollback, and the memory retained for requested pending payloads.
+    // Expected: Only unique requested pending values are copied; committed rows
+    // remain borrowed and an existing reader keeps its original view.
+    for rollback in [false, true] {
+        let directory = TemporaryDirectory::new("cursor_write_overlay");
+        let mut storage = MdbxStorage::open(directory.path()).unwrap();
+        storage.register_schemas(&schema_manifest()).unwrap();
+        let original = user_document("one@example.com", 1, "Original", 10);
+        let deleted = user_document("two@example.com", 2, "Deleted", 20);
+        let unchanged = user_document("three@example.com", 3, "Unchanged", 30);
+        storage.put("users", 1, &original).unwrap();
+        storage.put("users", 2, &deleted).unwrap();
+        storage.put("users", 3, &unchanged).unwrap();
+        let reader = storage.cursor_document_reader("users", &[1, 3]).unwrap();
+        assert!(reader.staged_documents.is_empty());
+        drop(reader);
+
+        storage.begin_write_transaction().unwrap();
+        let updated = user_document("one@example.com", 1, "Updated", 11);
+        let inserted = user_document("four@example.com", 4, "Inserted", 40);
+        storage.put("users", 1, &updated).unwrap();
+        storage.put("users", 4, &inserted).unwrap();
+        storage.delete_many("users", &[2]).unwrap();
+        storage
+            .put(
+                "users",
+                5,
+                &user_document("five@example.com", 5, &"x".repeat(100_000), 50),
+            )
+            .unwrap();
+
+        let mut reader = storage
+            .cursor_document_reader("users", &[4, 2, 1, 3, 999, 4])
+            .unwrap();
+        assert_eq!(reader.len(), 6);
+        assert_eq!(reader.staged_documents.len(), 3);
+        assert_eq!(
+            reader
+                .staged_documents
+                .values()
+                .flatten()
+                .map(Vec::len)
+                .sum::<usize>(),
+            updated.len() + inserted.len()
+        );
+        assert_eq!(
+            reader.document_bytes(3).unwrap(),
+            Some(unchanged.as_slice())
+        );
+        assert!(matches!(reader.current_bytes, Some(Cow::Borrowed(_))));
+        let inserted_pointer = reader.document_bytes(0).unwrap().unwrap().as_ptr();
+        assert_eq!(
+            reader.document_bytes(5).unwrap().unwrap().as_ptr(),
+            inserted_pointer
+        );
+        assert!(!reader.is_present(1).unwrap());
+        assert!(!reader.is_present(4).unwrap());
+        assert!(!reader.is_present(6).unwrap());
+        assert_eq!(reader.document_id(0).unwrap(), Some(4));
+        assert_eq!(reader.document_id(1).unwrap(), None);
+
+        let latest = user_document("one@example.com", 1, "Latest", 12);
+        storage.put("users", 1, &latest).unwrap();
+        if rollback {
+            storage.rollback_transaction().unwrap();
+        } else {
+            storage.commit_transaction().unwrap();
+        }
+        assert_eq!(reader.document_bytes(2).unwrap(), Some(updated.as_slice()));
+        assert_eq!(reader.document_bytes(0).unwrap(), Some(inserted.as_slice()));
+        assert!(!reader.is_present(1).unwrap());
+        drop(reader);
+
+        let mut reader = storage.cursor_document_reader("users", &[1, 2, 4]).unwrap();
+        assert!(reader.staged_documents.is_empty());
+        assert_eq!(
+            reader.document_bytes(0).unwrap(),
+            Some(if rollback {
+                original.as_slice()
+            } else {
+                latest.as_slice()
+            })
+        );
+        assert_eq!(reader.is_present(1).unwrap(), rollback);
+        assert_eq!(reader.is_present(2).unwrap(), !rollback);
+    }
+}
+
+#[test]
 fn streams_all_query_documents_from_borrowed_rows() {
     // Scenario: MDBX streams an unsorted all-documents query directly from
     // cursor rows.

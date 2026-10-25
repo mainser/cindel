@@ -2,6 +2,7 @@
 
 ## 1.1.3
 
+- Fixed MDBX `getAll` inside `writeTxn`, preserving pending writes, deletions, ordering, and generated types with SQLite native/Web parity regressions.
 - Added macOS framework loading for SwiftPM/CocoaPods while preserving the public API and legacy dylib loading.
 - Fixed Web watchers emitting closed-database errors from pending snapshots during shutdown.
 - Fixed generated nullable lists, shared embedded types, and list/object reads and projections across MDBX and SQLite native/Web, preserving the same typed API.

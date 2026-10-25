@@ -13,6 +13,7 @@ import 'close_suite.dart' as close;
 import 'count_suite.dart' as count;
 import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
+import 'get_all_transaction_suite.dart' as get_all_transactions;
 import 'links_backlinks_suite.dart' as links_backlinks;
 import 'mdbx_contract_suite.dart' as mdbx_contract;
 import 'mdbx_distinct_suite.dart' as distinct;
@@ -41,6 +42,7 @@ void main() {
   count.main();
   dart_distinct.main();
   find_first.main();
+  get_all_transactions.main();
   links_backlinks.main();
   mdbx_contract.main();
   distinct.main();

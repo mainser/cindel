@@ -70,6 +70,7 @@ pub(crate) struct MdbxCursorDocumentReader {
     cursor: Cursor<'static, RO>,
     _transaction: Arc<MdbxReadTransaction>,
     ids: Vec<u64>,
+    staged_documents: HashMap<u64, Option<Vec<u8>>>,
     current_index: Option<usize>,
     current_bytes: Option<Cow<'static, [u8]>>,
 }
@@ -80,8 +81,7 @@ impl MdbxCursorDocumentReader {
     }
 
     pub(crate) fn is_present(&mut self, document_index: usize) -> Result<bool, String> {
-        self.load(document_index)?;
-        Ok(self.current_bytes.is_some())
+        Ok(self.document_bytes(document_index)?.is_some())
     }
 
     pub(crate) fn document_bytes(
@@ -89,12 +89,18 @@ impl MdbxCursorDocumentReader {
         document_index: usize,
     ) -> Result<Option<&[u8]>, String> {
         self.load(document_index)?;
+        if let Some(document) = self
+            .ids
+            .get(document_index)
+            .and_then(|id| self.staged_documents.get(id))
+        {
+            return Ok(document.as_deref());
+        }
         Ok(self.current_bytes.as_deref())
     }
 
     pub(crate) fn document_id(&mut self, document_index: usize) -> Result<Option<u64>, String> {
-        self.load(document_index)?;
-        if self.current_bytes.is_some() {
+        if self.is_present(document_index)? {
             Ok(self.ids.get(document_index).copied())
         } else {
             Ok(None)
@@ -112,6 +118,9 @@ impl MdbxCursorDocumentReader {
         let Some(id) = self.ids.get(document_index).copied() else {
             return Ok(());
         };
+        if self.staged_documents.contains_key(&id) {
+            return Ok(());
+        }
         self.current_bytes = ignore_not_found(
             self.cursor
                 .set::<Cow<'static, [u8]>>(&document_table_key(id))
@@ -902,9 +911,6 @@ impl MdbxStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<MdbxCursorDocumentReader, String> {
-        if self.active_write().is_some() {
-            return Err("cursor document reader does not support active write transactions".into());
-        }
         let snapshot = self.read_transaction()?;
         let transaction = &snapshot.transaction;
         let documents_table = open_documents_table(transaction, collection)?;
@@ -915,10 +921,26 @@ impl MdbxStorage {
         // Erase the cursor borrow before moving its owning transaction below.
         let cursor = unsafe { std::mem::transmute::<Cursor<'_, RO>, Cursor<'static, RO>>(cursor) };
 
+        // Keep only requested pending values, once per ID. The reader owns this
+        // overlay so later writes, commit or rollback cannot invalidate its bytes.
+        // Untouched documents still use the borrowed cursor payload; ordinary
+        // reads allocate no overlay entries. None marks a pending deletion.
+        let mut staged_documents = HashMap::new();
+        if let Some(write) = self.active_write() {
+            for id in ids {
+                if !staged_documents.contains_key(id) {
+                    if let Some(document) = write.staged_document(collection, *id) {
+                        staged_documents.insert(*id, document);
+                    }
+                }
+            }
+        }
+
         Ok(MdbxCursorDocumentReader {
             cursor,
             _transaction: snapshot,
             ids: ids.to_vec(),
+            staged_documents,
             current_index: None,
             current_bytes: None,
         })

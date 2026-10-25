@@ -224,19 +224,17 @@ keep its database work together:
 ```dart
 await db.writeTxn(() async {
   await db.todos.putAll(todos);
-  for (final todo in todos) {
-    final saved = await db.todos.get(todo.dbId);
-    if (saved == null) {
-      throw StateError('A written todo could not be read.');
-    }
+  final saved = await db.todos.getAll(todos.map((todo) => todo.dbId));
+  if (saved.any((todo) => todo == null)) {
+    throw StateError('A written todo could not be read.');
   }
 });
 ```
 
-The individual reads above work across backends. The current MDBX typed
-`getAll` path has a confirmed failure inside an active `writeTxn`; see
-[the current transaction defect](20-current_limits.md#known-transaction-defect).
-This is an implementation defect, not a different intended public contract.
+`getAll` inside `writeTxn` reads this handle's pending inserts and updates;
+pending deletions return null. Input order, duplicate IDs, and missing entries
+are preserved on MDBX, SQLite native, and Web. Returned objects are detached
+values: later writes or rollback do not mutate a previously returned list.
 
 ### Writing Inside `readTxn`
 
