@@ -81,8 +81,10 @@ void main() {
     // Covers: Export with heterogeneous schemas, links and embedded values.
     // Expected: Generated callbacks retain their model types on every backend.
     test('exports inline heterogeneous collections.', () async {
+      // Arrange.
       final db = await source();
       final output = BackupBytesConsumer();
+      // Act.
       final report = await CindelBackup.exportDatabase(
         database: db,
         collections: [
@@ -93,6 +95,7 @@ void main() {
         batchSize: 1,
         compression: CindelBackupCompression.none,
       );
+      // Assert.
       expect(report.documents, 4);
       await db.close();
       final target = await open();
@@ -113,6 +116,7 @@ void main() {
     // Covers: Import independently of inline export, including ID setters.
     // Expected: Native/binary writers accept their concrete models without casts.
     test('imports inline heterogeneous collections.', () async {
+      // Arrange.
       final db = await source();
       final output = BackupBytesConsumer();
       await CindelBackup.exportDatabase(
@@ -126,6 +130,7 @@ void main() {
       );
       await db.close();
       final target = await open();
+      // Act.
       final report = await CindelBackup.importDatabase(
         database: target,
         collections: [
@@ -136,6 +141,7 @@ void main() {
         batchSize: 1,
         compression: CindelBackupCompression.none,
       );
+      // Assert.
       expect(report.documents, 4);
       await verify(target);
     });
@@ -144,12 +150,14 @@ void main() {
     // Covers: Existing local-list usage and widening before wrapper construction.
     // Expected: Both forms preserve the schema's runtime model type.
     test('round-trips inferred lists and widened schemas.', () async {
+      // Arrange.
       final db = await source();
       final selection = [
         CindelBackupCollection(backupNodeSchema),
         CindelBackupCollection(DistinctRecordSchema),
       ];
       final output = BackupBytesConsumer();
+      // Act / Assert.
       await CindelBackup.exportDatabase(
         database: db,
         collections: selection,
@@ -178,6 +186,7 @@ void main() {
       // Covers: Serializer call counts, incremental export and import batch peaks.
       // Expected: Each row is converted once; import never hydrates the archive.
       test('preserves bounded batches with batchSize $batchSize.', () async {
+        // Arrange.
         const count = 35;
         const payloadSize = 65536;
         var exported = 0;
@@ -250,6 +259,7 @@ void main() {
             }
           },
         );
+        // Act.
         await CindelBackup.exportDatabase(
           database: db,
           collections: [CindelBackupCollection(schema)],
@@ -257,6 +267,7 @@ void main() {
           batchSize: batchSize,
           compression: CindelBackupCompression.none,
         );
+        // Assert.
         expect(exported, count);
         expect(consumed, count);
         await db.close();

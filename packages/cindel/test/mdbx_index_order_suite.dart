@@ -30,7 +30,15 @@ void main() {
           upper: upper,
         ).sortBy('score').thenBy('dbId');
 
+    // Scenario: Indexed ranges include bounded, open-ended, equal and empty
+    // bounds with optional filters.
+    // Covers:
+    // - Ordered index reads, tied keys and pagination across result shapes.
+    // Expected: Returned rows match the fully ordered reference for every
+    // tested window.
     test('preserves bounds, ties, filters and all result shapes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final (lower, upper) in [
         (-3, 3),
         (null, 0),
@@ -63,9 +71,17 @@ void main() {
       }
     });
 
+    // Scenario: An indexed window is queried while rows change in a write or
+    // an external handle.
+    // Covers:
+    // - Pending index changes, rollback and read snapshot stability.
+    // Expected: Rollback restores the original window, snapshots retain it
+    // and later reads reflect committed deletion.
     test('keeps pending writes, rollback and the read snapshot.', () async {
+      // Arrange.
       final query = range(lower: -5, upper: 5).limit(4);
       final before = await query.findAll();
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await rows.put(_IndexRow(1, -5));
@@ -88,7 +104,14 @@ void main() {
       expect((await query.findFirst())?.dbId, isNot(before.first.dbId));
     });
 
+    // Scenario: Adjacent signed 64-bit index values and sparse IDs are
+    // inserted in reverse order.
+    // Covers:
+    // - Exact index-key ordering and ID tie breaking beyond double precision.
+    // Expected: Score and ID projections retain the expected order and
+    // endpoint extrema stay exact.
     test('keeps adjacent 64-bit values and sparse ID ties exact.', () async {
+      // Arrange.
       await rows.all().deleteAll();
       final expected = [
         _IndexRow(7, -9007199254740993),
@@ -101,6 +124,7 @@ void main() {
       ];
       await rows.putAll(expected.reversed);
       final query = range(lower: -9007199254740993, upper: 9007199254740993);
+      // Act / Assert.
       expect(
         await query.limit(10).property<int>('score').findAll(),
         expected.map((row) => row.score),

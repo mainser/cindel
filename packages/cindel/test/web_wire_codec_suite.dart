@@ -9,7 +9,16 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel Web wire codec', () {
+    // Scenario: A direct Web batch encoder writes 256 records containing
+    // nullable integer lists.
+    // Covers:
+    // - Buffer size bounds, list round-tripping and unsafe/nonfinite value
+    // rejection.
+    // Expected: Capacity stays within twice the encoded length, all lists
+    // round-trip and invalid values throw.
     test('streams primitive list records into a bounded batch buffer', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final bytes = web_wire.encodeNativeDocumentWriteBatchDirect<int>(
         ids: List.generate(256, (i) => i + 1),
         objects: List.generate(256, (i) => i),
@@ -26,6 +35,7 @@ void main() {
           writer.endList(list);
         },
       );
+      // Assert.
       expect(bytes.buffer.lengthInBytes, lessThanOrEqualTo(bytes.length * 2));
       final rows = web_wire.decodeNativeDocumentWriteBatch(bytes);
       expect(rows, hasLength(256));
@@ -64,6 +74,7 @@ void main() {
     // - Web-safe u64 decoding guard.
     // Expected: Id order is preserved and unsafe Web integers are rejected.
     test('round-trips web id lists and rejects unsafe u64 values.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(web_wire.decodeIdList(web_wire.encodeIdList([1, 3, 5])), [
         1,
@@ -785,6 +796,7 @@ void main() {
     // - [web_wire.CindelWireReader.readValue].
     // Expected: Update keys are encoded in lexical order.
     test('encodes web field updates in stable field order.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final reader = web_wire.CindelWireReader(
         web_wire.encodeFieldUpdates({
@@ -810,6 +822,7 @@ void main() {
     // - Writer integer range guards.
     // Expected: Invalid Web wire payloads fail with explicit exceptions.
     test('rejects malformed web wire payloads.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(() => web_wire.decodeIdList(_bytes([0])), throwsFormatException);
       expect(

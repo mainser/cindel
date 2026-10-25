@@ -132,9 +132,18 @@ void main({bool concurrentHandles = true}) {
       'unique',
       'close',
     ]) {
+      // Scenario: A migration fails in a hook, streamed batch, verification,
+      // unique constraint or close phase.
+      // Covers:
+      // - Per-step rollback of data, schemas, relations and migration
+      // metadata.
+      // - retryability.
+      // Expected: Reopening shows the original state after failure, and a
+      // later successful retry publishes version two.
       test(
         'failure at $failure preserves data, schema, relations and version after reopen.',
         () async {
+          // Arrange.
           final path = await seed();
           final planStep = step(
             before: (context) async {
@@ -179,6 +188,7 @@ void main({bool concurrentHandles = true}) {
               if (failure == 'verify') throw StateError('injected');
             },
           );
+          // Act / Assert.
           await expectLater(run(path, [planStep]), throwsA(anything));
           await assertState(path);
           final retried = await run(path, [step()]);
@@ -188,9 +198,16 @@ void main({bool concurrentHandles = true}) {
       );
     }
 
+    // Scenario: A migration registers its target schema before streaming
+    // original rows.
+    // Covers:
+    // - Original-source reads, one-time publication and rerun detection.
+    // Expected: Exactly seven rows are visited, rerunning does not visit them
+    // again and the next inserted ID is eight.
     test(
       'streams original rows after target registration and publishes exactly once.',
       () async {
+        // Arrange.
         final path = await seed();
         var seen = 0;
         final migrationStep = step(
@@ -208,7 +225,9 @@ void main({bool concurrentHandles = true}) {
             );
           },
         );
+        // Act.
         final db = await run(path, [migrationStep]);
+        // Assert.
         expect(seen, 7);
         await db.close();
         await assertState(path, version: 2, prefix: 'new');
@@ -231,8 +250,16 @@ void main({bool concurrentHandles = true}) {
       },
     );
 
+    // Scenario: The second migration step fails after the first step
+    // committed.
+    // Covers:
+    // - Atomicity boundaries between successive version steps.
+    // Expected: Version two and its transformed rows remain committed while
+    // version three is not published.
     test('later step failure keeps the earlier committed step.', () async {
+      // Arrange.
       final path = await seed();
+      // Act / Assert.
       await expectLater(
         run(path, [
           step(),
@@ -243,10 +270,19 @@ void main({bool concurrentHandles = true}) {
       await assertState(path, version: 2, prefix: 'new');
     });
 
+    // Scenario: A migration imports a lazy iterable, empty sources and an
+    // invalid batch size.
+    // Covers:
+    // - Batched consumption, no-op empty streams/iterables and argument
+    // validation.
+    // Expected: Valid lazy rows migrate to version two; empty imports succeed
+    // and batch size zero is rejected.
     test(
       'lazy iterable is consumed one batch at a time and empty streams work.',
       () async {
+        // Arrange.
         final path = await seed();
+        // Act / Assert.
         final db = await run(path, [
           step(
             migrate: (context) async {
@@ -278,7 +314,15 @@ void main({bool concurrentHandles = true}) {
       },
     );
 
+    // Scenario: Immutable IDs and generated nested/list values pass through
+    // multiple migration steps.
+    // Covers:
+    // - Typed object/document streaming, immutable identity and nullable
+    // embedded/list preservation.
+    // Expected: IDs 91 and 7 and their original field values survive, with
+    // migration version three published.
     test('preserves immutable IDs and generated nested/list values.', () async {
+      // Arrange.
       final path = await createCloseTestDirectory();
       addTearDown(() => deleteCloseTestDirectory(path));
       final schemas = [ImmutableUserSchema, DistinctRecordSchema];
@@ -305,6 +349,7 @@ void main({bool concurrentHandles = true}) {
           );
       await source.setMigrationVersion(1);
       await source.close();
+      // Act / Assert.
       final db = await Cindel.open(
         directory: path,
         backend: testStorageBackend,
@@ -359,9 +404,17 @@ void main({bool concurrentHandles = true}) {
     });
 
     for (final size in [1000, 10000]) {
+      // Scenario: A parameterized large migration tracks produced and written
+      // objects.
+      // Covers:
+      // - Per-ID traversal counts and maximum pending objects with batch size
+      // 29.
+      // Expected: Each input row is produced and written once, maximum
+      // pending is exactly 29 and all payloads persist.
       test(
         'streams $size objects with bounded pending objects and one visit per ID.',
         () async {
+          // Arrange.
           final elapsed = Stopwatch()..start();
           final path = await seed(count: 2);
           final source = await openTestDatabase(
@@ -384,6 +437,7 @@ void main({bool concurrentHandles = true}) {
           final target = _trackedSchema(() {
             written++;
           });
+          // Act / Assert.
           final db = await run(path, [
             step(
               migrate: (context) async {
@@ -435,10 +489,17 @@ void main({bool concurrentHandles = true}) {
       );
     }
 
+    // Scenario: A migration omits an identity that had related edges.
+    // Covers:
+    // - Orphan cleanup before verification and identity reuse afterward.
+    // Expected: Verification sees no orphaned children and reinserting the
+    // old ID does not resurrect removed links.
     test(
       'removed identities lose orphaned links before verification.',
       () async {
+        // Arrange.
         final path = await seed();
+        // Act / Assert.
         final db = await run(path, [
           step(
             migrate: (context) async {
@@ -470,9 +531,17 @@ void main({bool concurrentHandles = true}) {
       },
     );
 
+    // Scenario: A persisted field is renamed and verification first fails,
+    // then succeeds on retry.
+    // Covers:
+    // - Renamed-field staging, atomic rollback, unaffected collections and
+    // reopened data.
+    // Expected: Failure preserves the old state; retry publishes version two
+    // and retains the renamed values and untouched collection.
     test(
       'renamed persisted fields roll back on failure and publish on retry.',
       () async {
+        // Arrange.
         final path = await seed();
         var fail = true;
         Future<CindelDatabase> migrate() => Cindel.open(
@@ -509,6 +578,7 @@ void main({bool concurrentHandles = true}) {
             ],
           ),
         );
+        // Act / Assert.
         await expectLater(migrate(), throwsStateError);
         await assertState(path);
         fail = false;
@@ -539,9 +609,17 @@ void main({bool concurrentHandles = true}) {
     );
 
     if (concurrentHandles) {
+      // Scenario: Native migrations stream integers beyond the exact double
+      // range in both signs.
+      // Covers:
+      // - Int64 preservation while reading, transforming and publishing typed
+      // rows.
+      // Expected: Positive and negative 9007199254740993 remain exact during
+      // and after migration.
       test(
         'streamed native SQLite and MDBX migrations preserve int64 precision.',
         () async {
+          // Arrange.
           final path = await seed(count: 2);
           final source = await openTestDatabase(
             directory: path,
@@ -556,6 +634,7 @@ void main({bool concurrentHandles = true}) {
               BackupNode(i + 1, code: values[i]),
           ]);
           await source.close();
+          // Act / Assert.
           final db = await run(path, [
             step(
               migrate: (context) async {
@@ -585,12 +664,19 @@ void main({bool concurrentHandles = true}) {
         },
       );
 
+      // Scenario: Another handle writes while a migration is being verified.
+      // Covers:
+      // - Conflict detection before publishing staged migration data.
+      // Expected: Publication fails, the concurrent row remains and the
+      // original rows/version are preserved.
       test('concurrent writes reject publication and remain intact.', () async {
+        // Arrange.
         final path = await seed();
         final other = await openTestDatabase(
           directory: path,
           schemas: [backupNodeSchema, backupLeafSchema],
         );
+        // Act / Assert.
         try {
           await expectLater(
             run(path, [

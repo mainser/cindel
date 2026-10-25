@@ -25,8 +25,10 @@ void main() {
   test(
     'package:cindel/cindel.dart owns the Web application entrypoint',
     () async {
+      // Arrange.
       final source = await _readPackageFile('package:cindel/cindel.dart');
 
+      // Act / Assert.
       expect(
         source,
         contains(
@@ -58,11 +60,13 @@ void main() {
   // Expected: No `cindel_web.dart` public entrypoint is present beside
   // `cindel.dart`.
   test('package:cindel/cindel_web.dart is not a public entrypoint', () async {
+    // Arrange.
     final publicEntrypoint = await _packageFile('package:cindel/cindel.dart');
     final removedEntrypoint = File.fromUri(
       publicEntrypoint.uri.resolve('cindel_web.dart'),
     );
 
+    // Act / Assert.
     expect(removedEntrypoint.existsSync(), isFalse);
   });
 
@@ -77,10 +81,12 @@ void main() {
   test(
     'web query facade routes generated queries through native plans',
     () async {
+      // Arrange.
       final source = await _readPackageFile(
         'package:cindel/src/web/query.dart',
       );
 
+      // Act / Assert.
       expect(source, contains('WireQueryPlan? _nativePlan'));
       expect(source, contains('_indexedEqualityQuery'));
       expect(source, contains('WireQuerySource.indexEqual'));
@@ -106,6 +112,7 @@ void main() {
   // - Query materialization using generated native readers.
   // Expected: No Web generated path calls the removed untyped facade methods.
   test('web generated APIs stay on generated typed storage', () async {
+    // Arrange.
     final databaseSource = await _readPackageFile(
       'package:cindel/src/web/database.dart',
     );
@@ -116,6 +123,7 @@ void main() {
       'package:cindel/src/web/typed_collection.dart',
     );
 
+    // Act / Assert.
     expect(databaseSource, contains('getAllNativeBinaryDocuments'));
     expect(databaseSource, contains('CindelWebNativeDocumentReader'));
     expect(databaseSource, contains('queryNativePlanObjects'));
@@ -163,6 +171,7 @@ void main() {
   // Expected: SQLite Web/OPFS exposes the same relation operations as native
   // SQLite and MDBX.
   test('web exposes link and backlink worker contract', () async {
+    // Arrange.
     final databaseSource = await _readPackageFile(
       'package:cindel/src/web/database.dart',
     );
@@ -171,6 +180,7 @@ void main() {
       publicEntrypoint.uri.resolve('../web/cindel_worker.js'),
     ).readAsString();
 
+    // Act / Assert.
     expect(databaseSource, contains('saveLinkIds'));
     expect(databaseSource, contains('loadLinkedObjects'));
     expect(databaseSource, contains('loadBacklinkObjects'));
@@ -189,6 +199,7 @@ void main() {
   // Expected: Web keeps the same migration/export/import/compact surface as
   // native callers.
   test('web exposes public migration tooling contract', () async {
+    // Arrange.
     final publicSource = await _readPackageFile('package:cindel/cindel.dart');
     final cindelSource = await _readPackageFile(
       'package:cindel/src/web/cindel.dart',
@@ -206,6 +217,7 @@ void main() {
       ),
     ).readAsString();
 
+    // Act / Assert.
     expect(publicSource, contains("export 'src/migration.dart';"));
     expect(publicSource, contains("export 'src/backup.dart';"));
     expect(cindelSource, contains('CindelMigrationPlan? migrationPlan'));
@@ -228,6 +240,7 @@ void main() {
   // - Worker operation names matching the Dart Web facade.
   // Expected: Web can page document ids without forcing a full id-list read.
   test('web exposes paged document id contract', () async {
+    // Arrange.
     final databaseSource = await _readPackageFile(
       'package:cindel/src/web/database.dart',
     );
@@ -241,6 +254,7 @@ void main() {
       ),
     ).readAsString();
 
+    // Act / Assert.
     expect(databaseSource, contains('Future<List<int>> documentIdsPage'));
     for (final source in [workerSource, packagedWorkerSource]) {
       expect(source, contains("case 'documentIdsPage':"));
@@ -256,11 +270,13 @@ void main() {
   // Expected: Web can use uncompressed JSONL backup streams through the same
   // package import.
   test('web exposes backup stream contract', () async {
+    // Arrange.
     final publicSource = await _readPackageFile('package:cindel/cindel.dart');
     final backupSource = await _readPackageFile(
       'package:cindel/src/backup.dart',
     );
 
+    // Act / Assert.
     expect(publicSource, contains("export 'src/backup.dart';"));
     expect(backupSource, contains('enum CindelBackupCompression'));
     expect(backupSource, contains('none,'));
@@ -275,6 +291,7 @@ void main() {
   // Expected: Web generated APIs do not silently append duplicates when a
   // replace index should target the existing row.
   test('web typed collection reuses ids for unique replace indexes', () async {
+    // Arrange.
     final collectionSource = await _readPackageFile(
       'package:cindel/src/web/typed_collection.dart',
     );
@@ -282,6 +299,7 @@ void main() {
       'package:cindel/src/web/database.dart',
     );
 
+    // Act / Assert.
     expect(collectionSource, contains('_reuseUniqueIndexId'));
     expect(collectionSource, contains('queryCompositeEqualIds'));
     expect(collectionSource, contains('queryEqualIds'));

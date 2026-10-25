@@ -11,9 +11,17 @@ import 'schema_generation_fixture.dart';
 
 void main() {
   group('Cindel backup', () {
+    // Scenario: A gzip archive has a corrupted checksum delivered after its
+    // document records.
+    // Covers:
+    // - Atomic rollback when gzip trailer validation fails after batch
+    // staging.
+    // Expected: Import fails, the target stays empty, migration version nine
+    // is preserved and its next ID is one.
     test(
       'rolls back staged rows when gzip validation fails at the trailer.',
       () async {
+        // Arrange.
         final source = await openTestDatabaseInMemory(schemas: [UserSchema]);
         addTearDown(source.close);
         await source.users.putAll([_user(1), _user(2), _user(3)]);
@@ -34,6 +42,7 @@ void main() {
           yield bytes.sublist(bytes.length - 8);
         }
 
+        // Act / Assert.
         await expectLater(
           CindelBackup.importDatabase(
             database: target,
@@ -62,6 +71,7 @@ void main() {
     // - Migration version and checksum round-trip.
     // Expected: restored typed collections contain the same data and metadata.
     test('exports and imports a compressed typed archive.', () async {
+      // Arrange.
       final sourceBackend = testStorageBackend;
       final targetBackend = sourceBackend;
       final sourceDir = await Directory.systemTemp.createTemp(
@@ -100,6 +110,7 @@ void main() {
 
       final archive = _BytesConsumer();
       final exportProgress = <CindelBackupProgress>[];
+      // Act.
       final exported = await CindelBackup.exportDatabase(
         database: source,
         collections: collections,
@@ -128,6 +139,7 @@ void main() {
         onProgress: importProgress.add,
       );
 
+      // Assert.
       expect(exported.documents, 15);
       expect(imported.documents, exported.documents);
       expect(imported.checksum, exported.checksum);
@@ -156,10 +168,12 @@ void main() {
     // Expected: Invalid options fail with `ArgumentError` before storage or
     // stream work starts.
     test('rejects invalid backup options.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final collections = [CindelBackupCollection<User>(UserSchema)];
 
+      // Act / Assert.
       await expectLater(
         CindelBackup.exportDatabase(
           database: database,
@@ -201,6 +215,7 @@ void main() {
     // Expected: Bad archives fail with `StateError` instead of partially
     // restoring unchecked data.
     test('rejects malformed and inconsistent archives.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final collections = [CindelBackupCollection<User>(UserSchema)];
@@ -217,6 +232,7 @@ void main() {
         );
       }
 
+      // Act / Assert.
       await expectRejected(const Stream<List<int>>.empty());
       await expectRejected(_rawJsonl(['[]']));
       await expectRejected(_recordsJsonl([_header(format: 'wrong')]));
@@ -258,6 +274,7 @@ void main() {
     // Expected: Restore fails with `StateError` before existing data can be
     // overwritten or merged.
     test('rejects restore into non-empty target.', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp(
         'cindel_backup_non_empty_${testStorageBackend.name}_',
       );
@@ -274,6 +291,7 @@ void main() {
       addTearDown(database.close);
       await database.users.put(_user(1));
 
+      // Act / Assert.
       await expectLater(
         CindelBackup.importDatabase(
           database: database,

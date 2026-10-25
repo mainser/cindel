@@ -628,7 +628,9 @@ final class CindelQuery<T> {
       return 0;
     }
     final nativePlan = _nativePlan(limitOverride: limitOverride);
-    if (nativePlan == null && _sourceFilter == null) {
+    if (nativePlan == null &&
+        _sourceFilter == null &&
+        _distinctFields.isEmpty) {
       throw UnsupportedError(
         'Cindel Web query updates require a SQLite-native query plan.',
       );
@@ -650,7 +652,7 @@ final class CindelQuery<T> {
       updates[field.name] = _nativeFilterValue(value);
     }
     if (nativePlan == null) {
-      // Keep word/normalized-source updates atomic, including their window.
+      // Keep Dart-selected updates atomic, including distinct and the window.
       // Batch IDs so a large match set cannot exceed SQLite's parameter limit.
       Future<int> updateSelected() async {
         final query = limitOverride == 1 ? _limitToFirst() : this;
@@ -736,7 +738,9 @@ final class CindelQuery<T> {
   }
 
   bool get _canUseNativePlanner {
-    if (_sourceFilter != null) {
+    // SQL GROUP BY chooses a representative before ORDER BY. As on native
+    // SQLite, select distinct representatives after sorting generated rows.
+    if (_sourceFilter != null || _distinctFields.isNotEmpty) {
       return false;
     }
     return _usesNativeDocuments() && _schema.readNativeDocument != null;
@@ -797,7 +801,8 @@ final class CindelQuery<T> {
       final objects = await _database.queryNativePlanObjects(
         _schema.name,
         WireQueryPlan(
-          source: const WireQuerySource.all(dedupe: false),
+          // Keep indexed candidates when only the final selection needs Dart.
+          source: _nativeSource,
           filter: null,
           sorts: const [],
           distinctFields: const [],
@@ -1146,18 +1151,9 @@ final class CindelQuery<T> {
     }
     final value = predicate.expected!;
     if (_requiresDartIndexedEquality(field, value)) {
-      return CindelQuery._(
-        database: _database,
-        schema: _schema,
-        sourceFilter: _caseInsensitiveStringEqualityFilter(
-          field,
-          value as String,
-        ),
-        sortKeys: _sortKeys,
-        distinctFields: _distinctFields,
-        offset: _offset,
-        limit: _limit,
-      );
+      // A field filter compares stored text exactly. Only where() inherits
+      // index normalization; using that source here would change the predicate.
+      return null;
     }
     return CindelQuery._(
       database: _database,

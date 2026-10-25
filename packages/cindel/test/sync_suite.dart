@@ -12,9 +12,19 @@ void main() {
     // Public adapter values are plain transport contracts. This protects the
     // documented defaults and the less common result shapes without reaching
     // into the internal scheduler.
+    // Scenario: Public sync configuration and result objects are constructed
+    // with default and explicit values.
+    // Covers:
+    // - Adapter identity, scheduler defaults and link/rejection/push result
+    // fields.
+    // Expected: Defaults and every supplied transport field are retained
+    // unchanged.
     test('exposes adapter contract value objects', () {
+      // Arrange.
       final adapter = _SyncTestAdapter();
+      // Act.
       final config = CindelSyncConfig(adapter: adapter);
+      // Assert.
       expect(config.adapter, same(adapter));
       expect(config.clientId, isNull);
       expect(config.onStatusChanged, isNull);
@@ -58,13 +68,22 @@ void main() {
     // This test covers the full local-outbox lifecycle: optimistic local write,
     // offline retry, durable pending row across reopen, successful push after
     // reconnect, and a follow-up delete using a non-reused mutation id.
+    // Scenario: An offline adapter receives a local typed write, then the
+    // database reopens before reconnecting.
+    // Covers:
+    // - Durable pending writes, reconnect push and mutation sequence reuse
+    // prevention.
+    // Expected: The row persists offline, reconnect drains pending work and a
+    // subsequent delete reaches the server.
     test(
       'pushes pending typed writes through the internal scheduler',
       () async {
+        // Arrange.
         final directory = await Directory.systemTemp.createTemp('cindel_sync_');
         final adapter = _SyncTestAdapter()..online = false;
         final statuses = <CindelSyncStatus>[];
         CindelDatabase? database;
+        // Act / Assert.
         try {
           database = await openTestDatabase(
             directory: directory.path,
@@ -117,7 +136,15 @@ void main() {
 
     // Remote apply must look like a normal committed database change to
     // watchers, but it must not be recorded as a new outgoing local mutation.
+    // Scenario: A fake adapter stages a remote upsert followed by a remote
+    // delete.
+    // Covers:
+    // - Watcher visibility of remote changes without generating outgoing
+    // mutations.
+    // Expected: Watchers observe both changes, the upsert adds no push and
+    // the final pending count is zero.
     test('applies remote changes without re-enqueueing them', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp('cindel_sync_');
       final adapter = _SyncTestAdapter();
       final statuses = <CindelSyncStatus>[];
@@ -125,6 +152,7 @@ void main() {
       CindelDatabase? database;
       StreamSubscription<List<User>>? subscription;
       final snapshots = <List<String>>[];
+      // Act / Assert.
       try {
         database = await openTestDatabase(
           directory: directory.path,
@@ -176,10 +204,18 @@ void main() {
     // Query update support is intentionally blocked for now because it lacks
     // per-document snapshots. The object remains readable after the failed
     // update, proving the operation is rejected before corrupting data.
+    // Scenario: A sync-enabled collection receives a query update.
+    // Covers:
+    // - Rejection of unsupported query mutations before changing stored
+    // fields.
+    // Expected: The update throws UnsupportedError and the original name
+    // remains readable.
     test('rejects query updates while sync is enabled', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp('cindel_sync_');
       final adapter = _SyncTestAdapter();
       CindelDatabase? database;
+      // Act / Assert.
       try {
         database = await openTestDatabase(
           directory: directory.path,

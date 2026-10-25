@@ -13,14 +13,17 @@ void main() {
     // - Public schema version lookup by collection name.
     // Expected: The registered collection reports schema version 1.
     test('persists the initial schema version.', () async {
+      // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
+      // Act.
       final database = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema()],
       );
       addTearDown(database.close);
 
+      // Assert.
       expect(await database.schemaVersion('users'), 1);
     });
 
@@ -30,6 +33,7 @@ void main() {
     // - Version increments for additive metadata changes.
     // Expected: Reopening with the expanded schema advances the version to 2.
     test('advances schema version for additive compatible changes.', () async {
+      // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
       final original = await openTestDatabase(
@@ -38,12 +42,14 @@ void main() {
       );
       await original.close();
 
+      // Act.
       final expanded = await openTestDatabase(
         directory: directory.path,
         schemas: [_userSchema(includeActive: true)],
       );
       addTearDown(expanded.close);
 
+      // Assert.
       expect(await expanded.schemaVersion('users'), 2);
     });
 
@@ -56,6 +62,7 @@ void main() {
     test(
       'rejects incompatible schema changes without migration support.',
       () async {
+        // Arrange.
         final directory = await _createDatabaseDirectory();
         addTearDown(() => directory.delete(recursive: true));
         final database = await openTestDatabase(
@@ -64,6 +71,7 @@ void main() {
         );
         await database.close();
 
+        // Act / Assert.
         await expectLater(
           openTestDatabase(
             directory: directory.path,
@@ -87,11 +95,14 @@ void main() {
     // - Public schema version lookup for missing collections.
     // Expected: Missing collection versions are reported as null.
     test('returns null for unregistered schema versions.', () async {
+      // Arrange.
       final directory = await _createDatabaseDirectory();
       addTearDown(() => directory.delete(recursive: true));
+      // Act.
       final database = await openTestDatabase(directory: directory.path);
       addTearDown(database.close);
 
+      // Assert.
       expect(await database.schemaVersion('users'), isNull);
     });
   });

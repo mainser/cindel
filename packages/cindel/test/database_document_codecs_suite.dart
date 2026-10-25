@@ -16,6 +16,7 @@ void main() {
     // - `_dedupeIds` preserving first-seen order.
     // Expected: Repeated ids are removed without sorting.
     test('deduplicates ids while preserving query order.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final ids = _invokePrivate<List<int>>('_dedupeIds', [
         [3, 1, 3, 2, 1],
@@ -32,6 +33,7 @@ void main() {
     // - Invalid present flag and trailing payload guards.
     // Expected: Malformed native payloads fail with [CindelNativeError].
     test('rejects malformed native binary document batches.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(() => _decodeBinaryBatch(_bytes([1, 0, 0])), _throwsNativeError);
       expect(
@@ -58,6 +60,7 @@ void main() {
     //   `_checkPollInterval`, and `_checkId` error branches.
     // Expected: Invalid caller input fails with [ArgumentError].
     test('rejects invalid public API arguments.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(() => _invokePrivateRaw('_checkDirectory', ['  ']), _throwsArg);
       expect(() => _invokePrivateRaw('_checkCollection', ['']), _throwsArg);
@@ -302,6 +305,7 @@ void main() {
     // - `_wireIndexValueKind` list branch.
     // Expected: Composite/list index values report the `list` kind.
     test('reports list wire index value kind.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final kind = _invokePrivate<String>('_wireIndexValueKind', [
         const WireIndexValue.list([WireIndexValue.int(1)]),

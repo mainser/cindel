@@ -12,7 +12,15 @@ void main() {
     for (final route in ['changes', 'object', 'collection', 'query']) {
       // The runner injects one revision failure for this database name only.
       // Subsequent requests execute against the packaged Worker and SQLite.
+      // Scenario: Each public watcher route encounters a controlled revision
+      // failure before recovery and an update.
+      // Covers:
+      // - Error context preservation, resumed notifications and stream
+      // termination on close.
+      // Expected: One contextual error is reported, values seven/nine are
+      // observed and no new events arrive after close.
       test('$route preserves errors, recovers, updates and closes', () async {
+        // Arrange.
         final directory =
             'cindel-watch-error-${await createCloseTestDirectory()}';
         addTearDown(() => deleteCloseTestDirectory(directory));
@@ -62,6 +70,7 @@ void main() {
         final recovered = Completer<void>();
         final updated = Completer<void>();
         final closed = Completer<void>();
+        // Act.
         final subscription = stream.listen(
           (value) {
             events.add(value);
@@ -77,6 +86,7 @@ void main() {
         addTearDown(subscription.cancel);
         const timeout = Duration(seconds: 5);
         final error = await failed.future.timeout(timeout);
+        // Assert.
         expect(error, isA<CindelError>());
         final cindelError = error as CindelError;
         expect(cindelError.operation, 'collectionRevision');
@@ -123,7 +133,15 @@ void main() {
       // Queue a real committed change while the listener is paused, then close
       // before resuming. This reproduces queued snapshot reads after retirement
       // without injected Worker failures or arbitrary timing delays.
+      // Scenario: A watcher subscription is paused while an update is
+      // buffered and the database closes.
+      // Covers:
+      // - Pending watcher work during close across object, collection, query
+      // and lazy routes.
+      // Expected: New reads are rejected, resuming allows close/stream
+      // completion and no watcher error is emitted.
       test('$route closes with a buffered update and no error', () async {
+        // Arrange.
         final directory = await createCloseTestDirectory();
         addTearDown(() => deleteCloseTestDirectory(directory));
         final db = await Cindel.open(
@@ -161,6 +179,7 @@ void main() {
         final errors = <Object>[];
         final initial = Completer<void>();
         final done = Completer<void>();
+        // Act.
         final subscription = stream.listen(
           (_) {
             if (!initial.isCompleted) initial.complete();
@@ -178,6 +197,7 @@ void main() {
             ..value = 9,
         );
         final closing = db.close();
+        // Assert.
         try {
           // Yield one event-loop turn so close has retired the handle; the
           // public read verifies that state before the buffered stream resumes.

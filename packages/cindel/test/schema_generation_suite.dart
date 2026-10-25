@@ -1047,7 +1047,15 @@ void main({bool includeMdbxOnlyTests = false}) {
     // - String and List<String> hydration from compact borrowed MDBX rows.
     // Expected: Missing ids remain null and repeated hits hydrate consistently.
     if (includeMdbxOnlyTests) {
+      // Scenario: MDBX putAll stores generated objects with empty, nonempty
+      // and null list fields.
+      // Covers:
+      // - Generated get/getAll hydration of string, scalar and embedded
+      // lists.
+      // Expected: Empty lists stay empty, null lists stay null and the
+      // nonempty string list preserves its values.
       test('reads empty lists with generated get after MDBX putAll.', () async {
+        // Arrange.
         final db = await openTestDatabaseInMemory(
           schemas: [UserSchema],
           backend: CindelStorageBackend.mdbx,
@@ -1066,10 +1074,12 @@ void main({bool includeMdbxOnlyTests = false}) {
           ..email = 'nonempty@example.com'
           ..tags = ['', 'tag'];
 
+        // Act.
         await db.users.putAll([empty, nonEmpty]);
 
         // get decodes bytes in Dart; getAll uses the native cursor reader.
         final stored = await db.users.get(1);
+        // Assert.
         expect(stored, isNotNull);
         expect(stored!.tags, isEmpty);
         expect(stored.scores, isEmpty);
@@ -1084,6 +1094,12 @@ void main({bool includeMdbxOnlyTests = false}) {
         ]);
       });
 
+      // Scenario: Generated MDBX getAll receives reordered, missing and
+      // repeated IDs.
+      // Covers:
+      // - Cursor-reader hydration and preservation of requested positions.
+      // Expected: IDs two and one retain emails/lists, the missing ID yields
+      // null and the repeated ID is returned twice.
       test(
         'hydrates generated getAll through the MDBX native cursor reader.',
         () async {

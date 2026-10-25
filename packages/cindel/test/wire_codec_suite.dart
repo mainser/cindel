@@ -430,6 +430,7 @@ void main() {
     // - Direct writer order guard.
     // Expected: Out-of-order writes fail before malformed bytes are emitted.
     test('direct native document encoder rejects out-of-order fields', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(
         () => encodeNativeDocumentWriteBatchDirect<Object>(
@@ -512,6 +513,7 @@ void main() {
     // Expected: Valid direct bytes decode normally and invalid callback shapes
     //   fail before producing malformed wire payloads.
     test('direct native document encoder handles edge writer paths', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final encoded = encodeNativeDocumentWriteBatchDirect<Object>(
         ids: const [1],

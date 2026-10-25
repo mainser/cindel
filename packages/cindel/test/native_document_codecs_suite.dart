@@ -12,9 +12,17 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel native document codecs', () {
+    // Scenario: A truncated binary string-list count begins with the ASCII
+    // bytes for square brackets.
+    // Covers:
+    // - Binary-versus-legacy-JSON detection for an ambiguous prefix.
+    // Expected: Decoding rejects the truncated binary payload instead of
+    // returning an empty JSON list.
     test(
       'does not read a binary count starting with brackets as empty JSON',
       () {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         expect(
           _decodeStringList(Uint8List.fromList([0x5b, 0x5d, 0, 0])),
           isNull,
@@ -92,6 +100,7 @@ void main() {
     // - Non-string JSON element rejection.
     // Expected: Supported legacy values decode, unsupported values return null.
     test('decodes and rejects legacy JSON string-list payloads.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(_decodeStringList(_bytes('["A\\n",null]')), ['A\n', '']);
       expect(_decodeStringList(_bytes('[1]')), isNull);

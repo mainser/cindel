@@ -23,6 +23,7 @@ import 'mdbx_partial_selection_suite.dart' as partial_selection;
 import 'migration_suite.dart' as migration;
 import 'query_builder_suite.dart' as query_builder;
 import 'query_public_contract_suite.dart' as query_public_contract;
+import 'query_projection_contract_suite.dart' as query_projection_contract;
 import 'schema_generation_suite.dart' as schema_generation;
 import 'schema_version_suite.dart' as schema_version;
 import 'sync_suite.dart' as sync;
@@ -55,6 +56,7 @@ void main() {
   sync.main();
   query_builder.main();
   query_public_contract.main();
+  query_projection_contract.main();
   schema_generation.main(includeMdbxOnlyTests: true);
   typed_collection.main();
 }

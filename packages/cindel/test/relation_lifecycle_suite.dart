@@ -68,15 +68,24 @@ void main() {
 
     for (final indexed in [false, true]) {
       for (final operation in ['single', 'batch', 'query']) {
+        // Scenario: A linked identity is deleted individually, in a batch or
+        // by query, with optional indexes.
+        // Covers:
+        // - Incoming/outgoing relation cleanup across deletion paths and
+        // reopen.
+        // Expected: Deleted identities have no remaining incident links after
+        // the database is reopened.
         test(
           '$operation deletion removes incoming/outgoing links with indexed=$indexed and survives reopen.',
           () async {
+            // Arrange.
             final schema = indexed
                 ? backupNodeSchema
                 : _nodeSchema(indexed: false);
             var db = await open(schema: schema);
             await seed(db, schema);
             final nodes = db.typedCollection(schema);
+            // Act / Assert.
             switch (operation) {
               case 'single':
                 await nodes.delete(1);
@@ -97,15 +106,25 @@ void main() {
       }
     }
 
+    // Scenario: A linked row is updated, deleted/reinserted, rolled back or
+    // relinked.
+    // Covers:
+    // - Link preservation on update, rollback restoration and prevention of
+    // stale-link resurrection.
+    // Expected: Updates keep existing edges, rollback restores them and
+    // committed reinsertion only acquires explicitly saved new links.
     test(
       'updates preserve links; rollback restores edges; delete/reinsert does not resurrect them.',
       () async {
+        // Arrange.
         final db = await open();
         await seed(db);
         final nodes = db.typedCollection(backupNodeSchema);
+        // Act.
         await nodes.put(BackupNode(1, payload: 'updated'));
         var row = (await nodes.get(1))!;
         await row.children.load();
+        // Assert.
         expect(row.children.map((n) => n.dbId).toSet(), {1, 2});
         await expectLater(
           db.writeTxn(() async {
@@ -139,17 +158,26 @@ void main() {
     );
 
     for (final batch in [false, true]) {
+      // Scenario: A unique-index replacement evicts an identity that owns and
+      // receives links.
+      // Covers:
+      // - Single/bulk replacement cleanup and later identity reuse.
+      // Expected: The evicted row is absent, reinsertion has no stale edges
+      // and explicit cleanup finds no orphan links.
       test('unique replacement cleans the evicted ID, batch=$batch.', () async {
+        // Arrange.
         final schema = _nodeSchema(replace: true);
         final db = await open(schema: schema);
         await seed(db, schema);
         final nodes = db.typedCollection(schema);
         final replacement = BackupNode(9, code: 1);
+        // Act.
         if (batch) {
           await nodes.putAll([replacement]);
         } else {
           await nodes.put(replacement);
         }
+        // Assert.
         expect(await nodes.get(1), isNull);
         await nodes.put(BackupNode(1, code: 10));
         final leaf = (await db.typedCollection(backupLeafSchema).get(1))!;
@@ -163,9 +191,16 @@ void main() {
       });
     }
 
+    // Scenario: A watched collection is related to a row deleted in aborted
+    // and committed transactions.
+    // Covers:
+    // - Deferred relation-change publication and rollback suppression.
+    // Expected: No event appears before commit or after rollback; the
+    // committed deletion emits one local collection change.
     test(
       'only related watchers are notified after commit, never on rollback.',
       () async {
+        // Arrange.
         final db = await open();
         await seed(db);
         final events = <CindelChangeSet>[];
@@ -178,6 +213,7 @@ void main() {
             .listen(events.add);
         addTearDown(subscription.cancel);
         await Future<void>.delayed(const Duration(milliseconds: 30));
+        // Act / Assert.
         await expectLater(
           db.writeTxn(() async {
             await db.typedCollection(backupNodeSchema).delete(1);
@@ -202,9 +238,17 @@ void main() {
       },
     );
 
+    // Scenario: Migration reconstruction restores only some identities from a
+    // linked graph.
+    // Covers:
+    // - Explicit orphan cleanup, transaction restrictions and idempotent
+    // cleanup reports.
+    // Expected: Valid identities keep their links, exactly one orphan is
+    // removed and cleanup inside read/write transactions is rejected.
     test(
       'migration reconstruction preserves identities; explicit cleanup removes only orphaned edges.',
       () async {
+        // Arrange.
         final original = await open();
         await seed(original);
         final path = original.directory;
@@ -215,6 +259,7 @@ void main() {
           backend: testStorageBackend,
         );
         addTearDown(db.close);
+        // Act.
         await db.registerMigratedSchemas([backupNodeSchema, backupLeafSchema]);
         await db.typedCollection(backupNodeSchema).putAll([
           BackupNode(1),
@@ -223,6 +268,7 @@ void main() {
         await db.typedCollection(backupLeafSchema).put(BackupNode(1));
         final row = (await db.typedCollection(backupNodeSchema).get(1))!;
         await row.children.load();
+        // Assert.
         expect(row.children.map((n) => n.dbId).toSet(), {1, 2});
         await expectLater(
           db.readTxn(() => db.cleanupOrphanLinks()),
@@ -246,9 +292,16 @@ void main() {
       },
     );
 
+    // Scenario: A graph is exported after one of its linked identities was
+    // deleted.
+    // Covers:
+    // - Relation-cleanup persistence through backup export/import.
+    // Expected: The archive contains only the remaining valid link and the
+    // restored graph retains the deletion cleanup.
     test(
       'backup after deletion restores a closed graph without orphaned links.',
       () async {
+        // Arrange.
         final db = await open();
         await seed(db);
         await db.typedCollection(backupNodeSchema).delete(1);
@@ -257,6 +310,7 @@ void main() {
           CindelBackupCollection<BackupNode>(backupNodeSchema),
           CindelBackupCollection<BackupNode>(backupLeafSchema),
         ];
+        // Act.
         await CindelBackup.exportDatabase(
           database: db,
           collections: selection,
@@ -266,6 +320,7 @@ void main() {
         final records = const LineSplitter()
             .convert(utf8.decode(sink.bytes))
             .map((s) => jsonDecode(s) as Map);
+        // Assert.
         expect(records.where((r) => r['type'] == 'link'), hasLength(1));
         await db.close();
         final target = await open();
@@ -279,21 +334,37 @@ void main() {
       },
     );
 
+    // Scenario: Orphan cleanup is admitted immediately before the database
+    // closes.
+    // Covers:
+    // - In-flight cleanup completion and rejection after close.
+    // Expected: Admitted cleanup completes with zero examined/removed links;
+    // later cleanup attempts fail.
     test(
       'cleanup admitted before close completes without notification work on a closed handle.',
       () async {
+        // Arrange.
         final db = await open();
+        // Act.
         final pending = db.cleanupOrphanLinks();
         final closed = db.close();
+        // Assert.
         expect(await pending, (examinedLinks: 0, removedLinks: 0));
         await closed;
         await expectLater(db.cleanupOrphanLinks(), throwsStateError);
       },
     );
 
+    // Scenario: One node has 4096 incident edges and another has an unrelated
+    // edge.
+    // Covers:
+    // - Large relation deletion and preservation of unrelated backlinks.
+    // Expected: Deleting the node removes its incident edges; one valid edge
+    // remains with owner ID 4098.
     test(
       'deletes 4096 incident links and retains unrelated relations.',
       () async {
+        // Arrange.
         final db = await open();
         await db.typedCollection(backupNodeSchema).putAll([
           for (var id = 1; id <= 4098; id++) BackupNode(id),
@@ -302,7 +373,9 @@ void main() {
           for (var id = 2; id <= 4097; id++) id,
         ]);
         await link(db, 'backup_nodes', 4098, 'children', [4097]);
+        // Act.
         await db.typedCollection(backupNodeSchema).delete(1);
+        // Assert.
         expect(await db.cleanupOrphanLinks(), (
           examinedLinks: 1,
           removedLinks: 0,

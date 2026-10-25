@@ -438,7 +438,7 @@ void main() {
         const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
       );
 
-      // Assert.
+      // Act / Assert.
       await expectLater(
         database.users
             .all()
@@ -735,7 +735,7 @@ void main() {
       final database = await _openSeededUsers();
       addTearDown(database.close);
 
-      // Assert.
+      // Act / Assert.
       expect(
         () => database.users.all().distinctByFields([]),
         throwsArgumentError,

@@ -9,9 +9,17 @@ import 'package:test/test.dart';
 import 'package:web/web.dart' as web;
 
 void main() {
+  // Scenario: The packaged Web runtime is loaded by a probe worker and opened
+  // through the public API.
+  // Covers:
+  // - Packaged Wasm ABI compatibility and repeated SQLite database
+  // open/close.
+  // Expected: The worker reports ABI 39 within the timeout and the same
+  // database opens and closes twice without failure.
   test(
     'packaged Web runtime has ABI 39 and opens, closes and reopens',
     () async {
+      // Arrange.
       final abi = Completer<int>();
       final probe = web.Worker(
         'abi_probe.js'.toJS,
@@ -26,6 +34,7 @@ void main() {
           abi.completeError(StateError('Cannot initialize the packaged Wasm.'));
         }
       }).toJS;
+      // Act / Assert.
       try {
         expect(await abi.future.timeout(const Duration(seconds: 15)), 39);
       } finally {

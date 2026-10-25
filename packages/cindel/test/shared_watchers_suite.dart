@@ -27,6 +27,7 @@ void main({bool includeExternalHandle = true}) {
     test(
       'preserves mixed typed subscriptions and committed changes.',
       () async {
+        // Arrange.
         final db = await open();
         final nodes = db.typedCollection(backupNodeSchema);
         final subscriptions = <StreamSubscription<Object?>>[];
@@ -39,6 +40,7 @@ void main({bool includeExternalHandle = true}) {
         var collections = 0;
         final queryResults = List.generate(25, (_) => <List<BackupNode>>[]);
         var lazy = 0;
+        // Act.
         for (var i = 0; i < 25; i++) {
           subscriptions.add(nodes.watchObject(1).listen((_) => objects++));
           subscriptions.add(
@@ -59,6 +61,7 @@ void main({bool includeExternalHandle = true}) {
               collections == 25 &&
               queryResults.every((events) => events.isNotEmpty),
         );
+        // Assert.
         expect(lazy, 0);
         await nodes.put(BackupNode(2, payload: 'unrelated'));
         await _until(() => collections == 50);
@@ -111,11 +114,13 @@ void main({bool includeExternalHandle = true}) {
     test(
       'does not initialize watchers from an uncommitted transaction.',
       () async {
+        // Arrange.
         final db = await open();
         final events = <List<BackupNode>>[];
         StreamSubscription<List<BackupNode>>? subscription;
         addTearDown(() => subscription?.cancel());
         final failure = StateError('controlled rollback');
+        // Act / Assert.
         await expectLater(
           db.writeTxn(() async {
             await db.typedCollection(backupNodeSchema).put(BackupNode(1));
@@ -141,6 +146,7 @@ void main({bool includeExternalHandle = true}) {
       test(
         'detects external commits after other subscribers cancel.',
         () async {
+          // Arrange.
           final db = await open();
           final writer = await openTestDatabase(
             directory: db.directory,
@@ -163,8 +169,10 @@ void main({bool includeExternalHandle = true}) {
             }
           });
           await _until(() => events.every((values) => values.length == 1));
+          // Act.
           await writer.typedCollection(backupNodeSchema).put(BackupNode(1));
           await _until(() => events.every((values) => values.length == 2));
+          // Assert.
           expect(events.every((values) => values.last.isExternal), isTrue);
           for (final subscription in subscriptions.take(99)) {
             await subscription.cancel();

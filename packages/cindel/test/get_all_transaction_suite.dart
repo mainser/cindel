@@ -31,6 +31,7 @@ void main() {
       test(
         'reads pending changes before ${rollback ? 'rollback' : 'commit'}.',
         () async {
+          // Arrange.
           await database.apiProducts.putAll([
             _product(10, 'Original'),
             _product(20, 'Delete me'),
@@ -89,6 +90,7 @@ void main() {
             }
           });
 
+          // Act / Assert.
           if (rollback) {
             await expectLater(writeAndRead(), throwsA(same(failure)));
           } else {
@@ -112,6 +114,7 @@ void main() {
     // Covers: Existing and new final IDs, updates, duplicate and missing rows.
     // Expected: Reading a staged object never substitutes the autoIncrement sentinel.
     test('preserves immutable IDs inside writeTxn.', () async {
+      // Arrange.
       await database.immutableUsers.put(
         const ImmutableUser(
           dbId: 1,
@@ -119,6 +122,7 @@ void main() {
           active: false,
         ),
       );
+      // Act / Assert.
       await database.writeTxn(() async {
         final id = await database.allocateId('immutableUsers');
         await database.immutableUsers.putAll([
@@ -145,6 +149,7 @@ void main() {
     // Covers: Null/empty/populated lists, embedded data, enums and temporal values.
     // Expected: Both transaction reads and post-commit reads preserve the model.
     test('preserves generated field types inside writeTxn.', () async {
+      // Arrange.
       final recipient = Recipient()
         ..name = 'Ada'
         ..address = 'ada@example.com'
@@ -183,6 +188,7 @@ void main() {
         );
       }
 
+      // Act / Assert.
       await database.writeTxn(() async {
         await database.users.putAll(users);
         await verify();

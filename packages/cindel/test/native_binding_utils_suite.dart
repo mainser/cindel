@@ -74,6 +74,7 @@ void main() {
     // - `_checkStatus` non-zero status branch.
     // Expected: Invalid ids and failing status codes are surfaced immediately.
     test('rejects invalid ids and failing native statuses.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(() => _invokePrivateRaw('_checkId', [-1]), throwsArgumentError);
       expect(

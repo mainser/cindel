@@ -9,6 +9,7 @@ void main() {
     // - [CindelChangeSet.mayAffectDocument] unknown-id branch.
     // Expected: The change is external and may affect any document id.
     test('represents external collection changes with unknown ids.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final change = CindelChangeSet.external('users');
 
@@ -55,6 +56,7 @@ void main() {
     // Expected: The id is exact, while document materialization is marked
     // unknown for watchers that need a fresh read.
     test('marks local upserts without snapshots as unknown documents.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final change = CindelChangeSet.upsert('users', 9, null);
 
@@ -104,6 +106,7 @@ void main() {
     // - [CindelChangeSet.upserts] null-document branch.
     // Expected: Watchers know the affected ids but must read values if needed.
     test('marks batched upserts without snapshots as unknown documents.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final change = CindelChangeSet.upserts('users', null, ids: const [4, 5]);
 
@@ -122,6 +125,7 @@ void main() {
     // Expected: The change records no affected ids, still marks document values
     // as unknown, and does not claim unrelated ids may be affected.
     test('supports batched upserts with unknown documents and no ids.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final change = CindelChangeSet.upserts('users', null);
 
@@ -141,6 +145,7 @@ void main() {
     // - [CindelChangeSet.deletes].
     // Expected: Deleted ids are exact and no document snapshots are attached.
     test('represents delete changes with exact ids.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final single = CindelChangeSet.delete('users', 6);
       final many = CindelChangeSet.deletes('users', const [6, 7, 7]);
@@ -200,6 +205,7 @@ void main() {
     // Expected: Defaults represent an exact native change with no attached
     // snapshots and no unknown document payloads.
     test('represents native change metadata with default options.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act.
       final change = CindelChangeSet.native(
         collection: 'users',

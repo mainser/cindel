@@ -517,8 +517,8 @@ final class CindelQuery<T> {
     return _updateNative(changes);
   }
 
-  // Property writes remain native. Sources SQLite cannot represent select IDs
-  // in a write transaction, then update only the requested fields atomically.
+  // Property writes remain native. SQLite sources or distinct selections that
+  // need Dart select IDs in a write transaction before atomic property writes.
   Future<int> _updateNative(
     Map<String, Object?> changes, {
     int? limitOverride,
@@ -528,7 +528,8 @@ final class CindelQuery<T> {
     }
     final nativePlan = _nativePlan(limitOverride: limitOverride);
     final selectInDart =
-        _database.usesSqliteNativeDocuments && !_canUseSqliteNativeSource;
+        _database.usesSqliteNativeDocuments &&
+        (!_canUseSqliteNativeSource || _distinctFields.isNotEmpty);
     if (nativePlan == null && !selectInDart) {
       throw UnsupportedError(
         'Native query updates require the MDBX binary query planner.',
@@ -1121,7 +1122,8 @@ final class CindelQuery<T> {
     final nativeFilter = _nativeFilter;
     if (!_canUseNativePlanner ||
         nativeSource == null ||
-        (_database.usesSqliteNativeDocuments && !_canUseSqliteNativeSource) ||
+        (_database.usesSqliteNativeDocuments &&
+            (!_canUseSqliteNativeSource || _distinctFields.isNotEmpty)) ||
         (_filter != null && nativeFilter == null)) {
       return null;
     }

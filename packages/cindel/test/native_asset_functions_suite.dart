@@ -12,17 +12,26 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel native asset functions', () {
+    // Scenario: The executable is inside a macOS app bundle whose path
+    // contains spaces.
+    // Covers:
+    // - Framework and dylib lookup relative to the executable.
+    // Expected: Both candidates point into Contents/Frameworks and contain no
+    // URL-encoded spaces.
     test(
       'resolves macOS frameworks from the executable, including spaces.',
       () {
+        // Arrange.
         final executable = File(
           '${Directory.systemTemp.path}/Cindel App.app/Contents/MacOS/Runner',
         );
+        // Act.
         final candidates = _invokePrivate<List<String>>(
           '_macOSFrameworkCandidates',
           [executable.path],
         );
         final frameworks = executable.parent.parent.uri.resolve('Frameworks/');
+        // Assert.
         expect(candidates, [
           frameworks
               .resolve('CindelNative.framework/CindelNative')
@@ -33,11 +42,20 @@ void main() {
       },
     );
 
+    // Scenario: Native-asset functions are invoked directly with an
+    // unsupported backend.
+    // Covers:
+    // - ABI 39 and native error buffer ownership through take/free calls.
+    // Expected: The ABI matches, opening returns no handle, error bytes can
+    // be consumed/freed and a second take is empty.
     test('executes ABI 39 error ownership through native assets.', () {
+      // Arrange.
       final functions = reflect(_nativeAssetFunctions());
+      // Act.
       final abi =
           functions.getField(const Symbol('abiVersion')).reflectee
               as int Function();
+      // Assert.
       expect(abi(), 39);
       final directory = ':memory:'.toNativeUtf8();
       final status = calloc<Int32>();

@@ -21,14 +21,23 @@ void main() {
       return (db: db, path: path);
     }
 
+    // Scenario: A transaction inserts a valid row before violating a unique
+    // code index.
+    // Covers:
+    // - Error cause/context preservation, rollback and subsequent write
+    // recovery.
+    // Expected: The error identifies uniqueness and the code field, both
+    // transaction rows are absent and a later valid insert succeeds.
     test(
       'keeps unique constraint cause through rollback and recovers.',
       () async {
+        // Arrange.
         final fixture = await open();
         final db = fixture.db;
         final nodes = db.typedCollection(backupNodeSchema);
         await nodes.put(BackupNode(1, code: 10));
         Object? caught;
+        // Act.
         try {
           await db.writeTxn(() async {
             await nodes.put(BackupNode(2, code: 20));
@@ -37,6 +46,7 @@ void main() {
         } catch (error) {
           caught = error;
         }
+        // Assert.
         expect(caught, isA<CindelError>());
         final error = caught! as CindelError;
         expect(error.operation, isNotEmpty);
@@ -50,9 +60,16 @@ void main() {
       },
     );
 
+    // Scenario: A persisted collection is reopened with an incompatible field
+    // definition.
+    // Covers:
+    // - Schema-open diagnostics and recovery using the original schema.
+    // Expected: Opening fails with a cause naming payload; the original
+    // schema reopens at version one.
     test(
       'keeps incompatible schema cause on open and allows reopening.',
       () async {
+        // Arrange.
         final path = await createCloseTestDirectory();
         addTearDown(() => deleteCloseTestDirectory(path));
         final original = CindelCollectionSchema<BackupNode>(
@@ -87,6 +104,7 @@ void main() {
           toDocument: backupNodeSchema.toDocument,
           fromDocument: backupNodeSchema.fromDocument,
         );
+        // Act / Assert.
         await expectLater(
           openTestDatabase(directory: path, schemas: [incompatible]),
           throwsA(
@@ -106,10 +124,18 @@ void main() {
 
     // Scenario: the engine rejects a malformed filter payload.
     // Expected: failure is distinguishable from an empty successful query.
+    // Scenario: A seeded collection receives a deliberately invalid query.
+    // Covers:
+    // - Query error diagnostics without converting failure to an empty
+    // result.
+    // Expected: The error retains its cause and filter detail, and the stored
+    // ID remains readable.
     test('returns query diagnostics instead of empty results.', () async {
+      // Arrange.
       final fixture = await open();
       final db = fixture.db;
       await db.typedCollection(backupNodeSchema).put(BackupNode(1));
+      // Act / Assert.
       await expectLater(
         failingQuery(db),
         throwsA(
@@ -125,11 +151,18 @@ void main() {
       expect(await db.documentIds('backup_nodes'), [1]);
     });
 
+    // Scenario: A transaction callback closes its database and then throws a
+    // known error instance.
+    // Covers:
+    // - Original callback error preservation after close-triggered rollback.
+    // Expected: The caller receives that exact error instance.
     test(
       'preserves the original callback error after close rolls back.',
       () async {
+        // Arrange.
         final fixture = await open();
         final original = StateError('controlled callback failure');
+        // Act / Assert.
         await expectLater(
           fixture.db.writeTxn(() async {
             await fixture.db.close();

@@ -42,12 +42,14 @@ void main({bool concurrentHandles = true}) {
     // Covers: Real revision polling after rollback, without a later write masking it.
     // Expected: No change event; the next successful commit is still delivered.
     test('rollback does not publish a phantom change.', () async {
+      // Arrange.
       final db = await open();
       final nodes = db.typedCollection(backupNodeSchema);
       await nodes.put(BackupNode(1, payload: 'original'));
       final events = await observe(db);
       final initial = events.length;
       final error = StateError('controlled rollback');
+      // Act / Assert.
       await expectLater(
         db.writeTxn(() async {
           await nodes.put(BackupNode(2));
@@ -72,11 +74,13 @@ void main({bool concurrentHandles = true}) {
     test(
       'relation rollback preserves data and the observed revision.',
       () async {
+        // Arrange.
         final db = await open();
         final nodes = db.typedCollection(backupNodeSchema);
         await nodes.putAll([BackupNode(1), BackupNode(2)]);
         final events = await observe(db);
         final initial = events.length;
+        // Act / Assert.
         await expectLater(
           db.writeTxn(() async {
             await db.saveLinkIds(
@@ -112,11 +116,13 @@ void main({bool concurrentHandles = true}) {
     // Covers: Failed statements, clean revision retry and no idle phantom events.
     // Expected: The failure leaves both the collection and revision unchanged.
     test('failed batch preserves the revision and permits a retry.', () async {
+      // Arrange.
       final db = await open();
       final nodes = db.typedCollection(backupNodeSchema);
       await nodes.put(BackupNode(1));
       final events = await observe(db);
       final initial = events.length;
+      // Act / Assert.
       await expectLater(
         nodes.putAll([BackupNode(2), BackupNode(3, code: 1)]),
         throwsA(
@@ -138,6 +144,7 @@ void main({bool concurrentHandles = true}) {
     test(
       'reopen and migration preserve monotonic revision metadata.',
       () async {
+        // Arrange.
         var db = await open();
         final path = db.directory;
         final first = await observe(db);
@@ -151,6 +158,7 @@ void main({bool concurrentHandles = true}) {
             .revision!;
         await db.setMigrationVersion(1);
         await db.close();
+        // Act.
         db = await open(path);
         final reopened = await observe(db);
         await db.typedCollection(backupNodeSchema).put(BackupNode(3));
@@ -158,6 +166,7 @@ void main({bool concurrentHandles = true}) {
         final after = reopened
             .lastWhere((event) => event.revision != null)
             .revision!;
+        // Assert.
         expect(after, before + 1);
         await db.close();
         db = await Cindel.open(
@@ -204,6 +213,7 @@ void main({bool concurrentHandles = true}) {
     // Covers: Published revisions through SQLite native and Web import paths.
     // Expected: The restored revision is persisted and advanced by the next write.
     test('restore publishes a revision before normal writes resume.', () async {
+      // Arrange.
       final source = await open();
       await source.typedCollection(backupNodeSchema).putAll([
         BackupNode(1),
@@ -220,6 +230,7 @@ void main({bool concurrentHandles = true}) {
       await source.close();
       var target = await open();
       final path = target.directory;
+      // Act.
       await CindelBackup.importDatabase(
         database: target,
         collections: [CindelBackupCollection<BackupNode>(backupNodeSchema)],
@@ -232,6 +243,7 @@ void main({bool concurrentHandles = true}) {
       final events = await observe(target);
       await target.typedCollection(backupNodeSchema).put(BackupNode(3));
       await _until(() => events.any((event) => event.revision != null));
+      // Assert.
       expect(events.lastWhere((event) => event.revision != null).revision, 2);
       expect(await target.typedCollection(backupNodeSchema).all().count(), 3);
     });
@@ -243,6 +255,7 @@ void main({bool concurrentHandles = true}) {
       test(
         'observes writes by another connection with no listeners.',
         () async {
+          // Arrange.
           final reader = await open();
           var writer = await open(reader.directory);
           final events = await observe(reader);
@@ -254,6 +267,7 @@ void main({bool concurrentHandles = true}) {
             observed = events.length;
           }
 
+          // Act.
           await changed(
             () => writer.typedCollection(backupNodeSchema).putAll([
               BackupNode(1),
@@ -267,6 +281,7 @@ void main({bool concurrentHandles = true}) {
               'payload': 'updated',
             }),
           );
+          // Assert.
           expect(
             (await reader.typedCollection(backupNodeSchema).get(1))!.payload,
             'updated',

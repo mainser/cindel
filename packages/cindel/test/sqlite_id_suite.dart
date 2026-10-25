@@ -8,7 +8,15 @@ import 'schema_generation_fixture.dart';
 void main({bool includeSameDirectoryHandles = true}) {
   group('SQLite typed IDs', () {
     if (includeSameDirectoryHandles) {
+      // Scenario: Two SQLite handles are opened before either writes an
+      // automatic-ID row.
+      // Covers:
+      // - Cross-handle allocation state and explicit high-water marks before
+      // putAll.
+      // Expected: Initial IDs are 1/2, manual ID 40 advances the next batch
+      // to 41/42 and both handles retain every row.
       test('preserves rows written through already-open handles.', () async {
+        // Arrange.
         final directory = await createCloseTestDirectory();
         addTearDown(() => deleteCloseTestDirectory(directory));
         final first = await _open(directory);
@@ -18,8 +26,10 @@ void main({bool includeSameDirectoryHandles = true}) {
 
         final ana = ApiProduct()..name = 'Ana';
         final ben = ApiProduct()..name = 'Ben';
+        // Act.
         await first.writeTxn(() => first.apiProducts.put(ana));
         await second.writeTxn(() => second.apiProducts.put(ben));
+        // Assert.
         expect([ana.dbId, ben.dbId], [1, 2]);
         expect((await second.apiProducts.get(1))?.name, 'Ana');
         expect((await first.apiProducts.get(2))?.name, 'Ben');
@@ -40,14 +50,23 @@ void main({bool includeSameDirectoryHandles = true}) {
       });
     }
 
+    // Scenario: SQLite reservations and manual-ID writes span rollback,
+    // deletion and reopen.
+    // Covers:
+    // - Persistent high-water marks, reservation-only commits and
+    // transactional counter rollback.
+    // Expected: Reopen preserves reservations, rollback restores next ID 3,
+    // and deleting manual ID 40 still leaves the next ID at 41.
     test(
       'persists reservations and rolls back typed counters on reopen.',
       () async {
+        // Arrange.
         final directory = await createCloseTestDirectory();
         addTearDown(() => deleteCloseTestDirectory(directory));
         var database = await _open(directory);
         addTearDown(() => database.close());
 
+        // Act / Assert.
         expect(await database.allocateId('apiProducts'), 1);
         await database.close();
         database = await _open(directory);

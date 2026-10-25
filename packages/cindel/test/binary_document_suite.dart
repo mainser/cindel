@@ -16,6 +16,7 @@ void main() {
     test(
       'round-trips schema-backed compact fields and direct reader access.',
       () {
+        // Arrange.
         final fieldTypes = [
           CindelBinaryFieldType.boolValue,
           CindelBinaryFieldType.intValue,
@@ -24,6 +25,7 @@ void main() {
           CindelBinaryFieldType.listValue,
           CindelBinaryFieldType.objectValue,
         ];
+        // Act.
         final bytes = cindelEncodeSchemaBinaryDocument([
           true,
           42,
@@ -33,6 +35,7 @@ void main() {
           {'active': false},
         ], fieldTypes);
 
+        // Assert.
         expect(cindelDecodeSchemaBinaryDocument(bytes, fieldTypes), [
           true,
           42,
@@ -61,6 +64,7 @@ void main() {
     // Expected: Full-document and direct-reader APIs return null for every
     //   compact field type.
     test('round-trips null schema-backed compact fields.', () {
+      // Arrange.
       final fieldTypes = [
         CindelBinaryFieldType.boolValue,
         CindelBinaryFieldType.intValue,
@@ -69,12 +73,14 @@ void main() {
         CindelBinaryFieldType.listValue,
         CindelBinaryFieldType.objectValue,
       ];
+      // Act.
       final bytes = cindelEncodeSchemaBinaryDocument(
         List<Object?>.filled(fieldTypes.length, null),
         fieldTypes,
       );
       final reader = CindelSchemaBinaryDocumentReader(bytes, staticSize: 26);
 
+      // Assert.
       expect(cindelDecodeSchemaBinaryDocument(bytes, fieldTypes), [
         null,
         null,
@@ -101,6 +107,8 @@ void main() {
     // - [CindelSchemaBinaryDocumentReader] constructor validation.
     // Expected: Invalid compact payloads fail before returning partial values.
     test('rejects invalid schema-backed compact documents.', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       expect(
         () => cindelEncodeSchemaBinaryDocument([1], const []),
         throwsArgumentError,
@@ -177,6 +185,8 @@ void main() {
     // - Truncated dynamic payload bytes.
     // Expected: Malformed dynamic fields throw StateError during decode.
     test('rejects malformed compact dynamic fields.', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       expect(
         () => cindelDecodeSchemaBinaryDocument(bytes([3, 0, 0, 1, 0, 0]), [
           CindelBinaryFieldType.stringValue,
@@ -207,6 +217,7 @@ void main() {
     // Expected: Public binary object/list helpers round-trip supported values
     //   using the generic binary payload format.
     test('round-trips binary object and list values.', () {
+      // Arrange.
       final object = {
         'bool': true,
         'date': DateTime.fromMicrosecondsSinceEpoch(7, isUtc: true),
@@ -219,6 +230,7 @@ void main() {
         'string': 'value',
       };
 
+      // Act / Assert.
       expect(cindelDecodeBinaryObject(cindelEncodeBinaryObject(object)), {
         'bool': true,
         'date': 7,
@@ -246,6 +258,8 @@ void main() {
     // Expected: Unsupported write values throw ArgumentError and unknown tags
     //   throw StateError.
     test('rejects unsupported and unknown binary value records.', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       expect(() => cindelEncodeBinaryList([Object()]), throwsArgumentError);
       expect(
         () => cindelDecodeBinaryList(
@@ -255,9 +269,16 @@ void main() {
       );
     });
 
+    // Scenario: Empty string and generic lists arrive in binary list and
+    // schema-backed document formats.
+    // Covers:
+    // - Empty-list decoding through standalone codecs and the compact reader.
+    // Expected: Every representation decodes to an empty list.
     test('decodes empty native string lists and generic empty lists.', () {
+      // Arrange: use the inputs described in this scenario.
       // Native putAll emits a three-byte static-size header for an empty
       // string list. Generic lists still use a four-byte element count.
+      // Act / Assert.
       expect(cindelDecodeBinaryList(bytes([0, 0, 0])), isEmpty);
       expect(cindelDecodeBinaryList(cindelEncodeBinaryList([])), isEmpty);
       final document = bytes([
@@ -291,6 +312,8 @@ void main() {
     // Expected: Valid compact string lists decode to nullable string lists and
     //   malformed payloads throw StateError.
     test('decodes and validates compact string list payloads.', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       expect(
         cindelDecodeBinaryList(
           bytes([

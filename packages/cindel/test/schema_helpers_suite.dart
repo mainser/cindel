@@ -11,11 +11,14 @@ void main() {
     // Expected: String lists are written through the fastest available writer
     //   contract without changing the element order.
     test('write string lists through fast and fallback writer paths.', () {
+      // Arrange.
       final fallbackWriter = _RecordingNativeWriter();
 
+      // Act.
       cindelWriteNativeStringList(fallbackWriter, 2, ['a', 'b']);
 
       final fallbackListWriter = fallbackWriter.listWriters.single;
+      // Assert.
       expect(fallbackWriter.events, ['beginList:2:2', 'endList']);
       expect(fallbackListWriter.events, ['writeString:0:a', 'writeString:1:b']);
 
@@ -38,8 +41,10 @@ void main() {
     // Expected: Objects are converted to maps only when the native object
     //   writer fast path is unavailable.
     test('write embedded objects through fallback writer paths.', () {
+      // Arrange.
       final writer = _RecordingNativeWriter();
 
+      // Act.
       cindelWriteNativeObject<String>(
         writer,
         1,
@@ -57,6 +62,7 @@ void main() {
         _toNameDocument,
       );
 
+      // Assert.
       expect(writer.objects[1], {'name': 'Ana'});
       expect(writer.objectLists[2], [
         {'name': 'Ana'},
@@ -74,8 +80,10 @@ void main() {
     // Expected: Single embedded objects use the native object fast path, while
     //   list elements fall back to map writes only for the list child.
     test('write embedded objects through native object writer paths.', () {
+      // Arrange.
       final writer = _ObjectNativeWriter(listWriterSupportsObjects: false);
 
+      // Act.
       cindelWriteNativeObject<String>(
         writer,
         4,
@@ -93,6 +101,7 @@ void main() {
         _toNameDocument,
       );
 
+      // Assert.
       expect(writer.events, [
         'beginObject:4:name',
         'endObject',
@@ -118,8 +127,10 @@ void main() {
     // Expected: Non-null elements use native object writers and null elements
     //   stay represented as nulls in the list.
     test('write embedded object lists with object-capable list writers.', () {
+      // Arrange.
       final writer = _ObjectNativeWriter(listWriterSupportsObjects: true);
 
+      // Act.
       cindelWriteNativeObjectList<String>(
         writer,
         6,
@@ -130,6 +141,7 @@ void main() {
       );
 
       final listWriter = writer.listWriters.single as _ObjectNativeWriter;
+      // Assert.
       expect(writer.events, ['beginList:6:3', 'endList']);
       expect(listWriter.events, [
         'beginObject:0:name',
@@ -156,6 +168,7 @@ void main() {
     // Expected: Map-based reader results are converted through fromDocument
     //   only when values are present.
     test('read embedded objects through fallback reader paths.', () {
+      // Arrange.
       final reader = _RecordingNativeReader()
         ..objects[_key(0, 1)] = {'name': 'Ana'}
         ..objects[_key(0, 2)] = null
@@ -166,6 +179,7 @@ void main() {
         ]
         ..objectLists[_key(0, 4)] = null;
 
+      // Act / Assert.
       expect(
         cindelReadNativeObject<String>(
           reader,
@@ -222,12 +236,14 @@ void main() {
     // Expected: Present child readers hydrate through readNative and every
     //   acquired child/list reader is released.
     test('read embedded objects through native object reader paths.', () {
+      // Arrange.
       final childReader = _RecordingNativeReader()..strings[_key(0, 0)] = 'Ana';
       final nullObjectReader = _ObjectNativeReader()
         ..objectReaders[_key(0, 1)] = null;
       final objectReader = _ObjectNativeReader()
         ..objectReaders[_key(0, 1)] = childReader;
 
+      // Act / Assert.
       expect(
         cindelReadNativeObject<String>(
           objectReader,

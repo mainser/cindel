@@ -25,7 +25,15 @@ void main({bool includeSameDirectoryHandles = true}) {
       ]);
     });
 
+    // Scenario: Ten seeded products are counted through unordered and ordered
+    // queries.
+    // Covers:
+    // - Offset/limit cardinality, empty windows and query reuse.
+    // Expected: Counts follow the selected window, clamp at the collection
+    // end and leave the original count at ten.
     test('counts the window with and without ordering.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final query in [
         database.apiProducts.all(),
         database.apiProducts.all().sortByNameDesc().thenByDbId(),
@@ -42,7 +50,15 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    // Scenario: Scalar filters and indexed sources are combined with ordering
+    // and pagination.
+    // Covers:
+    // - Optimized counts for filtered equality/range query shapes.
+    // Expected: Every count equals the length of the same query window
+    // returned by findAll.
     test('preserves filtered and indexed source cardinality.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final query in [
         database.apiProducts.all().filter().dbIdGreaterThan(4),
         database.apiProducts.all().filter().nameEqualTo('Name 1'),
@@ -68,8 +84,15 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    // Scenario: Repeated names and nullable projected IDs are counted.
+    // Covers:
+    // - Distinct cardinality and non-null property count semantics.
+    // Expected: Four distinct names and seven non-null IDs are counted; paged
+    // counts match their selected values.
     test('keeps distinct and non-null property counts unchanged.', () async {
+      // Arrange.
       final distinct = database.apiProducts.all().sortByName().distinctByName();
+      // Act / Assert.
       expect(await distinct.count(), 4);
       expect(await distinct.offset(1).limit(2).count(), 2);
       expect(await distinct.limit(0).count(), 0);
@@ -83,10 +106,18 @@ void main({bool includeSameDirectoryHandles = true}) {
       );
     });
 
+    // Scenario: A transaction inserts, updates and deletes rows before
+    // rollback or commit.
+    // Covers:
+    // - Pending counts, filtered counts and transaction visibility.
+    // Expected: The aborted changes restore count ten; a later committed
+    // deletion leaves count eight.
     test(
       'counts pending inserts, updates and deletes and respects rollback.',
       () async {
+        // Arrange.
         final all = database.apiProducts.all();
+        // Act / Assert.
         await expectLater(
           database.writeTxn<void>(() async {
             await database.apiProducts.delete(1);
@@ -122,12 +153,21 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: Rows are deleted, the handle is reopened and the collection
+    // is emptied.
+    // Covers:
+    // - Persisted count changes and empty counts in read transactions.
+    // Expected: Reopen sees eight remaining rows; deleting them makes all
+    // tested counts zero.
     test(
       'counts empty collections and persisted changes after reopen.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         await database.apiProducts.deleteAll([1, 2]);
         await database.close();
         database = await _open(directory);
+        // Assert.
         expect(await database.apiProducts.all().count(), 8);
         await database.apiProducts.deleteAll(List.generate(8, (i) => i + 3));
         await database.readTxn(() async {
@@ -147,9 +187,17 @@ void main({bool includeSameDirectoryHandles = true}) {
     );
 
     if (includeSameDirectoryHandles) {
+      // Scenario: A second handle commits changes while the first holds a
+      // read transaction.
+      // Covers:
+      // - Snapshot isolation for full, filtered and paged counts.
+      // Expected: The read snapshot keeps the original ten rows and excludes
+      // New; after it ends the count is eight.
       test('uses the read snapshot after another handle commits.', () async {
+        // Arrange.
         final other = await _open(directory);
         addTearDown(other.close);
+        // Act / Assert.
         await database.readTxn(() async {
           expect(await database.apiProducts.all().count(), 10);
           await other.writeTxn(() async {

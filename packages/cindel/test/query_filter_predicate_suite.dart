@@ -9,6 +9,7 @@ void main() {
     // - [CindelFilter.path] rejecting empty paths and empty path parts.
     // Expected: Invalid predicate builders fail before a query can be built.
     test('rejects empty field names and path parts.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(() => CindelFilter.field(''), throwsA(isA<ArgumentError>()));
       expect(() => CindelFilter.field('   '), throwsA(isA<ArgumentError>()));

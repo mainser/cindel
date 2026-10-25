@@ -19,6 +19,8 @@ void _directSqliteProjections() {
   // Covers: The underlying SQL projection independently of that Dart routing choice.
   // Expected: Lists and objects have the same values through the direct native plan.
   test('direct SQLite projection of a string list', () async {
+    // Arrange: use the inputs described in this scenario.
+    // Act / Assert.
     await _checkProjection(
       Modelc20Schema,
       Modelc20()
@@ -29,7 +31,14 @@ void _directSqliteProjections() {
       ],
     );
   });
+  // Scenario: SQLite directly projects a generated embedded object containing
+  // a boolean.
+  // Covers:
+  // - Native-plan projection of embedded values.
+  // Expected: The projection contains the expected map with value true.
   test('direct SQLite projection of an embedded object', () async {
+    // Arrange: use the inputs described in this scenario.
+    // Act / Assert.
     await _checkProjection(
       Envelopec00Schema,
       Envelopec00()

@@ -12,6 +12,7 @@ void main() {
     // Covers: Shared async revision requests and the serial Worker bridge.
     // Expected: The Worker receives 21 requests over 20 controlled polling cycles.
     test('sends one revision request per collection and cycle.', () async {
+      // Arrange.
       final bridge = CindelWebWorkerBridge(
         'fixtures/close_transport_worker.js',
       );
@@ -44,6 +45,7 @@ void main() {
             )
             .listen((_) {});
       }
+      // Act.
       for (var cycle = 0; cycle <= 20; cycle++) {
         await clock.advance(Duration(milliseconds: cycle == 0 ? 0 : 50));
         final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -57,6 +59,7 @@ void main() {
       final count = await bridge.send(operation: 'requestCount');
       // The protocol fixture returns the zero-based request order independently
       // of the client counter: requestCount must be exactly request number 21.
+      // Assert.
       expect(count.payload, '21:requestCount');
       expect(responses, 21);
       expect(clock.peakTimers, 1);

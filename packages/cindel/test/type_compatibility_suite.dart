@@ -2770,6 +2770,7 @@ void _register<T>(
     // Covers: Populated, empty and null values independently at root/embedded depth.
     // Expected: Every route preserves the logical values; record all failures before asserting.
     test('$id $context $type $mode', () async {
+      // Arrange.
       final directory = await createCloseTestDirectory();
       CindelDatabase? db;
       final failures = <String>[];
@@ -2788,6 +2789,7 @@ void _register<T>(
         return error == null;
       }
 
+      // Act.
       try {
         db = await Cindel.open(
           directory: directory,
@@ -2862,6 +2864,7 @@ void _register<T>(
         await db?.close();
         await deleteCloseTestDirectory(directory);
       }
+      // Assert.
       expect(failures, isEmpty);
     });
   }

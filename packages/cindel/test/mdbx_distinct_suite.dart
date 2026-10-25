@@ -24,7 +24,15 @@ void main() {
       ]);
     });
 
+    // Scenario: MDBX distinct runs over all, filtered and indexed candidate
+    // sources.
+    // Covers:
+    // - Source order, composite distinct tuples and paginated results.
+    // Expected: Each query retains the first expected representative and
+    // every window matches the reference selection.
     test('preserves source order, filters, tuples and windows.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final source in [
         database.apiProducts.all(),
         database.apiProducts.filter().dbIdGreaterThan(20),
@@ -66,7 +74,15 @@ void main() {
       }
     });
 
+    // Scenario: Composite fields contain separator-like text and nullable
+    // values.
+    // Covers:
+    // - Tuple key boundaries, nullable representatives and non-null property
+    // counts.
+    // Expected: IDs 1, 2 and 4 survive, the final projected null is preserved
+    // and counts distinguish rows from non-null values.
     test('preserves tuple boundaries and the first nullable value.', () async {
+      // Arrange.
       await database.apiProducts.all().deleteAll();
       await database.apiProducts.putAll([
         for (final (id, name, value) in [
@@ -82,6 +98,7 @@ void main() {
             ..id = value,
       ]);
       final query = database.apiProducts.all().distinctByFields(['name', 'id']);
+      // Act / Assert.
       expect(await query.dbIdProperty().findAll(), [1, 2, 4]);
       expect(await query.offset(1).limit(2).idProperty().findAll(), [
         'b\u0001String:c',
@@ -92,7 +109,15 @@ void main() {
       expect(await query.offset(2).idProperty().findFirst(), isNull);
     });
 
+    // Scenario: Sorted distinct is queried while writes are pending and then
+    // rolled back.
+    // Covers:
+    // - Ordered representatives, changed duplicate groups and transaction
+    // visibility.
+    // Expected: Sorted results match the reference selection and rollback
+    // restores the original distinct IDs.
     test('keeps sorted distinct and pending writes correct.', () async {
+      // Arrange.
       final query = database.apiProducts.all().distinctByName();
       final before = await query.dbIdProperty().findAll();
       final sorted = database.apiProducts.all().sortByDbIdDesc();
@@ -100,6 +125,7 @@ void main() {
       final expected = (await sorted.findAll())
           .where((row) => seen.add(row.name))
           .toList();
+      // Act / Assert.
       await _expectRows(
         sorted.distinctByName().limit(3),
         expected.take(3).toList(),
@@ -130,10 +156,18 @@ void main() {
       expect(await query.dbIdProperty().findAll(), before);
     });
 
+    // Scenario: Another handle deletes a representative during a read
+    // transaction.
+    // Covers:
+    // - Snapshot isolation for distinct queries.
+    // Expected: The active snapshot keeps its old representatives; after it
+    // ends the first visible ID is 2.
     test('keeps distinct within the read transaction snapshot.', () async {
+      // Arrange.
       final other = await _open(directory);
       addTearDown(other.close);
       final query = database.apiProducts.all().distinctByName();
+      // Act / Assert.
       await database.readTxn(() async {
         final before = await query.findAll();
         await other.apiProducts.delete(before.first.dbId);

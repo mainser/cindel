@@ -33,7 +33,14 @@ void main() {
         .sortByDbIdDesc();
 
     for (final separator in ['\u0001String:', '\u0000']) {
+      // Scenario: Two field tuples contain separators at different
+      // boundaries, with duplicates and an excluded row.
+      // Covers:
+      // - Collision-free composite distinct keys for each separator variant.
+      // Expected: Distinct keeps IDs 3 and 2 as separate tuples in query
+      // order.
       test('preserves field boundaries with ${separator.codeUnits}.', () async {
+        // Arrange.
         await database.distinctRecords.putAll([
           _user(1)
             ..name = 'a${separator}b'
@@ -49,6 +56,7 @@ void main() {
             ..email = 'b${separator}c',
         ]);
 
+        // Act / Assert.
         await _expectResults(query().distinctByFields(['name', 'email']), [
           3,
           2,
@@ -56,7 +64,14 @@ void main() {
       });
     }
 
+    // Scenario: String lists differ by element boundaries and ordering.
+    // Covers:
+    // - Structural list distinct keys rather than joined string
+    // representations.
+    // Expected: IDs 4, 3 and 2 remain distinct while the identical list is
+    // deduplicated.
     test('preserves list element boundaries and order.', () async {
+      // Arrange.
       await database.distinctRecords.putAll([
         _user(1)..tags = ['a, b'],
         _user(2)..tags = ['a', 'b'],
@@ -64,10 +79,18 @@ void main() {
         _user(4)..tags = ['b', 'a'],
       ]);
 
+      // Act / Assert.
       await _expectResults(query().distinctByTags(), [4, 3, 2]);
     });
 
+    // Scenario: Lists of embedded recipients contain punctuation that mimics
+    // serialized field boundaries.
+    // Covers:
+    // - Nested object/list key encoding and duplicate representatives.
+    // Expected: The distinct query returns IDs 3 and 2 without merging
+    // different embedded objects.
     test('preserves nested object boundaries inside lists.', () async {
+      // Arrange.
       List<Recipient> recipients(String name, String address) => [
         Recipient()
           ..name = name
@@ -80,28 +103,44 @@ void main() {
         _user(3)..recipients = recipients('a, address: b', 'c'),
       ]);
 
+      // Act / Assert.
       await _expectResults(query().distinctByRecipients(), [3, 2]);
     });
 
+    // Scenario: Nullable names contain null and the literal string null.
+    // Covers:
+    // - Type-preserving distinct keys for nullable scalar fields.
+    // Expected: Null duplicates collapse but the string remains separate,
+    // yielding IDs 3 and 2.
     test('distinguishes null from its string representation.', () async {
+      // Arrange.
       await database.distinctRecords.putAll([
         _user(1)..displayName = null,
         _user(2)..displayName = 'null',
         _user(3)..displayName = null,
       ]);
 
+      // Act / Assert.
       await _expectResults(query().distinctByDisplayName(), [3, 2]);
     });
 
+    // Scenario: Tags contain either an empty list or a list with one empty
+    // string.
+    // Covers:
+    // - Empty-container versus empty-element distinct encoding.
+    // Expected: The two values stay separate and the query returns IDs 3 and
+    // 2.
     test(
       'distinguishes empty lists from lists containing an empty string.',
       () async {
+        // Arrange.
         await database.distinctRecords.putAll([
           _user(1)..tags = [],
           _user(2)..tags = [''],
           _user(3)..tags = [],
         ]);
 
+        // Act / Assert.
         await _expectResults(query().distinctByTags(), [3, 2]);
       },
     );

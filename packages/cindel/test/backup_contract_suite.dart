@@ -101,10 +101,19 @@ void main({bool includeSameDirectoryHandles = true}) {
       );
     }
 
+    // Scenario: A version-two archive contains paged links, cycles, backlinks
+    // and allocation metadata.
+    // Covers:
+    // - Export/import round-trip and reopening the restored graph.
+    // Expected: All expected edges load, migration version is seven and the
+    // next node ID is 14.
     test(
       'round-trips paged links, cycles, backlinks and metadata, then reopens.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final records = await archive(nodes: 13);
+        // Assert.
         expect(records.first['version'], 2);
         expect(records.where((r) => r['type'] == 'link'), hasLength(15));
         var target = await open();
@@ -127,9 +136,17 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: Generated rows contain nested embedded objects, Unicode
+    // strings, nulls and empty lists.
+    // Covers:
+    // - Typed backup serialization and hydration for scalar/list/embedded
+    // fields.
+    // Expected: Restored rows retain list contents, nested labels and the
+    // distinction between empty lists and null fields.
     test(
       'preserves generated embedded objects, nulls and empty/string lists.',
       () async {
+        // Arrange.
         final source = await open(null, [DistinctRecordSchema]);
         final row = DistinctRecord()
           ..dbId = 1
@@ -148,6 +165,7 @@ void main({bool includeSameDirectoryHandles = true}) {
             ..email = 'two@local',
         ]);
         final output = BackupBytesConsumer();
+        // Act.
         await CindelBackup.exportDatabase(
           database: source,
           collections: [
@@ -167,6 +185,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           compression: CindelBackupCompression.none,
         );
         final restored = (await target.distinctRecords.get(1))!;
+        // Assert.
         expect(restored.tags, row.tags);
         expect(restored.displayName, isNull);
         expect(restored.primaryRecipient!.metadata!.label, 'inner');
@@ -177,9 +196,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: An archive links two collections, then a copy is corrupted
+    // with a missing target.
+    // Covers:
+    // - Atomic cross-collection restore and backlink reconstruction.
+    // Expected: The corrupted import leaves both collections empty; the valid
+    // archive restores both forward and reverse relationships.
     test(
       'restores cross-collection links atomically with their backlinks.',
       () async {
+        // Arrange.
         final schemas = [backupNodeSchema, backupLeafSchema];
         final selection = [
           CindelBackupCollection(backupNodeSchema),
@@ -196,6 +222,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           targetIds: [1],
         );
         final output = BackupBytesConsumer();
+        // Act.
         await CindelBackup.exportDatabase(
           database: source,
           collections: selection,
@@ -210,6 +237,7 @@ void main({bool includeSameDirectoryHandles = true}) {
             .toList();
         records.firstWhere((r) => r['type'] == 'link')['targetId'] = 404;
         _checksum(records);
+        // Assert.
         await expectLater(
           CindelBackup.importDatabase(
             database: target,
@@ -244,9 +272,15 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: An export selection omits the collection targeted by a
+    // forward link.
+    // Covers:
+    // - Graph-closure validation before archive output starts.
+    // Expected: Export fails with StateError and emits no bytes.
     test(
       'rejects omitted forward-link collections before exporting.',
       () async {
+        // Arrange.
         final partial = CindelCollectionSchema<BackupNode>(
           name: 'partial_nodes',
           dartName: 'BackupNode',
@@ -258,6 +292,7 @@ void main({bool includeSameDirectoryHandles = true}) {
         );
         final source = await open(null, [backupNodeSchema, partial]);
         final output = BackupBytesConsumer();
+        // Act / Assert.
         await expectLater(
           CindelBackup.exportDatabase(
             database: source,
@@ -271,9 +306,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: An export output callback tries to write through the
+    // exporting handle and then fails.
+    // Covers:
+    // - Read-snapshot write rejection and snapshot release on output errors.
+    // Expected: The nested write fails, export propagates failure and a
+    // subsequent write succeeds with IDs 1/3 present.
     test(
       'export rejects writes through its own handle and releases its snapshot on output error.',
       () async {
+        // Arrange.
         final source = await open();
         await source.typedCollection(backupNodeSchema).put(BackupNode(1));
         final output = BackupBytesConsumer(
@@ -289,6 +331,7 @@ void main({bool includeSameDirectoryHandles = true}) {
             throw StateError('Output failed.');
           },
         );
+        // Act / Assert.
         await expectLater(
           CindelBackup.exportDatabase(
             database: source,
@@ -316,9 +359,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       'duplicate-link',
       'decode',
     ]) {
+      // Scenario: Each corruption variant damages archive structure, schema,
+      // IDs, uniqueness, links or decoded values.
+      // Covers:
+      // - Atomic restore rejection and cleanup of staged batches.
+      // Expected: Failure leaves documents, relations, counters and metadata
+      // unchanged; retrying the valid archive restores IDs 1/2/3.
       test(
         '$corruption leaves documents, relations, IDs and metadata unchanged.',
         () async {
+          // Arrange.
           final records = await archive();
           final original = jsonDecode(jsonEncode(records)) as List;
           final docs = records.where((r) => r['type'] == 'doc').toList();
@@ -364,6 +414,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           }
           final target = await open();
           await target.setMigrationVersion(9);
+          // Act / Assert.
           await expectLater(restore(target, records), throwsA(anything));
           await unchanged(target);
           // Reuse the same wrappers after failure: no pending objects may leak.
@@ -377,10 +428,18 @@ void main({bool includeSameDirectoryHandles = true}) {
       );
     }
 
+    // Scenario: Input streaming or progress reporting throws after document
+    // batches were flushed.
+    // Covers:
+    // - Restore rollback after asynchronous producer/callback failures.
+    // Expected: StateError propagates and the target retains its pre-import
+    // state.
     test(
       'stream and progress failures after flushed batches are atomic.',
       () async {
+        // Arrange.
         final records = await archive();
+        // Act / Assert.
         for (final progressFailure in [false, true]) {
           final target = await open();
           await target.setMigrationVersion(9);
@@ -412,9 +471,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: A concurrent row appears after archive staging but before
+    // publication.
+    // Covers:
+    // - Final target-emptiness validation without deleting concurrent data.
+    // Expected: Restore is rejected and the independently inserted ID 50
+    // remains.
     test(
       'rechecks target emptiness when publishing without deleting concurrent data.',
       () async {
+        // Arrange.
         final records = await archive();
         final target = await open();
         Stream<List<int>> raced() async* {
@@ -423,6 +489,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           yield* _stream([records.last]);
         }
 
+        // Act / Assert.
         await expectLater(
           CindelBackup.importDatabase(
             database: target,
@@ -437,9 +504,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: A separate transaction occupies the target when staged data
+    // is ready to publish.
+    // Covers:
+    // - Failed-publication cleanup and reuse of the same target.
+    // Expected: Import fails without publishing rows, and a later restore
+    // succeeds after the transaction is released.
     test(
       'cleans staging when another transaction prevents publication.',
       () async {
+        // Arrange.
         final records = await archive();
         final target = await open();
         final started = Completer<void>();
@@ -455,6 +529,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           yield* _stream([records.last]);
         }
 
+        // Act / Assert.
         try {
           await expectLater(
             CindelBackup.importDatabase(
@@ -475,15 +550,23 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: A legacy version-one archive is imported into a linked
+    // schema.
+    // Covers:
+    // - Explicit acknowledgement of missing legacy link data.
+    // Expected: Default import rejects the archive; opting in restores its
+    // three documents.
     test(
       'legacy archives require explicit acknowledgement for lost links.',
       () async {
+        // Arrange.
         final records = await archive(withLinks: false);
         records.first['version'] = 1;
         records[1].remove('manifest');
         records.last.remove('links');
         _checksum(records);
         final target = await open();
+        // Act / Assert.
         await expectLater(restore(target, records), throwsStateError);
         await restore(target, records, legacy: true);
         expect(await target.documentIdsPage('backup_nodes', limit: 10), [
@@ -494,9 +577,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: A legacy document-only import selects one collection and
+    // explicitly accepts missing links.
+    // Covers:
+    // - Partial legacy selections with omitted forward-link destinations.
+    // Expected: Only the selected leaf collection receives IDs 1/2/3; the
+    // destination collection stays empty.
     test(
       'legacy document-only selection can omit link destinations explicitly.',
       () async {
+        // Arrange.
         final records = await archive(withLinks: false);
         records.first['version'] = 1;
         records[1].remove('manifest');
@@ -508,6 +598,7 @@ void main({bool includeSameDirectoryHandles = true}) {
         }
         _checksum(records);
         final target = await open(null, [backupNodeSchema, backupLeafSchema]);
+        // Act.
         await CindelBackup.importDatabase(
           database: target,
           collections: [CindelBackupCollection<BackupNode>(backupLeafSchema)],
@@ -515,6 +606,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           compression: CindelBackupCompression.none,
           allowLegacyWithoutLinks: true,
         );
+        // Assert.
         expect(await target.documentIdsPage('backup_leaves', limit: 10), [
           1,
           2,
@@ -524,9 +616,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: An import receives an oversized unfinished record or its
+    // database closes during staging.
+    // Covers:
+    // - Record byte limits, close-time cleanup and retry after reopening.
+    // Expected: Both imports fail without publishing rows or metadata
+    // changes, and a valid retry succeeds.
     test(
       'bounds incomplete records and removes staging after close.',
       () async {
+        // Arrange.
         final target = await open();
         await target.setMigrationVersion(9);
         Stream<List<int>> oversized() async* {
@@ -535,6 +634,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           }
         }
 
+        // Act / Assert.
         await expectLater(
           CindelBackup.importDatabase(
             database: target,
@@ -580,9 +680,17 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: A lazily generated archive contains 1024 documents with 64
+    // KiB payloads.
+    // Covers:
+    // - Streaming input and restore completeness with a large requested batch
+    // size.
+    // Expected: The report counts 1024 documents and more than 64 MiB; the
+    // final payload retains all 65536 characters.
     test(
       'restores a 64 MiB generated stream without accumulating an archive.',
       () async {
+        // Arrange.
         final template = await archive(withLinks: false);
         final target = await open();
         const count = 1024;
@@ -609,6 +717,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           );
         }
 
+        // Act.
         final report = await CindelBackup.importDatabase(
           database: target,
           collections: collections,
@@ -616,6 +725,7 @@ void main({bool includeSameDirectoryHandles = true}) {
           batchSize: 100000,
           compression: CindelBackupCompression.none,
         );
+        // Assert.
         expect(report.documents, count);
         expect(report.archiveBytes, greaterThan(64 * 1024 * 1024));
         expect(
@@ -628,9 +738,16 @@ void main({bool includeSameDirectoryHandles = true}) {
     );
 
     if (includeSameDirectoryHandles) {
+      // Scenario: Another handle changes rows, links and migration metadata
+      // during export.
+      // Covers:
+      // - One consistent export snapshot across all archive sections.
+      // Expected: Restoring the archive yields the original document, link to
+      // ID 2 and migration version three.
       test(
         'export holds one snapshot across documents, links and metadata.',
         () async {
+          // Arrange.
           final source = await open();
           await source.typedCollection(backupNodeSchema).putAll([
             BackupNode(1, payload: 'before'),
@@ -664,6 +781,7 @@ void main({bool includeSameDirectoryHandles = true}) {
               }
             },
           );
+          // Act.
           await CindelBackup.exportDatabase(
             database: source,
             collections: collections,
@@ -680,6 +798,7 @@ void main({bool includeSameDirectoryHandles = true}) {
             input: Stream.value(output.bytes),
             compression: CindelBackupCompression.none,
           );
+          // Assert.
           expect(
             (await target.typedCollection(backupNodeSchema).get(2))!.payload,
             '',

@@ -11,7 +11,14 @@ import 'sqlite_id_suite.dart' as ids;
 void main() {
   ids.main();
   group('Cindel SQLite typed contract', () {
+    // Scenario: A generated typed user is persisted to SQLite and the handle
+    // is reopened.
+    // Covers:
+    // - Native typed persistence, string lists and schema version metadata.
+    // Expected: The reopened user retains its name, email and tags and schema
+    // version remains one.
     test('persists and reopens generated typed objects.', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp(
         'cindel_sqlite_contract_',
       );
@@ -28,7 +35,9 @@ void main() {
         ..active = true
         ..tags = ['typed', 'sqlite'];
 
+      // Act.
       await database.users.put(user);
+      // Assert.
       expect(await database.schemaVersion('users'), 1);
       expect((await database.users.get(1))?.tags, ['typed', 'sqlite']);
 
@@ -55,6 +64,7 @@ void main() {
     // Expected: pages are stable, ascending, bounded, and end with an empty
     // page once the cursor reaches the last id.
     test('pages generated typed document ids.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
 
@@ -73,6 +83,7 @@ void main() {
           ..email = 'eli@example.com',
       ]);
 
+      // Act / Assert.
       expect(await database.documentIdsPage('users', limit: 2), [1, 3]);
       expect(await database.documentIdsPage('users', afterId: 1, limit: 2), [
         3,
@@ -88,10 +99,18 @@ void main() {
       );
     });
 
+    // Scenario: Typed writes run in successful, failed and read-only
+    // transactions.
+    // Covers:
+    // - Commit visibility, rollback cleanup and readTxn write rejection.
+    // Expected: Committed user 1 survives, users 2/3 are absent and read-only
+    // writes raise CindelTransactionError.
     test('commits and rolls back generated typed transactions.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
 
+      // Act.
       final committed = await database.writeTxn(() async {
         await database.users.put(
           User()
@@ -101,6 +120,7 @@ void main() {
         );
         return database.users.get(1);
       });
+      // Assert.
       expect(committed?.name, 'Ana');
 
       await expectLater(
@@ -135,13 +155,21 @@ void main() {
       expect(await database.users.get(3), isNull);
     });
 
+    // Scenario: An automatic-ID insert rolls back before a second user is
+    // committed.
+    // Covers:
+    // - Transactional allocation counter restoration.
+    // Expected: Both Dart objects receive ID 1, but only the committed user
+    // Ben is stored.
     test('keeps generated auto-increment allocation transactional.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final rolledBack = User()
         ..name = 'Ana'
         ..email = 'ana@example.com';
 
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.users.put(rolledBack);
@@ -160,7 +188,14 @@ void main() {
       expect((await database.users.get(1))?.name, 'Ben');
     });
 
+    // Scenario: Typed collection, object and lazy watchers observe an aborted
+    // write followed by a commit.
+    // Covers:
+    // - Commit-only publication and initial watcher state.
+    // Expected: Rollback publishes no nonempty user result; committing emits
+    // the expected user and lazy notification.
     test('notifies generated typed watchers only after commit.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final collectionEvents = <List<User>>[];
@@ -183,6 +218,7 @@ void main() {
       await _waitUntil(() => objectEvents.length == 1);
       final initialLazyEvents = lazyEvents.length;
 
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.users.put(

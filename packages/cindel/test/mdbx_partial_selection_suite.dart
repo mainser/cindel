@@ -24,9 +24,18 @@ void main() {
       ]);
     });
 
+    // Scenario: Limited queries use all, equality or filtered range sources
+    // with ID-inclusive ordering.
+    // Covers:
+    // - Partial selection equivalence for objects and projections over
+    // several windows.
+    // Expected: Each limited result matches the corresponding slice of the
+    // full ordering.
     test(
       'matches full ordering for limited objects and projections.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         for (final source in [
           database.apiProducts.all(),
           database.apiProducts.where().idEqualTo('group1'),
@@ -56,9 +65,16 @@ void main() {
       },
     );
 
+    // Scenario: Queries omit the ID sort key or apply distinct before
+    // limiting results.
+    // Covers:
+    // - Result parity for query shapes outside partial-selection eligibility.
+    // Expected: Their windows still match the full-sort reference.
     test(
       'preserves full-sort results without an ID key and with distinct.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         for (final ordered in [
           database.apiProducts.all().sortByName(),
           database.apiProducts.all().sortByName().thenByDbId().distinctByName(),
@@ -69,7 +85,14 @@ void main() {
       },
     );
 
+    // Scenario: Thousands of candidates have tied names and nullable index
+    // values.
+    // Covers:
+    // - Small ordered windows over all, indexed and filtered candidate sets.
+    // Expected: First-row and offset windows match full ordering for every
+    // tested sort combination.
     test('selects small windows from thousands of tied candidates.', () async {
+      // Arrange.
       await database.apiProducts.putAll([
         for (var id = 1000; id < 3048; id++)
           ApiProduct()
@@ -77,6 +100,7 @@ void main() {
             ..id = id.isEven ? 'bulk' : null
             ..name = 'Name ${(id * 37) % 11}',
       ]);
+      // Act / Assert.
       for (final source in [
         database.apiProducts.all(),
         database.apiProducts.where().idEqualTo('bulk'),
@@ -92,9 +116,17 @@ void main() {
       }
     });
 
+    // Scenario: A limited ordered query sees staged deletes/inserts before
+    // rollback.
+    // Covers:
+    // - Transaction visibility and selection restoration.
+    // Expected: The pending First row leads the window and rollback restores
+    // the original ordered IDs.
     test('preserves pending writes and rollback.', () async {
+      // Arrange.
       final ordered = database.apiProducts.all().sortByName().thenByDbId();
       final original = await ordered.dbIdProperty().findAll();
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.apiProducts.delete(1);
@@ -118,10 +150,18 @@ void main() {
       await _expectWindow(ordered, 0, 5);
     });
 
+    // Scenario: Another handle changes the first ordered rows during a read
+    // transaction.
+    // Covers:
+    // - Stable snapshot selection and visibility after the snapshot ends.
+    // Expected: Limited results stay fixed inside readTxn and ID 200 becomes
+    // first afterward.
     test('keeps the read snapshot while another handle commits.', () async {
+      // Arrange.
       final other = await _open(directory);
       addTearDown(other.close);
       final ordered = database.apiProducts.all().sortByName().thenByDbId();
+      // Act / Assert.
       await database.readTxn(() async {
         final before = await ordered.limit(5).dbIdProperty().findAll();
         await other.writeTxn(() async {

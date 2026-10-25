@@ -10,6 +10,7 @@ void main() {
     // Expected: Constructing the Web worker bridge outside Web throws a clear
     // UnsupportedError instead of touching browser-only APIs.
     test('throws when constructed on non-Web targets.', () {
+      // Arrange: use the inputs described in this scenario.
       // Act / Assert.
       expect(
         () => CindelWebWorkerBridge('worker.js'),
@@ -29,7 +30,7 @@ void main() {
       const response = CindelWebWorkerResponse(payload: {'ok': true});
       const exception = CindelWebWorkerException('boom', 'Worker failed');
 
-      // Assert.
+      // Act / Assert.
       expect(response.payload, {'ok': true});
       expect(exception.code, 'boom');
       expect(exception.message, 'Worker failed');

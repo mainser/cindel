@@ -307,6 +307,13 @@ void main({bool includeSameDirectoryHandles = true}) {
     // - Reads and committed writes through the second handle after the first closes.
     // Expected: closing one handle leaves the other usable and its write persists.
     if (includeSameDirectoryHandles) {
+      // Scenario: Two handles share a database and one is closed before the
+      // other reads and writes.
+      // Covers:
+      // - Independent handle lifetime and persistence after both handles
+      // close.
+      // Expected: The surviving handle reads the original row and stores ID
+      // three; reopening retains both rows.
       test('preserves a second handle when the first handle closes.', () async {
         // Arrange.
         final fixture = await _openSeededDatabase();

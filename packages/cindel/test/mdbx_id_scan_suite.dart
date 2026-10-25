@@ -25,9 +25,18 @@ void main() {
       ]);
     });
 
+    // Scenario: All, equality and range native plans traverse a sparse set of
+    // IDs.
+    // Covers:
+    // - Direct native plan ID results, ascending/descending order and query
+    // windows.
+    // Expected: Returned IDs match the explicit ordered slices and a missing
+    // index value yields no IDs.
     test(
       'returns native plan IDs for all and indexed sources without losing windows.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         for (final source in [
           const CindelNativeAllQuerySource(),
           const CindelNativeIndexEqualQuerySource(
@@ -85,9 +94,17 @@ void main() {
       },
     );
 
+    // Scenario: Native ID plans with distinct are evaluated during pending
+    // writes, rollback and a read snapshot.
+    // Covers:
+    // - ID-only query semantics across transaction states.
+    // Expected: Pending results use current staged rows, rollback restores
+    // the original IDs and the read snapshot excludes external deletions
+    // until exit.
     test(
       'native plan IDs preserve distinct, pending writes and snapshots.',
       () async {
+        // Arrange.
         const plan = CindelNativeQueryPlan(
           source: CindelNativeAllQuerySource(),
           sorts: [CindelNativeQuerySort(field: 'dbId', descending: true)],
@@ -101,6 +118,7 @@ void main() {
         );
         Future<List<int>> read(CindelNativeQueryPlan query) =>
             database.queryNativePlanIds('apiProducts', query);
+        // Act / Assert.
         expect(await read(distinct), [ids.last]);
         await expectLater(
           database.writeTxn<void>(() async {
@@ -131,9 +149,17 @@ void main() {
       },
     );
 
+    // Scenario: Sparse IDs, including wide 64-bit values, are queried in both
+    // directions.
+    // Covers:
+    // - ID ordering, projections, pagination and empty collections.
+    // Expected: Every result shape matches its explicit ascending/descending
+    // slice and returns no rows after deletion.
     test(
       'reads sparse 64-bit IDs and projections in both directions.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         for (final ascending in [true, false]) {
           final ordered = ascending
               ? database.apiProducts.all().sortByDbId()
@@ -162,9 +188,17 @@ void main() {
       },
     );
 
+    // Scenario: Predicates select a subset of sparse IDs before pagination in
+    // either direction.
+    // Covers:
+    // - Filtering before offset/limit for direct ID-order queries.
+    // Expected: Windows count matching rows rather than scanned rows and
+    // empty collections produce empty results.
     test(
       'applies filtered windows to matches in both ID directions.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         for (final (source, matching) in [
           (
             database.apiProducts.all().filter().nameContains('5'),
@@ -204,9 +238,17 @@ void main() {
       },
     );
 
+    // Scenario: ID-order queries also use filters, missing indexes, distinct
+    // or secondary sort keys.
+    // Covers:
+    // - Compatibility of direct scans with additional query modifiers.
+    // Expected: Each query returns the explicitly expected IDs without losing
+    // its extra conditions.
     test(
       'preserves filters, indexes, distinct and additional sort keys.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         await _expectIds(
           database.apiProducts
               .all()
@@ -240,9 +282,17 @@ void main() {
       },
     );
 
+    // Scenario: An active write transaction deletes boundary IDs and inserts
+    // new rows before aborting.
+    // Covers:
+    // - Read-your-writes in both ID scan directions and rollback restoration.
+    // Expected: Pending scans reflect staged rows; rollback restores the
+    // original first and last ID windows.
     test(
       'includes pending writes and restores results after rollback.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         await expectLater(
           database.writeTxn<void>(() async {
             await database.apiProducts.delete(1);
@@ -275,9 +325,17 @@ void main() {
       },
     );
 
+    // Scenario: A second handle deletes boundary rows while a read
+    // transaction is active.
+    // Covers:
+    // - Snapshot isolation for ascending and descending ID scans.
+    // Expected: The active read keeps its original boundaries; subsequent
+    // reads expose the committed deletions.
     test('keeps both directions on the read transaction snapshot.', () async {
+      // Arrange.
       final other = await _open(directory);
       addTearDown(other.close);
+      // Act / Assert.
       await database.readTxn(() async {
         await other.writeTxn(() async {
           await other.apiProducts.delete(1);
@@ -302,10 +360,19 @@ void main() {
       ]);
     });
 
+    // Scenario: Filtered ID scans observe staged and externally committed
+    // membership changes.
+    // Covers:
+    // - Predicate evaluation with rollback and stable read snapshots in both
+    // directions.
+    // Expected: Staged matches disappear on rollback; external changes become
+    // visible only after the read transaction ends.
     test(
       'filters pending writes and preserves rollback and read snapshots.',
       () async {
+        // Arrange.
         final filtered = database.apiProducts.all().filter().nameContains('5');
+        // Act / Assert.
         await expectLater(
           database.writeTxn<void>(() async {
             await database.apiProducts.delete(255);

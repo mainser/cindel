@@ -15,9 +15,17 @@ void main() {
       ['primaryRecipient'],
       ['recipients'],
     ]) {
+      // Scenario: Typed scalar, list and embedded values contain text that
+      // resembles distinct-key separators.
+      // Covers:
+      // - Distinct field boundaries, ordered representatives, projections and
+      // windows.
+      // Expected: Two distinct values survive; ascending representatives are
+      // 1/2 and descending representatives are 3/2.
       test(
         'distinct preserves value boundaries in ${fields.join(', ')}.',
         () async {
+          // Arrange.
           final database = await openTestDatabaseInMemory(
             schemas: [UserSchema],
           );
@@ -40,6 +48,7 @@ void main() {
 
           await database.users.putAll([user(1), user(2, other: true), user(3)]);
           final query = database.users.all().distinctByFields(fields);
+          // Act / Assert.
           expect(await query.count(), 2);
           expect((await query.findAll()).map((value) => value.dbId), [1, 2]);
           final sorted = query.sortBy(
@@ -56,9 +65,18 @@ void main() {
       );
     }
 
+    // Scenario: Adjacent signed 64-bit durations straddle floating-point
+    // precision and integer boundary values.
+    // Covers:
+    // - Exact duration filters, ascending/descending sorts and transaction
+    // query paths.
+    // Expected: Comparisons and paged sorts distinguish adjacent microseconds
+    // without rounding.
     test('filters and sorts int64 durations without rounding.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
+      // Act / Assert.
       for (final low in [
         // The compact native format reserves int64 minimum for null.
         -9223372036854775807,
@@ -131,9 +149,17 @@ void main() {
       }
     });
 
+    // Scenario: Two dates differ by one microsecond beyond exact double
+    // integer precision.
+    // Covers:
+    // - Generated DateTime filters and exact ordering inside/outside
+    // writeTxn.
+    // Expected: The greater-than filter selects ID 1 and ascending date order
+    // remains 2/1.
     test(
       'preserves adjacent DateTime microseconds beyond double precision.',
       () async {
+        // Arrange.
         final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
         addTearDown(database.close);
         final lower = DateTime.fromMicrosecondsSinceEpoch(
@@ -156,6 +182,7 @@ void main() {
             ..email = 'low@test'
             ..createdAt = lower,
         ]);
+        // Act / Assert.
         expect(
           (await database.users.filter().createdAtGreaterThan(lower).findAll())
               .map((user) => user.dbId),
@@ -178,7 +205,14 @@ void main() {
       },
     );
 
+    // Scenario: A generated typed user is persisted to an MDBX database and
+    // the handle is reopened.
+    // Covers:
+    // - Native typed persistence, string lists and schema version metadata.
+    // Expected: The reopened user retains its name, email and tags and schema
+    // version remains one.
     test('persists and reopens generated typed objects.', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp(
         'cindel_mdbx_contract_',
       );
@@ -195,7 +229,9 @@ void main() {
         ..active = true
         ..tags = ['typed', 'mdbx'];
 
+      // Act.
       await database.users.put(user);
+      // Assert.
       expect(await database.schemaVersion('users'), 1);
       expect((await database.users.get(1))?.tags, ['typed', 'mdbx']);
 
@@ -222,6 +258,7 @@ void main() {
     // Expected: pages are stable, ascending, bounded, and end with an empty
     // page once the cursor reaches the last id.
     test('pages generated typed document ids.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
 
@@ -240,6 +277,7 @@ void main() {
           ..email = 'eli@example.com',
       ]);
 
+      // Act / Assert.
       expect(await database.documentIdsPage('users', limit: 2), [1, 3]);
       expect(await database.documentIdsPage('users', afterId: 1, limit: 2), [
         3,
@@ -255,10 +293,18 @@ void main() {
       );
     });
 
+    // Scenario: Typed writes run in successful, failed and read-only
+    // transactions.
+    // Covers:
+    // - Commit visibility, rollback cleanup and readTxn write rejection.
+    // Expected: Committed user 1 survives, users 2/3 are absent and read-only
+    // writes raise CindelTransactionError.
     test('commits and rolls back generated typed transactions.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
 
+      // Act.
       final committed = await database.writeTxn(() async {
         await database.users.put(
           User()
@@ -268,6 +314,7 @@ void main() {
         );
         return database.users.get(1);
       });
+      // Assert.
       expect(committed?.name, 'Ana');
 
       await expectLater(
@@ -302,13 +349,21 @@ void main() {
       expect(await database.users.get(3), isNull);
     });
 
+    // Scenario: An automatic-ID insert rolls back before a second user is
+    // committed.
+    // Covers:
+    // - Transactional allocation counter restoration.
+    // Expected: Both Dart objects receive ID 1, but only the committed user
+    // Ben is stored.
     test('keeps generated auto-increment allocation transactional.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final rolledBack = User()
         ..name = 'Ana'
         ..email = 'ana@example.com';
 
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.users.put(rolledBack);
@@ -328,9 +383,17 @@ void main() {
     });
 
     for (final rollback in [false, true]) {
+      // Scenario: A writer updates, deletes and inserts rows while another
+      // handle holds readTxn.
+      // Covers:
+      // - Snapshot isolation across reads and both normal/exceptional
+      // transaction exits.
+      // Expected: The reader retains its original snapshot until exit, then
+      // sees Latest and IDs 1/3.
       test(
         'keeps readTxn snapshot isolated until ${rollback ? 'rollback' : 'commit'}.',
         () async {
+          // Arrange.
           final (reader, writer, _) = await _openSharedDatabases();
           await writer.users.put(_user('Before', id: 1));
           await writer.users.put(_user('Deleted', id: 2));
@@ -393,6 +456,7 @@ void main() {
             if (rollback) throw StateError('rollback snapshot');
           }
 
+          // Act / Assert.
           if (rollback) {
             await expectLater(reader.readTxn(checkSnapshot), throwsStateError);
           } else {
@@ -407,14 +471,22 @@ void main() {
       );
     }
 
+    // Scenario: Writes overlap across two handles and mix explicit
+    // transactions, implicit writes and putAll.
+    // Covers:
+    // - Shared automatic-ID reservations and persistence after reopening.
+    // Expected: All five rows get distinct IDs 1..5, survive reopen and the
+    // next insert receives ID 6.
     test(
       'reserves auto IDs across overlapping writeTxn callbacks and implicit writes.',
       () async {
+        // Arrange.
         final (first, second, directory) = await _openSharedDatabases();
         final outer = _user('Outer');
         final inner = _user('Inner');
         final implicit = _user('Implicit');
         final batch = [_user('Batch A'), _user('Batch B')];
+        // Act.
         await first.writeTxn(() async {
           await first.users.put(outer);
           await second.writeTxn(() => second.users.put(inner));
@@ -422,6 +494,7 @@ void main() {
           await first.users.putAll(batch);
         });
 
+        // Assert.
         expect(
           [
             outer.dbId,
@@ -452,12 +525,21 @@ void main() {
       },
     );
 
+    // Scenario: One handle aborts its write while another has committed an
+    // automatic-ID row.
+    // Covers:
+    // - Reservation rollback without overwriting another handle's committed
+    // counter.
+    // Expected: ID 1 is absent, committed ID 2 survives and the next insert
+    // receives ID 3.
     test(
       'rollback preserves IDs committed by an overlapping writeTxn.',
       () async {
+        // Arrange.
         final (first, second, _) = await _openSharedDatabases();
         final rolledBack = _user('Rolled back');
         final committed = _user('Committed');
+        // Act / Assert.
         await expectLater(
           first.writeTxn<void>(() async {
             await first.users.put(rolledBack);
@@ -477,7 +559,14 @@ void main() {
       },
     );
 
+    // Scenario: Typed collection, object and lazy watchers observe an aborted
+    // write followed by a commit.
+    // Covers:
+    // - Commit-only publication and initial watcher state.
+    // Expected: Rollback adds no visible stored change; committing emits the
+    // expected user to typed and lazy observers.
     test('notifies generated typed watchers only after commit.', () async {
+      // Arrange.
       final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
       addTearDown(database.close);
       final collectionEvents = <List<User>>[];
@@ -500,6 +589,7 @@ void main() {
       await _waitUntil(() => objectEvents.length == 1);
       final initialLazyEvents = lazyEvents.length;
 
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.users.put(

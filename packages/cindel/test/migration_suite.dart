@@ -14,6 +14,8 @@ void main() {
     // - `baselineVersion` argument validation.
     // Expected: Invalid versions throw `ArgumentError` immediately.
     test('rejects negative migration plan versions.', () {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       expect(
         () => CindelMigrationPlan(targetVersion: -1, steps: const []),
         throwsArgumentError,
@@ -42,6 +44,7 @@ void main() {
     test(
       'runs verified open-time migration and reopens target schema.',
       () async {
+        // Arrange.
         final directory = await Directory.systemTemp.createTemp(
           'cindel_migration_${testStorageBackend.name}_',
         );
@@ -108,6 +111,7 @@ void main() {
           ],
         );
 
+        // Act.
         final migrated = await Cindel.open(
           directory: directory.path,
           schemas: [_newUserSchema],
@@ -116,6 +120,7 @@ void main() {
         );
         addTearDown(migrated.close);
 
+        // Assert.
         expect(migrationRuns, 1);
         expect(await migrated.migrationVersion(), 2);
         expect(await migrated.schemaVersion('migration_users'), 2);
@@ -160,6 +165,7 @@ void main() {
     // Expected: The callback rewrites three source documents into target
     // documents, preserves ids, and persists version 2.
     test('supports document helpers and batching.', () async {
+      // Arrange.
       final directory = await Directory.systemTemp.createTemp(
         'cindel_migration_helpers_${testStorageBackend.name}_',
       );
@@ -226,6 +232,7 @@ void main() {
         ],
       );
 
+      // Act.
       final migrated = await Cindel.open(
         directory: directory.path,
         schemas: [_newUserSchema],
@@ -234,6 +241,7 @@ void main() {
       );
       addTearDown(migrated.close);
 
+      // Assert.
       expect(await migrated.migrationVersion(), 2);
       expect(await migrated.documentIds('migration_users'), [1, 2, 3]);
     });
@@ -246,6 +254,7 @@ void main() {
     test(
       'registers target schemas automatically when callback skips it.',
       () async {
+        // Arrange.
         final directory = await Directory.systemTemp.createTemp(
           'cindel_migration_auto_register_${testStorageBackend.name}_',
         );
@@ -280,6 +289,7 @@ void main() {
           ],
         );
 
+        // Act.
         final migrated = await Cindel.open(
           directory: directory.path,
           schemas: [_oldUserSchema],
@@ -288,6 +298,7 @@ void main() {
         );
         addTearDown(migrated.close);
 
+        // Assert.
         expect(await migrated.migrationVersion(), 2);
       },
     );
@@ -299,6 +310,8 @@ void main() {
     // - Step that exceeds the plan target.
     // Expected: Each invalid plan throws `StateError` with a focused message.
     test('rejects invalid migration step graphs.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectMigrationPlanError(
         CindelMigrationPlan(
           targetVersion: 2,

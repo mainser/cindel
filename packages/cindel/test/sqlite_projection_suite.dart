@@ -25,7 +25,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       ]);
     });
 
+    // Scenario: Filtered and indexed product queries are ordered and
+    // optionally paginated.
+    // Covers:
+    // - Nullable field projections and numeric count/min/max/sum/average
+    // windows.
+    // Expected: Projections match selected objects and aggregates match their
+    // non-null or numeric reference values.
     test('projects and aggregates filtered and indexed windows.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final source in [
         database.apiProducts.all(),
         database.apiProducts.all().filter().dbIdGreaterThan(3),
@@ -66,7 +75,14 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    // Scenario: Floating-point values with cancellation are aggregated in
+    // opposite row orders.
+    // Covers:
+    // - Sequential floating addition, null exclusion and paged aggregates.
+    // Expected: Ascending sum is 1 and average 0.25; descending sum/average
+    // are zero, matching selected-row accumulation.
     test('streams floating aggregates in the selected row order.', () async {
+      // Arrange.
       final samples = database.typedCollection(_sampleSchema);
       await samples.putAll([
         _AggregateSample(1, 1e16),
@@ -81,6 +97,7 @@ void main({bool includeSameDirectoryHandles = true}) {
         order: CindelSortOrder.descending,
       );
       // These sums differ because floating-point addition depends on row order.
+      // Act / Assert.
       expect(await ascending.property<double?>('value').sum(), 1.0);
       expect(await descending.property<double?>('value').sum(), 0.0);
       expect(await ascending.property<double?>('value').average(), 0.25);
@@ -97,14 +114,22 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    // Scenario: A large numeric dataset contains nulls and is read through
+    // full, paged and empty windows.
+    // Covers:
+    // - Nullable numeric count/extrema/sum/average inside readTxn.
+    // Expected: Aggregates match non-null values in each window and empty or
+    // all-null windows return null numeric aggregates.
     test(
       'streams large nullable numeric aggregates and empty windows.',
       () async {
+        // Arrange.
         final samples = database.typedCollection(_sampleSchema);
         await samples.putAll([
           for (var id = 1; id <= 2048; id++)
             _AggregateSample(id, id % 3 == 0 ? null : id / 4 - 256),
         ]);
+        // Act / Assert.
         await database.readTxn(() async {
           final all = samples.all().sortBy('id');
           for (final query in [
@@ -131,8 +156,16 @@ void main({bool includeSameDirectoryHandles = true}) {
       },
     );
 
+    // Scenario: Queries select no rows or only null property values.
+    // Covers:
+    // - Empty projections, non-null counts and empty/all-null aggregate
+    // semantics.
+    // Expected: Projections preserve null entries, counts are zero and all
+    // aggregate values are null.
     test('keeps empty and all-null aggregate behavior.', () async {
+      // Arrange.
       final all = database.apiProducts.all().sortByDbId();
+      // Act / Assert.
       for (final query in [
         all.limit(0),
         all.offset(99),
@@ -154,8 +187,17 @@ void main({bool includeSameDirectoryHandles = true}) {
       expect(await nulls.average(), isNull);
     });
 
+    // Scenario: Products with repeated names are sorted, deduplicated and
+    // paginated.
+    // Covers:
+    // - Shared distinct representatives for objects, projections and numeric
+    // sums.
+    // Expected: Property lists and sums use exactly the objects selected by
+    // the distinct window.
     test('preserves distinct representatives and their window.', () async {
+      // Arrange.
       final distinct = database.apiProducts.all().sortByName().distinctByName();
+      // Act / Assert.
       for (final query in [distinct, distinct.offset(1).limit(1)]) {
         final objects = await query.findAll();
         expect(
@@ -173,8 +215,17 @@ void main({bool includeSameDirectoryHandles = true}) {
       }
     });
 
+    // Scenario: Projected values are read after staged edits, rollback and a
+    // later committed deletion.
+    // Covers:
+    // - Transaction visibility and persistence of projection/aggregate
+    // results.
+    // Expected: Rollback restores sum 36; reopening after the committed
+    // deletion yields IDs 2..8 and sum 35.
     test('reads pending changes and respects rollback and reopen.', () async {
+      // Arrange.
       final ids = database.apiProducts.all().sortByDbId().dbIdProperty();
+      // Act / Assert.
       await expectLater(
         database.writeTxn<void>(() async {
           await database.apiProducts.delete(1);
@@ -216,10 +267,17 @@ void main({bool includeSameDirectoryHandles = true}) {
     });
 
     if (includeSameDirectoryHandles) {
+      // Scenario: A second handle deletes a row during a read transaction.
+      // Covers:
+      // - Snapshot consistency for property lists and sums.
+      // Expected: The active snapshot retains IDs 1..8 and sum 36; afterward
+      // the sum is 35.
       test('projects and aggregates from the active read snapshot.', () async {
+        // Arrange.
         final other = await _open(directory);
         addTearDown(other.close);
         final ids = database.apiProducts.all().sortByDbId().dbIdProperty();
+        // Act / Assert.
         await database.readTxn(() async {
           expect(await ids.sum(), 36);
           await other.writeTxn(() => other.apiProducts.delete(1));

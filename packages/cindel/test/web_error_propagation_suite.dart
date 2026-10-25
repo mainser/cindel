@@ -4,9 +4,17 @@ import 'package:test/test.dart';
 
 void main() {
   group('Web error propagation', () {
+    // Scenario: A worker returns controlled failures for several concurrently
+    // queued operations.
+    // Covers:
+    // - Error class/context mapping, per-request isolation and bridge
+    // recovery.
+    // Expected: Each failure identifies its own operation and cause; a
+    // healthy request succeeds with no pending requests.
     test(
       'keeps queued failures isolated and allows the next request.',
       () async {
+        // Arrange.
         final bridge = CindelWebWorkerBridge(
           'fixtures/error_transport_worker.js',
         );
@@ -19,6 +27,7 @@ void main() {
           'replaceLinks',
           'compact',
         ];
+        // Act.
         final failures = await Future.wait([
           for (final operation in operations)
             bridge
@@ -28,6 +37,7 @@ void main() {
                   onError: (Object error) => error,
                 ),
         ]);
+        // Assert.
         for (var i = 0; i < operations.length; i++) {
           final error = failures[i] as CindelError;
           expect(error.operation, operations[i]);

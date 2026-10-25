@@ -4,9 +4,18 @@ import 'package:test/test.dart';
 
 void main() {
   group('CindelGenerator', () {
+    // Scenario: A model combines primitive, temporal, enum and embedded lists
+    // with nullable variants.
+    // Covers:
+    // - Cast generation for typed native readers versus dynamically typed
+    // values.
+    // Expected: Redundant primitive/promoted embedded casts are absent while
+    // temporal, enum and nullable scalar conversions retain required casts.
     test(
       'omits casts for typed list reads and promoted embedded parameters',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(r'''
 import 'package:cindel/cindel.dart';
 part 'model.g.dart';
@@ -30,6 +39,7 @@ class Model {
 }
 ''');
         final compact = generated.replaceAll(RegExp(r'\s+'), '');
+        // Assert.
         expect(compact, contains('listReader.readInt(0,i)??0'));
         expect(compact, contains("listReader.readString(0,i)??''"));
         expect(compact, isNot(contains('??0)asint')));
@@ -51,7 +61,16 @@ class Model {
       },
     );
 
+    // Scenario: Two collections in one library reference the same embedded
+    // class.
+    // Covers:
+    // - Deduplication of shared embedded serializers and nullable-element
+    // handling.
+    // Expected: Exactly one embedded serializer is emitted and nullable
+    // values are guarded.
     test('emits shared embedded helpers once per library', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(r'''
 import 'package:cindel/cindel.dart';
 part 'model.g.dart';
@@ -62,6 +81,7 @@ class First { Id dbId = autoIncrement; late Leaf value; }
 @collection
 class Second { Id dbId = autoIncrement; late List<Leaf?> value; }
 ''');
+      // Assert.
       expect(
         RegExp(r'Map<String, Object\?> _\$LeafToCindelEmbedded\(')
             .allMatches(generated),
@@ -70,7 +90,15 @@ class Second { Id dbId = autoIncrement; late List<Leaf?> value; }
       expect(generated, contains('value == null ? null'));
     });
 
+    // Scenario: Enum-list fields explicitly request ordinal or value
+    // annotations.
+    // Covers:
+    // - Validation of unsupported list annotation strategies.
+    // Expected: Both builds fail with the diagnostic that Enumerated applies
+    // only to enum fields.
     test('keeps explicitly unsupported list annotations rejected', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       for (final strategy in ['ordinal', 'value']) {
         await _expectBuildError('''
 import 'package:cindel/cindel.dart';
@@ -96,8 +124,11 @@ class Model {
     test(
       'generates schema metadata, serializers, and collection access.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_richModelSource);
 
+        // Assert.
         _expectAll(generated, [
           'final RichUserSchema = CindelCollectionSchema<RichUser>(',
           'name: "richUsers"',
@@ -141,8 +172,11 @@ class Model {
     // Expected: Link fields are excluded from persisted fields and bound by
     //   generated schema callbacks after hydration.
     test('generates link and backlink metadata and binders.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_linkModelSource);
 
+      // Assert.
       _expectAll(generated, [
         'final AuthorSchema = CindelCollectionSchema<Author>(',
         'links: <CindelLinkSchema>[',
@@ -183,8 +217,11 @@ class Model {
     // Expected: Generated query helpers expose the complete typed query API for
     // the model without requiring manual document predicates.
     test('generates query helpers for indexes, filters, lists, and embedded objects.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_richModelSource);
 
+      // Assert.
       _expectAll(generated, [
         'final class RichUserQueryWhere',
         'CindelQuery<RichUser> emailEqualTo(String value)',
@@ -232,8 +269,11 @@ class Model {
     // Expected: The generated API exposes `filter()` but does not emit an empty
     // `QueryWhere` class or a `where()` method with no valid methods.
     test('does not generate empty where helpers without indexes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_noIndexModelSource);
 
+      // Assert.
       _expectAll(generated, [
         'final NoIndexModelSchema = CindelCollectionSchema<NoIndexModel>(',
         'NoIndexModelQueryFilter filter() => NoIndexModelQueryFilter(',
@@ -253,8 +293,11 @@ class Model {
     // Expected: Generated conversion code is explicit and deterministic for
     // every supported persisted value shape.
     test('generates conversion code for enums, date/time, duration, and embedded lists.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_richModelSource);
 
+      // Assert.
       _expectAll(generated, [
         '"createdAt": object.createdAt.microsecondsSinceEpoch',
         'object.createdAt = DateTime.fromMicrosecondsSinceEpoch(',
@@ -285,8 +328,11 @@ class Model {
     test(
       'generates native fast paths for string lists and embedded objects.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_richModelSource);
 
+        // Assert.
         _expectAll(generated, [
           'void _\$RichUserWriteCindelNativeDocument(',
           'RichUser _\$RichUserReadCindelNativeDocument(',
@@ -312,8 +358,11 @@ class Model {
     test(
       'supports immutable explicit-id classes with constructor hydration.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_immutableSource);
 
+        // Assert.
         _expectAll(generated, [
           'final ImmutableUserSchema = CindelCollectionSchema<ImmutableUser>(',
           'fromDocument: _\$ImmutableUserFromCindelDocument',
@@ -340,8 +389,11 @@ class Model {
     // Expected: Generated code hydrates through the Freezed factory and omits
     // ignored values from storage.
     test('supports Freezed primary-factory collection models.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_freezedPrimaryFactorySource);
 
+      // Assert.
       _expectAll(generated, [
         'final FreezedUserSchema = CindelCollectionSchema<FreezedUser>(',
         'int _\$FreezedUserGetCindelId(FreezedUser object)',
@@ -365,8 +417,11 @@ class Model {
     // Expected: Generated code calls the positional constructor and derives the
     // default collection accessor from the class name.
     test('supports positional constructors and default collection names.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act.
       final generated = await _generate(_positionalConstructorSource);
 
+      // Assert.
       _expectAll(generated, [
         'final PositionalUserSchema = CindelCollectionSchema<PositionalUser>(',
         'name: "positionalUser"',
@@ -388,8 +443,11 @@ class Model {
     test(
       'normalizes lower-camel accessors for non-identifier names.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_nonIdentifierCollectionNameSource);
 
+        // Assert.
         _expectAll(generated, [
           'name: "event-log"',
           'CindelTypedCollection<EventLog> get eventLog',
@@ -408,8 +466,11 @@ class Model {
     test(
       'generates native paths for non-null embedded and scalar lists.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_nativeBranchSource);
 
+        // Assert.
         _expectAll(generated, [
           'object.requiredFlag);',
           'object.requiredCount);',
@@ -444,8 +505,11 @@ class Model {
     test(
       'generates enum strategies for default and nullable values.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act.
         final generated = await _generate(_enumStrategySource);
 
+        // Assert.
         _expectAll(generated, [
           '"plain": object.plain?.name',
           'PlainStatus.values.byName(document["plain"] as String)',
@@ -467,6 +531,8 @@ class Model {
     // Covers: Generator validation for constructible collection shapes.
     // Expected: The build fails with a concrete-class diagnostic.
     test('rejects abstract non-Freezed collections.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _abstractCollectionSource,
         '@collection classes must be concrete.',
@@ -477,6 +543,8 @@ class Model {
     // Covers: Generator target validation before schema analysis.
     // Expected: The build fails with a class-only diagnostic.
     test('rejects @collection on non-class elements.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _nonClassCollectionSource,
         '@collection can only be used on classes.',
@@ -487,6 +555,8 @@ class Model {
     // Covers: Minimum persisted-field validation.
     // Expected: The build fails before generating an unusable schema.
     test('rejects collections without persisted fields.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _emptyPersistedFieldsSource,
         '@collection classes must declare at least one persisted field.',
@@ -497,6 +567,8 @@ class Model {
     // Covers: Typed public id convention enforcement.
     // Expected: The build fails and points at the `dbId` requirement.
     test('rejects collections without exactly one dbId field.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _missingIdSource,
         '@collection classes must declare exactly one field named `dbId`.',
@@ -508,6 +580,8 @@ class Model {
     // Covers: Constructor discovery for generated object hydration.
     // Expected: The build fails with a usable-constructor diagnostic.
     test('rejects collections without a usable unnamed constructor.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _noUsableConstructorSource,
         '@collection classes need an unnamed constructor with no parameters',
@@ -522,6 +596,8 @@ class Model {
     test(
       'rejects final persisted fields without constructor hydration.',
       () async {
+        // Arrange: use the inputs described in this scenario.
+        // Act / Assert.
         await _expectBuildError(
           _finalFieldsWithoutConstructorSource,
           '@collection classes with final persisted fields need an unnamed '
@@ -537,6 +613,8 @@ class Model {
     // - Missing persisted constructor parameters.
     // Expected: Each invalid constructor shape fails with a targeted diagnostic.
     test('rejects invalid constructor hydration signatures.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _constructorUnknownParameterSource,
         'Constructor parameter `unknown` does not match a persisted field.',
@@ -555,6 +633,8 @@ class Model {
     // Covers: List index validation.
     // Expected: The build fails before generating an unusable list index.
     test('rejects list indexes that are not multi-entry.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _invalidListIndexSource,
         'list fields require CindelIndexType.multiEntry',
@@ -569,6 +649,8 @@ class Model {
     // - Invalid word-index targets.
     // Expected: The generator reports precise diagnostics for each bad option.
     test('rejects invalid index options.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _invalidMultiEntryIndexSource,
         'multi-entry indexes require primitive list fields.',
@@ -588,6 +670,8 @@ class Model {
     // Expected: The build fails instead of generating partial embedded index
     // support.
     test('rejects embedded indexes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _invalidEmbeddedIndexSource,
         'embedded indexes are not supported yet',
@@ -598,6 +682,8 @@ class Model {
     // Covers: Persisted type validation for unsupported nested lists.
     // Expected: The build fails with the unsupported type name.
     test('rejects nested lists.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _nestedListSource,
         'unsupported type `List<List<String>>`',
@@ -614,6 +700,8 @@ class Model {
     // Expected: Each invalid composite declaration fails with a specific
     // diagnostic before code generation.
     test('rejects invalid composite indexes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _shortCompositeIndexSource,
         'Composite indexes require at least two fields.',
@@ -643,6 +731,8 @@ class Model {
     // - Embedded classes without a default constructor.
     // Expected: The build fails before generating embedded hydration helpers.
     test('rejects invalid embedded class shapes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _abstractEmbeddedSource,
         '@Embedded classes must be concrete.',
@@ -661,36 +751,73 @@ class Model {
     // - Persisted link names cannot collide with persisted field names.
     // Expected: The build fails before emitting unusable relation metadata.
     test('rejects non-final link fields.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _nonFinalLinkSource,
         'Link field `authors` must be final.',
       );
     });
+    // Scenario: A collection declares a link with void as its target.
+    // Covers:
+    // - Link target validation before generating bindings.
+    // Expected: Generation fails with a diagnostic requiring a collection
+    // type for authors.
     test('rejects void link targets.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _voidLinkTargetSource,
         'Link field `authors` must target a collection type.',
       );
     });
+    // Scenario: A collection declares a link targeting an enum.
+    // Covers:
+    // - Rejection of non-class link targets.
+    // Expected: Generation fails with a diagnostic requiring a class for
+    // status.
     test('rejects enum link targets.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _enumLinkTargetSource,
         'Link field `status` must target a class.',
       );
     });
+    // Scenario: A collection declares a link targeting an embedded class.
+    // Covers:
+    // - Separation of embedded values from collection link targets.
+    // Expected: Generation fails with a diagnostic forbidding the embedded
+    // target.
     test('rejects embedded link targets.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _embeddedLinkTargetSource,
         'Link field `embedded` cannot target an embedded object.',
       );
     });
+    // Scenario: A collection declares a link targeting an unannotated class.
+    // Covers:
+    // - Collection annotation requirements for linked classes.
+    // Expected: Generation fails with a diagnostic requiring a collection
+    // annotation for plain.
     test('rejects unannotated link targets.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _plainClassLinkTargetSource,
         'Link field `plain` must target a @collection class.',
       );
     });
+    // Scenario: A persisted link name conflicts with another stored field.
+    // Covers:
+    // - Persisted-name collision validation for links.
+    // Expected: Generation fails with a diagnostic identifying the
+    // conflicting author name.
     test('rejects conflicting persisted link names.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _linkNameConflictSource,
         'Persisted link name `author` conflicts with another field.',
@@ -706,24 +833,48 @@ class Model {
     // Expected: The build fails with diagnostics that identify the invalid enum
     // configuration.
     test('rejects enum annotations on non-enum fields.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _enumeratedNonEnumSource,
         '@Enumerated can only be used on enum fields.',
       );
     });
+    // Scenario: An enum requests value-based serialization without a
+    // valueField.
+    // Covers:
+    // - Required metadata for enum value serialization.
+    // Expected: Generation fails with a diagnostic requiring valueField.
     test('rejects value enums without valueField.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _enumValueWithoutValueFieldSource,
         'uses CindelEnumType.value but does not declare valueField.',
       );
     });
+    // Scenario: An enum value annotation references a field named missing
+    // that does not exist.
+    // Covers:
+    // - Resolution of the annotated enum value field.
+    // Expected: Generation fails with a diagnostic identifying the absent
+    // field.
     test('rejects unknown enum value fields.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _enumValueUnknownFieldSource,
         'does not declare a `missing` field.',
       );
     });
+    // Scenario: An enum value annotation selects a non-primitive field.
+    // Covers:
+    // - Supported storage types for enum value fields.
+    // Expected: Generation fails with a diagnostic listing int, double,
+    // String and bool.
     test('rejects non-primitive enum value fields.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _enumValueNonPrimitiveFieldSource,
         'must be int, double, String, or bool.',
@@ -735,6 +886,8 @@ class Model {
     // Expected: The build fails instead of generating a constructor call that
     // cannot supply a required value.
     test('rejects ignored required Freezed factory parameters.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _freezedIgnoredRequiredParameterSource,
         '@ignore cannot be used on required Freezed factory parameter `name`.',
@@ -749,6 +902,8 @@ class Model {
     // Expected: The build fails with diagnostics for invalid public
     // annotations.
     test('rejects invalid persisted names and replace indexes.', () async {
+      // Arrange: use the inputs described in this scenario.
+      // Act / Assert.
       await _expectBuildError(
         _duplicatePersistedFieldNameSource,
         'Persisted field name `email` is declared more than once.',

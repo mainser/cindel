@@ -13,15 +13,18 @@ void main() {
     test(
       'shares revision lookups for local changes without a revision.',
       () async {
+        // Arrange.
         final fixture = _Fixture();
         final values = <int>[];
         final subscriptions = [
           for (var i = 0; i < 100; i++) fixture.watch().listen(values.add),
         ];
         await fixture.clock.advance(Duration.zero);
+        // Act.
         fixture.revision = 1;
         fixture.coordinator.notify('items', _Change(null, {1}));
         await settleWatchMicrotasks();
+        // Assert.
         expect(values.where((value) => value == 1), hasLength(100));
         expect(fixture.reads, 2);
         for (final subscription in subscriptions) {
@@ -35,6 +38,7 @@ void main() {
     // Covers: Unknown change metadata must dominate exact local ID shortcuts.
     // Expected: The following snapshot performs a full refresh.
     test('keeps external changes while coalescing local metadata.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final pending = Completer<int>();
       final changes = <Set<int>?>[];
@@ -49,12 +53,14 @@ void main() {
           )
           .listen((_) {});
       await fixture.clock.advance(Duration.zero);
+      // Act.
       fixture.notify(1, {1});
       fixture.revision = 2;
       await fixture.clock.advance(const Duration(milliseconds: 50));
       fixture.notify(3, {3});
       pending.complete(1);
       await settleWatchMicrotasks();
+      // Assert.
       expect(changes, [
         null,
         {1},
@@ -68,6 +74,7 @@ void main() {
     // Covers: A completed snapshot must not be emitted through an active transaction.
     // Expected: It is refreshed after the transaction instead of acknowledging stale data.
     test('rechecks transaction state after a suspended snapshot.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final pending = Completer<int>();
       var snapshots = 0;
@@ -83,9 +90,11 @@ void main() {
           )
           .listen(values.add);
       await fixture.clock.advance(Duration.zero);
+      // Act.
       fixture.allowed = false;
       pending.complete(0);
       await settleWatchMicrotasks();
+      // Assert.
       expect(values, isEmpty);
       fixture.revision = 1;
       fixture.allowed = true;
@@ -100,11 +109,14 @@ void main() {
       // Covers: Shared initialization, cadence, one timer, and final cancellation.
       // Expected: 21 reads (initial + 20 polls), independently of subscriber count.
       test('shares revision reads across $count subscribers.', () async {
+        // Arrange.
         final fixture = _Fixture();
         final subscriptions = [
           for (var i = 0; i < count; i++) fixture.watch().listen((_) {}),
         ];
+        // Act.
         await fixture.clock.advance(const Duration(seconds: 1));
+        // Assert.
         expect(fixture.reads, 21);
         expect(fixture.clock.activeTimers, 1);
         expect(fixture.clock.peakTimers, 1);
@@ -123,6 +135,7 @@ void main() {
     // Covers: Cadence alignment and subscribers with different intervals.
     // Expected: Existing deadlines remain stable; slow subscribers retain theirs.
     test('aligns late subscribers and preserves mixed intervals.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final fast = <int>[];
       final slow = <int>[];
@@ -132,9 +145,11 @@ void main() {
             .watch(interval: const Duration(milliseconds: 120))
             .listen(slow.add),
       ];
+      // Act.
       await fixture.clock.advance(const Duration(milliseconds: 25));
       subscriptions.add(fixture.watch().listen((_) {}));
       await fixture.clock.advance(Duration.zero);
+      // Assert.
       expect(fixture.reads, 2);
       fixture.revision = 1;
       await fixture.clock.advance(const Duration(milliseconds: 25));
@@ -157,13 +172,16 @@ void main() {
     // Covers: Collection isolation and one handle-level timer.
     // Expected: Reads scale with collections, not subscription count.
     test('shares only within each collection.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final subscriptions = [
         for (final name in ['a', 'b'])
           for (var i = 0; i < 100; i++)
             fixture.watch(collection: name).listen((_) {}),
       ];
+      // Act.
       await fixture.clock.advance(const Duration(seconds: 1));
+      // Assert.
       expect(fixture.reads, 42);
       expect(fixture.clock.peakTimers, 1);
       for (final subscription in subscriptions) {
@@ -176,10 +194,13 @@ void main() {
     // Covers: In-flight sharing, cancellation/re-subscription, and resource release.
     // Expected: One outstanding read, including when the last listener changes.
     test('never overlaps a collection revision read.', () async {
+      // Arrange.
       final pending = Completer<int>();
       final fixture = _Fixture(read: () => pending.future);
       final first = fixture.watch().listen((_) {});
+      // Act.
       await fixture.clock.advance(const Duration(milliseconds: 200));
+      // Assert.
       expect(fixture.reads, 1);
       await first.cancel();
       final values = <int>[];
@@ -198,15 +219,18 @@ void main() {
     // Covers: Response invalidation and independent snapshot consumers.
     // Expected: The stale response does not trigger an old/duplicate snapshot.
     test('ignores a revision response superseded by a local commit.', () async {
+      // Arrange.
       final pending = Completer<int>();
       final fixture = _Fixture(read: () => pending.future);
       final values = <int>[];
       final subscription = fixture.watch().listen(values.add);
       await fixture.clock.advance(Duration.zero);
+      // Act.
       fixture.notify(2, {2});
       await settleWatchMicrotasks();
       pending.complete(0);
       await settleWatchMicrotasks();
+      // Assert.
       expect(values, [2]);
       expect(fixture.reads, 1);
       await subscription.cancel();
@@ -217,6 +241,7 @@ void main() {
     // Covers: Merging changed IDs, lazy priming, and isolation of slow consumers.
     // Expected: All changed IDs survive and other subscribers receive updates.
     test('merges changes during slow lazy initialization.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final pending = Completer<int>();
       final seenChanges = <Set<int>?>[];
@@ -235,10 +260,12 @@ void main() {
           .listen(slowValues.add);
       final fast = fixture.watch().listen(fastValues.add);
       await fixture.clock.advance(Duration.zero);
+      // Act.
       fixture.notify(1, {1});
       fixture.notify(2, {2});
       fixture.notify(3, {3});
       await settleWatchMicrotasks();
+      // Assert.
       expect(fastValues.last, 3);
       expect(slowValues, isEmpty);
       pending.complete(0);
@@ -257,6 +284,7 @@ void main() {
     // Covers: Error fan-out, retained causes, retry cadence, and no busy loop.
     // Expected: Each listener receives the same error and then initializes.
     test('recovers from shared revision failures.', () async {
+      // Arrange.
       final failure = StateError('controlled revision failure');
       var attempts = 0;
       final fixture = _Fixture(
@@ -271,7 +299,9 @@ void main() {
         for (var i = 0; i < 100; i++)
           fixture.watch().listen(values.add, onError: errors.add),
       ];
+      // Act.
       await fixture.clock.advance(Duration.zero);
+      // Assert.
       expect(errors, hasLength(100));
       expect(errors.every((error) => identical(error, failure)), isTrue);
       expect(fixture.reads, 1);
@@ -290,6 +320,7 @@ void main() {
     test(
       'retries a failed snapshot before applying local ID shortcuts.',
       () async {
+        // Arrange.
         final fixture = _Fixture();
         var fail = false;
         final errors = <Object>[];
@@ -307,9 +338,11 @@ void main() {
             )
             .listen(values.add, onError: errors.add);
         await fixture.clock.advance(Duration.zero);
+        // Act.
         fail = true;
         fixture.notify(1, {1});
         await settleWatchMicrotasks();
+        // Assert.
         expect(errors, hasLength(1));
         fixture.notify(2, {9});
         await settleWatchMicrotasks();
@@ -323,10 +356,13 @@ void main() {
     // Covers: No reads/initial emissions during a transaction and later recovery.
     // Expected: Subscriptions resume without leaking an uncommitted snapshot.
     test('defers initialization and polling during transactions.', () async {
+      // Arrange.
       final fixture = _Fixture()..allowed = false;
       final values = <int>[];
       final subscription = fixture.watch().listen(values.add);
+      // Act.
       await fixture.clock.advance(const Duration(milliseconds: 200));
+      // Assert.
       expect(fixture.reads, 0);
       fixture.allowed = true;
       await fixture.clock.advance(const Duration(milliseconds: 50));
@@ -346,13 +382,16 @@ void main() {
     // Covers: Timer release, idempotent close, and suppression of late errors.
     // Expected: Close finishes without waiting for the read; no late event escapes.
     test('stops before close and ignores in-flight failures.', () async {
+      // Arrange.
       final pending = Completer<int>();
       final fixture = _Fixture(read: () => pending.future);
       final errors = <Object>[];
       final values = <int>[];
       fixture.watch().listen(values.add, onError: errors.add);
       await fixture.clock.advance(Duration.zero);
+      // Act.
       final close = fixture.coordinator.close();
+      // Assert.
       expect(identical(close, fixture.coordinator.close()), isTrue);
       await close;
       pending.completeError(StateError('late read failure'));
@@ -367,13 +406,16 @@ void main() {
     // Covers: Existing StreamController completion semantics and timer shutdown.
     // Expected: Polling stops immediately; cancellation allows close to complete.
     test('preserves paused subscription closure.', () async {
+      // Arrange.
       final fixture = _Fixture();
       final subscription = fixture.watch().listen((_) {});
       await fixture.clock.advance(Duration.zero);
       subscription.pause();
       var closed = false;
+      // Act.
       final close = fixture.coordinator.close().then((_) => closed = true);
       await settleWatchMicrotasks();
+      // Assert.
       expect(closed, isFalse);
       expect(fixture.clock.activeTimers, 0);
       await subscription.cancel();

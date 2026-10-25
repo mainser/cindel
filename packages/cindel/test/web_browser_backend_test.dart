@@ -23,6 +23,7 @@ import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
 import 'get_all_transaction_suite.dart' as get_all_transactions;
 import 'query_public_contract_suite.dart' as query_public_contract;
+import 'query_projection_contract_suite.dart' as query_projection_contract;
 import 'sqlite_id_suite.dart' as ids;
 import 'sqlite_projection_suite.dart' as sqlite_projection;
 import 'web_close_additional_suite.dart' as web_close;
@@ -53,6 +54,7 @@ void main() {
   find_first.main();
   get_all_transactions.main();
   query_public_contract.main();
+  query_projection_contract.main();
   web_close.main();
   worker_close.main();
 }

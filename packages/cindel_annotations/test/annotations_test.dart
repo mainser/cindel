@@ -9,6 +9,7 @@ void main() {
     // - Named collections with composite index metadata.
     // Expected: Public annotation values remain stable for generator reads.
     test('exposes collection annotations and defaults.', () {
+      // Arrange.
       const defaultCollection = Collection();
       const namedCollection = Collection(
         name: 'users',
@@ -17,6 +18,7 @@ void main() {
         ],
       );
 
+      // Act / Assert.
       expect(collection.name, isNull);
       expect(collection.indexes, isEmpty);
       expect(defaultCollection.name, isNull);
@@ -37,6 +39,7 @@ void main() {
     // - Public `CindelIndexType` ordering.
     // Expected: Generator-facing index metadata remains stable.
     test('exposes field annotations and index options.', () {
+      // Arrange.
       const renamed = Name('user_name');
       const hashedIndex = Index(
         unique: true,
@@ -45,6 +48,7 @@ void main() {
         type: CindelIndexType.hash,
       );
 
+      // Act / Assert.
       expect(renamed.value, 'user_name');
       expect(index.unique, isFalse);
       expect(index.replace, isFalse);
@@ -71,9 +75,11 @@ void main() {
     // Expected: Annotation-only consumers can rely on the public constants and
     // enum values without importing runtime packages.
     test('exposes embedded, ignore, enum, and id helpers.', () {
+      // Arrange.
       const byName = Enumerated(CindelEnumType.name);
       const byValue = Enumerated(CindelEnumType.value, valueField: 'code');
 
+      // Act / Assert.
       expect(embedded, isA<Embedded>());
       expect(ignore, isA<Ignore>());
       expect(byName.type, CindelEnumType.name);
@@ -95,8 +101,10 @@ void main() {
     // - `Backlink` constructor and forward-link target metadata.
     // Expected: Generator-facing backlink metadata stores the target field.
     test('exposes backlink annotation target.', () {
+      // Arrange.
       final backlink = Backlink(to: 'songs');
 
+      // Act / Assert.
       expect(backlink.to, 'songs');
     });
   });
