@@ -517,8 +517,8 @@ final class CindelQuery<T> {
     return _updateNative(changes);
   }
 
-  // Native update path. Query updates intentionally require a native plan so
-  // changes can be applied atomically without hydrating and rewriting objects.
+  // Property writes remain native. Sources SQLite cannot represent select IDs
+  // in a write transaction, then update only the requested fields atomically.
   Future<int> _updateNative(
     Map<String, Object?> changes, {
     int? limitOverride,
@@ -527,7 +527,9 @@ final class CindelQuery<T> {
       return 0;
     }
     final nativePlan = _nativePlan(limitOverride: limitOverride);
-    if (nativePlan == null) {
+    final selectInDart =
+        _database.usesSqliteNativeDocuments && !_canUseSqliteNativeSource;
+    if (nativePlan == null && !selectInDart) {
       throw UnsupportedError(
         'Native query updates require the MDBX binary query planner.',
       );
@@ -548,7 +550,38 @@ final class CindelQuery<T> {
       }
       updates[field.name] = _nativeFilterValue(value);
     }
-    return _database.updateNativePlan(_schema.name, nativePlan, updates);
+    if (selectInDart) {
+      // Selection and all property updates share one transaction. Capture the
+      // window once, since an update may change the source/filter itself.
+      Future<int> updateSelected() async {
+        final query = limitOverride == 1 ? _limitToFirst() : this;
+        final ids = (await query._matchingDocuments())
+            .map(_idFromDocument)
+            .toList(growable: false);
+        var count = 0;
+        for (var start = 0; start < ids.length; start += 128) {
+          final end = (start + 128).clamp(0, ids.length);
+          final filter = CindelFilter.any([
+            for (var i = start; i < end; i++)
+              CindelFilter.field(_schema.idField).equalTo(ids[i]),
+          ]);
+          count += await _database.updateNativePlan(
+            _schema.name,
+            CindelNativeQueryPlan(
+              source: const CindelNativeAllQuerySource(),
+              filter: _nativeFilterBytes(filter),
+            ),
+            updates,
+          );
+        }
+        return count;
+      }
+
+      return _database.isInWriteTransaction
+          ? updateSelected()
+          : _database.writeTxn(updateSelected);
+    }
+    return _database.updateNativePlan(_schema.name, nativePlan!, updates);
   }
 
   int _idFromDocument(CindelDocument document) {
@@ -791,6 +824,12 @@ final class CindelQuery<T> {
         _distinctFields.isNotEmpty) {
       return false;
     }
+    return _canUseSqliteNativeSource;
+  }
+
+  // SQL column comparisons cannot represent tokenized or normalized sources.
+  // Counts must use the same source semantics as object and projection reads.
+  bool get _canUseSqliteNativeSource {
     final source = _nativeSource;
     return switch (source) {
       null => false,
@@ -1082,6 +1121,7 @@ final class CindelQuery<T> {
     final nativeFilter = _nativeFilter;
     if (!_canUseNativePlanner ||
         nativeSource == null ||
+        (_database.usesSqliteNativeDocuments && !_canUseSqliteNativeSource) ||
         (_filter != null && nativeFilter == null)) {
       return null;
     }

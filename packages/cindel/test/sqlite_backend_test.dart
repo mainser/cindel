@@ -19,6 +19,7 @@ import 'links_backlinks_suite.dart' as links_backlinks;
 import 'migration_suite.dart' as migration;
 import 'native_binding_validation_suite.dart' as native_binding_validation;
 import 'query_builder_suite.dart' as query_builder;
+import 'query_public_contract_suite.dart' as query_public_contract;
 import 'schema_generation_suite.dart' as schema_generation;
 import 'schema_version_suite.dart' as schema_version;
 import 'sqlite_contract_suite.dart' as sqlite_contract;
@@ -51,6 +52,7 @@ void main() {
   schema_version.main();
   sync.main();
   query_builder.main();
+  query_public_contract.main();
   schema_generation.main();
   typed_collection.main();
 }

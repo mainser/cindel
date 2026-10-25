@@ -23,7 +23,9 @@ use rusqlite::{
     ffi, params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior,
 };
 
-use crate::document_format::{binary_to_wire_value, decode_list, decode_object, BinaryValue};
+use crate::document_format::{
+    binary_to_wire_value, decode_list, decode_object, encode_wire_object, BinaryValue,
+};
 use crate::wire::{
     decode_filter, encode_index_value, encode_projection_rows, encode_scalar, WireFilter,
     WireFilterOperation, WireIndexValue, WireProjectionRows, WireQueryPlan, WireQuerySource,
@@ -1848,7 +1850,8 @@ fn sqlite_update_value(field: &FieldSchemaManifest, value: &WireValue) -> Result
             Err("SQLite update double values must be finite".into())
         }
         ("string", WireValue::String(value)) => Ok(Value::Text(value.clone())),
-        ("list", WireValue::List(_)) | ("object", WireValue::Object(_)) => {
+        ("object", WireValue::Object(fields)) => encode_wire_object(fields).map(Value::Blob),
+        ("list", WireValue::List(_)) => {
             let mut json = String::new();
             push_wire_json_value(&mut json, value)?;
             Ok(Value::Text(json))
@@ -6338,6 +6341,86 @@ mod tests {
         assert_eq!(after_update, 2);
         assert!(remaining_true.is_empty());
         assert_eq!(false_count, 3);
+    }
+
+    #[test]
+    fn query_object_updates_round_trip_through_native_document_reads() {
+        let directory = TemporaryDirectory::new("query_object_update");
+        let schema = user_schema(vec![native_field("profile", "Recipient?", "object", false)]);
+        let manifest = schema_manifest(vec![schema.clone()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        storage
+            .put_many_native_documents(
+                "users",
+                &[
+                    NativeDocumentWrite {
+                        id: 1,
+                        values: vec![NativeDocumentValue::Null],
+                    },
+                    NativeDocumentWrite {
+                        id: 2,
+                        values: vec![NativeDocumentValue::Null],
+                    },
+                ],
+                true,
+            )
+            .unwrap();
+        let plan = WireQueryPlan {
+            source: WireQuerySource::All { dedupe: false },
+            filter: None,
+            sorts: vec![crate::wire::WireQuerySort {
+                field: "id".into(),
+                ascending: true,
+            }],
+            distinct_fields: vec![],
+            offset: 1,
+            limit: Some(1),
+        };
+        let value = WireValue::Object(vec![
+            (
+                "metadata".into(),
+                WireValue::Object(vec![(
+                    "values".into(),
+                    WireValue::List(vec![WireValue::Int(9_007_199_254_740_993), WireValue::Null]),
+                )]),
+            ),
+            ("name".into(), WireValue::String("Recipient".into())),
+        ]);
+        assert_eq!(
+            storage
+                .query_plan_update("users", &plan, &[("profile".into(), value.clone())], true)
+                .unwrap(),
+            1
+        );
+        let rows = storage.get_many_stored("users", &[1, 2]).unwrap();
+        let first = crate::document_format::read_binary_field(
+            &schema,
+            rows[0].as_ref().unwrap(),
+            "profile",
+        )
+        .unwrap();
+        let second = crate::document_format::read_binary_field(
+            &schema,
+            rows[1].as_ref().unwrap(),
+            "profile",
+        )
+        .unwrap();
+        assert!(first.is_none());
+        assert_eq!(binary_to_wire_value(second.as_ref()).unwrap(), value);
+        assert_eq!(
+            storage
+                .query_plan_update("users", &plan, &[("profile".into(), WireValue::Null)], true)
+                .unwrap(),
+            1
+        );
+        let rows = storage.get_many_stored("users", &[2]).unwrap();
+        assert!(crate::document_format::read_binary_field(
+            &schema,
+            rows[0].as_ref().unwrap(),
+            "profile"
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]

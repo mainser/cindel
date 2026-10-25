@@ -86,7 +86,7 @@ void main() {
       expect(source, contains('WireQuerySource.indexEqual'));
       expect(source, contains('webIndexValueForField'));
       expect(source, contains('_valuesAtPath'));
-      expect(source, contains('_modifierBaseQuery'));
+      expect(source, contains('_modifierPredicate'));
       expect(source, contains('queryNativePlanIds'));
       expect(source, contains('queryNativePlanCount'));
       expect(source, contains('deleteNativePlan'));

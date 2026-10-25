@@ -1377,16 +1377,20 @@ fn dynamic_update_payload(
             encode_list(&values).map(Some)
         }
         (CompactFieldType::Object, WireValue::Object(fields)) => {
-            let fields = fields
-                .iter()
-                .map(|(name, value)| Ok((name.clone(), wire_value_to_binary_value(value)?)))
-                .collect::<Result<Vec<_>, String>>()?;
-            encode_object(&fields).map(Some)
+            encode_wire_object(fields).map(Some)
         }
         _ => Err(format!(
             "query update value does not match field `{field_name}`"
         )),
     }
+}
+
+pub(crate) fn encode_wire_object(fields: &[(String, WireValue)]) -> Result<Vec<u8>, String> {
+    let fields = fields
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), wire_value_to_binary_value(value)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    encode_object(&fields)
 }
 
 fn compact_string_list_update_payload(

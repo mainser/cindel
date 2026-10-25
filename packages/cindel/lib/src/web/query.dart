@@ -6,6 +6,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 import '../cindel_error.dart';
 import '../query/distinct_key.dart';
 import '../schema.dart';
+import '../text.dart';
 import 'database.dart';
 import 'wire.dart';
 
@@ -309,10 +310,13 @@ final class CindelQuery<T> {
     required String field,
     required String word,
   }) {
-    return CindelQuery.all(
+    return CindelQuery._words(
       database: database,
       schema: schema,
-    ).whereMatches(CindelFilter.field(field).contains(word));
+      field: field,
+      text: word,
+      prefix: false,
+    );
   }
 
   /// Creates a typed query for a word-token prefix in a word index.
@@ -322,11 +326,57 @@ final class CindelQuery<T> {
     required String field,
     required String prefix,
   }) {
-    return CindelQuery.stringStartsWith(
+    return CindelQuery._words(
       database: database,
       schema: schema,
       field: field,
-      prefix: prefix,
+      text: prefix,
+      prefix: true,
+    );
+  }
+
+  factory CindelQuery._words({
+    required CindelDatabase database,
+    required CindelCollectionSchema<T> schema,
+    required String field,
+    required String text,
+    required bool prefix,
+  }) {
+    final schemaField = _schemaField(schema, field);
+    if (schemaField.indexType != CindelIndexType.words) {
+      throw CindelQueryError(
+        'Field `${schemaField.name}` is not a word index.',
+      );
+    }
+    final tokens = cindelSplitWords(
+      text,
+      caseSensitive: schemaField.indexCaseSensitive,
+    );
+    if (tokens.isEmpty) {
+      return CindelQuery.all(
+        database: database,
+        schema: schema,
+      ).whereMatches(CindelFilter.any(const []));
+    }
+    final token = tokens.first;
+    // SQLite stores the original text. LIKE/substring comparisons cannot
+    // reproduce the generated word index's normalization and token boundaries.
+    return CindelQuery._(
+      database: database,
+      schema: schema,
+      sourceFilter: (document) {
+        final value = document[field];
+        if (value is! String) {
+          return false;
+        }
+        final words = cindelSplitWords(
+          value,
+          caseSensitive: schemaField.indexCaseSensitive,
+        );
+        return prefix
+            ? words.any((word) => word.startsWith(token))
+            : words.contains(token);
+      },
     );
   }
 
@@ -371,8 +421,7 @@ final class CindelQuery<T> {
     }
     return whereMatches(
       CindelFilter.any([
-        for (final item in itemList)
-          option(_modifierBaseQuery(), item)._filter!,
+        for (final item in itemList) _modifierPredicate(option, item),
       ]),
     );
   }
@@ -383,16 +432,32 @@ final class CindelQuery<T> {
     CindelQueryRepeatOption<T, E> option,
   ) {
     final filters = [
-      for (final item in items) option(_modifierBaseQuery(), item)._filter!,
+      for (final item in items) _modifierPredicate(option, item),
     ];
     return filters.isEmpty ? this : whereMatches(CindelFilter.all(filters));
   }
 
-  CindelQuery<T> _modifierBaseQuery() {
-    return CindelQuery.all(
-      database: _database,
-      schema: _schema,
-    ).whereMatches(CindelFilter.all(const []));
+  CindelFilterPredicate _modifierPredicate<E>(
+    CindelQueryRepeatOption<T, E> option,
+    E item,
+  ) {
+    final base = _copyWith(filter: CindelFilter.all(const []));
+    final modified = option(base, item);
+    if (!identical(base._database, modified._database) ||
+        !identical(base._schema, modified._schema) ||
+        !identical(base._sourceFilter, modified._sourceFilter) ||
+        base._nativeSource != modified._nativeSource ||
+        !_sameSortKeys(base._sortKeys, modified._sortKeys) ||
+        !_sameFields(base._distinctFields, modified._distinctFields) ||
+        base._offset != modified._offset ||
+        base._limit != modified._limit) {
+      throw ArgumentError.value(
+        modified,
+        'option',
+        'anyOf/allOf options may only add filters.',
+      );
+    }
+    return modified._filter ?? CindelFilter.all(const []);
   }
 
   /// Sorts this query by [field].
@@ -400,6 +465,7 @@ final class CindelQuery<T> {
     String field, {
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
+    _checkFieldName(field);
     return _copyWith(sortKeys: [_SortKey(field, order)]);
   }
 
@@ -408,6 +474,7 @@ final class CindelQuery<T> {
     String field, {
     CindelSortOrder order = CindelSortOrder.ascending,
   }) {
+    _checkFieldName(field);
     return _copyWith(sortKeys: [..._sortKeys, _SortKey(field, order)]);
   }
 
@@ -418,16 +485,22 @@ final class CindelQuery<T> {
 
   /// Keeps only the first result for each distinct tuple of [fields].
   CindelQuery<T> distinctByFields(Iterable<String> fields) {
-    return _copyWith(distinctFields: fields.toList(growable: false));
+    return _copyWith(distinctFields: _checkedFields(fields));
   }
 
   /// Skips [count] results.
   CindelQuery<T> offset(int count) {
+    if (count < 0) {
+      throw ArgumentError.value(count, 'count', 'Must not be negative.');
+    }
     return _copyWith(offset: count);
   }
 
   /// Limits this query to [count] results.
   CindelQuery<T> limit(int count) {
+    if (count < 0) {
+      throw ArgumentError.value(count, 'count', 'Must not be negative.');
+    }
     return _copyWith(limit: count);
   }
 
@@ -436,6 +509,7 @@ final class CindelQuery<T> {
     String field, {
     R Function(Object? value)? decode,
   }) {
+    _checkFieldName(field);
     return CindelPropertyQuery<T, R>._(
       query: this,
       field: field,
@@ -447,7 +521,7 @@ final class CindelQuery<T> {
   CindelPropertiesQuery<T> properties(Iterable<String> fields) {
     return CindelPropertiesQuery<T>._(
       query: this,
-      fields: fields.toList(growable: false),
+      fields: _checkedFields(fields),
     );
   }
 
@@ -538,16 +612,23 @@ final class CindelQuery<T> {
 
   /// Updates the first object matching this query using native property writes.
   Future<bool> updateFirst(Map<String, Object?> changes) async {
-    return (await updateAll(changes)) > 0;
+    return (await _updateNative(changes, limitOverride: 1)) > 0;
   }
 
   /// Updates every object matching this query using native property writes.
   Future<int> updateAll(Map<String, Object?> changes) async {
+    return _updateNative(changes);
+  }
+
+  Future<int> _updateNative(
+    Map<String, Object?> changes, {
+    int? limitOverride,
+  }) async {
     if (changes.isEmpty) {
       return 0;
     }
-    final nativePlan = _nativePlan();
-    if (nativePlan == null) {
+    final nativePlan = _nativePlan(limitOverride: limitOverride);
+    if (nativePlan == null && _sourceFilter == null) {
       throw UnsupportedError(
         'Cindel Web query updates require a SQLite-native query plan.',
       );
@@ -567,6 +648,42 @@ final class CindelQuery<T> {
         );
       }
       updates[field.name] = _nativeFilterValue(value);
+    }
+    if (nativePlan == null) {
+      // Keep word/normalized-source updates atomic, including their window.
+      // Batch IDs so a large match set cannot exceed SQLite's parameter limit.
+      Future<int> updateSelected() async {
+        final query = limitOverride == 1 ? _limitToFirst() : this;
+        final ids = (await query._matchingDocuments())
+            .map(_idFromDocument)
+            .toList(growable: false);
+        var count = 0;
+        for (var start = 0; start < ids.length; start += 128) {
+          final end = (start + 128).clamp(0, ids.length);
+          count += await _database.updateNativePlan(
+            _schema.name,
+            WireQueryPlan(
+              source: const WireQuerySource.all(dedupe: false),
+              filter: _nativeFilterBytes(
+                CindelFilter.any([
+                  for (var i = start; i < end; i++)
+                    CindelFilter.field(_schema.idField).equalTo(ids[i]),
+                ]),
+              ),
+              sorts: const [],
+              distinctFields: const [],
+              offset: 0,
+              limit: null,
+            ),
+            updates,
+          );
+        }
+        return count;
+      }
+
+      return _database.isInWriteTransaction
+          ? updateSelected()
+          : _database.writeTxn(updateSelected);
     }
     return _database.updateNativePlan(_schema.name, nativePlan, updates);
   }
@@ -1073,6 +1190,47 @@ final class CindelQuery<T> {
   }
 }
 
+void _checkFieldName(String field) {
+  if (field.trim().isEmpty) {
+    throw ArgumentError.value(field, 'field', 'Must not be empty.');
+  }
+}
+
+List<String> _checkedFields(Iterable<String> fields) {
+  final result = fields.toList(growable: false);
+  if (result.isEmpty) {
+    throw ArgumentError.value(fields, 'fields', 'Must not be empty.');
+  }
+  for (final field in result) {
+    _checkFieldName(field);
+  }
+  return result;
+}
+
+bool _sameFields(List<String> left, List<String> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameSortKeys(List<_SortKey> left, List<_SortKey> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i++) {
+    if (left[i].field != right[i].field || left[i].order != right[i].order) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool _requiresDartIndexedEquality(CindelFieldSchema field, Object value) {
   return !field.indexCaseSensitive &&
       field.binaryType == 'string' &&
@@ -1192,8 +1350,9 @@ List<WireObjectEntry> _nativeFilterObjectEntries(Map<Object?, Object?> value) {
 
 bool _isNativeFilterValue(Object? value) {
   return switch (value) {
-    null || String() || bool() || int() => true,
-    double() => value.isFinite,
+    null || String() || bool() => true,
+    // In JavaScript, Infinity also satisfies `is int`.
+    num() => value.isFinite,
     List() => value.every(_isNativeFilterValue),
     Map() =>
       value.keys.every((key) => key is String) &&
