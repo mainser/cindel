@@ -20,7 +20,7 @@ env:
 jobs:
   dart-static:
     name: Dart format and analyze
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -65,7 +65,7 @@ jobs:
 
   dart-package-tests:
     name: Dart package tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
@@ -157,7 +157,7 @@ jobs:
 
   mdbx-backend:
     name: MDBX backend tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
@@ -236,7 +236,7 @@ jobs:
 
   sqlite-backend:
     name: SQLite backend tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       CINDEL_NATIVE_LIBRARY: ${{ github.workspace }}/packages/cindel/native/target/debug/libcindel_native.so
@@ -315,7 +315,7 @@ jobs:
 
   web-backend:
     name: Web backend tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:
