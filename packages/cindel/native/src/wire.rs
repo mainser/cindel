@@ -375,6 +375,46 @@ pub(crate) fn encode_optional_document_batch(
     Ok(writer.finish())
 }
 
+// Web can serialize ordered references without first cloning each document.
+#[cfg(any(feature = "web", test))]
+pub(crate) fn encode_optional_document_refs<'a>(
+    documents: impl ExactSizeIterator<Item = Option<&'a [u8]>> + Clone,
+) -> Result<Vec<u8>, String> {
+    let size = optional_document_batch_size(documents.clone().map(|doc| doc.map(<[u8]>::len)))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|error| error.to_string())?;
+    let mut writer = Writer { bytes };
+    writer.write_len(documents.len())?;
+    for document in documents {
+        writer.write_bool(document.is_some());
+        if let Some(bytes) = document {
+            writer.write_bytes(bytes)?;
+        }
+    }
+    Ok(writer.finish())
+}
+
+#[cfg(any(feature = "web", test))]
+fn optional_document_batch_size(
+    lengths: impl ExactSizeIterator<Item = Option<usize>>,
+) -> Result<usize, String> {
+    u32::try_from(lengths.len()).map_err(|_| "length exceeds u32::MAX")?;
+    let mut size = 4usize;
+    for length in lengths {
+        size = size.checked_add(1).ok_or("document batch size overflow")?;
+        if let Some(length) = length {
+            u32::try_from(length).map_err(|_| "length exceeds u32::MAX")?;
+            size = size
+                .checked_add(4)
+                .and_then(|n| n.checked_add(length))
+                .ok_or("document batch size overflow")?;
+        }
+    }
+    Ok(size)
+}
+
 pub(crate) fn decode_optional_document_batch(bytes: &[u8]) -> Result<Vec<Option<Vec<u8>>>, String> {
     let mut reader = Reader::new(bytes);
     let count = reader.read_len()?;
@@ -1427,6 +1467,48 @@ mod tests {
             decode_optional_document_batch(&encode_optional_document_batch(&documents).unwrap())
                 .unwrap(),
             documents
+        );
+    }
+
+    // Scenario: Borrowed documents contain empty bytes, missing rows and duplicates.
+    // Covers: Existing wire format and exact response reservation.
+    // Expected: Byte-for-byte equivalence with no capacity growth while writing.
+    #[test]
+    fn borrowed_document_batch_preserves_bytes_and_reserves_once() {
+        // Arrange.
+        let documents = [
+            Some(vec![]),
+            None,
+            Some(vec![7; 65536]),
+            Some(vec![7; 65536]),
+        ];
+        // Act.
+        let bytes = encode_optional_document_refs(documents.iter().map(|v| v.as_deref())).unwrap();
+        // Assert.
+        assert_eq!(bytes, encode_optional_document_batch(&documents).unwrap());
+        assert_eq!(bytes.capacity(), bytes.len());
+        assert_eq!(
+            encode_optional_document_refs(std::iter::empty()).unwrap(),
+            vec![0; 4]
+        );
+    }
+
+    // Scenario: Wire lengths cannot fit the count or document length fields.
+    // Covers: Checked sizing before allocation, including 32-bit address overflow.
+    // Expected: Invalid sizes return errors without allocating oversized buffers.
+    #[test]
+    fn borrowed_document_batch_checks_size_limits() {
+        // Arrange / Act / Assert.
+        let large = u32::MAX as usize;
+        if usize::BITS > 32 {
+            assert!(optional_document_batch_size(std::iter::repeat_n(None, large + 1)).is_err());
+            assert!(optional_document_batch_size([Some(large + 1)].into_iter()).is_err());
+        } else {
+            assert!(optional_document_batch_size([Some(large)].into_iter()).is_err());
+        }
+        assert_eq!(
+            optional_document_batch_size([None, Some(0), Some(10)].into_iter()).unwrap(),
+            25
         );
     }
 

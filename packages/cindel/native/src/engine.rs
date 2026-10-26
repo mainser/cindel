@@ -287,6 +287,17 @@ impl CindelEngine {
         self.storage.get_many_stored(collection, ids)
     }
 
+    #[cfg(all(feature = "web", target_family = "wasm", target_os = "unknown"))]
+    pub(crate) fn encode_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<u8>, String> {
+        match &self.storage {
+            StorageBackend::Sqlite(storage) => storage.encode_many_stored(collection, ids),
+        }
+    }
+
     pub(crate) fn sqlite_native_document_cursor(
         &self,
         collection: &str,

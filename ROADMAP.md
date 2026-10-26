@@ -173,6 +173,8 @@ Current public API policy:
   result batch, preserving per-document validation.
 - MDBX point reads without auxiliary table opens, and bounded SQLite native/Web
   prepared-read reuse with exclusive readers and schema invalidation.
+- Web `getAll` response encoding directly from retrieved rows, without intermediate
+  document clones or a second database pass, with checked response sizing.
 - Compact generated binary document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.

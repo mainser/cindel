@@ -1475,6 +1475,24 @@ impl SqliteStorage {
             .ok_or_else(|| format!("collection `{collection}` has no registered schema"))
     }
 
+    #[cfg(any(feature = "web", test))]
+    pub(crate) fn encode_many_stored(
+        &self,
+        collection: &str,
+        ids: &[u64],
+    ) -> Result<Vec<u8>, String> {
+        let Some(schema) = self.schemas.get(collection) else {
+            return crate::wire::encode_optional_document_batch(&self.get_many(collection, ids)?);
+        };
+        let batch = read_many_native_documents(&self.connection, schema, ids)?;
+        crate::wire::encode_optional_document_refs(
+            batch
+                .ids
+                .iter()
+                .map(|id| batch.found.get(id).map(Vec::as_slice)),
+        )
+    }
+
     fn query_plan_native_document_rows(
         &self,
         collection: &str,
@@ -3060,8 +3078,29 @@ fn get_many_native_documents(
     registered: &RegisteredCollectionSchema,
     ids: &[u64],
 ) -> Result<Vec<Option<Vec<u8>>>, String> {
+    let batch = read_many_native_documents(connection, registered, ids)?;
+    Ok(batch
+        .ids
+        .iter()
+        .map(|id| batch.found.get(id).cloned())
+        .collect())
+}
+
+struct NativeDocumentBatch {
+    ids: Vec<i64>,
+    found: HashMap<i64, Vec<u8>>,
+}
+
+fn read_many_native_documents(
+    connection: &Connection,
+    registered: &RegisteredCollectionSchema,
+    ids: &[u64],
+) -> Result<NativeDocumentBatch, String> {
     if ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(NativeDocumentBatch {
+            ids: Vec::new(),
+            found: HashMap::new(),
+        });
     }
     let schema = &registered.schema;
     let metadata = registered.read();
@@ -3074,6 +3113,8 @@ fn get_many_native_documents(
     let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
     let mut layout = None;
     for chunk in sqlite_ids.chunks(batch_limit) {
+        #[cfg(test)]
+        NATIVE_BATCH_WORK.with(|work| work.set((work.get().0 + 1, work.get().1)));
         let sql = format!(
             "{} IN {}",
             metadata.select,
@@ -3085,6 +3126,8 @@ fn get_many_native_documents(
                 .query(params_from_iter(chunk.iter()))
                 .map_err(sqlite_diagnostic)?;
             while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
+                #[cfg(test)]
+                NATIVE_BATCH_WORK.with(|work| work.set((work.get().0, work.get().1 + 1)));
                 let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
                 let layout = layout.get_or_insert_with(|| NativeDocumentLayout::new(&fields));
                 let document =
@@ -3098,7 +3141,10 @@ fn get_many_native_documents(
     }
     // Offsets are only needed while encoding rows, not while reordering them.
     drop(layout);
-    Ok(sqlite_ids.iter().map(|id| found.get(id).cloned()).collect())
+    Ok(NativeDocumentBatch {
+        ids: sqlite_ids,
+        found,
+    })
 }
 
 fn native_document_from_row(
@@ -3125,6 +3171,7 @@ struct NativeDocumentLayout {
 
 #[cfg(test)]
 std::thread_local! {
+    static NATIVE_BATCH_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     static NATIVE_DOCUMENT_LAYOUT_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -4662,6 +4709,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 #[cfg(test)]
 mod tests {
     include!("sqlite_read_tests.rs");
+    include!("sqlite_batch_response_tests.rs");
     include!("sqlite_revision_tests.rs");
     use std::fs;
     use std::path::PathBuf;

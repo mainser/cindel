@@ -352,6 +352,16 @@ batch, including batches split into multiple SQL statements. Dynamic payload
 offsets remain specific to each row; this does not cache application objects
 or change the order, missing entries or duplicate-ID behavior of `getAll`.
 
+For generated Web `getAll` reads, Rust writes the response directly from the
+retrieved rows in the requested ID order. It checks the final message size and
+reserves its buffer once, without cloning document payloads into an intermediate
+ordered list. Sizing uses the rows already read; it does not issue another query.
+Missing IDs still produce `null`, and duplicate IDs still produce independently
+decoded Dart objects. SQL chunking and transaction visibility are unchanged.
+This reduces temporary allocation, but is not a streaming API: retrieved rows
+and the final response coexist during encoding, and memory still grows with the
+requested result size. MDBX and SQLite native retain their existing cursor reads.
+
 Read preparation is also reused internally. MDBX point reads open only the
 document table and retain the existing transaction's snapshot and pending-write
 visibility. Its generated `getAll` already uses a document cursor. SQLite native

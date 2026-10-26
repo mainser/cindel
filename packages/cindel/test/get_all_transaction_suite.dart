@@ -62,6 +62,39 @@ void main() {
       await database.readTxn(verify);
     });
 
+    // Scenario: Large duplicate payloads straddle the SQLite parameter boundary.
+    // Covers:
+    // - Web response assembly without per-position Rust document copies.
+    // - Null positions, chunk order, independent objects and transaction parity.
+    // Expected: All backends return identical values without sharing mutable models.
+    test('preserves duplicate payloads across response chunks.', () async {
+      // Arrange.
+      final large = 'é漢🙂' * 8192;
+      await database.apiProducts.putAll([_product(1, large), _product(2, '')]);
+      final ids = List<int>.filled(32768, 999);
+      ids[0] = 1;
+      ids[1] = 2;
+      ids[32766] = 1;
+      Future<void> verify() async {
+        // Act.
+        final rows = await database.apiProducts.getAll(ids);
+        // Assert.
+        expect(rows.length, ids.length);
+        expect(rows[0]!.name, large);
+        expect(rows[1]!.name, '');
+        expect(rows[32766]!.name, large);
+        expect(rows.where((row) => row == null).length, ids.length - 3);
+        expect(identical(rows[0], rows[32766]), isFalse);
+        rows[0]!.name = 'local mutation';
+        expect(rows[32766]!.name, large);
+        expect((await database.apiProducts.get(1))!.name, large);
+      }
+
+      await verify();
+      await database.readTxn(verify);
+      await database.writeTxn(verify);
+    });
+
     // Scenario: Repeated reads vary their IDs and batch lengths around updates.
     // Covers:
     // - Prepared-read reuse, eviction, independent overlapping calls and reopen.

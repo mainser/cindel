@@ -231,11 +231,9 @@ impl CindelWebEngine {
     #[wasm_bindgen(js_name = getAllStored)]
     pub fn get_all_stored(&self, collection: String, ids: Vec<u8>) -> Result<Vec<u8>, JsValue> {
         let ids = decode_id_list(&ids).map_err(|error| JsValue::from_str(&error))?;
-        let documents = self
-            .inner
-            .get_many_stored(&collection, &ids)
-            .map_err(|error| JsValue::from_str(&error))?;
-        encode_optional_document_batch(&documents).map_err(|error| JsValue::from_str(&error))
+        self.inner
+            .encode_many_stored(&collection, &ids)
+            .map_err(|error| JsValue::from_str(&error))
     }
 
     #[wasm_bindgen(js_name = delete)]
