@@ -6,6 +6,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 import 'cindel_error.dart';
 import 'database.dart';
 import 'query.dart';
+import 'read_batch.dart';
 import 'schema.dart';
 
 // Typed collection bridge between generated schemas and the database runtime.
@@ -294,7 +295,7 @@ final class CindelTypedCollection<T> {
   ///
   /// Missing ids are returned as `null`.
   Future<List<T?>> getAll(Iterable<int> ids) async {
-    final idList = ids.toList(growable: false);
+    final idList = captureReadIds(ids);
     if (_usesBinaryDocuments || _usesSqliteNativeDocuments) {
       final nativeReader = schema.readNativeDocument;
       final nativeFieldTypes = _nativeFieldTypes();
@@ -305,10 +306,7 @@ final class CindelTypedCollection<T> {
           nativeFieldTypes,
           nativeReader,
         );
-        return [
-          for (final object in objects)
-            if (object == null) null else _bindLinks(object),
-        ];
+        return completeReadBatch(objects, database, schema);
       }
       final documents = await database.getAllBinaryDocuments(
         schema.name,

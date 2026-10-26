@@ -8,6 +8,7 @@ import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
 import '../migration.dart';
+import '../read_batch.dart';
 import '../schema.dart';
 import '../sync.dart';
 import '../watch_coordinator.dart';
@@ -563,7 +564,7 @@ class CindelDatabase {
   ) async {
     _checkOpen();
     _checkCollection(collection);
-    final idList = ids.toList(growable: false);
+    final idList = materializeReadIds(ids);
     for (final id in idList) {
       _checkId(id);
     }

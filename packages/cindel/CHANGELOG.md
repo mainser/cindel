@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.1.5
 
+- Reuse one private ID snapshot and the existing result list in `getAll` across all backends, skipping the binding pass for models without relationships.
 - Reduce temporary allocations in Web `getAll` by encoding retrieved rows directly into the response, preserving order, missing IDs and independent duplicate results.
 - Reduce repeated read preparation in MDBX and SQLite native/Web, with bounded SQLite statement reuse and schema invalidation.
 - Reuse schema layouts when reading Web documents and encoding SQLite result batches, preserving per-document validation.

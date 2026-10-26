@@ -1,7 +1,12 @@
+import 'dart:collection';
+import 'dart:typed_data';
+
 import 'package:cindel/cindel.dart';
+import 'package:cindel/src/read_batch.dart';
 import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
+import 'backup_contract_fixture.dart';
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 import 'schema_generation_fixture.dart';
@@ -13,7 +18,12 @@ void main() {
 
     Future<CindelDatabase> open() => openTestDatabase(
       directory: directory,
-      schemas: [ApiProductSchema, ImmutableUserSchema, UserSchema],
+      schemas: [
+        ApiProductSchema,
+        ImmutableUserSchema,
+        UserSchema,
+        backupNodeSchema,
+      ],
     );
 
     setUp(() async {
@@ -22,6 +32,193 @@ void main() {
       database = await open();
       addTearDown(() => database.close());
     });
+
+    // Scenario: Collection and database share a captured list across an await.
+    // Covers: Private ownership, one materialization and immutable forwarding.
+    // Expected: Internal forwarding reuses the snapshot; caller mutation cannot alter it.
+    test('captures read IDs once without borrowing caller storage.', () {
+      // Arrange.
+      final caller = [2, 99, 1, 2];
+      final source = _SingleUseIds(caller);
+      // Act.
+      final captured = captureReadIds(source);
+      final first = materializeReadIds(captured);
+      final second = materializeReadIds(captureReadIds(captured));
+      caller.clear();
+      // Assert.
+      expect(first, [2, 99, 1, 2]);
+      expect(identical(first, second), isTrue);
+      expect(source.iterations, 1);
+      expect(() => captured[0] = 4, throwsUnsupportedError);
+      expect(() => captured.add(4), throwsUnsupportedError);
+      final external = [1, 2];
+      final direct = materializeReadIds(UnmodifiableListView(external));
+      external[0] = 99;
+      expect(direct, [1, 2]);
+    });
+
+    // Scenario: Generated models without relationships complete a batch.
+    // Covers: Result-list reuse and elimination of the empty binding pass.
+    // Expected: Completion neither visits nor copies the object list.
+    test('returns relationship-free results without another traversal.', () {
+      // Arrange.
+      final objects = _ObservedResults<ApiProduct>([
+        _product(1, 'first'),
+        null,
+      ]);
+      expect(ApiProductSchema.bindLinks, isNull);
+      // Act.
+      final result = completeReadBatch(objects, database, ApiProductSchema);
+      // Assert.
+      expect(identical(result, objects), isTrue);
+      expect(objects.reads, 0);
+      result.add(_product(2, 'second'));
+      expect(result.length, 3);
+    });
+
+    // Scenario: IDs are lazy or mutated while a public getAll is pending.
+    // Covers: Collection/direct database reads, snapshots and transaction paths.
+    // Expected: The original order, nulls and duplicates survive; inputs are consumed once.
+    test('keeps pending read IDs private in all transaction modes.', () async {
+      // Arrange.
+      await database.apiProducts.putAll([
+        _product(1, 'first'),
+        _product(2, 'second'),
+      ]);
+      Future<void> verify() async {
+        final ids = [2, 99, 1, 2];
+        final input = _SingleUseIds(ids);
+        // Act.
+        final pending = database.apiProducts.getAll(input);
+        ids
+          ..clear()
+          ..add(99);
+        final rows = await pending;
+        final directIds = [1, 99, 2, 1];
+        final directPending = database.getAllNativeBinaryDocuments(
+          ApiProductSchema.name,
+          UnmodifiableListView(directIds),
+          Uint8List.fromList([3, 3]), // The fixture's two stored string fields.
+          ApiProductSchema.readNativeDocument!,
+        );
+        directIds[0] = 99;
+        final direct = await directPending;
+        // Assert.
+        expect(input.iterations, 1);
+        expect(_names(rows), ['second', null, 'first', 'second']);
+        expect(_names(direct), ['first', null, 'second', 'first']);
+        expect(identical(rows.first, rows.last), isFalse);
+        rows.add(null);
+        final empty = await database.apiProducts.getAll([]);
+        empty.add(null);
+        expect(empty, [null]);
+      }
+
+      await verify();
+      await database.readTxn(verify);
+      await database.writeTxn(verify);
+    });
+
+    // Scenario: Hydration or binding fails before a batch can be returned.
+    // Covers: Full hydration before binding, error identity and subsequent reads.
+    // Expected: A decode failure binds nothing; binding errors propagate without poisoning reads.
+    test('finishes hydration before binding and preserves failures.', () async {
+      // Arrange.
+      await database.apiProducts.putAll([
+        _product(1, 'first'),
+        _product(2, 'second'),
+      ]);
+      final failure = StateError('controlled read failure');
+      final bound = <int>[];
+      var decoded = 0;
+      var failRead = true;
+      var failBind = false;
+      final base = ApiProductSchema;
+      final schema = CindelCollectionSchema<ApiProduct>(
+        name: base.name,
+        dartName: base.dartName,
+        idField: base.idField,
+        fields: base.fields,
+        links: base.links,
+        compositeIndexes: base.compositeIndexes,
+        toDocument: base.toDocument,
+        fromDocument: base.fromDocument,
+        toBinaryDocument: base.toBinaryDocument,
+        fromBinaryDocument: base.fromBinaryDocument,
+        getId: base.getId,
+        setId: base.setId,
+        writeNativeDocument: base.writeNativeDocument,
+        readNativeDocument: (reader, index) {
+          decoded++;
+          if (failRead && decoded == 2) throw failure;
+          return base.readNativeDocument!(reader, index);
+        },
+        bindLinks: (_, _, object) {
+          expect(decoded, 3);
+          if (failBind) throw failure;
+          bound.add(object.dbId);
+        },
+      );
+      final collection = database.typedCollection(schema);
+      // Act / Assert.
+      await expectLater(
+        collection.getAll([2, 99, 1, 2]),
+        throwsA(same(failure)),
+      );
+      expect(bound, isEmpty);
+      failRead = false;
+      decoded = 0;
+      expect(_names(await collection.getAll([2, 99, 1, 2])), [
+        'second',
+        null,
+        'first',
+        'second',
+      ]);
+      expect(bound, [2, 1, 2]);
+      decoded = 0;
+      failBind = true;
+      await expectLater(
+        collection.getAll([2, 99, 1, 2]),
+        throwsA(same(failure)),
+      );
+      expect(_names(await database.apiProducts.getAll([1, 2])), [
+        'first',
+        'second',
+      ]);
+    });
+
+    // Scenario: A result batch contains duplicate owners of persisted relationships.
+    // Covers: To-many link binding, null positions and independent duplicate owners.
+    // Expected: Each owner can load its links; local changes do not affect its duplicate.
+    test(
+      'binds duplicate relationship owners on the original result list.',
+      () async {
+        // Arrange.
+        final nodes = database.typedCollection(backupNodeSchema);
+        final parent = BackupNode(1);
+        final child = BackupNode(2);
+        await nodes.putAll([parent, child]);
+        parent.children.add(child);
+        await parent.children.save();
+        Future<void> verify() async {
+          // Act.
+          final rows = await nodes.getAll([1, 99, 1]);
+          await rows[0]!.children.load();
+          await rows[2]!.children.load();
+          // Assert.
+          expect(rows[1], isNull);
+          expect(rows[0]!.children.single.dbId, 2);
+          expect(rows[2]!.children.single.dbId, 2);
+          expect(identical(rows[0]!.children, rows[2]!.children), isFalse);
+          rows[0]!.children.remove(rows[0]!.children.single);
+          expect(rows[2]!.children.single.dbId, 2);
+        }
+
+        await verify();
+        await database.readTxn(verify);
+        await database.writeTxn(verify);
+      },
+    );
 
     // Scenario: A batch alternates empty, null and growing dynamic fields.
     // Covers:
@@ -333,6 +530,36 @@ void main() {
 ApiProduct _product(int id, String name) => ApiProduct()
   ..dbId = id
   ..name = name;
+
+final class _SingleUseIds extends IterableBase<int> {
+  _SingleUseIds(this.values);
+  final List<int> values;
+  int iterations = 0;
+
+  @override
+  Iterator<int> get iterator {
+    if (++iterations != 1) throw StateError('IDs enumerated more than once');
+    return values.iterator;
+  }
+}
+
+final class _ObservedResults<T> extends ListBase<T?> {
+  _ObservedResults(this.values);
+  final List<T?> values;
+  int reads = 0;
+  @override
+  int get length => values.length;
+  @override
+  set length(int value) => values.length = value;
+  @override
+  T? operator [](int index) {
+    reads++;
+    return values[index];
+  }
+
+  @override
+  void operator []=(int index, T? value) => values[index] = value;
+}
 
 List<String?> _names(List<ApiProduct?> rows) =>
     rows.map((row) => row?.name).toList();

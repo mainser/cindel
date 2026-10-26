@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:cindel_annotations/cindel_annotations.dart';
 
 import '../cindel_error.dart';
+import '../read_batch.dart';
 import '../schema.dart';
 import 'database.dart';
 import 'query.dart';
@@ -193,7 +194,7 @@ final class CindelTypedCollection<T> {
   ///
   /// Missing ids are returned as `null`.
   Future<List<T?>> getAll(Iterable<int> ids) async {
-    final idList = ids.toList(growable: false);
+    final idList = captureReadIds(ids);
     final nativeReader = schema.readNativeDocument;
     final nativeFieldTypes = _nativeFieldTypes();
     if (nativeReader == null || nativeFieldTypes == null) {
@@ -205,10 +206,7 @@ final class CindelTypedCollection<T> {
       nativeFieldTypes,
       nativeReader,
     );
-    return [
-      for (final object in objects)
-        if (object == null) null else _bindLinks(object),
-    ];
+    return completeReadBatch(objects, database, schema);
   }
 
   /// Deletes the object stored under [id], if it exists.

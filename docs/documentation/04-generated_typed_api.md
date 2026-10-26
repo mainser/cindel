@@ -362,6 +362,19 @@ This reduces temporary allocation, but is not a streaming API: retrieved rows
 and the final response coexist during encoding, and memory still grows with the
 requested result size. MDBX and SQLite native retain their existing cursor reads.
 
+The Dart collection and database layers share one private snapshot of `getAll`
+IDs. Caller-owned lists and lazy iterables are captured before the operation
+suspends; changing the original list while the read is pending cannot change
+the requested IDs. Direct database reads also capture external inputs, including
+unmodifiable views whose underlying list may still be mutable.
+
+The collection returns the object list already built by the reader. Models
+without relationships need no additional binding pass. Models with relationships
+are bound on that same list after hydration, error checking and reader release,
+in input order and skipping missing objects. Results remain independently
+mutable, including duplicate IDs and empty batches. This removes temporary Dart
+lists without changing the generated API, database snapshots or wire format.
+
 Read preparation is also reused internally. MDBX point reads open only the
 document table and retain the existing transaction's snapshot and pending-write
 visibility. Its generated `getAll` already uses a document cursor. SQLite native

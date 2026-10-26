@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.1.5
 
-- Rebuilt the Web runtime to avoid intermediate document copies in `getAll`; native ABI remains 39.
+- Rebuilt the Web runtime to avoid intermediate document copies in `getAll`.
 - Rebuilt the Web runtime with bounded prepared-read statement reuse and schema invalidation.
-- Rebuilt the Web runtime with reusable SQLite batch layouts; native ABI remains 39.
+- Rebuilt the Web runtime with reusable SQLite batch layouts.
 
 ## 1.1.4
 
