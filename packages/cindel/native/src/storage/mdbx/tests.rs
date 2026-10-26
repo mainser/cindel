@@ -6,6 +6,7 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 thread_local! {
+    pub(super) static AUXILIARY_TABLE_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static INDEX_RANGE_ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DISTINCT_CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static SORT_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -4070,4 +4071,51 @@ impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+#[test]
+fn read_preparation_point_reads_skip_auxiliary_tables_and_keep_snapshots() {
+    // Scenario: Point reads run normally, within a snapshot and over staged writes.
+    // Covers: No auxiliary table opens, fresh standalone reads, snapshot isolation and rollback.
+    // Expected: Each read returns the proper version with zero auxiliary opens.
+    // Arrange.
+    let directory = TemporaryDirectory::new("read_preparation");
+    let mut reader = MdbxStorage::open(directory.path()).unwrap();
+    reader.put("users", 1, b"original").unwrap();
+    let mut writer = MdbxStorage::open(directory.path()).unwrap();
+    // Act / Assert.
+    AUXILIARY_TABLE_OPENS.with(|c| c.set(0));
+    assert_eq!(
+        reader.get_stored("users", 1).unwrap().as_deref(),
+        Some(&b"original"[..])
+    );
+    assert!(reader.get_stored("users", 99).unwrap().is_none());
+    AUXILIARY_TABLE_OPENS.with(|c| assert_eq!(c.get(), 0));
+    reader.begin_read_transaction().unwrap();
+    writer.put("users", 1, b"committed").unwrap();
+    AUXILIARY_TABLE_OPENS.with(|c| c.set(0));
+    assert_eq!(
+        reader.get_stored("users", 1).unwrap().as_deref(),
+        Some(&b"original"[..])
+    );
+    AUXILIARY_TABLE_OPENS.with(|c| assert_eq!(c.get(), 0));
+    reader.commit_transaction().unwrap();
+    assert_eq!(
+        reader.get_stored("users", 1).unwrap().as_deref(),
+        Some(&b"committed"[..])
+    );
+    reader.begin_write_transaction().unwrap();
+    reader.put("users", 1, b"pending").unwrap();
+    AUXILIARY_TABLE_OPENS.with(|c| c.set(0));
+    assert_eq!(
+        reader.get_stored("users", 1).unwrap().as_deref(),
+        Some(&b"pending"[..])
+    );
+    assert!(reader.get_stored("users", 99).unwrap().is_none());
+    AUXILIARY_TABLE_OPENS.with(|c| assert_eq!(c.get(), 0));
+    reader.rollback_transaction().unwrap();
+    assert_eq!(
+        reader.get_stored("users", 1).unwrap().as_deref(),
+        Some(&b"committed"[..])
+    );
 }

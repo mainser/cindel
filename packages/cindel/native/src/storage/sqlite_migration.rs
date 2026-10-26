@@ -113,6 +113,7 @@ impl SqliteStorage {
         manifest: &SchemaManifest,
     ) -> Result<(Self, u64), String> {
         self.backup_check_idle()?;
+        self.invalidate_read_preparation();
         let path = crate::backup::TemporaryBackupPath::new(token, "migration")?;
         let mut stage = Self::open_uninitialized(path.database_directory(), true)?;
         stage.migration_path = Some(path);
@@ -137,10 +138,7 @@ impl SqliteStorage {
                     persisted_schema_version(&self.connection, &schema.name)?.unwrap_or(1);
                 self.schemas.insert(
                     schema.name.clone(),
-                    RegisteredCollectionSchema {
-                        version,
-                        schema: schema.clone(),
-                    },
+                    RegisteredCollectionSchema::new(version, schema.clone()),
                 );
             }
             Ok((stage, revision as u64))
@@ -158,6 +156,7 @@ impl SqliteStorage {
         version: u64,
     ) -> Result<(), String> {
         stage.backup_check_idle()?;
+        self.invalidate_read_preparation();
         self.rollback_transaction()?;
         let txn = self
             .connection

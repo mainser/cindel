@@ -39,6 +39,7 @@ impl SqliteStorage {
         version: u64,
     ) -> Result<(), String> {
         self.backup_check_idle()?;
+        self.invalidate_read_preparation();
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)

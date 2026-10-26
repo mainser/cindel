@@ -891,17 +891,25 @@ impl MdbxStorage {
             MdbxTables<'txn>,
         ) -> Result<T, String>,
     ) -> Result<T, String> {
+        self.with_read_snapshot(|transaction| {
+            let tables = open_tables(transaction)?;
+            action(transaction, tables)
+        })
+    }
+
+    fn with_read_snapshot<T>(
+        &self,
+        action: impl FnOnce(&Transaction<'_, RO, NoWriteMap>) -> Result<T, String>,
+    ) -> Result<T, String> {
         if let Some(MdbxActiveTransaction::Read(snapshot)) = &self.active_transaction {
-            let tables = open_tables(&snapshot.transaction)?;
-            return action(&snapshot.transaction, tables);
+            return action(&snapshot.transaction);
         }
         let transaction = self
             .state
             .database
             .begin_ro_txn()
             .map_err(|error| error.to_string())?;
-        let tables = open_tables(&transaction)?;
-        let result = action(&transaction, tables)?;
+        let result = action(&transaction)?;
         transaction.commit().map_err(|error| error.to_string())?;
         Ok(result)
     }
@@ -2318,8 +2326,7 @@ impl StorageEngine for MdbxStorage {
             return Ok(document);
         }
 
-        self.with_read_transaction(|transaction, tables| {
-            let _ = tables;
+        self.with_read_snapshot(|transaction| {
             let Ok(documents_table) = open_documents_table(transaction, collection) else {
                 return Ok(None);
             };
@@ -3281,6 +3288,8 @@ fn open_tables<'txn, K>(
 where
     K: libmdbx::TransactionKind,
 {
+    #[cfg(test)]
+    tests::AUXILIARY_TABLE_OPENS.with(|count| count.set(count.get() + 7));
     Ok(MdbxTables {
         relation_changes: RefCell::new(HashSet::new()),
         preserve_relations: Cell::new(false),

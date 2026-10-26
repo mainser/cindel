@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rebuilt the Web runtime with bounded prepared-read statement reuse and schema invalidation.
 - Rebuilt the Web runtime with reusable SQLite batch layouts; native ABI remains 39.
 
 ## 1.1.4

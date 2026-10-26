@@ -62,6 +62,66 @@ void main() {
       await database.readTxn(verify);
     });
 
+    // Scenario: Repeated reads vary their IDs and batch lengths around updates.
+    // Covers:
+    // - Prepared-read reuse, eviction, independent overlapping calls and reopen.
+    // - Fresh values after commits and restoration of values after rollback.
+    // Expected: All three backends preserve order, nulls and transaction visibility.
+    test(
+      'reuses read preparation without retaining parameters or results.',
+      () async {
+        // Arrange.
+        await database.apiProducts.putAll([
+          _product(1, 'first'),
+          _product(2, 'second'),
+        ]);
+        // Act / Assert.
+        for (var size = 1; size <= 20; size++) {
+          final ids = List.generate(size, (i) => [2, 99, 1][i % 3]);
+          expect(_names(await database.apiProducts.getAll(ids)), [
+            for (final id in ids)
+              id == 99 ? null : (id == 1 ? 'first' : 'second'),
+          ]);
+        }
+        await database.apiProducts.put(_product(1, 'updated'));
+        expect((await database.apiProducts.get(1))!.name, 'updated');
+        await database.readTxn(() async {
+          final batches = await Future.wait([
+            database.apiProducts.getAll([1, 2, 99]),
+            database.apiProducts.getAll([2, 99, 1]),
+          ]);
+          expect(_names(batches[0]), ['updated', 'second', null]);
+          expect(_names(batches[1]), ['second', null, 'updated']);
+          expect(identical(batches[0][0], batches[1][2]), isFalse);
+        });
+        final failure = StateError('rollback prepared reads');
+        await expectLater(
+          database.writeTxn(() async {
+            await database.apiProducts.put(_product(1, 'pending'));
+            await database.apiProducts.delete(2);
+            expect(_names(await database.apiProducts.getAll([1, 2, 1])), [
+              'pending',
+              null,
+              'pending',
+            ]);
+            throw failure;
+          }),
+          throwsA(same(failure)),
+        );
+        expect(_names(await database.apiProducts.getAll([1, 2])), [
+          'updated',
+          'second',
+        ]);
+        await database.close();
+        database = await open();
+        expect(_names(await database.apiProducts.getAll([2, 1, 99])), [
+          'second',
+          'updated',
+          null,
+        ]);
+      },
+    );
+
     for (final rollback in [false, true]) {
       // Scenario: Bulk reads are interleaved with writes in an explicit txn.
       // Covers: Input order, duplicates, missing/deleted rows, latest staged

@@ -171,6 +171,8 @@ Current public API policy:
   runtime.
 - Reused schema offsets in Web readers and immutable SQLite row layouts per
   result batch, preserving per-document validation.
+- MDBX point reads without auxiliary table opens, and bounded SQLite native/Web
+  prepared-read reuse with exclusive readers and schema invalidation.
 - Compact generated binary document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.

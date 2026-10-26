@@ -1,3 +1,8 @@
+#[path = "sqlite_reads.rs"]
+mod reads;
+use reads::*;
+use std::cell::OnceCell;
+use std::sync::{Arc, Mutex};
 #[path = "sqlite_backup.rs"]
 mod backup;
 #[path = "sqlite_migration.rs"]
@@ -41,6 +46,7 @@ use super::{DocumentFormatVersion, SchemaMetadataVersion, StorageLayoutVersion, 
 
 pub struct SqliteStorage {
     connection: Connection,
+    read_cache: Arc<Mutex<NativeReadCache>>,
     migration_path: Option<crate::backup::TemporaryBackupPath>,
     schemas: HashMap<String, RegisteredCollectionSchema>,
     persist_schema_metadata: bool,
@@ -53,6 +59,7 @@ pub struct SqliteStorage {
 struct RegisteredCollectionSchema {
     version: u64,
     schema: CollectionSchemaManifest,
+    read: OnceCell<ReadMetadata>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +71,7 @@ enum TransactionMode {
 pub(crate) struct SqliteNativeDocumentCursor {
     database: *mut ffi::sqlite3,
     statement: *mut ffi::sqlite3_stmt,
+    read_statement: Option<NativeReadStatement>,
     ids: Vec<i64>,
     current_index: Option<usize>,
     current_present: bool,
@@ -80,7 +88,8 @@ pub(crate) struct SqliteNativeQueryCursor {
 impl SqliteNativeDocumentCursor {
     fn new(
         connection: &Connection,
-        schema: &CollectionSchemaManifest,
+        sql: &Arc<CString>,
+        cache: &Arc<Mutex<NativeReadCache>>,
         ids: &[u64],
         owns_transaction: bool,
     ) -> Result<Self, String> {
@@ -89,38 +98,24 @@ impl SqliteNativeDocumentCursor {
             .copied()
             .map(sqlite_id)
             .collect::<Result<Vec<_>, _>>()?;
-        let fields = native_fields(schema);
-        let mut select = String::from("SELECT ");
-        select.push_str(SQLITE_ROW_ID_COLUMN);
-        for field in &fields {
-            select.push_str(", ");
-            select.push_str(&field.name);
-        }
-        select.push_str(" FROM ");
-        select.push_str(&schema.name);
-        select.push_str(" WHERE ");
-        select.push_str(SQLITE_ROW_ID_COLUMN);
-        select.push_str(" = ?");
-
-        let sql = CString::new(select).map_err(sqlite_diagnostic)?;
-        let mut statement = ptr::null_mut();
         let database = unsafe { connection.handle() };
         if owns_transaction {
             sqlite_exec(database, "BEGIN")?;
         }
-        let status = unsafe {
-            ffi::sqlite3_prepare_v2(database, sql.as_ptr(), -1, &mut statement, ptr::null_mut())
-        };
-        if status != ffi::SQLITE_OK {
-            let error = sqlite_error(database);
-            if owns_transaction {
-                let _ = sqlite_exec(database, "ROLLBACK");
+        let read_statement = match NativeReadStatement::acquire(database, sql, cache) {
+            Ok(statement) => statement,
+            Err(error) => {
+                if owns_transaction {
+                    let _ = sqlite_exec(database, "ROLLBACK");
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
+        };
+        let statement = read_statement.statement;
         Ok(Self {
             database,
             statement,
+            read_statement: Some(read_statement),
             ids,
             current_index: None,
             current_present: false,
@@ -395,12 +390,9 @@ impl Drop for SqliteNativeQueryCursor {
 
 impl Drop for SqliteNativeDocumentCursor {
     fn drop(&mut self) {
-        if !self.statement.is_null() {
-            unsafe {
-                ffi::sqlite3_finalize(self.statement);
-            }
-            self.statement = ptr::null_mut();
-        }
+        // Reset before ending the transaction so a cached statement retains no snapshot.
+        drop(self.read_statement.take());
+        self.statement = ptr::null_mut();
         if self.owns_transaction {
             let _ = sqlite_exec(self.database, "COMMIT");
             self.owns_transaction = false;
@@ -545,12 +537,13 @@ impl SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<Option<SqliteNativeDocumentCursor>, String> {
-        let Some(schema) = self.collection_schema(collection) else {
+        let Some(schema) = self.schemas.get(collection) else {
             return Ok(None);
         };
         SqliteNativeDocumentCursor::new(
             &self.connection,
-            schema,
+            &schema.read().point,
+            &self.read_cache,
             ids,
             self.active_transaction.is_none(),
         )
@@ -576,8 +569,10 @@ impl SqliteStorage {
 
     fn open_uninitialized(directory: &str, persist_schema_metadata: bool) -> Result<Self, String> {
         let connection = open_sqlite_connection(directory)?;
+        connection.set_prepared_statement_cache_capacity(READ_CACHE_ENTRIES);
         let storage = Self {
             connection,
+            read_cache: Arc::new(Mutex::new(NativeReadCache::default())),
             migration_path: None,
             schemas: HashMap::new(),
             persist_schema_metadata,
@@ -689,10 +684,7 @@ impl SqliteStorage {
         create_collection_table(&self.connection, collection)?;
         self.schemas.insert(
             collection.name.clone(),
-            RegisteredCollectionSchema {
-                version,
-                schema: collection.clone(),
-            },
+            RegisteredCollectionSchema::new(version, collection.clone()),
         );
         Ok(())
     }
@@ -742,6 +734,7 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn rollback_transaction(&mut self) -> Result<(), String> {
+        self.invalidate_read_preparation();
         if self.active_transaction.is_none() {
             return Err("no active transaction to rollback".into());
         }
@@ -818,7 +811,7 @@ impl StorageEngine for SqliteStorage {
         collection: &str,
         ids: &[u64],
     ) -> Result<Vec<Option<Vec<u8>>>, String> {
-        let Some(schema) = self.collection_schema(collection) else {
+        let Some(schema) = self.schemas.get(collection) else {
             return self.get_many(collection, ids);
         };
         get_many_native_documents(&self.connection, schema, ids)
@@ -1175,6 +1168,7 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn register_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        self.invalidate_read_preparation();
         validate_schema_manifest(manifest)?;
         self.ensure_can_write()?;
         if self.persist_schema_metadata {
@@ -1185,10 +1179,7 @@ impl StorageEngine for SqliteStorage {
                         persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
                     self.schemas.insert(
                         collection.name.clone(),
-                        RegisteredCollectionSchema {
-                            version,
-                            schema: collection.clone(),
-                        },
+                        RegisteredCollectionSchema::new(version, collection.clone()),
                     );
                 }
                 return Ok(());
@@ -1204,10 +1195,7 @@ impl StorageEngine for SqliteStorage {
                     persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
                 self.schemas.insert(
                     collection.name.clone(),
-                    RegisteredCollectionSchema {
-                        version,
-                        schema: collection.clone(),
-                    },
+                    RegisteredCollectionSchema::new(version, collection.clone()),
                 );
             }
             return Ok(());
@@ -1236,6 +1224,7 @@ impl StorageEngine for SqliteStorage {
     }
 
     fn register_migrated_schemas(&mut self, manifest: &SchemaManifest) -> Result<(), String> {
+        self.invalidate_read_preparation();
         validate_schema_manifest(manifest)?;
         self.ensure_can_write()?;
         if !self.persist_schema_metadata {
@@ -1248,10 +1237,7 @@ impl StorageEngine for SqliteStorage {
                     persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
                 self.schemas.insert(
                     collection.name.clone(),
-                    RegisteredCollectionSchema {
-                        version,
-                        schema: collection.clone(),
-                    },
+                    RegisteredCollectionSchema::new(version, collection.clone()),
                 );
             }
             return Ok(());
@@ -1267,10 +1253,7 @@ impl StorageEngine for SqliteStorage {
                 persisted_schema_version(&self.connection, &collection.name)?.unwrap_or(1);
             self.schemas.insert(
                 collection.name.clone(),
-                RegisteredCollectionSchema {
-                    version,
-                    schema: collection.clone(),
-                },
+                RegisteredCollectionSchema::new(version, collection.clone()),
             );
         }
         Ok(())
@@ -3074,25 +3057,15 @@ fn sqlite_placeholders_from(start: usize, count: usize) -> String {
 
 fn get_many_native_documents(
     connection: &Connection,
-    schema: &CollectionSchemaManifest,
+    registered: &RegisteredCollectionSchema,
     ids: &[u64],
 ) -> Result<Vec<Option<Vec<u8>>>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let fields = native_fields(schema);
-    let mut select = String::from("SELECT ");
-    select.push_str(SQLITE_ROW_ID_COLUMN);
-    for field in &fields {
-        select.push_str(", ");
-        select.push_str(&field.name);
-    }
-    select.push_str(" FROM ");
-    select.push_str(&schema.name);
-    select.push_str(" WHERE ");
-    select.push_str(SQLITE_ROW_ID_COLUMN);
-    select.push_str(" IN ");
-
+    let schema = &registered.schema;
+    let metadata = registered.read();
+    let fields: Vec<_> = metadata.order.iter().map(|&i| &schema.fields[i]).collect();
     let sqlite_ids = ids
         .iter()
         .map(|id| sqlite_id(*id))
@@ -3101,18 +3074,27 @@ fn get_many_native_documents(
     let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
     let mut layout = None;
     for chunk in sqlite_ids.chunks(batch_limit) {
-        let sql = format!("{select}{}", sqlite_placeholders(chunk.len()));
-        let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
-        let mut rows = statement
-            .query(params_from_iter(chunk.iter()))
-            .map_err(sqlite_diagnostic)?;
-        while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
-            let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
-            let layout = layout.get_or_insert_with(|| NativeDocumentLayout::new(&fields));
-            let document =
-                native_document_from_row(row, &fields, layout).map_err(sqlite_diagnostic)?;
-            found.insert(id, document);
-        }
+        let sql = format!(
+            "{} IN {}",
+            metadata.select,
+            sqlite_placeholders(chunk.len())
+        );
+        let mut statement = connection.prepare_cached(&sql).map_err(sqlite_diagnostic)?;
+        let result = (|| {
+            let mut rows = statement
+                .query(params_from_iter(chunk.iter()))
+                .map_err(sqlite_diagnostic)?;
+            while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
+                let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
+                let layout = layout.get_or_insert_with(|| NativeDocumentLayout::new(&fields));
+                let document =
+                    native_document_from_row(row, &fields, layout).map_err(sqlite_diagnostic)?;
+                found.insert(id, document);
+            }
+            Ok::<_, String>(())
+        })();
+        finish_batch_statement(statement, result.is_ok(), sql.len());
+        result?;
     }
     // Offsets are only needed while encoding rows, not while reordering them.
     drop(layout);
@@ -4679,6 +4661,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 
 #[cfg(test)]
 mod tests {
+    include!("sqlite_read_tests.rs");
     include!("sqlite_revision_tests.rs");
     use std::fs;
     use std::path::PathBuf;

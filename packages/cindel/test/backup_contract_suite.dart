@@ -101,6 +101,30 @@ void main({bool includeSameDirectoryHandles = true}) {
       );
     }
 
+    // Scenario: Missing-ID reads populate preparation before restoring an archive.
+    // Covers:
+    // - Restore invalidation of prepared get/getAll reads in every backend.
+    // - Fresh results on the same open handle, without relying on reopening.
+    // Expected: Previously absent IDs become visible immediately after restore.
+    test('restores after warming prepared reads on the target.', () async {
+      // Arrange.
+      final records = await archive();
+      final target = await open();
+      final nodes = target.typedCollection(backupNodeSchema);
+      expect(await nodes.get(1), isNull);
+      expect(await nodes.getAll([3, 1, 99, 3]), [null, null, null, null]);
+      // Act.
+      await restore(target, records);
+      // Assert.
+      expect(await nodes.get(1), isNotNull);
+      final rows = await nodes.getAll([3, 1, 99, 3]);
+      expect(rows[0], isNotNull);
+      expect(rows[1], isNotNull);
+      expect(rows[2], isNull);
+      expect(rows[3], isNotNull);
+      expect(identical(rows[0], rows[3]), isFalse);
+    });
+
     // Scenario: A version-two archive contains paged links, cycles, backlinks
     // and allocation metadata.
     // Covers:

@@ -352,6 +352,29 @@ batch, including batches split into multiple SQL statements. Dynamic payload
 offsets remain specific to each row; this does not cache application objects
 or change the order, missing entries or duplicate-ID behavior of `getAll`.
 
+Read preparation is also reused internally. MDBX point reads open only the
+document table and retain the existing transaction's snapshot and pending-write
+visibility. Its generated `getAll` already uses a document cursor. SQLite native
+reuses its ordered field metadata and prepared ID lookup; Web reuses prepared
+`IN` statements when the same batch shape is requested again. These are internal
+optimizations: application code and the generated API are identical on all three
+backends.
+
+Each active SQLite reader exclusively owns its statement. Returning it resets
+the cursor and clears the parameters, so the cache retains neither a read
+snapshot nor application results. Schema registration, migration, restore and
+transaction rollback invalidate preparation; closing releases cached statements.
+An active native statement from an invalidated cache is discarded when returned.
+
+The native cursor and binary batch paths each retain at most eight idle
+statements. A statement is retained only when its SQLite-reported memory plus
+SQL text is at most 64 KiB; larger requests execute normally without retaining
+their statement. Thus these two caches together retain at most 1 MiB of measured
+statement/SQL storage per connection, plus container overhead. Lazily constructed
+field-order and SQL metadata are separate and proportional to the registered
+schemas. This trades a small amount of retained preparation memory for less
+repeated work; it does not change the number of rows returned or cache objects.
+
 ## Deleting One Object: `delete`
 
 `delete` removes one object by id.

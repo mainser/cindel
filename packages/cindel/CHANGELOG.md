@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reduce repeated read preparation in MDBX and SQLite native/Web, with bounded SQLite statement reuse and schema invalidation.
 - Reuse schema layouts when reading Web documents and encoding SQLite result batches, preserving per-document validation.
 
 ## 1.1.4
