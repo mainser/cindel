@@ -1255,12 +1255,30 @@ final class WireChangeSet {
 ///
 /// The payload is a u32 count followed by that many little-endian u64 ids.
 Uint8List encodeIdList(List<int> ids) {
-  final writer = CindelWireWriter();
-  writer.writeLength(ids.length);
-  for (final id in ids) {
-    writer.writeUint64(id);
+  final count = ids.length;
+  if (count < 0 || count > 0xffffffff) {
+    throw RangeError.range(count, 0, 0xffffffff, 'value');
   }
-  return writer.finish();
+  final bytes = Uint8List(4 + count * 8);
+  final data = ByteData.view(bytes.buffer);
+  data.setUint32(0, count, Endian.little);
+  var offset = 4;
+  for (final id in ids) {
+    // Keep the existing Web arithmetic and range checks. JavaScript must not
+    // truncate an ID through 32-bit bitwise operators or a native u64 write.
+    if (id < 0) {
+      throw RangeError.range(id, 0, null, 'value');
+    }
+    final low = id % _uint32Range;
+    final high = id ~/ _uint32Range;
+    if (high < 0 || high > 0xffffffff) {
+      throw RangeError.range(high, 0, 0xffffffff, 'value');
+    }
+    data.setUint32(offset, low, Endian.little);
+    data.setUint32(offset + 4, high, Endian.little);
+    offset += 8;
+  }
+  return bytes;
 }
 
 /// Decodes a native id-list payload.

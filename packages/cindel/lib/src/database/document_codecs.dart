@@ -43,8 +43,10 @@ Object? _wireValueToObject(WireValue value) {
 
 // Encode/decode id and binary-document batches exchanged with the native layer.
 
-Uint8List _encodeIds(Iterable<int> ids) {
-  return encodeIdList(ids.toList(growable: false));
+// Callers already own a captured list; encoding is synchronous and does not
+// retain it. Do not make another snapshot at the wire boundary.
+Uint8List _encodeIds(List<int> ids) {
+  return encodeIdList(ids);
 }
 
 List<Uint8List?> _decodeBinaryDocumentBatch(Uint8List bytes) {

@@ -1149,12 +1149,24 @@ final class WireChangeSet {
 ///
 /// The payload is a u32 count followed by that many little-endian u64 ids.
 Uint8List encodeIdList(List<int> ids) {
-  final writer = CindelWireWriter();
-  writer.writeLength(ids.length);
-  for (final id in ids) {
-    writer.writeUint64(id);
+  final count = ids.length;
+  if (count < 0 || count > 0xffffffff) {
+    throw RangeError.range(count, 0, 0xffffffff, 'value');
   }
-  return writer.finish();
+  // The wire size is known: one count and eight bytes per ID. Allocate the
+  // final buffer directly instead of collecting a fragment for every value.
+  final bytes = Uint8List(4 + count * 8);
+  final data = ByteData.view(bytes.buffer);
+  data.setUint32(0, count, Endian.little);
+  var offset = 4;
+  for (final id in ids) {
+    if (id < 0 || id > _maxUint64) {
+      throw RangeError.range(id, 0, _maxUint64, 'value');
+    }
+    data.setUint64(offset, id, Endian.little);
+    offset += 8;
+  }
+  return bytes;
 }
 
 /// Decodes a native id-list payload.

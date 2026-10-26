@@ -368,6 +368,13 @@ suspends; changing the original list while the read is pending cannot change
 the requested IDs. Direct database reads also capture external inputs, including
 unmodifiable views whose underlying list may still be mutable.
 
+ID batches are encoded directly into a buffer sized for the count and all IDs,
+without allocating a fragment per ID or copying the private list again in the
+native codec. The existing count and ID range checks remain in place. Web keeps
+its two-word integer encoding to preserve JavaScript precision. The wire format
+and ABI are unchanged; native FFI and engine ownership still require their own
+buffers. This reduces temporary allocation, not the size of the requested data.
+
 The collection returns the object list already built by the reader. Models
 without relationships need no additional binding pass. Models with relationships
 are bound on that same list after hydration, error checking and reader release,

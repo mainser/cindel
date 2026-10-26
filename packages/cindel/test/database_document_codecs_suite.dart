@@ -1,6 +1,7 @@
 // ignore_for_file: undefined_class, undefined_function
 // ignore_for_file: undefined_identifier, uri_does_not_exist
 
+import 'dart:collection';
 import 'dart:mirrors';
 import 'dart:typed_data';
 
@@ -11,6 +12,20 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel database document codecs', () {
+    // Scenario: The database has already captured and validated its ID list.
+    // Covers:
+    // - The native codec boundary must not materialize another list.
+    // Expected: IDs are encoded once without calling toList on owned storage.
+    test('encodes an owned ID list without copying it again.', () {
+      // Arrange.
+      final ids = _OwnedIds([2, 99, 1, 2]);
+      // Act.
+      final payload = _invokePrivate<Uint8List>('_encodeIds', [ids]);
+      // Assert.
+      expect(decodeIdList(payload), [2, 99, 1, 2]);
+      expect(ids.reads, 4);
+    });
+
     // Scenario: Query sources return duplicated ids from multi-entry indexes.
     // Covers:
     // - `_dedupeIds` preserving first-seen order.
@@ -369,3 +384,25 @@ LibraryMirror _databaseLibrary() {
 
 Symbol _privateSymbol(String name) =>
     MirrorSystem.getSymbol(name, _databaseLibrary());
+
+final class _OwnedIds extends ListBase<int> {
+  _OwnedIds(this.values);
+  final List<int> values;
+  int reads = 0;
+  @override
+  int get length => values.length;
+  @override
+  set length(int value) => throw UnsupportedError('fixed input');
+  @override
+  int operator [](int index) {
+    reads++;
+    return values[index];
+  }
+
+  @override
+  void operator []=(int index, int value) =>
+      throw UnsupportedError('fixed input');
+  @override
+  List<int> toList({bool growable = true}) =>
+      throw StateError('The captured ID list was copied again.');
+}

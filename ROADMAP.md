@@ -177,6 +177,8 @@ Current public API policy:
   document clones or a second database pass, with checked response sizing.
 - One private Dart ID snapshot and one hydrated result list for `getAll` across
   all backends, skipping the extra pass for models without relationships.
+- Exact-sized ID batch encoding without per-ID fragments or a redundant native
+  list copy, preserving range validation and the existing wire format.
 - Compact generated binary document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.

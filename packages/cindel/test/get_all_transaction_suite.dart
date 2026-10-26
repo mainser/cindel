@@ -7,11 +7,13 @@ import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
 import 'backup_contract_fixture.dart';
+import 'id_codec_suite.dart' as id_codec;
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 import 'schema_generation_fixture.dart';
 
 void main() {
+  id_codec.main();
   group('Cindel getAll transactions', () {
     late String directory;
     late CindelDatabase database;
@@ -31,6 +33,48 @@ void main() {
       addTearDown(() => deleteCloseTestDirectory(directory));
       database = await open();
       addTearDown(() => database.close());
+    });
+
+    // Scenario: Public batch reads contain IDs spanning both 32-bit halves.
+    // Covers:
+    // - Generated getAll, missing and duplicate IDs, transactions and rejection.
+    // Expected: All backends return the same objects and remain usable after errors.
+    test('preserves high IDs through the complete batch path.', () async {
+      // Arrange.
+      final ids = [1, 4294967295, 4294967296, 9007199254740991];
+      await database.apiProducts.putAll([
+        for (final id in ids) _product(id, 'product-$id'),
+      ]);
+      Future<void> verify() async {
+        // Act.
+        final rows = await database.apiProducts.getAll([
+          ids.last,
+          4294967297,
+          ids[1],
+          ids[2],
+          ids.last,
+          ids.first,
+        ]);
+        // Assert.
+        expect(_names(rows), [
+          'product-${ids.last}',
+          null,
+          'product-${ids[1]}',
+          'product-${ids[2]}',
+          'product-${ids.last}',
+          'product-1',
+        ]);
+        expect(identical(rows[0], rows[4]), isFalse);
+      }
+
+      await verify();
+      await database.readTxn(verify);
+      await database.writeTxn(verify);
+      await expectLater(
+        database.apiProducts.getAll([1, -1]),
+        throwsArgumentError,
+      );
+      await verify();
     });
 
     // Scenario: Collection and database share a captured list across an await.
