@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Rebuilt the Web runtime with reusable SQLite batch layouts; native ABI remains 39.
+
 ## 1.1.4
 
 - Fixed release artifact assembly so every platform ships the freshly built ABI 39 binaries, verified against the final Pub archive.

@@ -151,7 +151,7 @@ final class CindelWebNativeDocumentReader
       throw StateError('Native Cindel document is not present.');
     }
     final staticSize = _readU24(document, 0);
-    final expectedStaticSize = _staticSize(_fieldTypes);
+    final expectedStaticSize = _offsets.last;
     if (staticSize != expectedStaticSize) {
       throw const FormatException(
         'Native Cindel document static size does not match schema.',
@@ -251,15 +251,9 @@ List<int> _fieldOffsets(Uint8List fieldTypes) {
         offset += _fieldStaticSize(fieldType);
         return current;
       }(),
+    // The final offset is the static size, shared by every row in this reader.
+    offset,
   ];
-}
-
-int _staticSize(Uint8List fieldTypes) {
-  var size = 0;
-  for (final fieldType in fieldTypes) {
-    size += _fieldStaticSize(fieldType);
-  }
-  return size;
 }
 
 int _fieldStaticSize(int fieldType) {

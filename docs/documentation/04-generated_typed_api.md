@@ -345,6 +345,13 @@ null for pending deletions, with the same ordering and duplicate-ID behavior.
 This also applies to generated models with final IDs. See
 [transactional reads](09-transactions.md#await-every-operation-and-control-handle-ownership).
 
+Web readers calculate schema offsets and the expected static size once per
+reader, while still validating each document's header, bounds and field types.
+SQLite's binary result encoder also shares one immutable layout across the
+batch, including batches split into multiple SQL statements. Dynamic payload
+offsets remain specific to each row; this does not cache application objects
+or change the order, missing entries or duplicate-ID behavior of `getAll`.
+
 ## Deleting One Object: `delete`
 
 `delete` removes one object by id.

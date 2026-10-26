@@ -1500,13 +1500,13 @@ impl SqliteStorage {
         let schema = self.required_collection_schema(collection)?;
         let fields = native_fields(&schema);
         let (sql, params) = sqlite_query_plan_sql(&schema, plan, SqliteQuerySelect::Documents)?;
+        let mut layout = None;
         let mut statement = self.connection.prepare(&sql).map_err(sqlite_diagnostic)?;
         let rows = statement
             .query_map(params_from_iter(params.iter()), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    native_document_from_row(row, &fields)?,
-                ))
+                let id = row.get::<_, i64>(0)?;
+                let layout = layout.get_or_insert_with(|| NativeDocumentLayout::new(&fields));
+                Ok((id, native_document_from_row(row, &fields, layout)?))
             })
             .map_err(sqlite_diagnostic)?;
         let mut documents = Vec::new();
@@ -3099,6 +3099,7 @@ fn get_many_native_documents(
         .collect::<Result<Vec<_>, _>>()?;
     let batch_limit = SQLITE_MAX_PARAM_COUNT.max(1);
     let mut found = HashMap::<i64, Vec<u8>>::with_capacity(sqlite_ids.len());
+    let mut layout = None;
     for chunk in sqlite_ids.chunks(batch_limit) {
         let sql = format!("{select}{}", sqlite_placeholders(chunk.len()));
         let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
@@ -3107,25 +3108,29 @@ fn get_many_native_documents(
             .map_err(sqlite_diagnostic)?;
         while let Some(row) = rows.next().map_err(sqlite_diagnostic)? {
             let id = row.get::<_, i64>(0).map_err(sqlite_diagnostic)?;
-            let document = native_document_from_row(row, &fields).map_err(sqlite_diagnostic)?;
+            let layout = layout.get_or_insert_with(|| NativeDocumentLayout::new(&fields));
+            let document =
+                native_document_from_row(row, &fields, layout).map_err(sqlite_diagnostic)?;
             found.insert(id, document);
         }
     }
+    // Offsets are only needed while encoding rows, not while reordering them.
+    drop(layout);
     Ok(sqlite_ids.iter().map(|id| found.get(id).cloned()).collect())
 }
 
 fn native_document_from_row(
     row: &Row<'_>,
     fields: &[&FieldSchemaManifest],
+    layout: &NativeDocumentLayout,
 ) -> rusqlite::Result<Vec<u8>> {
-    let mut layout = NativeDocumentLayout::new(fields);
     let mut bytes = Vec::with_capacity(3 + layout.static_size);
     bytes.resize(3 + layout.static_size, 0);
     write_u24_le(&mut bytes, 0, layout.static_size)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     for (index, field) in fields.iter().enumerate() {
         let value = row.get_ref(index + 1)?;
-        write_native_row_value(&mut bytes, &mut layout, index, field, value)
+        write_native_row_value(&mut bytes, layout, index, field, value)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
     }
     Ok(bytes)
@@ -3136,8 +3141,15 @@ struct NativeDocumentLayout {
     static_size: usize,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static NATIVE_DOCUMENT_LAYOUT_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl NativeDocumentLayout {
     fn new(fields: &[&FieldSchemaManifest]) -> Self {
+        #[cfg(test)]
+        NATIVE_DOCUMENT_LAYOUT_BUILDS.with(|count| count.set(count.get() + 1));
         let mut offsets = Vec::with_capacity(fields.len());
         let mut static_size = 0usize;
         for field in fields {
@@ -3162,7 +3174,7 @@ fn native_field_static_size(field: &FieldSchemaManifest) -> usize {
 
 fn write_native_row_value(
     bytes: &mut Vec<u8>,
-    layout: &mut NativeDocumentLayout,
+    layout: &NativeDocumentLayout,
     index: usize,
     field: &FieldSchemaManifest,
     value: ValueRef<'_>,
@@ -5301,7 +5313,9 @@ mod tests {
         // - Chunked native collection-table reads.
         // - Reconstructing the original id order after unordered SQL results.
         // - Preserving nulls for missing ids and values for duplicate ids.
-        // Expected: Stored native documents are returned in requested order.
+        // - Reusing one immutable row layout across all SQL chunks.
+        // - No layout allocation for empty or all-missing requests.
+        // Expected: Ordered documents and exactly one layout for the batch.
 
         // Arrange.
         let directory = TemporaryDirectory::new("native_get_chunks");
@@ -5336,15 +5350,26 @@ mod tests {
         ids.push(1);
 
         // Act.
+        NATIVE_DOCUMENT_LAYOUT_BUILDS.with(|count| count.set(0));
         let documents = storage.get_many_stored("users", &ids).unwrap();
 
         // Assert.
+        NATIVE_DOCUMENT_LAYOUT_BUILDS.with(|count| assert_eq!(count.get(), 1));
         assert_eq!(documents.len(), ids.len());
         assert!(documents[0].is_some());
         assert_eq!(documents[1], None);
         assert!(documents[SQLITE_MAX_PARAM_COUNT].is_some());
         assert!(documents.last().unwrap().is_some());
         assert_eq!(documents[0], *documents.last().unwrap());
+        NATIVE_DOCUMENT_LAYOUT_BUILDS.with(|count| count.set(0));
+        assert_eq!(
+            storage
+                .get_many_stored("users", &[second_hit + 1, second_hit + 2])
+                .unwrap(),
+            vec![None, None]
+        );
+        assert!(storage.get_many_stored("users", &[]).unwrap().is_empty());
+        NATIVE_DOCUMENT_LAYOUT_BUILDS.with(|count| assert_eq!(count.get(), 0));
     }
 
     #[test]

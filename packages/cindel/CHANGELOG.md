@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Reuse schema layouts when reading Web documents and encoding SQLite result batches, preserving per-document validation.
+
 ## 1.1.4
 
 - Released alongside corrected ABI 39 binaries in `cindel_flutter_libs` 1.1.4.

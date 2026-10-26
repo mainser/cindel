@@ -23,6 +23,45 @@ void main() {
       addTearDown(() => database.close());
     });
 
+    // Scenario: A batch alternates empty, null and growing dynamic fields.
+    // Covers:
+    // - Reused row layouts, input order, missing IDs and mutable duplicates.
+    // - The same generated API inside and outside a read transaction.
+    // Expected: Offsets never leak between rows and duplicate objects are independent.
+    test('keeps variable payloads independent across batch rows.', () async {
+      // Arrange.
+      final products = [
+        for (var i = 1; i <= 256; i++)
+          _product(i, i.isEven ? '' : 'é漢🙂' * (i % 17))
+            ..id = i % 3 == 0 ? null : 'key-$i',
+      ];
+      await database.apiProducts.putAll(products);
+      final ids = [256, 999, ...List.generate(256, (i) => 256 - i), 1];
+      Future<void> verify() async {
+        // Act.
+        final rows = await database.apiProducts.getAll(ids);
+        // Assert.
+        expect(rows.length, ids.length);
+        for (var i = 0; i < ids.length; i++) {
+          if (ids[i] == 999) {
+            expect(rows[i], isNull);
+          } else {
+            final expected = products[ids[i] - 1];
+            expect(rows[i]!.dbId, expected.dbId);
+            expect(rows[i]!.name, expected.name);
+            expect(rows[i]!.id, expected.id);
+          }
+        }
+        expect(identical(rows[0], rows[2]), isFalse);
+        rows[0]!.name = 'changed only in memory';
+        expect(rows[2]!.name, products.last.name);
+        expect((await database.apiProducts.get(256))!.name, products.last.name);
+      }
+
+      await verify();
+      await database.readTxn(verify);
+    });
+
     for (final rollback in [false, true]) {
       // Scenario: Bulk reads are interleaved with writes in an explicit txn.
       // Covers: Input order, duplicates, missing/deleted rows, latest staged

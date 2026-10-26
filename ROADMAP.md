@@ -169,6 +169,8 @@ Current public API policy:
 - Web SQLite native batch writes with a direct wire encoder for generated rows
   and prepared SQLite insert statement reuse across full chunks in the Wasm
   runtime.
+- Reused schema offsets in Web readers and immutable SQLite row layouts per
+  result batch, preserving per-document validation.
 - Compact generated binary document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.
