@@ -566,6 +566,18 @@ final updatedCount = await db.todos
 
 `updateAll()` returns the number of updated objects.
 
+Both operations respect the query's offset and limit. The offset skips matching
+objects; `updateFirst()` then updates at most one object, while `updateAll()`
+updates the selected window. A zero limit updates nothing. These rules are the
+same in MDBX, SQLite native, and Web, including when a changed field is used by
+the filter.
+
+MDBX's direct scan for unsorted, non-distinct updates over the all-documents
+source stops before reading another row once the window is complete, even if
+later rows would not match. This path applies outside an explicit `writeTxn`
+when the changed fields do not participate in indexes. A zero limit performs
+no cursor reads on this path; field and filter validation still runs.
+
 The update map uses persisted field names:
 
 ```dart

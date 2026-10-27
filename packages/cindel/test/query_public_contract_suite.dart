@@ -90,6 +90,71 @@ void main() {
       expect(await names(), ['Alpha', 'changed', 'changed', 'Gamma']);
     });
 
+    for (final first in [true, false]) {
+      for (final window in [(0, 0), (0, 1), (0, 2), (1, 1), (5, 1)]) {
+        // Scenario: An unsorted limited update changes the field used by its
+        // filter, with nonmatching rows between and after the original matches.
+        // Covers:
+        // - updateFirst/updateAll window selection, zero limits and offsets.
+        // - Equivalent generated API behavior in MDBX, SQLite native and Web.
+        // Expected: Only the original matching IDs inside the window change;
+        // skipped and nonmatching rows remain intact and the count is exact.
+        test('unsorted ${first ? 'updateFirst' : 'updateAll'} preserves '
+            'sparse window $window.', () async {
+          // Arrange.
+          final query = database.users
+              .filter()
+              .nameEqualTo('Alpha')
+              .offset(window.$1)
+              .limit(window.$2);
+          final expectedIds = [1, 3]
+              .skip(window.$1)
+              .take(first && window.$2 > 0 ? 1 : window.$2)
+              .toList();
+          // Act.
+          final result = first
+              ? await query.updateFirst({'name': 'changed'})
+              : await query.updateAll({'name': 'changed'});
+          // Assert.
+          expect(result, first ? expectedIds.isNotEmpty : expectedIds.length);
+          expect(await names(), [
+            for (var id = 1; id <= 4; id++)
+              expectedIds.contains(id)
+                  ? 'changed'
+                  : ['Alpha', 'Beta', 'Alpha', 'Gamma'][id - 1],
+          ]);
+        });
+      }
+
+      // Scenario: An unsorted sparse update runs inside a transaction that fails.
+      // Covers:
+      // - Visibility and rollback for first/bulk updates with offset and limit.
+      // Expected: Only ID 3 changes inside the transaction and all names return
+      // after rollback on each backend.
+      test('unsorted ${first ? 'updateFirst' : 'updateAll'} rolls back '
+          'its sparse window.', () async {
+        // Arrange.
+        final query = database.users
+            .filter()
+            .nameEqualTo('Alpha')
+            .offset(1)
+            .limit(1);
+        // Act / Assert.
+        await expectLater(
+          database.writeTxn<void>(() async {
+            final result = first
+                ? await query.updateFirst({'name': 'pending'})
+                : await query.updateAll({'name': 'pending'});
+            expect(result, first ? true : 1);
+            expect(await names(), ['Alpha', 'Beta', 'pending', 'Gamma']);
+            throw StateError('rollback sparse window');
+          }),
+          throwsStateError,
+        );
+        expect(await names(), ['Alpha', 'Beta', 'Alpha', 'Gamma']);
+      });
+    }
+
     // Scenario: A first-row delete is applied after an offset with a larger
     // limit.
     // Covers:

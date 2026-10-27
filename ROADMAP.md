@@ -135,6 +135,8 @@ Current public API policy:
   integer-index range scans ordered by field and ID for eligible limited queries.
 - MDBX ID-only query results without copying document payloads, with regression
   checks for retained candidates, discarded payloads, and window completion.
+- Early termination of eligible limited MDBX updates, with cursor-read
+  regressions and shared first/bulk update-window contracts across all backends.
 
 ### Indexes
 

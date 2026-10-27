@@ -1773,6 +1773,9 @@ impl MdbxStorage {
         let mut change_sets = Vec::new();
 
         self.with_write_transaction(|transaction, tables| {
+            if limit == Some(0) {
+                return Ok(());
+            }
             let documents_table = match open_documents_table(transaction, collection) {
                 Ok(table) => table,
                 Err(_) => return Ok(()),
@@ -1781,6 +1784,8 @@ impl MdbxStorage {
                 .cursor(&documents_table)
                 .map_err(|error| error.to_string())?;
             let mut skipped = 0usize;
+            #[cfg(test)]
+            tests::UPDATE_CURSOR_READS.with(|count| count.set(count.get() + 1));
             let mut current = cursor
                 .first::<Vec<u8>, Vec<u8>>()
                 .map_err(|error| error.to_string())?;
@@ -1788,6 +1793,8 @@ impl MdbxStorage {
                 let id = decode_document_table_key(&key)?;
                 if let Some(filter) = &filter {
                     if !filter.matches_with_id(schema, &bytes, id)? {
+                        #[cfg(test)]
+                        tests::UPDATE_CURSOR_READS.with(|count| count.set(count.get() + 1));
                         current = cursor
                             .next::<Vec<u8>, Vec<u8>>()
                             .map_err(|error| error.to_string())?;
@@ -1796,13 +1803,12 @@ impl MdbxStorage {
                 }
                 if skipped < offset {
                     skipped += 1;
+                    #[cfg(test)]
+                    tests::UPDATE_CURSOR_READS.with(|count| count.set(count.get() + 1));
                     current = cursor
                         .next::<Vec<u8>, Vec<u8>>()
                         .map_err(|error| error.to_string())?;
                     continue;
-                }
-                if limit.is_some_and(|limit| count >= limit) {
-                    break;
                 }
                 apply_prepared_binary_field_updates(&mut bytes, updates)?;
                 cursor
@@ -1812,6 +1818,12 @@ impl MdbxStorage {
                 if let Some(ids) = ids.as_mut() {
                     ids.push(id);
                 }
+                // Stop before reading another row, even when it would not match.
+                if limit.is_some_and(|limit| count >= limit) {
+                    break;
+                }
+                #[cfg(test)]
+                tests::UPDATE_CURSOR_READS.with(|count| count.set(count.get() + 1));
                 current = cursor
                     .next::<Vec<u8>, Vec<u8>>()
                     .map_err(|error| error.to_string())?;

@@ -6,6 +6,7 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 thread_local! {
+    pub(super) static UPDATE_CURSOR_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static AUXILIARY_TABLE_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static INDEX_RANGE_ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static DISTINCT_CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -2955,6 +2956,196 @@ fn skips_change_set_ids_for_unwatched_unindexed_query_updates() {
             task_compact_document(false, "Ben"),
             task_compact_document(false, "Ana"),
         ]
+    );
+}
+
+#[test]
+fn limited_unindexed_updates_stop_cursor_reads_at_the_window() {
+    // Scenario: An unsorted update selects sparse matches followed by a nonmatching tail.
+    // Covers:
+    // - First/bulk limits, offsets, filters that change during the update and no limit.
+    // - Cursor reads, revision increments and optional change-set IDs.
+    // Expected: A complete window reads no subsequent row; incomplete windows reach EOF.
+    for collect_changes in [false, true] {
+        for filtered in [false, true] {
+            for (offset, limit) in [
+                (0, Some(1)),
+                (1, Some(1)),
+                (1, Some(2)),
+                (0, Some(3)),
+                (0, Some(40)),
+                (40, Some(1)),
+                (0, None),
+            ] {
+                // Arrange.
+                let directory = TemporaryDirectory::new("limited_update_reads");
+                let mut storage = MdbxStorage::open(directory.path()).unwrap();
+                storage
+                    .register_schemas(&task_unindexed_schema_manifest())
+                    .unwrap();
+                let documents: Vec<_> = (1..=32)
+                    .map(|id| DocumentWrite {
+                        id,
+                        bytes: task_compact_document([1, 4, 7].contains(&id), "original"),
+                        indexes: Vec::new(),
+                    })
+                    .collect();
+                storage.put_many_indexed("tasks", &documents).unwrap();
+                storage.take_change_sets().unwrap();
+                let revision = storage.collection_revision("tasks").unwrap();
+                let expected: Vec<_> = (1..=32_u64)
+                    .filter(|id| !filtered || [1, 4, 7].contains(id))
+                    .skip(offset as usize)
+                    .take(limit.unwrap_or(u32::MAX) as usize)
+                    .collect();
+                let expected_reads = if limit.is_some_and(|limit| expected.len() == limit as usize)
+                {
+                    *expected.last().unwrap() as usize
+                } else {
+                    33
+                };
+                let filter = filtered.then(|| {
+                    crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                        field: "completed".into(),
+                        operation: crate::wire::WireFilterOperation::Equal,
+                        value: WireValue::Bool(true),
+                    })
+                    .unwrap()
+                });
+                UPDATE_CURSOR_READS.with(|count| count.set(0));
+
+                // Act.
+                let count = storage
+                    .query_plan_update(
+                        "tasks",
+                        &WireQueryPlan {
+                            source: WireQuerySource::All { dedupe: false },
+                            filter,
+                            sorts: Vec::new(),
+                            distinct_fields: Vec::new(),
+                            offset,
+                            limit,
+                        },
+                        &[
+                            ("completed".into(), WireValue::Bool(false)),
+                            ("title".into(), WireValue::String("changed".into())),
+                        ],
+                        collect_changes,
+                    )
+                    .unwrap();
+
+                // Assert.
+                assert_eq!(count, expected.len());
+                assert_eq!(
+                    UPDATE_CURSOR_READS.with(|count| count.get()),
+                    expected_reads,
+                    "filtered={filtered} offset={offset} limit={limit:?}"
+                );
+                let next_revision = storage.collection_revision("tasks").unwrap();
+                assert_eq!(next_revision, revision + u64::from(!expected.is_empty()));
+                let changes = storage.take_change_sets().unwrap();
+                if collect_changes && !expected.is_empty() {
+                    assert_eq!(changes.len(), 1);
+                    assert_eq!(changes[0].document_ids, expected);
+                    assert_eq!(changes[0].revision, next_revision);
+                } else {
+                    assert!(changes.is_empty());
+                }
+                for original in &documents {
+                    let expected_bytes = if expected.contains(&original.id) {
+                        task_compact_document(false, "changed")
+                    } else {
+                        original.bytes.clone()
+                    };
+                    assert_eq!(
+                        storage.get("tasks", original.id).unwrap(),
+                        Some(expected_bytes)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_limit_unindexed_updates_read_nothing_and_keep_validation() {
+    // Scenario: A zero window has an offset and a filter with no matches.
+    // Covers:
+    // - Zero cursor reads, no revision/change notification and pre-write validation.
+    // Expected: Valid changes do nothing; invalid changes and read transactions still fail.
+    // Arrange.
+    let directory = TemporaryDirectory::new("zero_update_reads");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage
+        .register_schemas(&task_unindexed_schema_manifest())
+        .unwrap();
+    storage
+        .put("tasks", 1, &task_compact_document(false, "original"))
+        .unwrap();
+    storage.take_change_sets().unwrap();
+    let revision = storage.collection_revision("tasks").unwrap();
+    let plan = WireQueryPlan {
+        source: WireQuerySource::All { dedupe: false },
+        filter: Some(
+            crate::wire::encode_filter(&crate::wire::WireFilter::Field {
+                field: "completed".into(),
+                operation: crate::wire::WireFilterOperation::Equal,
+                value: WireValue::Bool(true),
+            })
+            .unwrap(),
+        ),
+        sorts: Vec::new(),
+        distinct_fields: Vec::new(),
+        offset: 10,
+        limit: Some(0),
+    };
+    UPDATE_CURSOR_READS.with(|count| count.set(0));
+    // Act / Assert.
+    assert_eq!(
+        storage
+            .query_plan_update(
+                "tasks",
+                &plan,
+                &[("completed".into(), WireValue::Bool(true))],
+                true
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(UPDATE_CURSOR_READS.with(|count| count.get()), 0);
+    assert_eq!(storage.collection_revision("tasks").unwrap(), revision);
+    assert!(storage.take_change_sets().unwrap().is_empty());
+    assert!(storage
+        .query_plan_update(
+            "tasks",
+            &plan,
+            &[("completed".into(), WireValue::String("invalid".into()))],
+            true
+        )
+        .is_err());
+    let mut malformed = plan.clone();
+    malformed.filter = Some(vec![255]);
+    assert!(storage
+        .query_plan_update(
+            "tasks",
+            &malformed,
+            &[("completed".into(), WireValue::Bool(true))],
+            true
+        )
+        .is_err());
+    storage.begin_read_transaction().unwrap();
+    assert!(storage
+        .query_plan_update(
+            "tasks",
+            &plan,
+            &[("completed".into(), WireValue::Bool(true))],
+            true
+        )
+        .is_err());
+    storage.rollback_transaction().unwrap();
+    assert_eq!(
+        storage.get("tasks", 1).unwrap(),
+        Some(task_compact_document(false, "original"))
     );
 }
 
