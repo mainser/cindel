@@ -75,10 +75,12 @@ fn read_preparation_reuses_native_statement_without_retaining_results() {
             .unwrap();
         assert_eq!(reader.is_present(0).unwrap(), id != 99);
         if id == 1 {
-            assert_eq!(reader.read_bytes(0, 2), Some(&b"first"[..]));
+            assert!(reader.is_present(0).unwrap());
+            assert_eq!(reader.current_read_bytes(2), Some(&b"first"[..]));
         }
         if id == 2 {
-            assert_eq!(reader.read_bytes(0, 2), Some(&b"second"[..]));
+            assert!(reader.is_present(0).unwrap());
+            assert_eq!(reader.current_read_bytes(2), Some(&b"second"[..]));
         }
     }
     storage
@@ -89,7 +91,8 @@ fn read_preparation_reuses_native_statement_without_retaining_results() {
         .native_document_cursor("users", &[1])
         .unwrap()
         .unwrap();
-    assert_eq!(reader.read_bytes(0, 2), Some(&b"updated"[..]));
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_bytes(2), Some(&b"updated"[..]));
     drop(reader);
     assert_eq!(storage.read_cache.lock().unwrap().prepares, 1);
     assert_eq!(retained_read_statements(&storage).len(), 1);
@@ -98,7 +101,8 @@ fn read_preparation_reuses_native_statement_without_retaining_results() {
         .native_document_cursor("users", &[2])
         .unwrap()
         .unwrap();
-    assert_eq!(reader.read_int(0, 1), Some(84));
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_int(1), Some(84));
     drop(reader);
     storage.commit_transaction().unwrap();
     assert_eq!(storage.read_cache.lock().unwrap().prepares, 1);
@@ -123,11 +127,15 @@ fn read_preparation_leases_exclusively_and_discards_invalidated_readers() {
         .unwrap();
     // Assert.
     assert_ne!(first.statement, second.statement);
-    assert_eq!(first.read_bytes(0, 2), Some(&b"first"[..]));
-    assert_eq!(second.read_bytes(0, 2), Some(&b"second"[..]));
-    assert_eq!(first.read_bytes(1, 2), Some(&b"second"[..]));
+    assert!(first.is_present(0).unwrap());
+    assert_eq!(first.current_read_bytes(2), Some(&b"first"[..]));
+    assert!(second.is_present(0).unwrap());
+    assert_eq!(second.current_read_bytes(2), Some(&b"second"[..]));
+    assert!(first.is_present(1).unwrap());
+    assert_eq!(first.current_read_bytes(2), Some(&b"second"[..]));
     storage.invalidate_read_preparation();
-    assert_eq!(second.read_bytes(1, 2), Some(&b"first"[..]));
+    assert!(second.is_present(1).unwrap());
+    assert_eq!(second.current_read_bytes(2), Some(&b"first"[..]));
     drop(first);
     drop(second);
     storage.commit_transaction().unwrap();
@@ -198,10 +206,14 @@ fn read_preparation_refreshes_ordered_fields_after_schema_changes() {
         .native_document_cursor("users", &[1])
         .unwrap()
         .unwrap();
-    assert_eq!(reader.read_bytes(0, 0), None);
-    assert_eq!(reader.read_bool(0, 1), Some(true));
-    assert_eq!(reader.read_int(0, 2), Some(42));
-    assert_eq!(reader.read_bytes(0, 3), Some(&b"first"[..]));
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_bytes(0), None);
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_bool(1), Some(true));
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_int(2), Some(42));
+    assert!(reader.is_present(0).unwrap());
+    assert_eq!(reader.current_read_bytes(3), Some(&b"first"[..]));
     drop(reader);
     let rows = storage.get_many_stored("users", &[1]).unwrap();
     assert_eq!(&rows[0].as_ref().unwrap()[..3], &[15, 0, 0]);

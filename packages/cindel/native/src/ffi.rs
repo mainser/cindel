@@ -4067,7 +4067,7 @@ impl CindelNativeDocumentReader {
                 cursor
                     .is_present(document_index)
                     .capture_reader(&self.error)?;
-                cursor.document_id(document_index)
+                cursor.current_document_id()
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { cursor, .. } => {
                 cursor.document_id(document_index)
@@ -4110,7 +4110,7 @@ impl CindelNativeDocumentReader {
                     .is_present(document_index)
                     .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
-                cursor.read_bool(document_index, field_index)
+                cursor.current_read_bool(field_index)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Bool)?;
@@ -4187,7 +4187,7 @@ impl CindelNativeDocumentReader {
                     .is_present(document_index)
                     .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
-                cursor.read_int(document_index, field_index)
+                cursor.current_read_int(field_index)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Int)?;
@@ -4288,7 +4288,7 @@ impl CindelNativeDocumentReader {
                     .is_present(document_index)
                     .capture_reader(&self.error)?;
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
-                cursor.read_double(document_index, field_index)
+                cursor.current_read_double(field_index)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 layout.require_field(field_index, NativeBatchFieldType::Double)?;
@@ -4400,7 +4400,7 @@ impl CindelNativeDocumentReader {
                     | NativeBatchFieldType::Object => {}
                     _ => return None,
                 }
-                cursor.read_bytes(document_index, field_index)
+                cursor.current_read_bytes(field_index)
             }
             CindelNativeDocumentReaderMode::SqliteQueryCursor { layout, cursor } => {
                 match layout.field_type(field_index)? {

@@ -77,6 +77,57 @@ void main() {
       await verify();
     });
 
+    // Scenario: Preallocated results mix missing IDs and duplicate positions.
+    // Covers:
+    // - Exact length, independent models and a growable result in every txn mode.
+    // - Single-position results for both present and missing IDs.
+    // Expected: Slots preserve input order; modifying one result never affects another.
+    test(
+      'keeps preallocated batch results independent and growable.',
+      () async {
+        // Arrange.
+        await database.apiProducts.putAll([
+          _product(1, 'one'),
+          _product(2, 'two'),
+        ]);
+        final ids = [
+          99,
+          ...List.generate(4096, (i) => i.isEven ? 1 : 2),
+          99,
+          1,
+        ];
+        Future<void> verify() async {
+          // Act.
+          final rows = await database.apiProducts.getAll(ids);
+          // Assert.
+          expect(rows.length, ids.length);
+          expect(rows.first, isNull);
+          expect(rows[4097], isNull);
+          for (var i = 1; i <= 4096; i++) {
+            expect(rows[i]!.name, i.isOdd ? 'one' : 'two');
+          }
+          expect(identical(rows[1], rows.last), isFalse);
+          rows[1]!.name = 'changed';
+          expect(rows.last!.name, 'one');
+          rows.add(null);
+          rows.removeAt(0);
+          rows.clear();
+          expect((await database.apiProducts.get(1))!.name, 'one');
+          for (final id in [1, 99]) {
+            final single = await database.apiProducts.getAll([id]);
+            expect(single.length, 1);
+            expect(single.single?.name, id == 1 ? 'one' : null);
+            single.add(null);
+            expect(single.length, 2);
+          }
+        }
+
+        await verify();
+        await database.readTxn(verify);
+        await database.writeTxn(verify);
+      },
+    );
+
     // Scenario: Collection and database share a captured list across an await.
     // Covers: Private ownership, one materialization and immutable forwarding.
     // Expected: Internal forwarding reuses the snapshot; caller mutation cannot alter it.

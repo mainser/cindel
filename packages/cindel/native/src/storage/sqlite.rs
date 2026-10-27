@@ -131,16 +131,16 @@ impl SqliteNativeDocumentCursor {
         self.seek(document_index)
     }
 
-    pub(crate) fn document_id(&mut self, document_index: usize) -> Option<u64> {
-        if !self.seek(document_index).ok()? {
+    pub(crate) fn current_document_id(&self) -> Option<u64> {
+        if !self.current_present {
             return None;
         }
         let id = unsafe { ffi::sqlite3_column_int64(self.statement, 0) };
         u64::try_from(id).ok()
     }
 
-    pub(crate) fn read_bool(&mut self, document_index: usize, field_index: usize) -> Option<bool> {
-        if !self.seek(document_index).ok()? {
+    pub(crate) fn current_read_bool(&self, field_index: usize) -> Option<bool> {
+        if !self.current_present {
             return None;
         }
         let column = Self::field_column(field_index)?;
@@ -151,8 +151,8 @@ impl SqliteNativeDocumentCursor {
         }
     }
 
-    pub(crate) fn read_int(&mut self, document_index: usize, field_index: usize) -> Option<i64> {
-        if !self.seek(document_index).ok()? {
+    pub(crate) fn current_read_int(&self, field_index: usize) -> Option<i64> {
+        if !self.current_present {
             return None;
         }
         let column = Self::field_column(field_index)?;
@@ -163,8 +163,8 @@ impl SqliteNativeDocumentCursor {
         }
     }
 
-    pub(crate) fn read_double(&mut self, document_index: usize, field_index: usize) -> Option<f64> {
-        if !self.seek(document_index).ok()? {
+    pub(crate) fn current_read_double(&self, field_index: usize) -> Option<f64> {
+        if !self.current_present {
             return None;
         }
         let column = Self::field_column(field_index)?;
@@ -175,12 +175,8 @@ impl SqliteNativeDocumentCursor {
         }
     }
 
-    pub(crate) fn read_bytes(
-        &mut self,
-        document_index: usize,
-        field_index: usize,
-    ) -> Option<&[u8]> {
-        if !self.seek(document_index).ok()? {
+    pub(crate) fn current_read_bytes(&self, field_index: usize) -> Option<&[u8]> {
+        if !self.current_present {
             return None;
         }
         let column = Self::field_column(field_index)?;
@@ -207,11 +203,13 @@ impl SqliteNativeDocumentCursor {
     }
 
     fn seek(&mut self, document_index: usize) -> Result<bool, String> {
-        #[cfg(test)]
-        super::test_faults::check("document_seek")?;
         if self.current_index == Some(document_index) {
             return Ok(self.current_present);
         }
+        self.current_index = None;
+        self.current_present = false;
+        #[cfg(test)]
+        super::test_faults::check("document_seek")?;
         let Some(id) = self.ids.get(document_index).copied() else {
             self.current_index = Some(document_index);
             self.current_present = false;
@@ -225,12 +223,12 @@ impl SqliteNativeDocumentCursor {
             ffi::sqlite3_bind_int64(self.statement, 1, id)
         })?;
         let status = unsafe { ffi::sqlite3_step(self.statement) };
-        self.current_index = Some(document_index);
         self.current_present = match status {
             ffi::SQLITE_ROW => true,
             ffi::SQLITE_DONE => false,
             _ => return Err(sqlite_error(self.database)),
         };
+        self.current_index = Some(document_index);
         Ok(self.current_present)
     }
 
@@ -5288,12 +5286,12 @@ mod tests {
         assert_eq!(stored[1], None);
         assert_eq!(cursor.len(), 2);
         assert!(cursor.is_present(0).unwrap());
-        assert_eq!(cursor.document_id(0), Some(2));
-        assert_eq!(cursor.read_bool(0, 0), Some(false));
-        assert_eq!(cursor.read_int(0, 1), Some(84));
-        assert_eq!(cursor.read_bytes(0, 2), Some(&b"Ada"[..]));
+        assert_eq!(cursor.current_document_id(), Some(2));
+        assert_eq!(cursor.current_read_bool(0), Some(false));
+        assert_eq!(cursor.current_read_int(1), Some(84));
+        assert_eq!(cursor.current_read_bytes(2), Some(&b"Ada"[..]));
         assert!(!cursor.is_present(1).unwrap());
-        assert_eq!(cursor.document_id(1), None);
+        assert_eq!(cursor.current_document_id(), None);
     }
 
     #[test]

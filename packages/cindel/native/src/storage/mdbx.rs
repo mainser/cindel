@@ -71,6 +71,7 @@ pub(crate) struct MdbxCursorDocumentReader {
     _transaction: Arc<MdbxReadTransaction>,
     ids: Vec<u64>,
     staged_documents: HashMap<u64, Option<Vec<u8>>>,
+    current_staged_id: Option<u64>,
     current_index: Option<usize>,
     current_bytes: Option<Cow<'static, [u8]>>,
 }
@@ -89,13 +90,6 @@ impl MdbxCursorDocumentReader {
         document_index: usize,
     ) -> Result<Option<&[u8]>, String> {
         self.load(document_index)?;
-        if let Some(document) = self
-            .ids
-            .get(document_index)
-            .and_then(|id| self.staged_documents.get(id))
-        {
-            return Ok(document.as_deref());
-        }
         Ok(self.current_bytes.as_deref())
     }
 
@@ -108,17 +102,29 @@ impl MdbxCursorDocumentReader {
     }
 
     fn load(&mut self, document_index: usize) -> Result<(), String> {
-        #[cfg(test)]
-        super::test_faults::check("document_seek")?;
         if self.current_index == Some(document_index) {
             return Ok(());
         }
-        self.current_index = Some(document_index);
-        self.current_bytes = None;
+        self.current_index = None;
+        // Move the owned overlay value into the current row without cloning.
+        // Restore it before moving on so duplicate IDs and backwards reads
+        // observe the same snapshot, including pending deletions.
+        if let Some(id) = self.current_staged_id.take() {
+            self.staged_documents
+                .insert(id, self.current_bytes.take().map(Cow::into_owned));
+        } else {
+            self.current_bytes = None;
+        }
+        #[cfg(test)]
+        super::test_faults::check("document_seek")?;
         let Some(id) = self.ids.get(document_index).copied() else {
+            self.current_index = Some(document_index);
             return Ok(());
         };
-        if self.staged_documents.contains_key(&id) {
+        if let Some(document) = self.staged_documents.remove(&id) {
+            self.current_staged_id = Some(id);
+            self.current_bytes = document.map(Cow::Owned);
+            self.current_index = Some(document_index);
             return Ok(());
         }
         self.current_bytes = ignore_not_found(
@@ -126,6 +132,7 @@ impl MdbxCursorDocumentReader {
                 .set::<Cow<'static, [u8]>>(&document_table_key(id))
                 .map_err(|error| error.to_string()),
         )?;
+        self.current_index = Some(document_index);
         Ok(())
     }
 }
@@ -949,6 +956,7 @@ impl MdbxStorage {
             _transaction: snapshot,
             ids: ids.to_vec(),
             staged_documents,
+            current_staged_id: None,
             current_index: None,
             current_bytes: None,
         })

@@ -1,9 +1,100 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:typed_data';
 import 'package:cindel/src/web/native_document_reader.dart';
 import 'package:test/test.dart';
 
 void main() {
+  // Scenario: A private batch hydrates many fields in the same row.
+  // Covers:
+  // - One row resolution per selection, revisits, independent readers and release.
+  // Expected: Cached invariants belong only to the selected row; fields stay checked.
+  test('prepares an owned row once and invalidates it on row changes.', () {
+    // Arrange.
+    final good = _wideDocument();
+    final bad = Uint8List.fromList(good)..[0] ^= 1;
+    final documents = _ObservedDocuments([good, null, bad, good]);
+    final types = Uint8List.fromList([
+      for (var i = 0; i < 16; i++) ...[0, 1, 2, 3],
+    ]);
+    final reader = CindelWebNativeDocumentReader.ownedBatch(
+      ids: [1, 99, 2, 1],
+      documents: documents,
+      fieldTypes: types,
+    );
+    // Act.
+    for (var i = 0; i < 16; i++) {
+      expect(reader.readBool(0, i * 4), isTrue);
+      expect(reader.readInt(0, i * 4 + 1), -42);
+      expect(reader.readDouble(0, i * 4 + 2), 2.5);
+      expect(reader.readString(0, i * 4 + 3), 'é漢$i');
+    }
+    // Assert.
+    expect(documents.reads, 1);
+    expect(() => reader.readInt(0, 0), throwsStateError);
+    expect(() => reader.readInt(0, 64), throwsRangeError);
+    expect(() => reader.readInt(1, 1), throwsStateError);
+    expect(() => reader.readInt(2, 1), throwsFormatException);
+    expect(reader.readInt(3, 1), -42);
+    expect(reader.readInt(0, 1), -42);
+    expect(documents.reads, 5);
+    final other = CindelWebNativeDocumentReader.ownedBatch(
+      ids: [4],
+      documents: [_wideDocument(nulls: true)],
+      fieldTypes: types,
+    );
+    expect(other.readInt(0, 1), isNull);
+    expect(reader.readInt(0, 1), -42);
+    reader.release();
+    expect(() => reader.readInt(0, 1), throwsStateError);
+    expect(other.readInt(0, 1), isNull);
+    other.release();
+  });
+
+  // Scenario: A normal reader references bytes owned and mutated by its caller.
+  // Covers: Prepared-row optimization must not bypass external buffer validation.
+  // Expected: A changed header fails on the next read, even at the same index.
+  test('revalidates externally owned bytes after mutation.', () {
+    // Arrange.
+    final bytes = _wideDocument();
+    final reader = CindelWebNativeDocumentReader(
+      ids: [1],
+      documents: [bytes],
+      fieldTypes: Uint8List.fromList([
+        for (var i = 0; i < 16; i++) ...[0, 1, 2, 3],
+      ]),
+    );
+    expect(reader.readBool(0, 0), isTrue);
+    // Act.
+    bytes[0] ^= 1;
+    // Assert.
+    expect(() => reader.readBool(0, 0), throwsFormatException);
+  });
+
+  // Scenario: A valid static section precedes a corrupt dynamic field.
+  // Covers: Preparing the row must not skip offset or payload boundary checks.
+  // Expected: Each corrupt field still throws after a successful scalar read.
+  test('checks dynamic fields after preparing an owned row.', () {
+    // Arrange.
+    final badOffset = _wideDocument()..setRange(20, 23, [1, 0, 0]);
+    final complete = _wideDocument();
+    final badPayload = Uint8List.fromList(
+      complete.sublist(0, complete.length - 1),
+    );
+    final reader = CindelWebNativeDocumentReader.ownedBatch(
+      ids: [1, 2],
+      documents: [badOffset, badPayload],
+      fieldTypes: Uint8List.fromList([
+        for (var i = 0; i < 16; i++) ...[0, 1, 2, 3],
+      ]),
+    );
+    // Act / Assert.
+    expect(reader.readBool(0, 0), isTrue);
+    expect(() => reader.readString(0, 3), throwsFormatException);
+    expect(reader.readBool(1, 0), isTrue);
+    expect(() => reader.readString(1, 63), throwsFormatException);
+    reader.release();
+  });
   // Scenario: A wide reader visits multiple rows and then a corrupt row.
   // Covers:
   // - Cached static size and offsets with empty schemas and mixed widths.
@@ -70,6 +161,25 @@ void main() {
     expect(empty.readId(0), 8);
     expect(() => empty.readBool(0, 0), throwsRangeError);
   });
+}
+
+final class _ObservedDocuments extends ListBase<Uint8List?> {
+  _ObservedDocuments(this.values);
+  final List<Uint8List?> values;
+  int reads = 0;
+  @override
+  int get length => values.length;
+  @override
+  set length(int value) => throw UnsupportedError('fixed input');
+  @override
+  Uint8List? operator [](int index) {
+    reads++;
+    return values[index];
+  }
+
+  @override
+  void operator []=(int index, Uint8List? value) =>
+      throw UnsupportedError('fixed input');
 }
 
 // Encode an independent wire fixture, including each dynamic field's own offset.

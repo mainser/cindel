@@ -20,12 +20,29 @@ final class CindelWebNativeDocumentReader
   }) : _ids = ids,
        _documents = documents,
        _fieldTypes = fieldTypes,
-       _offsets = _fieldOffsets(fieldTypes);
+       _offsets = _fieldOffsets(fieldTypes),
+       _ownsBatch = false;
+
+  // Only the database's private Worker response may use this constructor.
+  // Ordinary readers may reference caller-mutable bytes and must revalidate.
+  CindelWebNativeDocumentReader.ownedBatch({
+    required List<int> ids,
+    required List<Uint8List?> documents,
+    required Uint8List fieldTypes,
+  }) : _ids = ids,
+       _documents = documents,
+       _fieldTypes = fieldTypes,
+       _offsets = _fieldOffsets(fieldTypes),
+       _ownsBatch = true;
 
   final List<int> _ids;
   final List<Uint8List?> _documents;
   final Uint8List _fieldTypes;
   final List<int> _offsets;
+  final bool _ownsBatch;
+  int? _preparedIndex;
+  Uint8List? _preparedDocument;
+  bool _released = false;
 
   @override
   int get length => _documents.length;
@@ -143,9 +160,19 @@ final class CindelWebNativeDocumentReader
   }
 
   @override
-  void release() {}
+  void release() {
+    _preparedIndex = null;
+    _preparedDocument = null;
+    _released = true;
+  }
 
   Uint8List _document(int documentIndex) {
+    if (_ownsBatch) {
+      if (_released) throw StateError('Native Cindel reader is released.');
+      if (_preparedIndex == documentIndex) return _preparedDocument!;
+      _preparedIndex = null;
+      _preparedDocument = null;
+    }
     final document = _documents[documentIndex];
     if (document == null) {
       throw StateError('Native Cindel document is not present.');
@@ -161,6 +188,10 @@ final class CindelWebNativeDocumentReader
       throw const FormatException(
         'Native Cindel document static section is truncated.',
       );
+    }
+    if (_ownsBatch) {
+      _preparedIndex = documentIndex;
+      _preparedDocument = document;
     }
     return document;
   }

@@ -268,3 +268,114 @@ fn errors_ffi_distinguishes_empty_lists_from_malformed_payloads() {
     assert!(parse_native_raw_object(&[255; 4], vec![]).is_err());
     assert!(decode_native_field_names(&[255; 4]).is_err());
 }
+
+// Scenario: One selected row is hydrated repeatedly before the next seek fails.
+// Covers: Row preparation once, indexed/current access, type/range checks and errors.
+// Expected: Fields reuse the prepared row; the next real selection reports its failure.
+#[test]
+fn prepared_row_reuses_selection_and_preserves_seek_errors() {
+    for kind in kinds() {
+        // Arrange.
+        let mut engine = seeded(kind);
+        let ids = encode_id_list(&[1, 2]).unwrap();
+        unsafe {
+            let mut status = 0;
+            let reader = cindel_native_document_reader_new(
+                &mut engine,
+                b"items".as_ptr(),
+                5,
+                ids.as_ptr(),
+                ids.len(),
+                [1].as_ptr(),
+                1,
+                &mut status,
+            );
+            assert!(!reader.is_null(), "{:?}", take_status(status));
+            let _fault = test_faults::after("document_seek", 1);
+            // Act / Assert.
+            assert!(cindel_native_document_reader_is_present(reader, 0));
+            for _ in 0..64 {
+                assert_eq!(
+                    cindel_native_document_reader_read_current_id_value(reader),
+                    1
+                );
+                assert_eq!(
+                    cindel_native_document_reader_read_current_int_value(reader, 0),
+                    1
+                );
+                assert_eq!(
+                    cindel_native_document_reader_read_int_value(reader, 0, 0),
+                    1
+                );
+            }
+            assert_eq!(
+                cindel_native_document_reader_read_current_int_value(reader, 99),
+                i64::MIN
+            );
+            assert_eq!(
+                cindel_native_document_reader_read_current_bool_value(reader, 0),
+                2
+            );
+            assert_eq!(diagnostic(reader.as_ref()), None);
+            assert!(!cindel_native_document_reader_is_present(reader, 1));
+            assert_eq!(
+                diagnostic(reader.as_ref()).as_deref(),
+                Some("controlled failure at document_seek")
+            );
+            cindel_native_document_reader_free(reader);
+        }
+    }
+}
+
+// Scenario: Two independent ID readers alternate rows, absences and revisits.
+// Covers: Current-row ownership, indexed access and duplicate hydration positions.
+// Expected: Neither reader leaks the other's row or returns a previous value for absence.
+#[test]
+fn prepared_row_is_private_to_each_reader_and_handles_revisits() {
+    for kind in kinds() {
+        // Arrange.
+        let mut engine = seeded(kind);
+        engine.begin_read_transaction().unwrap();
+        let ids = encode_id_list(&[1, 99, 2, 1]).unwrap();
+        unsafe {
+            let mut status = 0;
+            let mut open = || {
+                cindel_native_document_reader_new(
+                    &mut engine,
+                    b"items".as_ptr(),
+                    5,
+                    ids.as_ptr(),
+                    ids.len(),
+                    [1].as_ptr(),
+                    1,
+                    &mut status,
+                )
+            };
+            let left = open();
+            let right = open();
+            assert!(!left.is_null() && !right.is_null());
+            // Act / Assert.
+            for index in [0, 2, 3, 1, 0, 1, 2] {
+                assert!(cindel_native_document_reader_is_present(right, 2));
+                let expected = [Some(1), None, Some(2), Some(1)][index];
+                assert_eq!(
+                    cindel_native_document_reader_is_present(left, index),
+                    expected.is_some()
+                );
+                assert_eq!(
+                    cindel_native_document_reader_read_current_int_value(left, 0),
+                    expected.unwrap_or(i64::MIN)
+                );
+                assert_eq!(
+                    cindel_native_document_reader_read_current_int_value(right, 0),
+                    2
+                );
+                assert_eq!(diagnostic(left.as_ref()), None);
+                assert_eq!(diagnostic(right.as_ref()), None);
+            }
+            cindel_native_document_reader_free(left);
+            cindel_native_document_reader_free(right);
+            engine.commit_transaction().unwrap();
+        }
+    }
+}

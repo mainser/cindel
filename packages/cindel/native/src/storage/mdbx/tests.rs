@@ -4119,3 +4119,46 @@ fn read_preparation_point_reads_skip_auxiliary_tables_and_keep_snapshots() {
         Some(&b"committed"[..])
     );
 }
+
+// Scenario: A reader retains staged replacements and deletions across rollback.
+// Covers: Moving the prepared overlay row without cloning, revisits and ownership.
+// Expected: The same owned buffers survive row changes and storage shutdown.
+#[test]
+fn prepared_row_moves_overlay_bytes_without_cloning_or_losing_deletions() {
+    // Arrange.
+    let directory = TemporaryDirectory::new("prepared_overlay");
+    let mut storage = MdbxStorage::open(directory.path()).unwrap();
+    storage.register_schemas(&schema_manifest()).unwrap();
+    for id in 1..=3 {
+        storage
+            .put("users", id, &user_document("old", id as i64, "Before", 1))
+            .unwrap();
+    }
+    storage.begin_write_transaction().unwrap();
+    let replacement = user_document("new", 42, "Pending", 2);
+    storage.put("users", 1, &replacement).unwrap();
+    storage.delete("users", 2).unwrap();
+    let mut reader = storage
+        .cursor_document_reader("users", &[1, 2, 3, 1, 99])
+        .unwrap();
+    let pointer = reader.staged_documents[&1].as_ref().unwrap().as_ptr();
+    storage.rollback_transaction().unwrap();
+    drop(storage);
+    // Act / Assert.
+    for index in [0, 1, 2, 3, 4, 1, 0] {
+        let row = reader.document_bytes(index).unwrap();
+        match index {
+            0 | 3 => {
+                let bytes = row.unwrap();
+                assert_eq!(bytes, replacement);
+                assert_eq!(bytes.as_ptr(), pointer);
+            }
+            1 | 4 => assert!(row.is_none()),
+            _ => assert_eq!(row.unwrap(), user_document("old", 3, "Before", 1)),
+        }
+        assert_eq!(
+            reader.staged_documents.len() + usize::from(reader.current_staged_id.is_some()),
+            2
+        );
+    }
+}

@@ -375,6 +375,16 @@ its two-word integer encoding to preserve JavaScript precision. The wire format
 and ABI are unchanged; native FFI and engine ownership still require their own
 buffers. This reduces temporary allocation, not the size of the requested data.
 
+The batch reader reserves the result length up front and fills each position;
+the returned list remains growable. It reuses the selected row while reading its
+fields: MDBX retains the selected stored or pending bytes without cloning them,
+and SQLite reads columns from the prepared row without selecting it again inside
+each column accessor. Web validates the static section once per selected row
+only for the database's private response buffers. Readers over externally owned
+bytes continue validating on each access. Field types, indices, dynamic payload
+bounds and read errors are still checked. Row state is private to each reader;
+changing rows cannot reuse another row's values or hide missing documents.
+
 The collection returns the object list already built by the reader. Models
 without relationships need no additional binding pass. Models with relationships
 are bound on that same list after hydration, error checking and reader release,

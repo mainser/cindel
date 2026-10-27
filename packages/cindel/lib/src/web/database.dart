@@ -575,16 +575,18 @@ class CindelDatabase {
       'collection': collection,
       'ids': encodeIdList(idList),
     });
-    final reader = CindelWebNativeDocumentReader(
+    final reader = CindelWebNativeDocumentReader.ownedBatch(
       ids: idList,
       documents: decodeOptionalDocumentBatch(response),
       fieldTypes: fieldTypes,
     );
     try {
-      return <T?>[
-        for (var i = 0; i < reader.length; i += 1)
-          if (reader.isPresent(i)) readDocument(reader, i) else null,
-      ];
+      final length = reader.length;
+      final objects = List<T?>.filled(length, null, growable: true);
+      for (var i = 0; i < length; i += 1) {
+        if (reader.isPresent(i)) objects[i] = readDocument(reader, i);
+      }
+      return objects;
     } finally {
       reader.release();
     }

@@ -567,10 +567,11 @@ final class CindelNativeBindings {
           );
           try {
             final length = _functions.nativeDocumentReaderLen(readerPointer);
-            return <T?>[
-              for (var i = 0; i < length; i += 1)
-                if (reader.isPresent(i)) readDocument(reader, i) else null,
-            ];
+            final objects = List<T?>.filled(length, null, growable: true);
+            for (var i = 0; i < length; i += 1) {
+              if (reader.isPresent(i)) objects[i] = readDocument(reader, i);
+            }
+            return objects;
           } finally {
             try {
               reader.checkError();

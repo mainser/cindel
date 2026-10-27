@@ -179,6 +179,8 @@ Current public API policy:
   all backends, skipping the extra pass for models without relationships.
 - Exact-sized ID batch encoding without per-ID fragments or a redundant native
   list copy, preserving range validation and the existing wire format.
+- Prepared-row reuse and preallocated, growable `getAll` results, retaining
+  field validation, pending-write snapshots and independent duplicate objects.
 - Compact generated binary document format.
 - Binary FFI payloads for ids, batches, filters, schema metadata, query plans,
   projections, aggregates, and watcher change sets.
