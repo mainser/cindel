@@ -2,15 +2,9 @@
 
 ## 1.1.5
 
-- Skip unnecessary sorting and SQLite ID subqueries for eligible unlimited query updates in MDBX and SQLite native/Web, preserving validation and rollback.
-- Preserve numeric-looking strings in SQLite native/Web, with an atomic, one-time upgrade of legacy string columns.
-- Stop eligible limited MDBX updates as soon as their window is complete, avoiding scans of subsequent nonmatching rows.
-- Reuse prepared rows and preallocate growable `getAll` results across all backends, preserving field validation, transaction snapshots and read errors.
-- Encode ID batches in one buffer across all backends, avoiding per-ID fragments and the extra native list copy while preserving range validation.
-- Reuse one private ID snapshot and the existing result list in `getAll` across all backends, skipping the binding pass for models without relationships.
-- Reduce temporary allocations in Web `getAll` by encoding retrieved rows directly into the response, preserving order, missing IDs and independent duplicate results.
-- Reduce repeated read preparation in MDBX and SQLite native/Web, with bounded SQLite statement reuse and schema invalidation.
-- Reuse schema layouts when reading Web documents and encoding SQLite result batches, preserving per-document validation.
+- Improved `get`/`getAll` performance and reduced temporary allocations across all backends.
+- Optimized limited MDBX updates and eligible unlimited query updates across all backends.
+- Fixed numeric-looking strings in SQLite native/Web and upgraded legacy string columns.
 
 ## 1.1.4
 
@@ -18,855 +12,314 @@
 
 ## 1.1.3
 
-- Fixed MDBX `getAll` inside `writeTxn`, preserving pending writes, deletions, ordering, and generated types with SQLite native/Web parity regressions.
-- Added macOS framework loading for SwiftPM/CocoaPods while preserving the public API and legacy dylib loading.
-- Fixed Web watchers emitting closed-database errors from pending snapshots during shutdown.
-- Fixed generated nullable lists, shared embedded types, and list/object reads and projections across MDBX and SQLite native/Web, preserving the same typed API.
-- Fixed inferred backup schema types in MDBX and SQLite native/Web export and import, preserving bounded batches.
-- Persisted SQLite native/Web change revisions atomically with writes, preserving rollback and cross-connection notifications.
-- Shared watcher polling by collection across MDBX and SQLite native/Web, preserving notifications and shutdown behavior.
-- Added consistent backups with links/backlinks and atomic, disk-staged restores for MDBX and SQLite native/Web, with regression and memory checks.
-- Removed incoming/outgoing links atomically on document deletion and added bounded orphan-link cleanup across MDBX and SQLite native/Web.
-- Added atomic migration steps with disk staging and bounded streaming for MDBX and SQLite native/Web.
-- Preserved engine error causes and rejected partial reads on failure in MDBX and SQLite native/Web, with regression tests.
-- Versioned backup schema validation and native ABI 39.
+- Fixed MDBX `getAll` inside `writeTxn` and generated list/embedded types across backends.
+- Improved backup type validation, relationship backups, and atomic restores.
+- Added atomic migration steps and bounded-memory backup, restore, and migration processing.
+- Improved relationship cleanup and engine error propagation.
+- Shared watcher polling, persisted SQLite revisions, and fixed Web watcher shutdown errors.
+- Added macOS framework loading for SwiftPM/CocoaPods, retaining dylib support.
+- Updated the native ABI to 39.
 
 ## 1.1.2
 
-- Optimized limited MDBX integer-index ranges ordered ascending by field and ID, stopping when the result window is complete.
-- Streamed unsorted MDBX `distinct` queries, retaining only distinct keys and stopping at the requested limit.
-- Fixed Dart-side `distinct` collisions in MDBX and SQLite native/Web queries.
-- Optimized limited MDBX queries with direct ID scans (including filters) and bounded-memory top-k selection when the order includes the ID.
-- Avoided full document copies in MDBX ID queries.
-- Optimized non-distinct SQLite native/Web projections and aggregates with one query and streaming aggregation.
-- Optimized non-distinct object counts in MDBX and SQLite native/Web, preserving query windows.
-- Optimized `findFirst`, including projections, to request at most one result on native and Web.
-- Optimized `putAll` with batch ID reservations in MDBX and SQLite native/Web.
-- Fixed auto-increment ID collisions in MDBX and SQLite native/Web.
-- Fixed MDBX `readTxn` isolation, 64-bit integer filtering/sorting, and `distinct` collisions.
-- Fixed reading empty string lists written by MDBX `putAll`.
-- Added regression tests and bumped the native ABI to 35.
+- Optimized eligible MDBX limited, indexed, ID, and distinct queries.
+- Improved `findFirst`, `count`, `putAll`, and SQLite native/Web projections and aggregates.
+- Fixed auto-increment ID and distinct collisions across backends.
+- Fixed MDBX read isolation, 64-bit integer queries, and empty string-list reads.
+- Updated the native ABI to 35.
 
 ## 1.1.1
 
-- Fixed repeated and concurrent database closure across native and Web backends,
-  preserving transaction rollback and completing cleanup consistently.
-- Added an exact native ABI check for dynamic libraries and native assets.
-  Bindings require ABI 34 and reject both older and newer ABIs before opening
-  a database, with a `CindelNativeError` identifying the expected and reported
-  versions and recommending a matching native library.
+- Fixed repeated and concurrent database closure across native and Web backends.
+- Added strict native ABI 34 validation before opening a database.
 
 ## 1.1.0
 
-- Updated the native MDBX engine to 0.14.4 and the Rust wrapper to 0.9.0.
-- Preserved database geometry, shrink thresholds, durability settings, and
-  platform build optimizations. Removed the obsolete coalesce flag because
-  page coalescing is always enabled by MDBX, and migrated assertion checks to
-  `MDBX_CHECKING`.
-- Adapted native cursor lifetimes and Windows exception handling for the
-  updated MDBX integration.
+- Updated MDBX to 0.14.4 and its Rust wrapper to 0.9.0, retaining existing tuning.
+- Adapted native cursors, assertions, and Windows exception handling to the new engine.
 
 ## 1.0.0
 
-- Released the first stable Cindel package version.
-- Updated internal package constraints to the 1.0.0 release line.
+- Released the first stable version with matching 1.0.0 package dependencies.
 
 ## 0.9.3
 
-- Fixed native generated serialization for `List<String>` fields inside
-  embedded objects, including embedded objects stored inside lists, so MDBX and
-  SQLite native backends hydrate those values as lists instead of string
-  payloads.
-- Fixed MDBX `CindelQuery.watch()` for native-planned queries so typed document
-  snapshots are materialized correctly instead of reporting a missing generated
-  native reader.
-- Fixed SQLite Web native generated rows for embedded object and embedded
-  object-list fields, case-insensitive unique replace lookups, indexed equality
-  fallbacks, nested embedded filters, and `anyOf`/`allOf` modifier queries.
-- Bumped the native ABI to 34 for the typed native writer symbols that preserve
-  dynamic value kinds for string, list, and object payloads.
+- Fixed generated embedded string-list reads and MDBX query watchers.
+- Fixed Web embedded fields, unique-replace lookups, indexed queries, and nested filters.
+- Updated the native ABI to 34.
 
 ## 0.9.2
 
-- Fixed the Web database facade so `CindelDatabase.deleteAll(collection, ids)`
-  is exposed like native backends while still using the SQLite-native typed row
-  delete path.
+- Exposed `CindelDatabase.deleteAll(collection, ids)` on Web, matching native backends.
 
 ## 0.9.1
 
-- Published in lockstep with `cindel_annotations`, `cindel_generator`, and
-  `cindel_flutter_libs` 0.9.1 so pub.dev can resolve the sync-enabled release
-  outside the workspace.
-- Updated internal package constraints to require the matching 0.9.1 release
-  line.
+- Aligned package dependencies with the coordinated 0.9.1 Sync release.
 
 ## 0.9.0
 
-- Added experimental Sync, enabled only when opening the database with
-  `Cindel.open(..., sync: CindelSyncConfig(...))`.
-- Added backend-neutral `CindelSyncAdapter` push/pull contracts, sync status
-  callbacks, durable internal outbox storage, checkpoint persistence, and
-  automatic background scheduling without exposing public sync commands.
-- Sync now captures typed puts, bulk puts, unique-index puts, deletes, query
-  deletes, and link replacements across SQLite native, MDBX, and SQLite Web.
-- Remote changes apply through internal guarded writes so watchers update while
-  remote apply does not re-enqueue outgoing mutations.
-- Query update operations now throw while sync is enabled because they do not
-  yet produce canonical per-document mutations.
+- Added opt-in experimental Sync across all backends, with adapters, persistent outbox/checkpoints, and background scheduling.
+- Propagated remote changes to watchers without re-enqueuing them.
+- Rejected query updates while Sync is enabled.
 
 ## 0.8.0
 
-- Added `CindelLink<T>` and `CindelLinks<T>` relation containers
-  with explicit `load`, `save`, and `reset` operations.
-- Added persisted forward links and read-only backlinks across SQLite native,
-  MDBX, and SQLite Web/OPFS, including relation validation, source-collection
-  watcher notifications, and native ABI/Web worker bindings.
-- Added generated link schema metadata and runtime binding hooks so hydrated
-  objects can load and save relations through the typed API.
+- Added typed `CindelLink`/`CindelLinks`, persisted forward links, and read-only backlinks across all backends.
+- Added generated relation metadata, validation, and watcher notifications.
 
 ## 0.7.0
 
-- Added public open-time data migration tooling with database-level migration
-  versions, ordered migration steps, before/after verification callbacks,
-  paged typed export helpers, typed/document import helpers, migrated schema
-  registration, and optional backend compaction.
-- Added native migration primitives for SQLite, MDBX, and Web SQLite/OPFS:
-  migrated schema registration, migration version persistence, and compact
-  requests through the Dart FFI/Web worker surfaces.
-- SQLite migrated schema registration now rebuilds target collection tables so
-  renamed, removed, or type-changed fields can be rewritten safely by the
-  migration callback before the app receives the final handle.
-- MDBX migrated schema registration now clears target collection documents and
-  indexes before importing rewritten target data while preserving normal
-  compatibility checks for non-migration opens.
-- Added migration coverage across SQLite native, MDBX, and the Web public
-  worker contract.
-- Added `CindelDatabase.documentIdsPage` for bounded, ascending document-id
-  scans across SQLite native, MDBX, and Web SQLite so backup/export tooling does
-  not need to materialize entire collections.
-- Added public typed full-database backup/export/import streams with JSONL v1
-  archives, checksum verification, progress callbacks, native gzip compression,
-  Web-compatible uncompressed archives, and empty-target restore validation.
-- Bumped the native ABI to 32 for the paged document-id FFI/Web surface.
+- Added versioned open-time migrations with verification, data rewriting, and optional compaction across all backends.
+- Added paged document IDs and typed JSONL backups with checksums, progress, native gzip, and empty-target restore validation.
+- Updated the native ABI to 32.
 
 ## 0.6.5
 
-- Updated package metadata so the published documentation link points to the
-  extended Cindel API guide.
-- Updated the `hooks` dependency constraint to support the latest stable
-  release used by pub.dev scoring.
-- Fixed a dangling Web worker bridge library documentation comment reported by
-  static analysis.
+- Updated documentation links and the `hooks` dependency.
+- Fixed a Web library documentation warning.
 
 ## 0.6.4
 
-- Aligned MDBX, SQLite native, and SQLite Web around the generated typed public
-  API. Applications now use the same `Cindel.open(...)`, typed collections,
-  typed queries, transactions, and watchers across supported platforms.
-- Added the SQLite Web/OPFS backend behind the normal
-  `Cindel.open(...)` path, loading packaged Worker/Wasm assets from
-  `cindel_flutter_libs`.
-- Removed the separate public Web entrypoint and removed untyped
-  collection-level document APIs from the current public direction.
-- Completed the Web typed runtime surface for CRUD, bulk reads/writes,
-  unique-replace helpers, query plans, projections, aggregates, updates,
-  deletes, transactions, collection revisions, change-set draining, and
-  single-tab watchers.
-- Optimized SQLite native/Web typed writes and `getAll` reads with direct
-  generated-row batch encoding, prepared-statement reuse, chunked id queries,
-  and stable requested-order restoration.
-- Added SQLite native query-plan projection and aggregate execution for typed
-  schema-backed rows, including count, min, max, sum, and average.
-- Kept MDBX as the default native backend and reference path while aligning
-  SQLite and Web SQLite behavior with the same typed app workloads.
+- Unified the generated typed API across MDBX, SQLite native, and Web/OPFS through `Cindel.open`.
+- Removed the separate Web entrypoint and untyped collection document APIs.
+- Completed Web CRUD, queries, transactions, and single-tab watchers.
+- Optimized SQLite native/Web batch reads and writes; added native projections and aggregates.
 
 ## 0.6.3
 
-- Added the native Web SQLite baseline behind the `web` feature, keeping MDBX
-  as the default native backend.
-- Added OPFS SAHPool setup for Web workers and explicit SQLite `opfs-sahpool`
-  opening for persistent Web storage.
-- Added the minimal Web worker transport bridge for request ids, structured
-  errors, close cleanup, and transferable payloads.
-- Added Web schema manifest encoding and a Wasm Web engine opener that registers
-  SQLite schema metadata persistently.
-- Kept runtime collection schemas loaded after persisted Web SQLite opens so
-  native document cursors remain available after OPFS reopen.
-- Added the Web typed CRUD surface on `CindelWebEngine` and the
-  package worker template: id allocation, put/putAll, get/getAll,
-  getStored/getAllStored, delete/deleteAll, documentIds, and SQLite-native
-  document write/delete batches.
-- Added Web CRUD wire helpers for id lists, indexed document batches, optional
-  get results, and SQLite-native generated document batches.
-- Added internal release packaging support for the SQLite-only Wasm runtime
-  assets emitted under `packages/cindel_flutter_libs/web/pkg`.
+- Added the SQLite Web/OPFS engine, worker transport, and typed CRUD foundation.
+- Added persistent Web schemas and packaged Worker/Wasm assets.
 
 ## 0.6.2
 
-- Added `@Name` support for persisted collection and field names so Dart model
-  identifiers can differ from the stored schema names.
-- Added unique replace indexes with `@Index(unique: true, replace: true)` and
-  `CompositeIndex(..., unique: true, replace: true)`.
-- Generated `putBy...` and `putAllBy...` helpers for unique replace
-  indexes so typed objects can upsert by natural keys without a manual query.
-- Updated SQLite, MDBX, schema metadata, and wire schema encoding to preserve
-  replace-index metadata and delete conflicting documents during replace
-  writes.
-- Persisted MDBX auto-increment high-water counters so deleted high ids and
-  allocate-only ids are not reused after reopening the database.
-- Updated the annotations dependency constraint to `^0.5.4` and the
-  development generator dependency constraint to `^0.6.1`.
+- Added `@Name` mappings and unique-replace indexes with generated `putBy...`/`putAllBy...` helpers.
+- Persisted MDBX auto-increment counters to prevent ID reuse after reopening.
+- Updated annotations to `^0.5.4` and the development generator to `^0.6.1`.
 
 ## 0.6.1
 
-- Added documented Cindel-specific runtime errors exported from the public API,
-  while keeping them compatible with existing `StateError` handling.
+- Added public Cindel runtime errors compatible with existing `StateError` handling.
 
 ## 0.6.0
 
-- Added `CindelQuery.optional`, `CindelQuery.anyOf`, and
-  `CindelQuery.allOf` dynamic query modifiers for conditional and repeated
-  filter composition.
-- Added list-length and list-empty filter predicates, plus generated
-  list helpers such as `tagsIsEmpty`, `tagsLengthGreaterThan`, and
-  `tagsLengthBetween`.
-- Added generated nested filter support for fields inside embedded object list
-  elements, such as `recipientsElement((recipient) => ...)`.
-- Added a Rust native embedded object writer/reader path for generated typed
-  serializers, avoiding intermediate Dart document maps for embedded object
-  fields, embedded object lists, and nested embedded objects.
-- Added native FFI entry points for embedded object child writers and readers,
-  including list-element embedded objects and nested embedded payloads.
-- Made embedded object equality and embedded-list element equality compare
-  stored map/list values deeply instead of by Dart object identity.
-- Added current-document native reader FFI entry points for dynamic bytes and
-  list fields, keeping generated MDBX point reads aligned with the active
-  native cursor document.
-- Improved generated typed MDBX `getAll` hydration by avoiding indexed dynamic
-  field reads after the cursor has already selected the current document.
-- Updated the development generator dependency constraint to `^0.6.0`.
+- Added `optional`, `anyOf`, `allOf`, list-length filters, and nested embedded-list filters.
+- Improved native embedded serialization and MDBX `getAll` reads.
+- Fixed deep equality for embedded objects and lists.
+- Updated the development generator to `^0.6.0`.
 
 ## 0.5.13
 
-- Declared iOS and macOS as supported Flutter prebuilt platforms through
-  `cindel_flutter_libs`.
-- Added automated tag-based release publishing support for the coordinated
-  `cindel` and `cindel_flutter_libs` release line.
+- Added iOS/macOS prebuilt platform metadata and coordinated tag-based publishing.
 
 ## 0.5.12
 
-- Streamed MDBX query-plan `count` and property aggregate execution for
-  supported plans, avoiding full planned-document materialization while
-  preserving the existing fallback for distinct and unsupported plans.
-- Streamed MDBX query-plan property projection for supported plans, writing
-  projection rows directly while preserving the existing fallback for distinct
-  and unsupported plans.
-- Made vendored MDBX bindgen generation pass Cargo's target explicitly so
-  Windows native builds use the correct FFI type layout.
+- Streamed eligible MDBX counts, aggregates, and projections to reduce materialization.
+- Fixed Windows native FFI layout generation.
 
 ## 0.5.11
 
-- Avoided creating Cindel-only SQLite storage metadata for generated
-  schema-aware SQLite opens, keeping the typed collection table layout 
-  while still validating existing metadata when present.
-- Added a direct native string-list writer used by generated typed serializers
-  to reduce MDBX `List<String>` batch insert overhead.
-- Added MDBX native query update support for compact dynamic fields, including
-  generated `List<String>` fields.
-- Avoided an MDBX document copy while generated native readers hydrate point
-  reads and unsorted query results.
-- Added MDBX streaming for unsorted generated index range query results.
-- Added a fast generated SQLite string-list hydration path for native reads,
-  while preserving Unicode and escaped-string fallbacks.
-- Kept generated typed APIs on document hydration after generic writes to the
-  same collection.
-- Updated the development generator dependency constraint to `^0.5.9`.
+- Optimized MDBX string-list writes, reads, updates, and unsorted index queries.
+- Improved SQLite string-list reads and avoided unnecessary metadata on typed opens.
+- Preserved typed hydration after generic writes; updated the development generator to `^0.5.9`.
 
 ## 0.5.10
 
-- Added native typed reader and writer support for embedded object fields and
-  embedded object lists.
-- Added generated nested filters for fields inside a single embedded object.
-- Kept embedded object-list nested query helpers unsupported.
-- Fixed SQLite native typed reads and projections for generated schemas that
-  store embedded/list payloads in collection tables.
-- Updated the development generator dependency constraint to `^0.5.8`.
+- Added native embedded-object/list readers and writers, plus nested single-object filters.
+- Fixed SQLite typed embedded/list reads and projections; embedded-list nested queries remained unsupported.
+- Updated the development generator to `^0.5.8`.
 
 ## 0.5.9
 
-- Updated the development generator dependency constraint to `^0.5.7`.
-- Added generated schema coverage for Freezed primary-factory collection
-  models, including factory-parameter `@Index` and `@ignore` annotations.
+- Added Freezed primary-factory schema coverage and updated the development generator to `^0.5.7`.
 
 ## 0.5.8
 
-- Changed the generated collection id convention from `id` to `dbId`, leaving
-  `id` free for API/domain fields in user models.
-- Removed the old CDBF document compatibility path so generated compact
-  documents use the current backend format as the only supported storage path.
-- Kept generated document ids in the storage key path while allowing normal
-  indexed `id` fields to be stored, queried, sorted, projected, and aggregated
-  like any other model field.
-- Expanded typed filter helpers so generated `contains` filters can represent
-  string, list, and embedded-value containment without narrowing the public
-  filter value to `String`.
-- Updated tests and documentation for the `dbId` id field convention.
+- Changed generated primary IDs to `dbId`, allowing ordinary indexed `id` fields.
+- Removed legacy CDBF document compatibility.
+- Expanded generated containment filters to strings, lists, and embedded values.
 
 ## 0.5.7
 
-- Completed the generated typed SQLite app backend path for the current public
-  surface: schema-backed open, typed `putAll`, `getAll`, query updates, query
-  deletes, filter queries, sorted queries, and direct native typed reads now use
-  SQLite collection tables.
-- Removed the remaining generated SQLite query fallback to generic stored
-  documents for supported typed query plans.
-- Added native SQLite query update and filter execution for generated
-  collections.
-- Reduced extra MDBX typed insert work by reusing cached schema metadata during
-  trusted unindexed batch writes.
-- Updated the development generator dependency constraint to `^0.5.5`.
+- Completed generated SQLite CRUD and query execution through typed collection tables.
+- Reduced MDBX unindexed batch insert work.
+- Updated the development generator to `^0.5.5`.
 
 ## 0.5.6
 
-- Aligned typed SQLite `getAll` with Isar's cursor path by keeping a prepared
-  SQLite statement alive across the batch, binding each requested id, and
-  reading generated fields directly from the active SQLite row.
-- Wrapped the generated SQLite `getAll` cursor in a native read transaction,
-  matching Isar's `getTxn` read path for cursor reads.
-- Added direct-return native reader calls for generated id, bool, int, double,
-  and string reads so the Dart hydration path mirrors Isar's reader FFI shape.
-- Removed the generated SQLite reader's fallback to the generic stored-document
-  batch path; generated SQLite reads now use the schema collection table path.
+- Optimized typed SQLite `getAll` with a reusable statement and transactional cursor.
+- Added direct native field reads and removed the generated SQLite generic-document fallback.
 
 ## 0.5.5
 
-- Aligned the SQLite schema-aware open path with Isar by registering generated
-  schemas during native open instead of opening first and registering schemas
-  through a second native call.
-- Configured SQLite `mmap_size` during open to match the Isar SQLite benchmark
-  profile.
-- Wrapped SQLite open-time table, metadata, and schema setup in one native
-  transaction and added coverage for opening SQLite with schemas already
-  available.
-- Aligned typed SQLite `putAll` with Isar's collection-table insert path by
-  routing generated native writers into per-collection SQLite tables instead of
-  the generic `documents` blob table.
-- Added coverage for native SQLite inserts proving generated values land in
-  collection columns without creating generic document rows.
+- Registered SQLite schemas and initialized tables atomically during open.
+- Tuned SQLite memory mapping and routed typed `putAll` into collection tables.
 
 ## 0.5.4
 
-- Typed writes now read ids through generated id getters instead of requiring
-  generated document maps to contain the id field.
-- Decoded schema-backed documents are rehydrated with the external
-  collection-key id on read paths, preserving typed object ids while keeping
-  ids out of stored generated document payloads.
-- Typed `putAll` now reuses caller-provided lists instead of copying them
-  before entering the native batch writer.
-- Native typed batch writes now follow Isar's insert path more closely by
-  avoiding duplicate-id set prevalidation before `UPSERT`.
-- MDBX trusted schema batch inserts skip old-index lookup work when the schema
-  has no indexes.
-- MDBX native query-plan updates now skip per-document change id collection
-  when no watcher is registered, reducing unindexed bulk update overhead.
-- Native filters avoid repeated schema field lookups after query-plan
-  preparation and use a faster single-byte string `contains` path.
-- Sorted MDBX query plans now order borrowed planned documents directly,
-  avoiding intermediate order and option vectors on filtered sort queries.
-- Updated the development generator dependency constraint to `^0.5.4`.
-- Bumped the native ABI to 29.
+- Preserved typed IDs through generated getters and external collection keys.
+- Reduced batch-write, query-update, filter, and sort overhead.
+- Updated the development generator to `^0.5.4` and native ABI to 29.
 
 ## 0.5.3
 
-- Fixed MDBX query-plan updates for compact native documents that store ids in
-  the collection key instead of inside the document payload.
-- Kept compact `sortById` queries ordered by the external document id without
-  reintroducing embedded ids into compact documents.
-- Hydrates generated compact binary documents with ids from the collection key
-  on Dart fallback reads.
+- Fixed MDBX compact-document updates, ID sorting, and fallback hydration using collection-key IDs.
 
 ## 0.5.2
 
-- Updated the annotations package constraint to the `0.5.2` documentation and
-  release line.
-- Aligned generated native MDBX typed writes with the collection-key id path,
-  keeping ids out of compact document payloads and reducing insert size.
-- Added native document id reads for generated typed hydration.
-- Improved typed MDBX `getAll` reads by keeping a native read cursor alive for
-  the batch reader, avoiding full batch materialization before Dart hydration.
-- Kept the existing batch reader as the fallback for non-MDBX paths and active
-  write transaction reads.
-- Added a streaming native query reader for unsorted MDBX query-plan reads so
-  typed filter queries can hydrate results as the cursor advances.
-- Extended the MDBX query reader to stream indexed equality results directly
-  from the index cursor instead of materializing the full result batch first.
-- Streamed sorted MDBX query results through the native reader, avoiding full
-  document batch copies after sorting.
-- Added a native string-list reader for generated typed hydration so MDBX
-  `getAll` can hydrate `List<String>` fields without a child reader and one
-  FFI call per element.
-- Added a direct compact bool equality scan for sorted indexed query plans.
-- Specialized prepared native bool equality filters for compact MDBX binary
-  documents.
-- Avoided building local watcher change sets for native writes when no watcher
-  is registered, reducing delete and write overhead on the common path.
-- Bumped the native ABI to 28.
+- Improved MDBX typed inserts, streaming reads, queries, and string-list hydration.
+- Reduced boolean-query and watcher bookkeeping overhead.
+- Updated annotations to 0.5.2 and native ABI to 28.
 
 ## 0.5.1
 
-- Updated the Cindel API package to the `0.5.1` patch line so Flutter app
-  dependency sets can pair it with `cindel_flutter_libs` `0.5.1`, which
-  contains the regenerated native runtime libraries required by the 0.5 API.
+- Aligned with `cindel_flutter_libs` 0.5.1 and its regenerated native binaries.
 
 ## 0.5.0
 
-- Updated the Cindel API package and hosted Cindel package constraints to the
-  coordinated `0.5.0` release line.
-- Prepared native MDBX filters against schema field layouts before scan
-  evaluation, reducing repeated field lookup work in unindexed filter queries.
-- Aligned native sorted query tie handling with the core comparator path and
-  removed typed reader string interning work from generated native hydration.
-- Reduced generated typed `getAll` hydration overhead for native list fields by
-  reusing reader scratch buffers between parent documents and child lists.
-- Fixed schema binary document decoding for compact native string-list payloads.
-- Tightened native `List<String>` payloads to use the compact nested list
-  layout while keeping backward-compatible reads for the previous marker
-  format.
-- Added native list readers for generated typed hydration, so
-  primitive list fields no longer force query results back through generic Dart
-  binary document decoding.
-- Reduced unindexed MDBX `filter query` overhead by applying offset/limit while
-  iterating unsorted native query plans and evaluating string/list `contains`
-  filters directly from compact binary payloads.
-- Cached native function resolution across Cindel database openings.
-- Registered schemas during MDBX native open so typed opens avoid the extra
-  Dart-to-native schema registration round trip.
-- Cached generated native field layouts for typed MDBX reads and writes.
-- Reduced MDBX query-plan `filter + sort` overhead by keeping sorted query
-  documents in borrowed native storage form longer and specializing compact
-  string sort keys.
-- Reduced MDBX batch delete overhead for compact documents with one simple
-  non-unique bool value index by deleting the index entry directly with
-  prepared cursors.
-- Reused one MDBX document cursor for batched `getAll` reads instead of
-  opening a table lookup for every requested id.
-- Trusted compact static layout metadata for generated MDBX `getAll` readers,
-  matching the native query-plan reader path.
-- Added a direct MDBX query-update path for simple non-unique bool value
-  indexes, updating compact document bytes in place and moving the index entry
-  with positioned cursors.
-- Added native query-plan updates for compact MDBX binary documents, enabling
-  property updates without Dart object hydration.
-- Fixed geometry and table count settings.
-- Raised the MDBX default map limit to support large batch updates and deletes
-  without forcing application-level chunking.
-- Skipped MDBX index rewrites when schema-backed binary updates leave derived
-  index entries unchanged.
-- Skipped MDBX index derivation during schema-backed batch deletes when the
-  collection schema declares no indexes.
-- Reused MDBX cursors while cleaning indexes during schema-backed batch deletes.
-- Reused MDBX document cursors during native batch writes.
-- Reduced schema binary document encode overhead by avoiding per-dynamic-field
-  header allocations.
-- Reduced compact binary string index preparation by reading string payloads
-  directly instead of materializing and cloning intermediate values.
-- Reused prepared MDBX index cursors during schema-backed batch writes.
-- Deleted schema-backed MDBX index entries through positioned cursors during
-  batch updates.
-- Reduced native batch writer reallocations by reusing observed document
-  capacity for subsequent documents.
-- Added nested native list writers for generated typed MDBX batch
-  inserts, including direct string value-record writing for primitive lists.
-- Reduced generated typed MDBX insert overhead for `List<String>` fields by
-  storing native string lists with a compact offset table and by sharing the
-  native string buffer between parent and list writers.
-- Bumped the native ABI to 25.
+- Optimized MDBX reads, writes, deletes, filters, sorting, and native query updates.
+- Reduced schema, cursor, index, and list serialization overhead; fixed compact string-list decoding.
+- Adjusted MDBX geometry/table limits for larger batches and coordinated package dependencies.
+- Updated the native ABI to 25.
 
 ## 0.4.0
 
-- Removed the legacy native benchmark module and optional `benchmarks` Cargo
-  feature from the committed native package sources.
-- Aligned the MDBX open profile by storing the
-  physical database as `cindel.mdbx` with no-subdir mode, `NoMetaSync`,
-  coalescing, 1 MiB minimum map size, 128 MiB default maximum map size, 5 MiB
-  growth steps, and 20 MiB shrink threshold.
-- Changed the MDBX default table limit from 2048 to 512.
-- Removed `MDBX_ACCEDE` from the default MDBX open flags.
-- Shortened MDBX document table names and marked the storage layout as
-  `mdbx-v4`.
-- Added schema-specific typed binary document storage with a compact
-  static/dynamic layout.
-- Marked generated typed document storage as `binary-v2`.
-- Compacted MDBX index table names and table-local index keys, marking the
-  storage layout as `mdbx-v5`.
-- Removed MDBX reverse-index metadata writes from the schema-backed binary
-  document path, marking the storage layout as `mdbx-v6`.
-- Optimized MDBX indexed batch writes by preparing document and index tables
-  once per native `putAll`.
-- Aligned native schema registration with generated binary document field
-  slots.
-- Added native compact-document writer and reader handles for generated FFI
-  typed paths.
-- Reworked the native compact-document writer to use a single object buffer
-  and static null template.
-- Added an MDBX fast path for no-schema/no-index batch document writes.
-- Added generated id getters for typed schemas and preserved generated field
-  order in native schema registration.
-- Added generated native typed writer and reader serializers for supported
-  schema fields.
-- Reduced native index extraction reparsing for schema-backed binary documents.
-- Streamed schema-backed indexed native `putAll` without prepared document
-  batches.
-- Optimized compact-document index iteration for typed MDBX writes.
-- Reduced native writer string marshaling overhead for large repeated strings.
-- Skipped native change-set id tracking for generated writes when no watchers
-  are registered.
-- Treated generated native-writer documents as trusted schema documents during
-  MDBX typed batch writes.
-- Optimized ASCII word-index extraction for generated binary documents.
-- Replaced per-entry MDBX index table hash lookups with prepared table lookup.
-- Reused MDBX index key buffers during generated typed batch writes.
-- Added native query-plan document readers for generated typed `findAll`
-  results.
-- Added ASCII string reads and native repeated-large-string interning to the
-  generated document reader.
-- Skipped redundant query-plan presence checks during generated typed
-  materialization.
-- Added generated direct binary document hydration without intermediate field
-  lists.
-- Optimized lazy collection and query watchers to avoid eager snapshot
-  hydration.
-- Aligned typed query watcher emissions with potential-change notifications.
-- Changed the native release profile from size-optimized to speed-optimized.
-- Bumped the native ABI to 23.
+- Introduced compact typed binary storage and generated native readers/writers.
+- Optimized MDBX batch operations, indexes, queries, and watchers; tuned native builds for speed.
+- Updated MDBX storage to `mdbx-v6`, typed documents to `binary-v2`, and native ABI to 23.
+- Removed the legacy native benchmark module.
 
 ## 0.3.4
 
-- Removed the default-runtime `serde_json` dependency from the native Rust core.
-- Replaced legacy native projection and aggregate JSON result payloads with
-  CindelWireV1 `ProjectionRows` and `Scalar` buffers.
-- Replaced SQLite stable list-index JSON keys with canonical binary
-  `WireIndexValue` bytes encoded as hex.
-- Removed Dart runtime `jsonDecode` usage from FFI projection and aggregate
-  paths while keeping public query APIs source-compatible.
-- Bumped the native ABI to 17.
+- Replaced native projection, aggregate, and SQLite list-index JSON payloads with binary encoding.
+- Removed default-runtime JSON decoding from these paths; updated native ABI to 17.
 
 ## 0.3.3
 
-- Added CindelWireV1 native watcher change-set payloads for collection name,
-  post-commit revision, and affected document ids.
-- Wired Dart watchers to committed SQLite and MDBX native change sets so local
-  writes can wake subscriptions without first rereading collection revision.
-- Kept the public watcher API unchanged and retained `pollInterval` as the
-  fallback for external database-handle changes.
-- Added change-set codec fixtures in Dart and Rust plus watcher coverage for
-  compact batched writes and delete id reporting.
-- Bumped the native ABI to 16.
+- Connected native change sets to watchers for immediate local notifications, retaining external-change polling.
+- Updated the native ABI to 16.
 
 ## 0.3.2
 
-- Added CindelWireV1 native query plan payloads for MDBX binary-document
-  queries.
-- Moved supported `findAll`, `count`, `deleteFirst`, `deleteAll`, property
-  projection, and property aggregate query shapes onto native plan execution.
-- Let native planning handle filter, sort, distinct, offset, and limit before
-  Dart object hydration when no Dart-only source filter is required.
-- Kept the public Dart query builder API unchanged and kept SQLite on the
-  compatibility fallback path.
-- Added query-plan codec fixtures in Dart and Rust plus backend coverage for
-  native plan behavior.
-- Bumped the native ABI to 15.
+- Added native MDBX query plans for supported reads, counts, deletes, projections, and aggregates.
+- Retained the public query API and SQLite fallback; updated native ABI to 15.
 
 ## 0.3.1
 
-- Replaced schema registration JSON with CindelWireV1 binary schema manifests.
-- Replaced SQLite and MDBX collection schema JSON records with explicitly
-  versioned binary schema metadata.
-- Replaced MDBX reverse document-index JSON metadata with binary
-  `IndexEntryList` records.
-- Added fail-closed rejection for JSON-era preview schema metadata, JSON-era
-  reverse-index metadata, future schema metadata versions, and corrupt binary
-  metadata.
-- Bumped the native ABI to 14 while keeping the public Dart API unchanged.
+- Replaced schema and reverse-index JSON metadata with versioned binary encoding.
+- Rejected legacy JSON, unsupported versions, and corrupt metadata; updated native ABI to 14.
 
 ## 0.3.0
 
-- Replaced manual `CindelDocument` JSON runtime storage with
-  GenericDocumentV1 binary payloads.
-- Switched `getMany` FFI results from JSON arrays to binary document batches.
-- Kept generated typed models on the existing typed binary document format,
-  with manual reads normalizing typed payloads through generated mappers when
-  needed.
-- Added GenericDocumentV1 Dart tests for nested values, UTF-8 key ordering, and
-  invalid payload rejection.
-- Bumped the native ABI to 13 while keeping the public Dart API unchanged.
+- Replaced manual-document JSON storage and batch-read payloads with binary encoding.
+- Retained typed-model compatibility and the public API; updated native ABI to 13.
 
 ## 0.2.18
 
-- Replaced native query filter JSON payloads with CindelWireV1 binary filter
-  AST buffers.
-- Added `WireFilter` codec coverage in Dart and Rust so field/group/not filters
-  are tested byte-for-byte across the FFI boundary.
-- Preserved current filter semantics for null equality, numeric comparisons,
-  string contains/prefix/suffix filters, list contains, object equality, and
-  all/any/not groups.
-- Bumped the native ABI to 12 while keeping the public Dart API unchanged.
+- Replaced native filter JSON payloads with binary encoding, preserving filter behavior.
+- Updated the native ABI to 12.
 
 ## 0.2.17
 
-- Replaced JSON FFI payloads for index values, index entry lists, and manual
-  indexed document write batches with CindelWireV1 binary buffers.
-- Added `WireIndexedDocumentWrite` codec coverage in Dart and Rust so indexed
-  batch writes are tested byte-for-byte across the FFI boundary.
-- Changed hash index canonicalization to hash binary `WireIndexValue` bytes
-  instead of JSON strings.
-- Removed the obsolete `mdbx-v2-spike` benchmark backend and its dedicated
-  storage module now that the real MDBX backend carries the optimized layout.
-- Bumped the native ABI to 11 while keeping the public Dart API unchanged.
+- Added binary index and indexed-write payloads, including binary hash-index keys.
+- Removed the obsolete MDBX benchmark backend; updated native ABI to 11.
 
 ## 0.2.16
 
-- Optimized MDBX get-family reads by caching collection schema manifests after
-  registration, avoiding repeated schema metadata reads and JSON parsing during
-  `get` and `getMany` style lookups.
-- Expanded the benchmark harness to measure manual `get`, raw stored-byte
-  reads, generated binary-document reads, typed `get`, `getAll`, batch-size
-  variants, query hydration, and `readTxn` get loops separately.
-- Added typed collection coverage confirming MDBX generated writes store the
-  Cindel binary document format used by the fast typed read path.
-- Kept the public Dart API and native ABI unchanged.
+- Cached MDBX schemas to reduce read overhead and expanded read benchmarks and typed-storage coverage.
 
 ## 0.2.15
 
-- Replaced JSON array id-list FFI payloads with CindelWireV1 binary buffers for
-  document ids, `getMany`, `getManyStored`, `deleteMany`, indexed query id
-  results, native filter candidate/result ids, projection candidate ids, and
-  aggregate candidate ids.
-- Reused CindelWireV1 `DocumentWriteBatch` for generated binary batch writes.
-- Bumped the native ABI to 10 for the binary id-list contract.
-- Kept the public Dart API unchanged; callers still use `getAll`,
-  `documentIds`, query builders, projections, aggregates, and deletes the same
-  way.
+- Replaced ID-list and generated batch-write JSON payloads with binary encoding.
+- Updated the native ABI to 10 without changing the public API.
 
 ## 0.2.14
 
-- Added the internal CindelWireV1 binary codec foundation shared by Dart and
-  Rust.
-- Added byte-for-byte Dart and Rust fixture coverage for id lists, index
-  values, scalar results, document write batches, projection rows, schema
-  manifests, and reverse index entry lists.
-- Added malformed-payload validation coverage for truncated buffers, invalid
-  tags, invalid UTF-8, invalid bool bytes, trailing bytes, and unsafe native
-  item counts.
-- Kept the public Dart API, native ABI, runtime storage behavior, and prebuilt
-  native binaries unchanged; runtime FFI paths still switch away from JSON in
-  the later JSON-02 and JSON-03 stages.
+- Added the shared Dart/Rust binary codec and malformed-payload tests, without changing runtime storage or ABI.
 
 ## 0.2.13
 
-- Added `CindelPropertyQuery` aggregate helpers for count, min, max, sum, and
-  average.
-- MDBX can execute supported property aggregates over native binary documents
-  without hydrating full Dart objects.
-- Kept SQLite behavior compatible through fallback aggregate evaluation.
-- Added FFI bindings for native aggregate queries and bumped the native ABI to
-  9.
-- Declared Linux in pub.dev platform metadata now that Linux prebuilt
-  generation is part of release validation.
-- Completed release hardening for the optimized MDBX default storage path.
+- Added property aggregates with native MDBX execution and SQLite fallback.
+- Added Linux platform metadata and hardened the MDBX release path.
+- Updated the native ABI to 9.
 
 ## 0.2.12
 
-- Promoted the faster MDBX v2 table layout into the real MDBX backend path.
-- MDBX now stores documents in per-collection tables and indexes in per-index
-  duplicate-sorted tables while preserving the existing public Dart API.
-- Kept binary documents, explicit transactions, unique/composite/multi-entry
-  indexes, and optimized auto-increment counters on the converged backend.
-- Added watcher change sets for local writes, including changed document ids
-  and written documents when Dart has them available.
-- Document and query watchers can skip safe local reads when a write does not
-  affect the watched document or visible query result.
-- Left the Rust-only `mdbx-v2-spike` path as a temporary benchmark fixture
-  behind the explicit `--backend all-with-spike` option.
+- Adopted MDBX per-collection document tables and per-index tables, preserving transactions and index support.
+- Added local watcher change sets and skipped unnecessary watcher reads.
 
 ## 0.2.11
 
-- Reduced MDBX allocations in id scans, range/equality query scans, collection
-  stats, and multi-document reads.
-- Reused MDBX document-key buffers for `get_many` paths outside active write
-  transactions.
-- Kept the existing safe MDBX cursor API; lower-level cursor work remains
-  deferred until benchmarks prove it is needed.
+- Reduced allocations and reused buffers in MDBX scans, statistics, and batch reads.
 
 ## 0.2.10
 
-- Optimized MDBX auto-increment id allocation with shared in-memory counters
-  initialized from document primary keys.
-- MDBX no longer writes persisted counter rows for the normal generated
-  auto-increment insert path.
-- Added native benchmark operations for id allocation and auto-increment
-  indexed writes.
-- Fixed explicit SQLite backend opening so it routes through the native backend
-  selector instead of the default MDBX open symbol.
+- Optimized MDBX auto-increment allocation with shared counters.
+- Fixed explicit SQLite backend selection.
 
 ## 0.2.9
 
-- Added collection-level composite index schema metadata and generated equality
-  query helpers.
-- Added multi-entry primitive list indexes for generated membership queries.
-- Added native composite index key encoding and SQLite compatibility handling.
-- Updated the annotations dependency to `0.2.1` and the generator dependency to
-  `0.2.3`.
+- Added composite-index equality and primitive-list multi-entry indexes.
+- Updated annotations to 0.2.1 and the development generator to 0.2.3.
 
 ## 0.2.8
 
-- Added a first native query planner path for MDBX binary-document queries.
-- Count and simple windowed list queries now use native candidate ids before
-  document hydration when sort/distinct processing is not required.
-- Added native single-field projection over binary document bytes.
-- Added FFI bindings for native projection queries and bumped the native ABI to
-  8.
+- Added initial MDBX native planning for counts, simple windowed queries, and field projections.
+- Updated the native ABI to 8.
 
 ## 0.2.7
 
-- Added native MDBX filtering for generated Cindel filter predicates over
-  binary document bytes.
-- Routed supported generated `filter()` and `where().filter()` queries through
-  native filtering on MDBX, with the existing Dart filter path retained for
-  SQLite and custom predicates.
-- Added FFI bindings for native filter queries and bumped the native ABI to 7.
+- Added native MDBX filtering for supported generated queries, retaining Dart fallbacks.
+- Updated the native ABI to 7.
 
 ## 0.2.6
 
-- Added generated binary document callbacks to collection schemas.
-- Added MDBX typed collection write and read paths that use Cindel binary
-  document bytes instead of JSON map decoding.
-- Added FFI bindings for raw stored document reads and bumped the native ABI to
-  6.
-- Kept SQLite available on the existing JSON document path.
-- Updated the development generator dependency constraint to the `0.2.2`
-  release line.
+- Added generated binary MDBX reads/writes; SQLite retained its JSON path.
+- Updated the development generator to 0.2.2 and native ABI to 6.
 
 ## 0.2.5
 
-- Switched MDBX schema-backed document storage to Cindel's native binary
-  document format.
-- MDBX now derives index entries from binary document bytes for generated
-  schema collections.
-- Made schema-backed MDBX writes strict: unknown fields are rejected instead of
-  falling back to JSON.
-- Removed the public migration callback and dry-run APIs while settling the
-  optimized storage format.
-- Made MDBX part of the default native Cargo build while keeping SQLite
-  compiled as an explicit secondary backend.
-- Moved the native benchmark and experimental MDBX layout prototype behind the
-  `benchmarks` Cargo feature so production builds stay smaller.
-- Updated the native MDBX default path so the Rust engine opens MDBX by default
-  when the native library is compiled with MDBX support.
-- Bumped the native ABI to 5 for the migration API cleanup.
+- Adopted strict schema-backed MDBX binary storage and made MDBX the default native build/backend.
+- Removed the public migration callback and dry-run APIs while stabilizing storage.
+- Updated the native ABI to 5.
 
 ## 0.2.4
 
-- Added internal storage metadata for layout and document format versions.
-- Added native storage verification helpers for layout, document-format, and
-  index metadata.
-- Kept the public Dart API, production storage behavior, and native binary
-  symbols unchanged.
+- Added internal storage-version metadata and verification without changing the public API or storage behavior.
 
 ## 0.2.3
 
-- Added an internal native binary document format prototype.
-- Documented the planned versioned object layout for future generated
-  serializers.
-- Added native tests for round-tripping supported field shapes without JSON and
-  reading one field by offset without full document decoding.
-- Kept the public Dart API, production storage layout, and native binary
-  symbols unchanged.
+- Added an internal binary-document prototype and tests without changing production storage or the public API.
 
 ## 0.2.2
 
-- Added an internal MDBX layout prototype for native performance benchmarks.
-- Added a benchmark backend that compares SQLite, the current MDBX layout, and
-  the layout prototype with the same workload.
-- Kept the public Dart API, production storage layout, and native binary
-  symbols unchanged.
+- Added an experimental MDBX layout and comparative benchmarks without changing production storage.
 
 ## 0.2.1
 
-- Added an internal MDBX index abstraction boundary for key creation, unique
-  checks, index replacement, deletion, collection clearing, and index stats.
-- Kept the existing MDBX storage layout and public Dart API unchanged.
-- Updated the development generator dependency constraint to the `0.2.1`
-  release line.
+- Added an internal MDBX index abstraction and updated the development generator to 0.2.1.
 
 ## 0.2.0
 
-- Prepared the Cindel API package for the coordinated `0.2.0` release line.
-- Updated hosted Cindel package constraints to `^0.2.0`.
-- Refreshed package documentation for MDBX as the default backend, SQLite as an
-  explicit fallback, and the Android/Windows prebuilt binary scope.
+- Coordinated the 0.2.0 package dependencies and updated backend/platform documentation.
 
 ## 0.1.18
 
-- Made MDBX the default storage backend for new Cindel databases.
-- Kept SQLite available through `backend: CindelStorageBackend.sqlite`.
-- Updated package documentation for the default backend switch.
+- Made MDBX the default backend, retaining explicit SQLite selection.
 
 ## 0.1.17
 
-- Prepared the first pub.dev development preview.
-- Switched Cindel package dependencies from local paths to hosted development
-  preview constraints.
-- Declared Android and Windows as the currently available prebuilt platforms.
-- Added optional `libmdbx` dependency and Windows build probe behind the
-  native `mdbx` Cargo feature.
-- Documented MDBX-01 build feasibility and LLVM/libclang requirements.
-- Updated Cindel package dependency constraints for the next development
-  preview.
-- Removed dates from changelog headings so pub.dev renders version labels cleanly.
-- Added the internal Rust backend selection boundary while keeping SQLite as
-  the FFI default backend.
-- Fixed an analyzer lint reported by pub.dev for an unnecessary `await`.
-- Added a package example page for pub.dev.
-- Added a library-level documentation comment for dartdoc/pub.dev analysis.
-- Added the MDBX key encoding spike for document, index, unique index, and
-  range-bound keys without changing the default SQLite backend.
-- Added the feature-gated minimal `MdbxStorage` prototype and benchmark
-  backend selection for SQLite, MDBX, or both.
-- Expanded the native benchmark to cover open, schema registration, indexed
-  writes, reads, indexed queries, batch writes, and deletes for the MDBX first
-  adoption decision.
-- Added shared Rust `StorageEngine` contract tests for SQLite and MDBX.
-- Brought MDBX storage parity up to the non-explicit-transaction contract,
-  including schema versions, compatible migrations, unique index enforcement,
-  batch rollback, ids, revisions, and indexed reads/writes.
-- Added MDBX explicit transaction integration through an internal write log
-  that commits staged writes inside one MDBX transaction without storing
-  self-referential transaction handles.
-- Added shared Rust transaction contract tests for SQLite and MDBX covering
-  commit, rollback, read transaction write rejection, nested transaction
-  rejection, and id allocation rollback.
-- Added the public `CindelStorageBackend` option and FFI backend selector so
-  callers can explicitly choose SQLite or MDBX while SQLite remains the
-  default backend.
-- Added backend-parameterized Dart tests so the full Cindel package suite can
-  run against SQLite or MDBX.
-- Added MDBX read-your-writes parity for staged write transactions and shared
-  same-directory MDBX environments across multiple Dart database handles.
-- Updated package installation snippets for the MDBX-enabled Android and
-  Windows prebuilt binaries.
+- Prepared the pub.dev preview with hosted dependencies, documentation, and Android/Windows prebuilts.
+- Added optional MDBX support and public backend selection; SQLite remained the default.
+- Added MDBX storage, transaction, and read-your-writes support with shared backend tests and benchmarks.
 
 ## 0.1.16
 
-- Added `putMany` as a public alias for manual and typed atomic bulk writes.
+- Added `putMany` as an alias for manual and typed atomic bulk writes.
 
 ## 0.1.15
 
-- Added pub.dev-oriented package metadata and documentation.
-- Added package-level README guidance for installation, generation, and core
-  database features.
+- Added pub.dev metadata and introductory package documentation.
 
 ## 0.1.14
 
-- Added optimized native batch document reads.
-- Regenerated Windows and Android prebuilt native libraries for ABI 4.
+- Optimized native batch reads and regenerated Windows/Android binaries for ABI 4.

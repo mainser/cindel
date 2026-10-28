@@ -2,362 +2,207 @@
 
 ## 1.1.5
 
-- Rebuilt the Web runtime to avoid redundant sorting in eligible unlimited query updates.
-- Rebuilt the Web runtime to preserve exact strings and upgrade legacy SQLite string columns.
-- Rebuilt the Web runtime alongside prepared-row reads.
-- Rebuilt the Web runtime to avoid intermediate document copies in `getAll`.
-- Rebuilt the Web runtime with bounded prepared-read statement reuse and schema invalidation.
-- Rebuilt the Web runtime with reusable SQLite batch layouts.
+- Updated the Web runtime with optimized reads and eligible unlimited query updates.
+- Fixed SQLite string preservation and upgraded legacy string columns in the Web runtime.
 
 ## 1.1.4
 
-- Fixed release artifact assembly so every platform ships the freshly built ABI 39 binaries, verified against the final Pub archive.
+- Fixed release packaging to include freshly built ABI 39 binaries on every platform.
 
 ## 1.1.3
 
-- Added iOS/macOS Swift Package Manager packaging alongside CocoaPods, with Apple consumer validation in CI and release.
-- Released in lockstep with `cindel` 1.1.3 for the native ABI 39.
+- Added Swift Package Manager support for iOS/macOS alongside CocoaPods.
+- Matched `cindel` 1.1.3 and native ABI 39.
 
 ## 1.1.2
 
-- Released in lockstep with `cindel` 1.1.2 for the native ABI 35.
+- Matched `cindel` 1.1.2 and native ABI 35.
 
 ## 1.1.1
 
-- Fixed Web worker transaction rollback and resource cleanup during database
-  closure.
+- Fixed Web worker rollback and resource cleanup during database closure.
 
 ## 1.0.0
 
-- Released the first stable Cindel Flutter libraries package version in
-  lockstep with `cindel` 1.0.0.
+- Released the first stable Flutter libraries package alongside `cindel` 1.0.0.
 
 ## 0.9.3
 
-- Released in lockstep with `cindel` 0.9.3 for the native ABI 34 runtime fix
-  that preserves `List<String>` fields inside embedded objects on native
-  backends.
+- Matched `cindel` 0.9.3 and ABI 34, fixing native embedded string-list reads.
 
 ## 0.9.2
 
-- Released in lockstep with `cindel` 0.9.2 so Flutter apps resolve matching
-  runtime and bundled Web assets for the Web `deleteAll` facade fix.
+- Matched `cindel` 0.9.2 with updated Web assets for the `deleteAll` fix.
 
 ## 0.9.1
 
-- Released in lockstep with all Cindel packages on the 0.9.1 line so the
-  release workflow publishes a fully resolvable package set.
+- Aligned all Cindel packages with the coordinated 0.9.1 release.
 
 ## 0.9.0
 
-- Released in lockstep with `cindel` 0.9.0 so Flutter apps resolve matching
-  runtime and bundled binary/Web assets for the sync-enabled release.
+- Updated native/Web assets for the `cindel` 0.9.0 Sync release.
 
 ## 0.7.0
 
-- Released in lockstep with `cindel` 0.7.0 for the native ABI 32 migration and
-  paged document-id runtime symbols.
-- Requires regenerated native libraries and Web Wasm assets that expose
-  migrated schema registration, migration version persistence, and compact
-  requests for SQLite, MDBX, and Web SQLite/OPFS.
-- Updated the packaged Web worker template for the `documentIdsPage` operation.
+- Updated native/Web runtimes for migrations, compaction, and paged document IDs; requires ABI 32 binaries.
 
 ## 0.6.5
 
-- Released in lockstep with `cindel` 0.6.5 so the runtime package and bundled
-  Flutter libraries keep matching versions.
+- Aligned with `cindel` 0.6.5.
 
 ## 0.6.4
 
-- Updated the bundled Web SQLite/OPFS Worker/Wasm assets for the generated
-  typed Cindel Web backend.
-- Packaged Web runtime support for typed CRUD, bulk reads/writes, query plans,
-  projections, aggregates, updates, deletes, transactions, revisions,
-  change-set draining, and single-tab watchers.
-- Declared Web plugin support and packaged the Worker, JavaScript glue, and
-  Wasm runtime assets as Flutter package assets.
+- Added Flutter Web plugin support and bundled the typed SQLite/OPFS Worker/Wasm runtime.
+- Included Web CRUD, queries, transactions, and single-tab watchers.
 
 ## 0.6.1
 
-- Added Web SQLite Wasm runtime assets under `web/pkg`.
+- Added Web SQLite Wasm assets under `web/pkg`.
 
 ## 0.6.0
 
-- Prepared regenerated Flutter native runtime libraries for the Cindel `0.6.0`
-  native reader ABI.
-- Includes the new current-document dynamic field reader symbols required by
-  the Cindel `0.6.0` MDBX typed hydration path.
-- Keeps MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Prepared native libraries for `cindel` 0.6.0 and its updated MDBX typed readers, retaining SQLite support.
 
 ## 0.5.13
 
-- Added iOS and macOS to the advertised Flutter plugin platform set.
-- Prepared release automation to generate Android, iOS, Linux, macOS, and
-  Windows native runtime binaries in GitHub Actions before pub.dev publishing.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Added iOS/macOS platform metadata and automated native builds for all five desktop/mobile platforms.
+- Retained MDBX as the default backend with explicit SQLite selection.
 
 ## 0.5.12
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  Cindel `0.5.12` native runtime line.
-- Includes the MDBX query-plan count, aggregate, and projection streaming
-  optimizations.
-- Keeps MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Rebuilt Windows/Android/Linux libraries for 0.5.12 with MDBX streaming counts, aggregates, and projections.
 
 ## 0.5.11
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  Cindel `0.5.11` native runtime line.
-- Includes the latest MDBX native read/query optimizations, SQLite string-list
-  hydration improvements, and SQLite schema-aware open behavior.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Rebuilt Windows/Android/Linux libraries for 0.5.11 with MDBX read/query and SQLite read/open improvements.
 
 ## 0.5.8
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  Cindel `0.5.8` backend format and `dbId` release line.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Rebuilt Windows/Android/Linux libraries for the 0.5.8 storage format and `dbId` changes.
 
 ## 0.5.7
 
-- Regenerated the Windows native runtime library for the Cindel `0.5.7`
-  SQLite generated typed backend completion line.
-- Kept MDBX and SQLite compiled into the shipped binary, with MDBX as the
-  default backend and SQLite selectable explicitly.
+- Rebuilt the Windows library for the completed SQLite typed backend in 0.5.7.
 
 ## 0.5.6
 
-- Regenerated the Windows native runtime library for the Cindel `0.5.6`
-  SQLite generated `getAll` cursor/reader ABI.
-- Kept MDBX and SQLite compiled into the shipped binary, with MDBX as the
-  default backend.
+- Rebuilt the Windows library for the SQLite `getAll` reader ABI in 0.5.6.
 
 ## 0.5.4
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  Cindel `0.5.4` native ABI 29 release line.
-- Includes the MDBX unindexed typed batch insert fast path, native query-plan
-  update optimization, native filter scan optimization, and filtered sort query
-  optimization used by the app-style benchmark path.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 29 with MDBX batch-write and query optimizations.
 
 ## 0.5.3
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  Cindel `0.5.3` native fix line.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for the 0.5.3 native fixes.
 
 ## 0.5.2
 
-- Regenerated Windows, Android, and Linux native runtime libraries for the
-  current Cindel native ABI used by the `cindel` 0.5.2 line.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries to match `cindel` 0.5.2.
 
 ## 0.5.1
 
-- Regenerated Windows, Android, and Linux native runtime libraries so the
-  shipped binaries match the `cindel` 0.5.0 native FFI surface, including the
-  native batch list writer symbols required by typed `List<String>` writes.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for the 0.5.0 native API, including typed string-list batch writers.
 
 ## 0.5.0
 
-- Updated the Flutter native libraries package to the coordinated `0.5.0`
-  release line.
-- Regenerated the Windows native runtime library with schema-prepared native
-  filter evaluation and typed reader string hydration cleanup.
-- Regenerated the Windows native runtime library with the tighter compact
-  native `List<String>` payload layout.
-- Regenerated the Windows native runtime library for faster typed MDBX inserts
-  with compact native string-list payloads.
-- Regenerated the Windows native runtime library for Cindel native ABI 25 with
-  MDBX schema registration during native open.
-- Kept MDBX and SQLite compiled into the Windows binary, with MDBX as the
-  default backend.
+- Aligned package versions and rebuilt the Windows library for ABI 25 with MDBX read, write, filter, and schema improvements.
 
 ## 0.4.0
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 23.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 23.
 
 ## 0.3.4
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 17 after removing default-runtime JSON result paths.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 17 with binary query result payloads.
 
 ## 0.3.3
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 16 with CindelWireV1 binary watcher change-set support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 16 with binary watcher change sets.
 
 ## 0.3.2
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 15 with CindelWireV1 binary native query plan execution support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 15 with native query plans.
 
 ## 0.3.1
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 14 with binary schema and metadata payload support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 14 with binary schemas and metadata.
 
 ## 0.3.0
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 13 with GenericDocumentV1 manual document payload support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 13 with binary manual documents.
 
 ## 0.2.18
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 12 with CindelWireV1 binary native filter AST payloads.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 12 with binary native filters.
 
 ## 0.2.17
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 11 with CindelWireV1 binary index values, index entries, and
-  indexed document write batches.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 11 with binary indexes and indexed-write batches.
 
 ## 0.2.16
 
-- Regenerated Windows, Android, and Linux native runtime libraries with the
-  GET-01 MDBX read-path optimization that caches schema manifests for
-  get-family reads.
-- Kept the native ABI at 10 and kept MDBX and SQLite compiled into the shipped
-  binaries.
+- Rebuilt Windows/Android/Linux libraries with cached MDBX schemas for faster reads; retained ABI 10.
 
 ## 0.2.15
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 10 with CindelWireV1 binary id-list FFI payloads.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 10 with binary ID lists.
 
 ## 0.2.13
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 9 with native aggregate query support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
-- Declared Linux in Flutter plugin metadata and included `linux/` in pub.dev
-  publication archives.
-- Completed Windows, Android, and Linux prebuilt validation for the optimized
-  MDBX storage release.
+- Rebuilt and validated Windows/Android/Linux libraries for ABI 9 with native aggregates.
+- Added Linux plugin metadata and publication files.
 
 ## 0.2.12
 
-- Regenerated Windows, Android, and Linux native runtime libraries with the
-  converged MDBX v2 table layout in the real default backend.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries with the updated MDBX v2 table layout.
 
 ## 0.2.11
 
-- Regenerated Windows, Android, and Linux native runtime libraries with the
-  MDBX allocation and key-buffer reuse optimizations.
+- Rebuilt Windows/Android/Linux libraries with reduced MDBX allocations and buffer reuse.
 
 ## 0.2.10
 
-- Regenerated Windows, Android, and Linux native runtime libraries with the
-  MDBX auto-increment counter optimization.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries with optimized MDBX auto-increment counters.
 
 ## 0.2.9
 
-- Regenerated Windows, Android, and Linux native runtime libraries with
-  composite and multi-entry index support.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries with composite and multi-entry indexes.
 
 ## 0.2.8
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 8.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 8.
 
 ## 0.2.7
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 7.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 7.
 
 ## 0.2.6
 
-- Regenerated Windows, Android, and Linux native runtime libraries for Cindel
-  native ABI 6.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as the
-  default backend.
+- Rebuilt Windows/Android/Linux libraries for ABI 6.
 
 ## 0.2.5
 
-- Regenerated native runtime libraries for the Cindel native ABI 5 cleanup.
-- Kept MDBX and SQLite compiled into the shipped binaries, with MDBX as
-  Cindel's default backend.
-- Added Linux as an advertised prebuilt platform alongside Android and
-  Windows.
+- Rebuilt native libraries for ABI 5 with MDBX as default and SQLite available.
+- Added Linux to the advertised Android/Windows prebuilt platforms.
 
 ## 0.2.0
 
-- Prepared the Flutter native libraries package for the coordinated `0.2.0`
-  Cindel release line.
-- Kept Android and Windows as the advertised prebuilt platforms for the current
-  pub.dev package.
-- Updated package and plugin metadata to the `0.2.0` version.
+- Aligned package/plugin metadata with the coordinated 0.2.0 release, advertising Android/Windows prebuilts.
 
 ## 0.1.11
 
-- Updated package documentation to describe MDBX as Cindel's default backend
-  while SQLite remains explicitly selectable.
+- Documented MDBX as the default backend and SQLite as an explicit alternative.
 
 ## 0.1.10
 
-- Prepared the first pub.dev development preview.
-- Limited published Flutter plugin support to Android and Windows until Apple
-  and Linux binaries are generated and validated.
-- Removed dates from changelog headings so pub.dev renders version labels cleanly.
-- Added a package example page for pub.dev.
-- Added a library-level documentation comment for dartdoc/pub.dev analysis.
-- Updated the package example dependency constraints for the current Cindel
-  development preview.
-- Updated the package example to reference the MDBX-04 Cindel development
-  preview.
-- Bundled Windows and Android native libraries built with MDBX support.
-- Updated the Windows and Android prebuilt build scripts to enable the native
-  `mdbx` Cargo feature.
+- Prepared the pub.dev preview with updated documentation, metadata, and examples.
+- Limited published plugin support to Android/Windows and bundled MDBX-enabled binaries.
 
 ## 0.1.9
 
-- Added pub.dev-oriented package metadata and maintainer information.
-- Declared current Flutter plugin support for Android, iOS, and Windows while
-  Linux and macOS prebuilt binaries remain pending.
+- Added pub.dev metadata and advertised Android/iOS/Windows support; Linux/macOS prebuilts remained pending.
 
 ## 0.1.8
 
-- Bundled regenerated Android and Windows native libraries for the current
-  Cindel native ABI.
+- Rebuilt Android/Windows libraries for the current native ABI.
