@@ -8,6 +8,37 @@ schemas alone. Typical examples include renamed fields, removed fields, split
 models, merged models, changed field types, or data rewrites that need
 controlled conversion.
 
+## SQLite String Storage Upgrade in 1.1.5
+
+SQLite native and Web now declare string columns with `TEXT` affinity. Earlier
+versions used `str`, which SQLite treats as numeric affinity: a string such as
+`'00123'` could become the integer `123`, and subsequent typed reads could fail.
+MDBX is unaffected by this storage defect.
+
+When an existing Cindel table is registered during opening, the runtime detects
+the legacy declaration and replaces that table transactionally. This is an
+internal storage correction: application models, generated APIs, schema
+versions, and `CindelMigrationPlan` target versions do not need to change.
+IDs, reserved ID counters, relationships, collection revisions, SQL indexes,
+and triggers are preserved. Copying rows does not fire the table's triggers.
+If the conversion fails, the original table and its data are restored.
+
+The first open of a legacy table copies its rows once using SQLite
+`INSERT ... SELECT`. It does not collect documents into a Dart or Rust list.
+That open needs time and disk space proportional to the affected table and its
+transaction journal. Later opens inspect the column declarations without
+rewriting the rows. New tables already use the corrected declaration.
+
+This correction prevents future conversions; it cannot reconstruct text lost
+by an earlier version. An already stored integer `123` becomes the readable
+string `'123'`, not the unknowable original spelling (`'00123'`, `'+123'`, etc.).
+Restoring the original spelling requires an unaffected backup or another source
+containing the original value. Existing intact strings and nulls are preserved.
+
+The automatic conversion recognizes Cindel's generated table layout. If the
+physical SQL table was manually changed to add unsupported constraints, opening
+reports an error rather than silently discarding those constraints.
+
 ## Mental Model
 
 Cindel stores a database-level data migration version inside the database. A

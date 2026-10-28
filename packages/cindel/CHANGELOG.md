@@ -2,6 +2,7 @@
 
 ## 1.1.5
 
+- Preserve numeric-looking strings in SQLite native/Web, with an atomic, one-time upgrade of legacy string columns.
 - Stop eligible limited MDBX updates as soon as their window is complete, avoiding scans of subsequent nonmatching rows.
 - Reuse prepared rows and preallocate growable `getAll` results across all backends, preserving field validation, transaction snapshots and read errors.
 - Encode ID batches in one buffer across all backends, avoiding per-ID fragments and the extra native list copy while preserving range validation.

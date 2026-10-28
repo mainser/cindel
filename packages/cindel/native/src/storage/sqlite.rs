@@ -11,6 +11,8 @@ mod migration;
 mod relations;
 #[path = "sqlite_revisions.rs"]
 mod revisions;
+#[path = "sqlite_text.rs"]
+mod text;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_void, CStr, CString};
 use std::fmt::Write as _;
@@ -4357,6 +4359,7 @@ fn create_collection_table(
     }
     sql.push(')');
     connection.execute(&sql, []).map_err(sqlite_diagnostic)?;
+    text::upgrade_legacy_columns(connection, &collection.name)?;
     // Bootstrap databases written before typed IDs had persisted counters.
     // Reopening or registering schemas must never lower an existing counter.
     let max_id = connection
@@ -4390,7 +4393,7 @@ fn sql_type_for_field(field: &FieldSchemaManifest) -> &'static str {
         "bool" => "bool",
         "int" => "i64",
         "double" => "f64",
-        "string" => "str",
+        "string" => "TEXT",
         "list" => "str[]",
         "object" => "json",
         _ => "json",
@@ -4706,6 +4709,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 
 #[cfg(test)]
 mod tests {
+    include!("sqlite_text_tests.rs");
     include!("sqlite_read_tests.rs");
     include!("sqlite_batch_response_tests.rs");
     include!("sqlite_revision_tests.rs");

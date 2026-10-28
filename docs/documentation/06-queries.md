@@ -592,6 +592,13 @@ Updating the id field is rejected.
 Values in the update map must already use Cindel-compatible stored shapes:
 `null`, `bool`, `int`, finite `double`, `String`, lists, and string-keyed maps.
 
+String values remain text even when they look numeric: updating a string to
+`'00123'`, `'1e3'`, or `'3.1400'` preserves those exact characters in MDBX,
+SQLite native, and Web. This also applies to `put` and `putAll`, nullable string
+fields, and indexed strings. Equality and sorting use string semantics.
+For SQLite databases created before 1.1.5, see the storage upgrade described
+in the migrations documentation; already lost characters cannot be recovered.
+
 For converted fields such as `DateTime`, `Duration`, or enums, prefer typed
 object writes unless you intentionally want to write the stored scalar
 representation:
