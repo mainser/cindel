@@ -1749,6 +1749,7 @@ impl MdbxStorage {
         updates: &PreparedBinaryFieldUpdates,
         update_touches_index: bool,
         collect_changes: bool,
+        validation_sort_fields: &[QuerySortField],
     ) -> Result<Option<usize>, String> {
         if self.active_write().is_some()
             || update_touches_index
@@ -1810,6 +1811,7 @@ impl MdbxStorage {
                         .map_err(|error| error.to_string())?;
                     continue;
                 }
+                validate_update_sort_fields(schema, &bytes, validation_sort_fields)?;
                 apply_prepared_binary_field_updates(&mut bytes, updates)?;
                 cursor
                     .put(&key, &bytes, WriteFlags::CURRENT)
@@ -3037,6 +3039,23 @@ impl StorageEngine for MdbxStorage {
         let schema = self.required_schema(collection)?;
         let update_touches_index = updates_touch_index(&schema, updates)?;
         let prepared_updates = prepare_binary_field_updates(&schema, updates)?;
+        // Without a selection window, distinct or index mutations, order cannot
+        // change the affected set. Keep the original sort-field validations.
+        let omit_order = !plan.sorts.is_empty()
+            && plan.offset == 0
+            && plan.limit.is_none()
+            && plan.distinct_fields.is_empty()
+            && !update_touches_index;
+        let validation_sort_fields = if omit_order {
+            query_sort_fields(&schema, &plan.sorts)?
+        } else {
+            Vec::new()
+        };
+        let unordered_plan = omit_order.then(|| WireQueryPlan {
+            sorts: Vec::new(),
+            ..plan.clone()
+        });
+        let plan = unordered_plan.as_ref().unwrap_or(plan);
         if let Some(count) = self.query_plan_update_direct_bool_index(
             collection,
             plan,
@@ -3053,6 +3072,7 @@ impl StorageEngine for MdbxStorage {
             &prepared_updates,
             update_touches_index,
             collect_changes,
+            &validation_sort_fields,
         )? {
             return Ok(count);
         }
@@ -3064,6 +3084,7 @@ impl StorageEngine for MdbxStorage {
 
         let mut documents = Vec::with_capacity(planned.len());
         for mut document in planned {
+            validate_update_sort_fields(&schema, &document.bytes, &validation_sort_fields)?;
             apply_prepared_binary_field_updates(&mut document.bytes, &prepared_updates)?;
             documents.push(DocumentWrite {
                 id: document.id,
@@ -4108,6 +4129,19 @@ fn can_stream_integer_index_order(schema: &CollectionSchemaManifest, plan: &Wire
                 && field.dart_type == "int"
                 && field.binary_type == "int"
         })
+}
+
+fn validate_update_sort_fields(
+    schema: &CollectionSchemaManifest,
+    bytes: &[u8],
+    fields: &[QuerySortField],
+) -> Result<(), String> {
+    for field in fields {
+        if let QuerySortTarget::Field(prepared) = &field.target {
+            read_prepared_binary_sort_key(schema, bytes, prepared)?;
+        }
+    }
+    Ok(())
 }
 
 fn query_sort_fields(

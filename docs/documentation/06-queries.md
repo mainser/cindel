@@ -578,6 +578,26 @@ later rows would not match. This path applies outside an explicit `writeTxn`
 when the changed fields do not participate in indexes. A zero limit performs
 no cursor reads on this path; field and filter validation still runs.
 
+For native query plans in MDBX and SQLite native/Web, an ordered `updateAll()`
+can omit internal sorting when it has no limit, zero offset, no distinct, and
+none of the changed fields participates in a simple or composite index. Every
+matching row is still updated, even when the changed field also appears in the
+filter or sort. The reusable query keeps its order for subsequent reads.
+`updateFirst()`, selection windows, distinct and indexed-field updates retain
+their existing selection behavior. Queries that select rows in Dart retain
+that selection path.
+
+On MDBX's all-documents source outside an explicit `writeTxn`, eligible ordered
+updates reuse the direct cursor scan: they do not retain or sort a batch of
+documents. Sort fields are still validated on each matching row before it is
+changed, and an error rolls back the operation. Collecting changed IDs for
+watchers still requires memory proportional to those IDs; transaction overlays
+and other query sources can still retain document batches. SQLite uses the
+direct filtered `UPDATE` instead of an ID subquery with `ORDER BY`; this avoids
+the intermediate ID set even when SQLite already removes that sort.
+These are internal optimizations; the public API and transaction guarantees
+are the same on all three backends.
+
 The update map uses persisted field names:
 
 ```dart

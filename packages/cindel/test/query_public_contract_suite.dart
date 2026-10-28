@@ -46,6 +46,187 @@ void main() {
     Future<List<String>> names() async =>
         (await all.findAll()).map((user) => user.name).toList();
 
+    for (final indexedSource in [false, true]) {
+      for (final transaction in [false, true]) {
+        // Scenario: An ordered unlimited update changes an unindexed property.
+        // Covers: Generated where/filter paths, transaction overlays and query reuse.
+        // Expected: Both selected users change; other fields and query order survive.
+        test('ordered unlimited update where=$indexedSource '
+            'transaction=$transaction preserves selection.', () async {
+          // Arrange.
+          final query =
+              (indexedSource
+                      ? database.users.where().emailEqualTo('team@example.com')
+                      : database.users.filter().emailEqualTo(
+                          'team@example.com',
+                        ))
+                  .sortByNameDesc()
+                  .thenByDbId();
+          Future<void> update() async {
+            expect(await query.updateAll({'sessionLength': 1234}), 2);
+            expect((await query.findAll()).map((row) => row.dbId), [2, 1]);
+          }
+
+          // Act.
+          if (transaction) {
+            await database.writeTxn(update);
+          } else {
+            await update();
+          }
+          // Assert.
+          final rows = await all.findAll();
+          expect(rows.map((row) => row.sessionLength?.inMicroseconds), [
+            1234,
+            1234,
+            null,
+            null,
+          ]);
+          expect(await names(), ['Alpha', 'Beta', 'Alpha', 'Gamma']);
+          expect(
+            await database.users
+                .where()
+                .emailEqualTo('team@example.com')
+                .count(),
+            2,
+          );
+        });
+      }
+    }
+
+    // Scenario: Updating the sort/filter property makes every match stop matching.
+    // Covers: Evaluation against the original rows and changing sort keys.
+    // Expected: Each original match changes exactly once, without omitted rows.
+    test(
+      'ordered unlimited update changes its own filter and sort field.',
+      () async {
+        // Arrange.
+        final query = database.users
+            .filter()
+            .nameContains('a')
+            .sortByNameDesc();
+        // Act.
+        expect(await query.updateAll({'name': '0'}), 4);
+        // Assert.
+        expect(await names(), ['0', '0', '0', '0']);
+        expect(await query.count(), 0);
+      },
+    );
+
+    for (final mode in [
+      'first',
+      'limit',
+      'offset',
+      'window',
+      'distinct',
+      'zero',
+    ]) {
+      // Scenario: Ordered updates include a selection rule that depends on order.
+      // Covers: updateFirst, limits, offsets and distinct representatives.
+      // Expected: Only the rows in the original ordered selection are modified.
+      test('ordered update preserves $mode selection.', () async {
+        // Arrange.
+        var query = database.users.all().sortByNameDesc().thenByDbId();
+        final List<int> selected;
+        switch (mode) {
+          case 'first':
+            selected = [4];
+          case 'limit':
+            query = query.limit(1);
+            selected = [4];
+          case 'offset':
+            query = query.offset(1);
+            selected = [2, 1, 3];
+          case 'window':
+            query = query.offset(1).limit(2);
+            selected = [2, 1];
+          case 'distinct':
+            query = query.distinctByEmail();
+            selected = [4, 2, 3];
+          default:
+            query = query.limit(0);
+            selected = [];
+        }
+        // Act.
+        if (mode == 'first') {
+          expect(await query.updateFirst({'sessionLength': 1234}), isTrue);
+        } else {
+          expect(
+            await query.updateAll({'sessionLength': 1234}),
+            selected.length,
+          );
+        }
+        // Assert.
+        final changed = (await all.findAll())
+            .where((row) => row.sessionLength != null)
+            .map((row) => row.dbId);
+        expect(changed, unorderedEquals(selected));
+      });
+    }
+
+    // Scenario: An unlimited sorted update is followed by an explicit failure.
+    // Covers: Transaction rollback for the path that may omit internal sorting.
+    // Expected: No updated value persists after the failed transaction.
+    test('ordered unlimited update rolls back.', () async {
+      // Arrange.
+      final query = database.users.all().sortByNameDesc();
+      // Act.
+      await expectLater(
+        database.writeTxn(() async {
+          expect(await query.updateAll({'name': 'pending'}), 4);
+          throw StateError('rollback ordered update');
+        }),
+        throwsStateError,
+      );
+      // Assert.
+      expect(await names(), ['Alpha', 'Beta', 'Alpha', 'Gamma']);
+    });
+
+    for (final indexedField in ['email', 'active']) {
+      // Scenario: An ordered update changes a simple or composite index member.
+      // Covers: Index maintenance and selection with indexed mutations.
+      // Expected: Stored values and index-based queries agree after the update.
+      test(
+        'ordered unlimited update maintains index member $indexedField.',
+        () async {
+          // Arrange.
+          final query = database.users.all().sortByNameDesc();
+          // Act.
+          expect(
+            await query.updateAll({
+              indexedField: indexedField == 'email' ? 'new@example.com' : false,
+            }),
+            4,
+          );
+          // Assert.
+          if (indexedField == 'email') {
+            expect(
+              await database.users
+                  .where()
+                  .emailEqualTo('new@example.com')
+                  .count(),
+              4,
+            );
+            expect(
+              await database.users
+                  .where()
+                  .emailEqualTo('team@example.com')
+                  .count(),
+              0,
+            );
+          } else {
+            expect(
+              (await all.findAll()).every((row) => row.active == false),
+              isTrue,
+            );
+            expect(
+              await database.users.filter().activeEqualTo(false).count(),
+              4,
+            );
+          }
+        },
+      );
+    }
+
     for (final limit in <int?>[null, 3]) {
       // Scenario: An ordered query starts at offset one with an optional
       // existing limit.

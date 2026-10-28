@@ -2,6 +2,7 @@
 
 ## 1.1.5
 
+- Skip unnecessary sorting and SQLite ID subqueries for eligible unlimited query updates in MDBX and SQLite native/Web, preserving validation and rollback.
 - Preserve numeric-looking strings in SQLite native/Web, with an atomic, one-time upgrade of legacy string columns.
 - Stop eligible limited MDBX updates as soon as their window is complete, avoiding scans of subsequent nonmatching rows.
 - Reuse prepared rows and preallocate growable `getAll` results across all backends, preserving field validation, transaction snapshots and read errors.

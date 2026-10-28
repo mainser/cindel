@@ -5,6 +5,8 @@ use super::*;
 use crate::document_format::{read_binary_field, write_compact_document_for_test, BinaryValue};
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
+include!("update_order_tests.rs");
+
 thread_local! {
     pub(super) static UPDATE_CURSOR_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static AUXILIARY_TABLE_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

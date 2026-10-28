@@ -2,6 +2,7 @@
 
 ## 1.1.5
 
+- Rebuilt the Web runtime to avoid redundant sorting in eligible unlimited query updates.
 - Rebuilt the Web runtime to preserve exact strings and upgrade legacy SQLite string columns.
 - Rebuilt the Web runtime alongside prepared-row reads.
 - Rebuilt the Web runtime to avoid intermediate document copies in `getAll`.

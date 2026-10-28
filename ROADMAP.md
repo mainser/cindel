@@ -139,6 +139,9 @@ Current public API policy:
   checks for retained candidates, discarded payloads, and window completion.
 - Early termination of eligible limited MDBX updates, with cursor-read
   regressions and shared first/bulk update-window contracts across all backends.
+- Redundant order elimination for unlimited, non-distinct native query updates
+  of unindexed fields in MDBX and SQLite native/Web, preserving validation,
+  index-sensitive paths and rollback.
 
 ### Indexes
 

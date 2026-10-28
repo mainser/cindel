@@ -1777,9 +1777,23 @@ fn update_native_query_plan(
         return Ok(0);
     }
     let (update_sql, mut params) = sqlite_update_sql(schema, updates)?;
+    let omit_order = !plan.sorts.is_empty()
+        && plan.offset == 0
+        && plan.limit.is_none()
+        && plan.distinct_fields.is_empty()
+        && !updates.iter().any(|(name, _)| {
+            schema
+                .fields
+                .iter()
+                .any(|field| field.name == *name && field.is_indexed)
+                || schema
+                    .composite_indexes
+                    .iter()
+                    .any(|index| index.fields.contains(name))
+        });
     let requires_subquery = plan.offset > 0
         || plan.limit.is_some()
-        || !plan.sorts.is_empty()
+        || (!plan.sorts.is_empty() && !omit_order)
         || !plan.distinct_fields.is_empty();
 
     let sql = if requires_subquery {
@@ -1792,6 +1806,9 @@ fn update_native_query_plan(
         )
     } else {
         let (predicates, predicate_params) = sqlite_query_plan_predicates(schema, plan)?;
+        for sort in &plan.sorts {
+            sqlite_column_for_field(schema, &sort.field)?;
+        }
         params.extend(predicate_params);
         let mut sql = format!("UPDATE {} SET {}", schema.name, update_sql);
         if !predicates.is_empty() {
@@ -1801,9 +1818,19 @@ fn update_native_query_plan(
         sql
     };
 
-    connection
-        .execute(&sql, params_from_iter(params.iter()))
-        .map_err(sqlite_diagnostic)
+    let mut statement = connection.prepare(&sql).map_err(sqlite_diagnostic)?;
+    let count = statement
+        .execute(params_from_iter(params.iter()))
+        .map_err(sqlite_diagnostic)?;
+    #[cfg(test)]
+    tests::UPDATE_STATEMENT_STATS.with(|stats| {
+        stats.set((
+            statement.get_status(rusqlite::StatementStatus::Sort),
+            statement.get_status(rusqlite::StatementStatus::VmStep),
+            statement.get_status(rusqlite::StatementStatus::MemUsed),
+        ));
+    });
+    Ok(count)
 }
 
 fn sqlite_update_sql(
@@ -4709,6 +4736,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 
 #[cfg(test)]
 mod tests {
+    include!("sqlite_update_order_tests.rs");
     include!("sqlite_text_tests.rs");
     include!("sqlite_read_tests.rs");
     include!("sqlite_batch_response_tests.rs");
