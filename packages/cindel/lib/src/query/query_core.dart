@@ -556,9 +556,9 @@ final class CindelQuery<T> {
       // window once, since an update may change the source/filter itself.
       Future<int> updateSelected() async {
         final query = limitOverride == 1 ? _limitToFirst() : this;
-        final ids = (await query._matchingDocuments())
-            .map(_idFromDocument)
-            .toList(growable: false);
+        final ids = (await query._matchingDocuments(
+          prefilterDistinctUpdate: true,
+        )).map(_idFromDocument).toList(growable: false);
         var count = 0;
         for (var start = 0; start < ids.length; start += 128) {
           final end = (start + 128).clamp(0, ids.length);
@@ -598,7 +598,9 @@ final class CindelQuery<T> {
 
   // Main document execution path. It tries native planning first, then applies
   // Dart-side sort, distinct, offset, and limit when storage cannot do it.
-  Future<List<CindelDocument>> _matchingDocuments() async {
+  Future<List<CindelDocument>> _matchingDocuments({
+    bool prefilterDistinctUpdate = false,
+  }) async {
     final mdbxNativeDocuments =
         await _matchingMdbxNativeDocumentsWithDartPlan();
     if (mdbxNativeDocuments != null) {
@@ -608,7 +610,9 @@ final class CindelQuery<T> {
     if (mdbxNativePlanDocuments != null) {
       return mdbxNativePlanDocuments;
     }
-    final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments();
+    final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments(
+      prefilterDistinctUpdate: prefilterDistinctUpdate,
+    );
     if (sqliteNativeDocuments != null) {
       return sqliteNativeDocuments;
     }
@@ -751,8 +755,12 @@ final class CindelQuery<T> {
 
   // SQLite generated native documents use the native planner when it can
   // represent the full query.
-  Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments() {
-    final dartDocuments = _matchingSqliteNativeDocumentsWithDartPlan();
+  Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments({
+    bool prefilterDistinctUpdate = false,
+  }) {
+    final dartDocuments = _matchingSqliteNativeDocumentsWithDartPlan(
+      prefilterDistinctUpdate: prefilterDistinctUpdate,
+    );
     if (dartDocuments != null) {
       return dartDocuments;
     }
@@ -780,7 +788,9 @@ final class CindelQuery<T> {
 
   // Evaluates SQLite generated native documents in Dart when native SQL cannot
   // represent the full query. It still reads through generated native readers.
-  Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan() {
+  Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan({
+    bool prefilterDistinctUpdate = false,
+  }) {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
     if (!_database.usesSqliteNativeDocuments ||
@@ -790,10 +800,31 @@ final class CindelQuery<T> {
       return null;
     }
 
+    final prefilter =
+        prefilterDistinctUpdate &&
+        _distinctFields.isNotEmpty &&
+        _sourceFilter == null &&
+        _canUseSqliteNativeSource &&
+        _nativeSource is! CindelNativeIndexRangeQuerySource &&
+        (_filter == null ||
+            (_nativeFilter != null && _canPrefilterDistinctUpdate(_filter)));
     return () async {
       final objects = await _database.queryNativePlanObjects(
         _schema.name,
-        const CindelNativeQueryPlan(source: CindelNativeAllQuerySource()),
+        prefilter
+            ? CindelNativeQueryPlan(
+                source: _nativeSource!,
+                filter: _nativeFilter,
+                // A SQL filter may use another index. Preserve the original
+                // row-ID traversal for distinct representatives and sort ties.
+                sorts: [
+                  CindelNativeQuerySort(
+                    field: _schema.idField,
+                    descending: false,
+                  ),
+                ],
+              )
+            : const CindelNativeQueryPlan(source: CindelNativeAllQuerySource()),
         fieldTypes,
         readNativeDocument,
       );
@@ -826,6 +857,40 @@ final class CindelQuery<T> {
       return false;
     }
     return _canUseSqliteNativeSource;
+  }
+
+  // This is a prefilter for an existing Dart selection, not a replacement for
+  // it. Keep predicates whose SQL null/type semantics can discard Dart matches
+  // (notably NOT and nullable comparisons) entirely on the existing path.
+  bool _canPrefilterDistinctUpdate(CindelFilterPredicate predicate) {
+    if (predicate is _CompositeFilterPredicate) {
+      return predicate.predicates.every(_canPrefilterDistinctUpdate);
+    }
+    if (predicate is! _FieldFilterPredicate || !predicate.isTopLevel) {
+      return false;
+    }
+    final field = _fieldSchema(predicate.field);
+    if (field == null) {
+      return false;
+    }
+    final value = predicate.expected;
+    return switch (predicate.operation) {
+      _FilterOperation.equalTo => switch (field.binaryType) {
+        'bool' => value == null || value is bool,
+        'int' || 'double' => value == null || (value is num && value.isFinite),
+        'string' => value == null || value is String,
+        _ => false,
+      },
+      _FilterOperation.greaterThan ||
+      _FilterOperation.greaterThanOrEqualTo ||
+      _FilterOperation.lessThan ||
+      _FilterOperation.lessThanOrEqualTo =>
+        !field.dartType.endsWith('?') &&
+            (field.binaryType == 'int' || field.binaryType == 'double') &&
+            value is num &&
+            value.isFinite,
+      _ => false,
+    };
   }
 
   // SQL column comparisons cannot represent tokenized or normalized sources.

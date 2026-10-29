@@ -598,6 +598,28 @@ the intermediate ID set even when SQLite already removes that sort.
 These are internal optimizations; the public API and transaction guarantees
 are the same on all three backends.
 
+For SQLite native and Web, updates with `distinct` can filter candidates in
+SQLite before loading them into Dart. Eligible predicates are top-level scalar
+equalities and comparisons on non-nullable numeric fields, including `AND` and
+`OR` combinations when every branch is eligible. This reduces object loading
+when most rows do not match. It does not change the public query or require
+different application code for each backend.
+
+The existing Dart selection still applies the full filter, ordering, distinct
+keys, offset and limit. For example, filtering happens before choosing a
+distinct representative, and a limit is never pushed ahead of distinct. All
+selected IDs are captured before any write, inside the same `writeTxn`, so
+changing a filter or distinct field cannot change later batches. Failures roll
+back the transaction as before.
+
+Predicates requiring other Dart semantics, such as nested filters, `NOT`,
+nullable numeric comparisons and structured equality, retain their existing
+selection path. Normalized/tokenized sources also retain that path; native
+SQLite index-range sources are not part of this optimization. Other query
+operations and MDBX's native update path are unchanged. Memory still depends
+on the matching candidates and selected IDs; this is not a constant-memory
+update API or a shortcut for queries that match the whole collection.
+
 The update map uses persisted field names:
 
 ```dart

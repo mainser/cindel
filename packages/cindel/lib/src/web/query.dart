@@ -656,9 +656,9 @@ final class CindelQuery<T> {
       // Batch IDs so a large match set cannot exceed SQLite's parameter limit.
       Future<int> updateSelected() async {
         final query = limitOverride == 1 ? _limitToFirst() : this;
-        final ids = (await query._matchingDocuments())
-            .map(_idFromDocument)
-            .toList(growable: false);
+        final ids = (await query._matchingDocuments(
+          prefilterDistinctUpdate: true,
+        )).map(_idFromDocument).toList(growable: false);
         var count = 0;
         for (var start = 0; start < ids.length; start += 128) {
           final end = (start + 128).clamp(0, ids.length);
@@ -690,8 +690,12 @@ final class CindelQuery<T> {
     return _database.updateNativePlan(_schema.name, nativePlan, updates);
   }
 
-  Future<List<CindelDocument>> _matchingDocuments() async {
-    final nativeDocuments = await _matchingNativeDocuments();
+  Future<List<CindelDocument>> _matchingDocuments({
+    bool prefilterDistinctUpdate = false,
+  }) async {
+    final nativeDocuments = await _matchingNativeDocuments(
+      prefilterDistinctUpdate: prefilterDistinctUpdate,
+    );
     if (nativeDocuments != null) {
       return nativeDocuments;
     }
@@ -770,7 +774,9 @@ final class CindelQuery<T> {
     return documents?.map(_schema.fromDocument).toList(growable: false);
   }
 
-  Future<List<CindelDocument>?> _matchingNativeDocuments() {
+  Future<List<CindelDocument>?> _matchingNativeDocuments({
+    bool prefilterDistinctUpdate = false,
+  }) {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
     if (!_usesNativeDocuments() ||
@@ -790,21 +796,34 @@ final class CindelQuery<T> {
         return [for (final object in objects) _documentFromObject(object)];
       }();
     }
-    return _matchingNativeDocumentsWithDartPlan(fieldTypes, readNativeDocument);
+    return _matchingNativeDocumentsWithDartPlan(
+      fieldTypes,
+      readNativeDocument,
+      prefilterDistinctUpdate: prefilterDistinctUpdate,
+    );
   }
 
   Future<List<CindelDocument>?> _matchingNativeDocumentsWithDartPlan(
     Uint8List fieldTypes,
-    CindelReadNativeDocument<T> readNativeDocument,
-  ) {
+    CindelReadNativeDocument<T> readNativeDocument, {
+    bool prefilterDistinctUpdate = false,
+  }) {
+    final prefilter =
+        prefilterDistinctUpdate &&
+        _distinctFields.isNotEmpty &&
+        _sourceFilter == null &&
+        (_filter == null ||
+            (_nativeFilter != null && _canPrefilterDistinctUpdate(_filter)));
     return () async {
       final objects = await _database.queryNativePlanObjects(
         _schema.name,
         WireQueryPlan(
           // Keep indexed candidates when only the final selection needs Dart.
           source: _nativeSource,
-          filter: null,
-          sorts: const [],
+          filter: prefilter ? _nativeFilter : null,
+          sorts: prefilter
+              ? [WireQuerySort(field: _schema.idField, ascending: true)]
+              : const [],
           distinctFields: const [],
           offset: 0,
           limit: null,
@@ -839,6 +858,45 @@ final class CindelQuery<T> {
       }
       return documents;
     }();
+  }
+
+  // Match the conservative native SQLite prefilter. The complete Dart filter,
+  // sort, distinct and window still run before any selected ID is updated.
+  bool _canPrefilterDistinctUpdate(CindelFilterPredicate predicate) {
+    if (predicate is _CompositeFilterPredicate) {
+      return predicate.predicates.every(_canPrefilterDistinctUpdate);
+    }
+    if (predicate is! _FieldFilterPredicate || predicate.path.length != 1) {
+      return false;
+    }
+    CindelFieldSchema? field;
+    for (final candidate in _schema.fields) {
+      if (candidate.name == predicate.path.single) {
+        field = candidate;
+        break;
+      }
+    }
+    if (field == null) {
+      return false;
+    }
+    final value = predicate.expected;
+    return switch (predicate.operation) {
+      _FilterOperation.equalTo => switch (field.binaryType) {
+        'bool' => value == null || value is bool,
+        'int' || 'double' => value == null || (value is num && value.isFinite),
+        'string' => value == null || value is String,
+        _ => false,
+      },
+      _FilterOperation.greaterThan ||
+      _FilterOperation.greaterThanOrEqualTo ||
+      _FilterOperation.lessThan ||
+      _FilterOperation.lessThanOrEqualTo =>
+        !field.dartType.endsWith('?') &&
+            (field.binaryType == 'int' || field.binaryType == 'double') &&
+            value is num &&
+            value.isFinite,
+      _ => false,
+    };
   }
 
   Future<List<int>> _matchingIds() async {

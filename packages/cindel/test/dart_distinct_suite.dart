@@ -6,8 +6,10 @@ import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 import 'schema_generation_fixture.dart' show Recipient, RecipientMetadata;
 import 'dart_distinct_fixture.dart';
+import 'distinct_update_suite.dart' as distinct_update;
 
 void main() {
+  distinct_update.main();
   group('Cindel Dart distinct', () {
     late CindelDatabase database;
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.6
+
+- Reduced candidate loading for eligible updates with `distinct` in SQLite native and Web, preserving selection and atomicity.
+
 ## 1.1.5
 
 - Improved `get`/`getAll` performance and reduced temporary allocations across all backends.

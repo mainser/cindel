@@ -142,6 +142,9 @@ Current public API policy:
 - Redundant order elimination for unlimited, non-distinct native query updates
   of unindexed fields in MDBX and SQLite native/Web, preserving validation,
   index-sensitive paths and rollback.
+- Candidate prefiltering for eligible SQLite native/Web distinct updates,
+  preserving ordered representatives, windows and atomic ID batches, with
+  shared backend regressions and candidate-reader checks.
 
 ### Indexes
 
