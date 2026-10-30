@@ -107,6 +107,8 @@ Current public API policy:
 ### Queries
 
 - Generated `where()` helpers for indexed fields.
+- Shared query-builder regressions run on MDBX, SQLite native, and Web,
+  including indexed windows, list membership, nullable sorting, and mutations.
 - Generated `filter()` helpers for persisted fields.
 - Equality, range, prefix, contains, suffix, and null predicates where
   supported.

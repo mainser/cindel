@@ -282,11 +282,15 @@ final class CindelQuery<T> {
     Object? lower,
     Object? upper,
   }) {
-    return CindelQuery.all(database: database, schema: schema).whereMatches(
-      CindelFilter.all([
-        if (lower is num) CindelFilter.field(field).greaterThanOrEqualTo(lower),
-        if (upper is num) CindelFilter.field(field).lessThanOrEqualTo(upper),
-      ]),
+    final schemaField = _schemaField(schema, field);
+    return CindelQuery._(
+      database: database,
+      schema: schema,
+      nativeSource: WireQuerySource.indexRange(
+        indexName: field,
+        lower: lower == null ? null : webIndexValueForField(lower, schemaField),
+        upper: upper == null ? null : webIndexValueForField(upper, schemaField),
+      ),
     );
   }
 
@@ -297,10 +301,38 @@ final class CindelQuery<T> {
     required String field,
     required String prefix,
   }) {
-    return CindelQuery.all(
+    final schemaField = _schemaField(schema, field);
+    if (schemaField.indexType == CindelIndexType.hash) {
+      throw CindelQueryError(
+        'Hash index `$field` only supports equality queries.',
+      );
+    }
+    final normalized = schemaField.indexCaseSensitive
+        ? prefix
+        : prefix.toLowerCase();
+    final sqlPrefix =
+        schemaField.indexType == CindelIndexType.value &&
+        schemaField.indexCaseSensitive;
+    return CindelQuery._(
       database: database,
       schema: schema,
-    ).whereMatches(CindelFilter.field(field).startsWith(prefix));
+      // Retain index order and check the exact prefix before the window.
+      // Ordinary string prefixes stay in SQL, without hydrating other rows.
+      nativeSource: WireQuerySource.indexRange(
+        indexName: field,
+        lower: webIndexValueForField(normalized, schemaField),
+        upper: null,
+      ),
+      filter: sqlPrefix ? CindelFilter.field(field).startsWith(prefix) : null,
+      sourceFilter: sqlPrefix
+          ? null
+          : (document) {
+              final value = document[field];
+              return value is String &&
+                  (schemaField.indexCaseSensitive ? value : value.toLowerCase())
+                      .startsWith(normalized);
+            },
+    );
   }
 
   /// Creates a typed query for an exact word token in a word index.
@@ -629,6 +661,7 @@ final class CindelQuery<T> {
     }
     final nativePlan = _nativePlan(limitOverride: limitOverride);
     if (nativePlan == null &&
+        _canUseNativeSource &&
         _sourceFilter == null &&
         _distinctFields.isEmpty &&
         !(_filter != null &&
@@ -747,10 +780,25 @@ final class CindelQuery<T> {
   bool get _canUseNativePlanner {
     // SQL GROUP BY chooses a representative before ORDER BY. As on native
     // SQLite, select distinct representatives after sorting generated rows.
-    if (_sourceFilter != null || _distinctFields.isNotEmpty) {
+    if (!_canUseNativeSource ||
+        _sourceFilter != null ||
+        _distinctFields.isNotEmpty) {
       return false;
     }
     return _usesNativeDocuments() && _schema.readNativeDocument != null;
+  }
+
+  // SQLite column comparisons do not represent normalized or multi-entry keys.
+  bool get _canUseNativeSource {
+    final fieldName = switch (_nativeSource) {
+      WireQueryAllSource() => null,
+      WireQueryIndexEqualSource(:final indexName) => indexName,
+      WireQueryIndexRangeSource(:final indexName) => indexName,
+    };
+    if (fieldName == null) return true;
+    final field = _schemaField(_schema, fieldName);
+    return field.indexType == CindelIndexType.value &&
+        (field.binaryType != 'string' || field.indexCaseSensitive);
   }
 
   Future<List<T>?> _matchingNativeObjects() async {
@@ -814,6 +862,8 @@ final class CindelQuery<T> {
     final prefilter =
         prefilterDistinctUpdate &&
         _distinctFields.isNotEmpty &&
+        _canUseNativeSource &&
+        _nativeSource is! WireQueryIndexRangeSource &&
         _sourceFilter == null &&
         (_filter == null ||
             (_nativeFilter != null && _canPrefilterDistinctUpdate(_filter)));
@@ -822,7 +872,9 @@ final class CindelQuery<T> {
         _schema.name,
         WireQueryPlan(
           // Keep indexed candidates when only the final selection needs Dart.
-          source: _nativeSource,
+          source: _canUseNativeSource
+              ? _nativeSource
+              : const WireQuerySource.all(),
           filter: prefilter ? _nativeFilter : null,
           sorts: prefilter
               ? [WireQuerySort(field: _schema.idField, ascending: true)]
@@ -847,6 +899,20 @@ final class CindelQuery<T> {
       if (_sortKeys.isNotEmpty) {
         documents = documents.toList(growable: false)
           ..sort((left, right) => _compareDocuments(left, right, _sortKeys));
+      } else if (_nativeSource case WireQueryIndexRangeSource(
+        :final indexName,
+      ) when !_canUseNativeSource) {
+        final field = _schemaField(_schema, indexName);
+        documents.sort((left, right) {
+          final comparison = _compareIndexValues(
+            left[indexName],
+            right[indexName],
+            field,
+          );
+          return comparison != 0
+              ? comparison
+              : _idFromDocument(left).compareTo(_idFromDocument(right));
+        });
       }
       if (_distinctFields.isNotEmpty) {
         final seen = <String>{};
@@ -913,6 +979,7 @@ final class CindelQuery<T> {
         _offset == 0 &&
         _limit == null &&
         _filter == null &&
+        _nativeSource is WireQueryAllSource &&
         _sourceFilter == null) {
       return _database.documentIds(_schema.name);
     }
@@ -1119,6 +1186,7 @@ final class CindelQuery<T> {
   }
 
   bool _matchesBeforeWindow(CindelDocument document) {
+    if (!_canUseNativeSource && !_matchesNativeSource(document)) return false;
     final sourceFilter = _sourceFilter;
     if (sourceFilter != null && !sourceFilter(document)) {
       return false;
@@ -1128,6 +1196,50 @@ final class CindelQuery<T> {
       return false;
     }
     return true;
+  }
+
+  bool _matchesNativeSource(CindelDocument document) {
+    switch (_nativeSource) {
+      case WireQueryAllSource():
+        return true;
+      case WireQueryIndexEqualSource(:final indexName, :final value):
+        final field = _schemaField(_schema, indexName);
+        final actual = document[indexName];
+        final expected = _indexValue(value);
+        if (field.indexType == CindelIndexType.multiEntry) {
+          return actual is Iterable &&
+              actual.any((item) => _indexEquals(item, expected, field));
+        }
+        if (field.indexType == CindelIndexType.words) {
+          return actual is String &&
+              cindelSplitWords(
+                actual,
+                caseSensitive: field.indexCaseSensitive,
+              ).any((token) => _indexEquals(token, expected, field));
+        }
+        return _indexEquals(actual, expected, field);
+      case WireQueryIndexRangeSource(
+        :final indexName,
+        :final lower,
+        :final upper,
+      ):
+        final field = _schemaField(_schema, indexName);
+        bool matches(Object? actual) =>
+            actual != null &&
+            (lower == null ||
+                _compareIndexValues(actual, _indexValue(lower), field) >= 0) &&
+            (upper == null ||
+                _compareIndexValues(actual, _indexValue(upper), field) <= 0);
+        final actual = document[indexName];
+        if (field.indexType == CindelIndexType.words) {
+          return actual is String &&
+              cindelSplitWords(
+                actual,
+                caseSensitive: field.indexCaseSensitive,
+              ).any(matches);
+        }
+        return matches(actual);
+    }
   }
 
   CindelDocument _documentFromObject(T object) {
@@ -1805,14 +1917,40 @@ final class _SortKey {
 }
 
 int _compare(Object? left, Object? right) {
+  if (left == null) return right == null ? 0 : -1;
+  if (right == null) return 1;
   if (left is num && right is num) {
     return left.compareTo(right);
   }
-  if (left is Comparable<Object?>) {
+  if (left is String && right is String) {
     return left.compareTo(right);
   }
-  return 0;
+  if (left is bool && right is bool) {
+    return left == right ? 0 : (left ? 1 : -1);
+  }
+  return left.toString().compareTo(right.toString());
 }
+
+Object? _indexValue(WireIndexValue value) => switch (value) {
+  WireIndexNull() => null,
+  WireIndexBool(:final value) => value,
+  WireIndexInt(:final value) => value,
+  WireIndexDouble(:final value) => value,
+  WireIndexString(:final value) => value,
+  WireIndexList(:final values) => [
+    for (final value in values) _indexValue(value),
+  ],
+};
+
+bool _indexEquals(Object? left, Object? right, CindelFieldSchema field) =>
+    left is String && right is String && !field.indexCaseSensitive
+    ? left.toLowerCase() == right.toLowerCase()
+    : left == right;
+
+int _compareIndexValues(Object? left, Object? right, CindelFieldSchema field) =>
+    left is String && right is String && !field.indexCaseSensitive
+    ? left.toLowerCase().compareTo(right.toLowerCase())
+    : _compare(left, right);
 
 int _length(Object? value) {
   if (value is Iterable) return value.length;

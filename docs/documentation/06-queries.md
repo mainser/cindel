@@ -137,6 +137,15 @@ final urgent = await db.todos
     .findAll();
 ```
 
+Range bounds are inclusive. Without an explicit `sortBy...`, a range or
+string-prefix query returns matches in ascending index order before applying
+`offset` and `limit`. Use an explicit sort to request a different order.
+
+Membership queries follow the index's `caseSensitive` setting. For the
+case-insensitive `tags` index above, `tagsContains('URGENT')` also matches
+`'urgent'`. The same selection applies to reads, projections, counts, updates,
+and deletes on all three backends.
+
 Use `where()` when the lookup is part of how you expect to find records often:
 by id-like fields, natural keys, dates, tags, categories, slugs, or other
 indexed values.

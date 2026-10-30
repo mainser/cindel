@@ -3,6 +3,7 @@
 ## 1.1.6
 
 - Updated the runtime to ABI 40 for nested-filter query updates.
+- Fixed indexed range ordering in SQLite runtimes.
 
 ## 1.1.5
 

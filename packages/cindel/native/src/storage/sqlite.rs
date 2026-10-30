@@ -1729,6 +1729,13 @@ fn sqlite_query_plan_sql(
                 sql.push_str(" DESC");
             }
         }
+    } else if let WireQuerySource::IndexRange { index_name, .. } = &plan.source {
+        // Range queries expose index order, even when the query planner chooses
+        // a table scan. Apply this order before offset/limit and break ties by ID.
+        sql.push_str(" ORDER BY ");
+        sql.push_str(&sqlite_column_for_field(schema, index_name)?);
+        sql.push_str(", ");
+        sql.push_str(SQLITE_ROW_ID_COLUMN);
     }
     if plan.offset > 0 {
         sql.push_str(&format!(
@@ -5727,6 +5734,67 @@ mod tests {
 
         // Assert.
         assert_eq!(ids, vec![1, 3]);
+    }
+
+    // Scenario: A range's string keys and duplicate keys are not in ID order.
+    // Covers:
+    // - Implicit binary index ordering and ID tie-breaking before pagination.
+    // - Count windows without an unnecessary sort and explicit order overrides.
+    // Expected: Reads select the indexed window; counting keeps its no-sort path.
+    #[test]
+    fn orders_index_range_windows_without_sorting_counts() {
+        // Arrange.
+        let directory = TemporaryDirectory::new("range_window_order");
+        let schema = native_user_schema();
+        let manifest = schema_manifest(vec![schema.clone()]);
+        let mut storage = SqliteStorage::open_with_schemas(directory.path(), &manifest).unwrap();
+        let documents: Vec<_> = ["z", "B", "a", "B"]
+            .iter()
+            .enumerate()
+            .map(|(index, title)| NativeDocumentWrite {
+                id: index as u64 + 1,
+                values: vec![
+                    NativeDocumentValue::Bool(true),
+                    NativeDocumentValue::Int(1),
+                    NativeDocumentValue::Bytes(title.as_bytes().to_vec()),
+                ],
+            })
+            .collect();
+        storage
+            .put_many_native_documents("users", &documents, true)
+            .unwrap();
+        let mut plan = WireQueryPlan {
+            source: WireQuerySource::IndexRange {
+                index_name: "title".into(),
+                lower: Some(WireIndexValue::String("B".into())),
+                upper: Some(WireIndexValue::String("z".into())),
+                dedupe: false,
+            },
+            filter: None,
+            sorts: Vec::new(),
+            distinct_fields: Vec::new(),
+            offset: 1,
+            limit: Some(2),
+        };
+
+        // Act.
+        let ids = storage.query_plan_ids("users", &plan).unwrap();
+        let (sql, params) =
+            sqlite_query_plan_sql(&schema, &plan, SqliteQuerySelect::Count).unwrap();
+        let mut statement = storage.connection.prepare(&sql).unwrap();
+        let count: i64 = statement
+            .query_row(params_from_iter(params.iter()), |row| row.get(0))
+            .unwrap();
+
+        // Assert.
+        assert_eq!(ids, vec![4, 3]);
+        assert_eq!(count, 2);
+        assert_eq!(statement.get_status(rusqlite::StatementStatus::Sort), 0);
+        plan.sorts.push(crate::wire::WireQuerySort {
+            field: "id".into(),
+            ascending: false,
+        });
+        assert_eq!(storage.query_plan_ids("users", &plan).unwrap(), vec![3, 2]);
     }
 
     #[test]

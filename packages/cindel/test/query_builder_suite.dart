@@ -2,6 +2,8 @@ import 'package:cindel/cindel.dart';
 import 'package:test/test.dart';
 
 import 'backend_test_support.dart';
+import 'close_test_support_io.dart'
+    if (dart.library.js_interop) 'close_test_support_web.dart';
 
 import 'schema_generation_fixture.dart';
 
@@ -15,7 +17,6 @@ void main() {
     test('finds typed objects by indexed equality.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -36,7 +37,6 @@ void main() {
     test('finds typed objects by indexed string prefix.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -60,7 +60,6 @@ void main() {
     test('finds typed objects by indexed range.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -75,6 +74,43 @@ void main() {
       ]);
     });
 
+    // Scenario: Indexed string values have a different order from their IDs.
+    // Covers:
+    // - Inclusive range bounds and index ordering before a result window.
+    // - Objects, projections, counts, and limited updates using the same query.
+    // Expected: Every operation selects the same indexed window.
+    test('preserves indexed range order before applying a window.', () async {
+      // Arrange.
+      final database = await _openQueryDatabase(schemas: [UserSchema]);
+      await database.users.putAll([
+        _user(dbId: 1, name: 'Last', email: 'c@example.com'),
+        _user(dbId: 2, name: 'First', email: 'a@example.com'),
+        _user(dbId: 3, name: 'Middle', email: 'b@example.com'),
+        _user(dbId: 4, name: 'Outside', email: 'z@example.com'),
+      ]);
+      final query = database.users
+          .where()
+          .emailBetween('a@example.com', 'c@example.com')
+          .offset(1)
+          .limit(1);
+
+      // Act.
+      final users = await query.findAll();
+      final first = await query.findFirst();
+      final emails = await query.emailProperty().findAll();
+      final count = await query.count();
+      final updated = await query.updateAll({'active': false});
+      final rows = await database.users.all().sortByDbId().findAll();
+
+      // Assert.
+      expect(users.map((user) => user.dbId), [3]);
+      expect(first?.dbId, 3);
+      expect(emails, ['b@example.com']);
+      expect(count, 1);
+      expect(updated, 1);
+      expect(rows.map((user) => user.active), [true, true, false, true]);
+    });
+
     // Scenario: A generated where helper queries a collection-level composite
     // index by its full value.
     // Covers:
@@ -84,7 +120,6 @@ void main() {
     test('finds typed objects by composite indexed equality.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final activeUsers = await database.users
@@ -110,7 +145,6 @@ void main() {
     test('finds typed objects by multi-entry list membership.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -122,6 +156,43 @@ void main() {
       expect(users.map((user) => user.name), ['Ana', 'Dee']);
     });
 
+    // Scenario: Normalized multi-entry matches are read and mutated with a window.
+    // Covers:
+    // - Case-insensitive list membership without duplicate results.
+    // - Projection, count, update selection, delete selection, and rollback.
+    // Expected: Only matching IDs are affected and a failed transaction restores them.
+    test('preserves multi-entry selection in limited mutations.', () async {
+      // Arrange.
+      final database = await _openSeededUsers();
+      final query = database.users.where().tagsContains('FLUTTER').sortByDbId();
+
+      // Act.
+      final emails = await query.emailProperty().findAll();
+      final count = await query.count();
+      final updated = await query.offset(1).limit(1).updateAll({
+        'active': false,
+      });
+      await expectLater(
+        database.writeTxn(() async {
+          expect(await query.limit(1).deleteAll(), 1);
+          throw StateError('rollback membership delete');
+        }),
+        throwsStateError,
+      );
+      final afterRollback = await query.findAll();
+      final deleted = await query.offset(1).limit(1).deleteAll();
+      final remaining = await database.users.all().sortByDbId().findAll();
+
+      // Assert.
+      expect(emails, ['team@example.com', 'team-alpha@example.com']);
+      expect(count, 2);
+      expect(updated, 1);
+      expect(afterRollback.map((user) => user.dbId), [1, 4]);
+      expect(afterRollback.map((user) => user.active), [true, false]);
+      expect(deleted, 1);
+      expect(remaining.map((user) => user.dbId), [1, 2, 3]);
+    });
+
     // Scenario: Generated where helpers target hash and word indexes.
     // Covers:
     // - Hash-index equality falling back to filter semantics.
@@ -131,7 +202,6 @@ void main() {
     test('finds typed objects by hash and word indexes.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final tokenUsers = await database.users
@@ -175,7 +245,6 @@ void main() {
     test('finds typed objects by list length helpers.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final emptyTags = await database.users
@@ -254,7 +323,6 @@ void main() {
     test('returns the first typed match or null.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final firstTeamUser = await database.users
@@ -280,7 +348,6 @@ void main() {
     test('counts matching typed query results.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final count = await database.users
@@ -300,7 +367,6 @@ void main() {
     test('deletes the first matching typed query result.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final deleted = await database.users
@@ -330,7 +396,6 @@ void main() {
     test('deletes all matching typed query results.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final deletedCount = await database.users
@@ -359,10 +424,7 @@ void main() {
     // Expected: Matching documents are updated and the returned count matches.
     test('updates all matching native typed query results.', () async {
       // Arrange.
-      final database = await openTestDatabaseInMemory(
-        schemas: [ImmutableUserSchema],
-      );
-      addTearDown(database.close);
+      final database = await _openQueryDatabase(schemas: [ImmutableUserSchema]);
       await database.immutableUsers.putAll([
         const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
         const ImmutableUser(dbId: 2, email: 'b@example.com', active: false),
@@ -396,10 +458,7 @@ void main() {
     // Expected: Only one matching object changes.
     test('updates the first matching native typed query result.', () async {
       // Arrange.
-      final database = await openTestDatabaseInMemory(
-        schemas: [ImmutableUserSchema],
-      );
-      addTearDown(database.close);
+      final database = await _openQueryDatabase(schemas: [ImmutableUserSchema]);
       await database.immutableUsers.putAll([
         const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
         const ImmutableUser(dbId: 2, email: 'b@example.com', active: true),
@@ -419,38 +478,59 @@ void main() {
       expect(users.map((user) => user.active), [false, true, false]);
     });
 
-    // Scenario: Query updates reject unsupported public mutation shapes.
+    // Scenario: A nested path selects one row among different and null parents.
     // Covers:
-    // - Update attempts without a native query plan.
+    // - [CindelFilter.path] and [CindelQuery.updateAll].
+    // - Typed updates with nested filters on each backend.
+    // Expected: Only the matching row changes; other fields and rows survive.
+    test('updates typed query results with nested paths.', () async {
+      // Arrange.
+      final database = await _openQueryDatabase(schemas: [UserSchema]);
+      final users = [
+        _user(dbId: 1, name: 'Ana', email: 'a@example.com'),
+        _user(dbId: 2, name: 'Ben', email: 'b@example.com'),
+        _user(dbId: 3, name: 'Cid', email: 'c@example.com')
+          ..primaryRecipient = null,
+      ];
+      await database.users.putAll(users);
+
+      // Act.
+      final updated = await database.users
+          .all()
+          .whereMatches(
+            CindelFilter.path([
+              'primaryRecipient',
+              'address',
+            ]).equalTo('a@example.com'),
+          )
+          .updateAll({'active': false});
+      final stored = await database.users.all().sortByDbId().findAll();
+
+      // Assert.
+      expect(updated, 1);
+      expect(stored.map((user) => user.dbId), [1, 2, 3]);
+      for (var index = 0; index < users.length; index++) {
+        final expected = UserSchema.toDocument(users[index]);
+        if (index == 0) {
+          expected['active'] = false;
+        }
+        expect(UserSchema.toDocument(stored[index]), expected);
+      }
+    });
+
+    // Scenario: Query updates receive invalid mutation fields or values.
+    // Covers:
     // - Id field updates.
     // - Values that cannot be encoded as native query update values.
     // Expected: Invalid updates fail before mutating documents.
     test('rejects invalid native typed query updates.', () async {
       // Arrange.
-      final database = await openTestDatabaseInMemory(
-        schemas: [UserSchema, ImmutableUserSchema],
-      );
-      addTearDown(database.close);
-      await database.users.put(
-        _user(dbId: 1, name: 'Ana', email: 'a@example.com'),
-      );
+      final database = await _openQueryDatabase(schemas: [ImmutableUserSchema]);
       await database.immutableUsers.put(
         const ImmutableUser(dbId: 1, email: 'a@example.com', active: true),
       );
 
       // Act / Assert.
-      await expectLater(
-        database.users
-            .all()
-            .whereMatches(
-              CindelFilter.path([
-                'primaryRecipient',
-                'address',
-              ]).equalTo('a@example.com'),
-            )
-            .updateAll({'active': false}),
-        throwsUnsupportedError,
-      );
       await expectLater(
         database.immutableUsers.filter().activeEqualTo(true).updateAll({
           'dbId': 99,
@@ -463,6 +543,11 @@ void main() {
         }),
         throwsArgumentError,
       );
+      final users = await database.immutableUsers.all().findAll();
+      expect(users, hasLength(1));
+      expect(users.single.dbId, 1);
+      expect(users.single.email, 'a@example.com');
+      expect(users.single.active, isTrue);
     });
 
     // Scenario: A generated filter starts from the whole collection.
@@ -473,7 +558,6 @@ void main() {
     test('filters the whole typed collection by bool equality.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final inactiveUsers = await database.users
@@ -494,7 +578,6 @@ void main() {
     test('uses indexed equality for filter-only indexed fields.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final filterUsers = await database.users
@@ -524,7 +607,6 @@ void main() {
     test('combines indexed where clauses with non-indexed filters.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final activeTeamUsers = await database.users
@@ -545,7 +627,6 @@ void main() {
     test('filters by string contains, startsWith, and endsWith.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final contains = await database.users
@@ -575,7 +656,6 @@ void main() {
     test('filters by numeric comparisons.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final greaterThan = await database.users
@@ -598,7 +678,6 @@ void main() {
     test('counts and projects filter-only queries.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final activeCount = await database.users
@@ -625,7 +704,6 @@ void main() {
     test('supports all, any, and not filter groups.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -656,7 +734,6 @@ void main() {
     test('supports optional, anyOf, and allOf query modifiers.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final optionalDisabled = await database.users
@@ -733,7 +810,6 @@ void main() {
     test('rejects invalid query modifiers.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act / Assert.
       expect(
@@ -809,7 +885,6 @@ void main() {
     test('word queries with no tokens match nothing.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final exactMatches = await database.users
@@ -834,7 +909,6 @@ void main() {
     test('sorts and paginates typed query results.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -858,7 +932,6 @@ void main() {
     test('processes Dart-side sort and window helpers.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       CindelQuery<User> dartPlannedQuery() {
         return database.users.all().whereMatches(
@@ -916,8 +989,7 @@ void main() {
     // query results.
     test('emits query watcher snapshots and lazy changes.', () async {
       // Arrange.
-      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
-      addTearDown(database.close);
+      final database = await _openQueryDatabase(schemas: [UserSchema]);
       CindelQuery<User> watchedQuery() {
         return database.users.all().whereMatches(
           CindelFilter.path([
@@ -971,8 +1043,7 @@ void main() {
     // Expected: SQLite and MDBX both emit typed objects for matching writes.
     test('emits native-plan query watcher snapshots.', () async {
       // Arrange.
-      final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
-      addTearDown(database.close);
+      final database = await _openQueryDatabase(schemas: [UserSchema]);
 
       final events = <List<User>>[];
       final subscription = database.users
@@ -1002,7 +1073,6 @@ void main() {
     test('sorts by secondary keys.', () async {
       // Arrange.
       final database = await _openUsersWithDuplicateNames();
-      addTearDown(database.close);
 
       // Act.
       final users = await database.users
@@ -1027,7 +1097,6 @@ void main() {
     test('returns distinct results by one or multiple fields.', () async {
       // Arrange.
       final database = await _openUsersWithDuplicateNames();
-      addTearDown(database.close);
 
       // Act.
       final distinctNames = await database.users
@@ -1061,7 +1130,6 @@ void main() {
     test('projects primitive fields.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final names = await database.users
@@ -1109,7 +1177,6 @@ void main() {
     test('aggregates projected primitive fields.', () async {
       // Arrange.
       final database = await _openSeededUsers();
-      addTearDown(database.close);
 
       // Act.
       final idCount = await database.users.all().dbIdProperty().count();
@@ -1159,7 +1226,6 @@ void main() {
     test('executes common query plans through the native path.', () async {
       // Arrange.
       final database = await _openUsersWithDuplicateNames();
-      addTearDown(database.close);
 
       CindelQuery<User> query() {
         return database.users
@@ -1206,7 +1272,6 @@ void main() {
       () async {
         // Arrange.
         final database = await _openUsersForExecutionOrder();
-        addTearDown(database.close);
 
         // Act.
         final names = await database.users
@@ -1229,7 +1294,7 @@ void main() {
 }
 
 Future<CindelDatabase> _openSeededUsers() async {
-  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+  final database = await _openQueryDatabase(schemas: [UserSchema]);
   await database.users.put(
     _user(
       dbId: 1,
@@ -1270,7 +1335,7 @@ Future<CindelDatabase> _openSeededUsers() async {
 }
 
 Future<CindelDatabase> _openUsersWithDuplicateNames() async {
-  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+  final database = await _openQueryDatabase(schemas: [UserSchema]);
   await database.users.put(
     _user(dbId: 1, name: 'Ana', email: 'z@example.com', active: false),
   );
@@ -1284,7 +1349,7 @@ Future<CindelDatabase> _openUsersWithDuplicateNames() async {
 }
 
 Future<CindelDatabase> _openUsersForExecutionOrder() async {
-  final database = await openTestDatabaseInMemory(schemas: [UserSchema]);
+  final database = await _openQueryDatabase(schemas: [UserSchema]);
   await database.users.put(
     _user(dbId: 1, name: 'Bob', email: 'team-a@example.com', active: true),
   );
@@ -1345,4 +1410,19 @@ Future<void> _waitUntil(
     }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
+}
+
+// Own each test database through close and temporary-storage cleanup on all
+// backends; Web's ephemeral names still occupy OPFS slots until removed.
+Future<CindelDatabase> _openQueryDatabase({
+  required Iterable<CindelCollectionSchema<dynamic>> schemas,
+}) async {
+  final directory = await createCloseTestDirectory();
+  addTearDown(() => deleteCloseTestDirectory(directory));
+  final database = await openTestDatabase(
+    directory: directory,
+    schemas: schemas,
+  );
+  addTearDown(database.close);
+  return database;
 }
