@@ -398,10 +398,12 @@ void main() {
         }
       });
     }
-    // Scenario: A nested update matches one row and all candidates have generated readers.
-    // Covers: Actual Dart hydration, preserving MDBX's native selection and SQLite's behavior.
-    // Expected: MDBX calls no generated reader; SQLite reads nine candidates and updates ID 9.
-    test('does not hydrate MDBX nested update candidates in Dart.', () async {
+    // Scenario: Nested predicates accept and reject generated rows with null parents/leaves.
+    // Covers: One conversion per candidate, distinct, sort, first/window, no matches
+    // and rollback, including updates without distinct and with a zero limit.
+    // Expected: SQLite converts each candidate once; MDBX stays native, and only
+    // the original representatives change even when their distinct field changes.
+    test('converts nested update candidates at most once.', () async {
       // Arrange.
       final directory = await createCloseTestDirectory();
       addTearDown(() => deleteCloseTestDirectory(directory));
@@ -410,8 +412,8 @@ void main() {
         schemas: [DistinctRecordSchema],
       );
       addTearDown(db.close);
-      await db.distinctRecords.putAll(seed());
       var reads = 0;
+      final conversions = <int, int>{};
       final s = DistinctRecordSchema;
       final counted = CindelCollectionSchema<DistinctRecord>(
         name: s.name,
@@ -420,7 +422,14 @@ void main() {
         fields: s.fields,
         links: s.links,
         compositeIndexes: s.compositeIndexes,
-        toDocument: s.toDocument,
+        toDocument: (object) {
+          conversions.update(
+            object.dbId,
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+          return s.toDocument(object);
+        },
         fromDocument: s.fromDocument,
         toBinaryDocument: s.toBinaryDocument,
         fromBinaryDocument: s.fromBinaryDocument,
@@ -433,17 +442,101 @@ void main() {
         },
         bindLinks: s.bindLinks,
       );
-      final q = db
-          .typedCollection(counted)
-          .all()
-          .filter()
-          .primaryRecipient((p) => p.metadata((m) => m.labelEqualTo(null)))
-          .distinctByEmail();
-      // Act.
-      expect(await q.updateAll({'name': 'changed'}), 1);
-      // Assert.
-      expect(reads, testStorageBackend == CindelStorageBackend.mdbx ? 0 : 9);
-      expect((await db.distinctRecords.get(9))!.name, 'changed');
+      for (final window in [
+        'null',
+        'all',
+        'first',
+        'window',
+        'zero',
+        'none',
+        'rollback',
+        'direct',
+      ]) {
+        // Arrange.
+        await db.distinctRecords.putAll(seed());
+        var q = db.typedCollection(counted).all();
+        if (window == 'direct') {
+          q = q.filter().dbIdEqualTo(1);
+        } else {
+          q = q
+              .filter()
+              .primaryRecipient(
+                (p) => p.metadata(
+                  (m) => m.labelEqualTo(switch (window) {
+                    'null' => null,
+                    'none' => 'missing',
+                    _ => 'yes',
+                  }),
+                ),
+              )
+              .sortByDbIdDesc();
+          if (window != 'all') {
+            q = q.distinctByEmail();
+          }
+          if (window == 'window') {
+            q = q.offset(1).limit(1);
+          } else if (window == 'zero') {
+            q = q.limit(0);
+          }
+        }
+        final ids = switch (window) {
+          'null' => [9],
+          'first' => [6],
+          'window' => [3],
+          'direct' => [1],
+          'all' => [6, 5, 3, 2],
+          'none' || 'zero' => <int>[],
+          _ => [6, 3],
+        };
+        reads = 0;
+        conversions.clear();
+        Future<void> update() async {
+          final changes = {'name': 'changed', 'email': 'merged'};
+          if (window == 'first') {
+            expect(await q.updateFirst(changes), isTrue);
+          } else {
+            expect(await q.updateAll(changes), ids.length);
+          }
+        }
+
+        // Act.
+        if (window == 'rollback') {
+          await expectLater(
+            db.writeTxn(() async {
+              await update();
+              throw StateError('rollback-marker');
+            }),
+            throwsStateError,
+          );
+        } else {
+          await update();
+        }
+        // Assert before verification reads can increment instrumentation.
+        final usesDart =
+            testStorageBackend != CindelStorageBackend.mdbx &&
+            window != 'direct';
+        expect(reads, usesDart ? 9 : 0, reason: window);
+        expect(
+          conversions.keys,
+          usesDart ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : isEmpty,
+          reason: window,
+        );
+        expect(conversions.values, everyElement(1), reason: window);
+        final rows = await db.distinctRecords.all().sortByDbId().findAll();
+        final originals = seed();
+        for (var index = 0; index < rows.length; index++) {
+          final changed =
+              window != 'rollback' && ids.contains(rows[index].dbId);
+          final expected = DistinctRecordSchema.toDocument(originals[index]);
+          if (changed) {
+            expected['name'] = 'changed';
+            expected['email'] = 'merged';
+          }
+          expect(rows[index].dbId, originals[index].dbId);
+          expect(DistinctRecordSchema.toDocument(rows[index]), expected);
+        }
+        expect(rows, hasLength(originals.length));
+      }
     });
   });
 }

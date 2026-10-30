@@ -338,18 +338,27 @@ void main() {
     }
 
     // Scenario: Twenty matches are surrounded by 1,980 irrelevant documents.
-    // Covers: Actual generated-reader calls during distinct update selection.
-    // Expected: At most twenty candidates are hydrated; five representatives change.
+    // Covers: Generated readers and document conversions after prefiltering.
+    // Expected: SQLite reads/converts twenty candidates once; MDBX does neither.
+    // Five representatives change and irrelevant documents remain untouched.
     test('hydrates only matching candidates.', () async {
       // Arrange.
       final original = DistinctRecordSchema;
       var reads = 0;
+      final conversions = <int, int>{};
       final counted = CindelCollectionSchema<DistinctRecord>(
         name: original.name,
         dartName: original.dartName,
         idField: original.idField,
         fields: original.fields,
-        toDocument: original.toDocument,
+        toDocument: (object) {
+          conversions.update(
+            object.dbId,
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+          return original.toDocument(object);
+        },
         fromDocument: original.fromDocument,
         toBinaryDocument: original.toBinaryDocument,
         fromBinaryDocument: original.fromBinaryDocument,
@@ -376,11 +385,19 @@ void main() {
           .sortByDbId()
           .distinctByEmail();
       // Act.
+      reads = 0;
+      conversions.clear();
       final changed = await query.updateAll({'name': 'changed'});
       final candidateReads = reads;
       // Assert.
       expect(changed, 5);
-      expect(candidateReads, lessThanOrEqualTo(20));
+      final usesDart = testStorageBackend != CindelStorageBackend.mdbx;
+      expect(candidateReads, usesDart ? 20 : 0);
+      expect(
+        conversions.keys,
+        usesDart ? [for (var id = 1001; id <= 1020; id++) id] : isEmpty,
+      );
+      expect(conversions.values, everyElement(1));
       final rows = await collection
           .all()
           .filter()

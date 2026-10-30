@@ -3,7 +3,7 @@
 ## 1.1.6
 
 - Fixed nested-filter updates across all backends.
-- Optimized SQLite native/Web updates with `distinct`.
+- Optimized SQLite native/Web updates with `distinct` and nested filters.
 - Updated the native ABI to 40.
 
 ## 1.1.5

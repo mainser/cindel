@@ -835,11 +835,16 @@ final class CindelQuery<T> {
         fieldTypes,
         readNativeDocument,
       );
-      var documents = <CindelDocument>[
-        for (final object in objects)
-          if (_matchesSqliteNativeDartPlan(_documentFromObject(object)))
-            _documentFromObject(object),
-      ];
+      var documents = <CindelDocument>[];
+      for (final object in objects) {
+        final document = _documentFromObject(object);
+        if (_matchesSqliteNativeDartPlan(document)) {
+          // Update selection can retain the document it just validated.
+          documents.add(
+            prefilterDistinctUpdate ? document : _documentFromObject(object),
+          );
+        }
+      }
       if (_sortKeys.isNotEmpty) {
         documents = _sortDocuments(documents, _sortKeys);
       } else {

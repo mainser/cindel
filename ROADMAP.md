@@ -146,7 +146,8 @@ Current public API policy:
   index-sensitive paths and rollback.
 - Candidate prefiltering for eligible SQLite native/Web distinct updates,
   preserving ordered representatives, windows and atomic ID batches, with
-  shared backend regressions and candidate-reader checks.
+  shared backend regressions and candidate-reader checks. SQLite update
+  candidates are converted to documents once, including nested-filter selection.
 
 ### Indexes
 

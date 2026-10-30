@@ -575,6 +575,11 @@ the filter or distinct clause does not change the selection midway through the
 operation. A failure rolls back the update. Use `writeTxn` when other database
 operations must commit together with it.
 
+When all selected objects receive the same stored values, call `updateFirst`
+or `updateAll` directly; there is no need to load them with `findAll` first.
+An update limit caps the number of changed objects, but sorting, distinct or
+nested filters may still need to examine more candidates.
+
 The update map uses persisted field names:
 
 ```dart

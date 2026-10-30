@@ -834,11 +834,16 @@ final class CindelQuery<T> {
         fieldTypes,
         readNativeDocument,
       );
-      var documents = <CindelDocument>[
-        for (final object in objects)
-          if (_matchesBeforeWindow(_documentFromObject(object)))
-            _documentFromObject(object),
-      ];
+      var documents = <CindelDocument>[];
+      for (final object in objects) {
+        final document = _documentFromObject(object);
+        if (_matchesBeforeWindow(document)) {
+          // Update selection can retain the document it just validated.
+          documents.add(
+            prefilterDistinctUpdate ? document : _documentFromObject(object),
+          );
+        }
+      }
       if (_sortKeys.isNotEmpty) {
         documents = documents.toList(growable: false)
           ..sort((left, right) => _compareDocuments(left, right, _sortKeys));
