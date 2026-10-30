@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.6
+
+- Updated the runtime to ABI 40 for nested-filter query updates.
+
 ## 1.1.5
 
 - Updated the Web runtime with optimized reads and eligible unlimited query updates.

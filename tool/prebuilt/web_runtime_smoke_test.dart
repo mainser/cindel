@@ -14,10 +14,10 @@ void main() {
   // Covers:
   // - Packaged Wasm ABI compatibility and repeated SQLite database
   // open/close.
-  // Expected: The worker reports ABI 39 within the timeout and the same
+  // Expected: The worker reports ABI 40 within the timeout and the same
   // database opens and closes twice without failure.
   test(
-    'packaged Web runtime has ABI 39 and opens, closes and reopens',
+    'packaged Web runtime has ABI 40 and opens, closes and reopens',
     () async {
       // Arrange.
       final abi = Completer<int>();
@@ -36,7 +36,7 @@ void main() {
       }).toJS;
       // Act / Assert.
       try {
-        expect(await abi.future.timeout(const Duration(seconds: 15)), 39);
+        expect(await abi.future.timeout(const Duration(seconds: 15)), 40);
       } finally {
         probe.terminate();
       }

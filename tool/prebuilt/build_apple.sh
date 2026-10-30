@@ -145,4 +145,4 @@ rm -f "${MACOS_PACKAGE}/CindelNative.xcframework.zip"
 ditto -c -k --keepParent --norsrc "${MACOS_PACKAGE}/CindelNative.xcframework" \
   "${MACOS_PACKAGE}/CindelNative.xcframework.zip"
 
-echo "Wrote iOS/macOS XCFrameworks and standalone macOS dylib (ABI 39, MDBX and SQLite)"
+echo "Wrote iOS/macOS XCFrameworks and standalone macOS dylib (ABI 40, MDBX and SQLite)"

@@ -112,7 +112,7 @@ Prebuilt slices cover iOS ARM64 devices, ARM64/x64 simulators, and ARM64/x64 Mac
 Maintainers build Apple artifacts with `tool/prebuilt/build_apple.sh` on macOS
 with Xcode. CI is configured to validate both managers with Flutter 3.41.0 and 3.47.8;
 release repeats consumer checks against the binaries being published. These
-checks include all FFI symbols, ABI 39, and MDBX/SQLite persistence. iOS device
+checks include all FFI symbols, ABI 40, and MDBX/SQLite persistence. iOS device
 Release builds are checked without signing; runtime checks use the simulator.
 Consumer checks use a locally archived and extracted pub package, including
 the macOS framework symlinks, without uploading anything to pub.dev.

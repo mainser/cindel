@@ -7,6 +7,39 @@ import 'package:test/test.dart';
 
 void main() {
   group('CindelWireV1', () {
+    // Scenario: ABI 40 carries a persisted nested property path.
+    // Covers: Exact path tag, native/Web codec round-trip, empty paths and truncation.
+    // Expected: Paths preserve their segments and malformed payloads fail.
+    test('round-trips nested update paths and rejects malformed paths.', () {
+      // Arrange.
+      const filter = WireFilter.path(
+        path: ['profile', 'name'],
+        operation: WireFilterOperation.equal,
+        value: WireValue.string('yes'),
+      );
+      // Act.
+      final bytes = encodeFilter(filter);
+      // Assert.
+      expect(bytes.first, 5);
+      expect(decodeFilter(bytes), filter);
+      for (var end = 0; end < bytes.length; end++) {
+        expect(
+          () => decodeFilter(Uint8List.sublistView(bytes, 0, end)),
+          throwsA(isA<Exception>()),
+        );
+      }
+      expect(
+        () => encodeFilter(
+          const WireFilter.path(
+            path: [],
+            operation: WireFilterOperation.equal,
+            value: WireValue.nullValue(),
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
+
     // Scenario: A Dart caller sends a compact list of document ids to Rust.
     // Covers:
     // - IdList little-endian count and u64 element encoding.

@@ -2,7 +2,9 @@
 
 ## 1.1.6
 
-- Reduced candidate loading for eligible updates with `distinct` in SQLite native and Web, preserving selection and atomicity.
+- Fixed nested-filter updates across all backends.
+- Optimized SQLite native/Web updates with `distinct`.
+- Updated the native ABI to 40.
 
 ## 1.1.5
 

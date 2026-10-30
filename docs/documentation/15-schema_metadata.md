@@ -51,8 +51,6 @@ Important fields include:
 - `compositeIndexes`
 - `toDocument`
 - `fromDocument`
-- `getId`
-- `setId`
 
 Example:
 
@@ -99,8 +97,8 @@ encoding, and embedded objects become nested maps. Forward links are stored
 separately and are not included by converting the owner object. Use
 `CindelBackup` to archive documents together with saved relationships.
 
-`setId` is optional: the generator omits it for immutable IDs. Metadata tooling
-must not assume that every generated model can be mutated after construction.
+For immutable models, assign IDs when constructing the objects as described
+in [data modeling](03-data_modeling.md#ids-in-immutable-models).
 
 ## `CindelFieldSchema`
 
@@ -110,7 +108,6 @@ Important fields include:
 
 - `name`
 - `dartType`
-- `binaryType`
 - `isId`
 - `isIndexed`
 - `isIndexUnique`
@@ -136,10 +133,6 @@ Use field metadata for tooling such as:
 
 Remember that `name` is the persisted field name. If a model uses `@Name`, the
 persisted field name can differ from the Dart property name.
-
-`binaryType` is the generated storage type used by Cindel's binary document
-path. Most application code does not need it, but diagnostics or schema
-inspection tools can display it.
 
 ## `CindelLinkSchema`
 

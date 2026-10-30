@@ -9,6 +9,12 @@ use crate::wire::{decode_filter, WireFilter, WireFilterOperation, WireValue};
 
 #[derive(Debug)]
 pub(crate) enum NativeFilter {
+    Path {
+        path: Vec<String>,
+        operation: FieldFilterOperation,
+        value: WireValue,
+        layout: Option<PreparedBinaryFieldLayout>,
+    },
     Field {
         field: String,
         operation: FieldFilterOperation,
@@ -56,6 +62,21 @@ impl NativeFilter {
 
     fn from_wire(filter: WireFilter) -> Result<Self, String> {
         match filter {
+            WireFilter::Path {
+                path,
+                operation,
+                value,
+            } => {
+                if path.is_empty() || path.iter().any(String::is_empty) {
+                    return Err("invalid nested filter path".into());
+                }
+                Ok(Self::Path {
+                    path,
+                    operation: FieldFilterOperation::from_wire(operation),
+                    value,
+                    layout: None,
+                })
+            }
             WireFilter::Field {
                 field,
                 operation,
@@ -95,6 +116,20 @@ impl NativeFilter {
 
     pub(crate) fn prepare_for_schema(self, schema: &CollectionSchemaManifest) -> Self {
         match self {
+            Self::Path {
+                path,
+                operation,
+                value,
+                ..
+            } => {
+                let layout = prepare_binary_field_layout(schema, &path[0]).ok();
+                Self::Path {
+                    path,
+                    operation,
+                    value,
+                    layout,
+                }
+            }
             Self::Field {
                 field,
                 operation,
@@ -141,6 +176,7 @@ impl NativeFilter {
 
     fn any_evaluation_cost(&self, schema: &CollectionSchemaManifest) -> u8 {
         match self {
+            Self::Path { .. } => 50,
             Self::Field {
                 field, operation, ..
             } => {
@@ -190,6 +226,47 @@ impl NativeFilter {
         id: Option<u64>,
     ) -> Result<bool, String> {
         match self {
+            Self::Path {
+                path,
+                operation,
+                value,
+                layout,
+            } => {
+                #[cfg(test)]
+                PATH_EVALUATIONS.with(|count| count.set(count.get() + 1));
+                let field = &path[0];
+                if path.len() == 1 {
+                    let actual = if schema_field_is_id(schema, field) {
+                        id.map(id_to_i64).transpose()?.map(BinaryValue::Int)
+                    } else if layout.is_some() {
+                        read_binary_field(schema, bytes, field)?
+                    } else {
+                        return Ok(false);
+                    };
+                    return path_leaf_matches(actual.as_ref(), *operation, value);
+                }
+                let Some(layout) = layout else {
+                    return Ok(false);
+                };
+                let Some((kind, payload)) = read_binary_field_payload_prepared(bytes, layout)?
+                else {
+                    return Ok(false);
+                };
+                let mut matched = false;
+                crate::document_format::visit_binary_path(
+                    kind,
+                    payload,
+                    &path[1..],
+                    &mut |leaf| {
+                        // Validate all addressed data even after a matching list element.
+                        if !matched {
+                            matched = path_leaf_matches(leaf.as_ref(), *operation, value)?;
+                        }
+                        Ok(())
+                    },
+                )?;
+                Ok(matched)
+            }
             Self::Field {
                 field,
                 operation,
@@ -246,6 +323,93 @@ impl NativeFilter {
             }
             Self::Not { predicate } => Ok(!predicate.matches_document(schema, bytes, id)?),
         }
+    }
+}
+
+#[cfg(test)]
+thread_local! { pub(crate) static PATH_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+// Mirror Dart's path evaluator rather than the flat SQL/native null rules.
+fn path_leaf_matches(
+    actual: Option<&BinaryValue>,
+    operation: FieldFilterOperation,
+    expected: &WireValue,
+) -> Result<bool, String> {
+    use FieldFilterOperation::*;
+    Ok(match operation {
+        EqualTo => path_values_equal(actual, expected),
+        IsNull => actual.is_none(),
+        GreaterThan | GreaterThanOrEqualTo | LessThan | LessThanOrEqualTo => {
+            let comparison = actual
+                .and_then(NativeNumber::from_binary)
+                .and_then(|actual| {
+                    let expected = match expected {
+                        WireValue::Int(value) => NativeNumber::Int(*value),
+                        WireValue::Double(value) => NativeNumber::Double(*value),
+                        _ => return None,
+                    };
+                    Some(match actual.total_cmp(expected) {
+                        std::cmp::Ordering::Less => -1,
+                        std::cmp::Ordering::Equal => 0,
+                        std::cmp::Ordering::Greater => 1,
+                    })
+                })
+                .unwrap_or(-1);
+            match operation {
+                GreaterThan => comparison > 0,
+                GreaterThanOrEqualTo => comparison >= 0,
+                LessThan => comparison < 0,
+                _ => comparison <= 0,
+            }
+        }
+        Contains => match actual {
+            Some(BinaryValue::List(values)) => values
+                .iter()
+                .any(|actual| path_values_equal(actual.as_ref(), expected)),
+            _ => actual
+                .and_then(binary_string)
+                .unwrap_or("")
+                .contains(wire_string(expected).unwrap_or("")),
+        },
+        StartsWith => actual
+            .and_then(binary_string)
+            .unwrap_or("")
+            .starts_with(wire_string(expected).unwrap_or("")),
+        EndsWith => actual
+            .and_then(binary_string)
+            .unwrap_or("")
+            .ends_with(wire_string(expected).unwrap_or("")),
+        _ => match actual {
+            Some(actual) => field_matches(actual, operation, expected)?,
+            None => false,
+        },
+    })
+}
+
+fn path_values_equal(actual: Option<&BinaryValue>, expected: &WireValue) -> bool {
+    let Some(actual) = actual else {
+        return matches!(expected, WireValue::Null);
+    };
+    match (actual, expected) {
+        (BinaryValue::Object(actual), WireValue::Object(expected)) => {
+            actual.len() == expected.len()
+                && expected.iter().all(|(name, value)| {
+                    actual
+                        .iter()
+                        .find(|(key, _)| key == name)
+                        .is_some_and(|(_, actual)| path_values_equal(actual.as_ref(), value))
+                })
+        }
+        (BinaryValue::List(actual), WireValue::List(expected)) => {
+            actual.len() == expected.len()
+                && actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(a, e)| path_values_equal(a.as_ref(), e))
+        }
+        (BinaryValue::Bool(a), WireValue::Bool(e)) => a == e,
+        (BinaryValue::String(a) | BinaryValue::Enum(a), WireValue::String(e)) => a == e,
+        _ => compare_numbers(actual, expected) == Some(0),
     }
 }
 
@@ -617,6 +781,7 @@ fn wire_to_binary_value(value: &WireValue) -> Result<Option<BinaryValue>, String
 
 #[cfg(test)]
 mod tests {
+    include!("native_filter/path_tests.rs");
     use super::*;
     use crate::document_format::write_compact_document_for_test;
     use crate::storage::FieldSchemaManifest;

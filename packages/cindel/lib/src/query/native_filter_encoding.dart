@@ -6,6 +6,17 @@ part of '../query.dart';
 // Returning null is intentional: it means the predicate cannot be represented
 // losslessly by native storage and must continue through the Dart evaluator.
 
+// Restrict the additional update route to predicates containing embedded paths.
+bool _hasNestedFilterPath(CindelFilterPredicate predicate) =>
+    switch (predicate) {
+      _FieldFilterPredicate() => predicate.path.length > 1,
+      _CompositeFilterPredicate() => predicate.predicates.any(
+        _hasNestedFilterPath,
+      ),
+      _NotFilterPredicate() => _hasNestedFilterPath(predicate.predicate),
+      _ => false,
+    };
+
 // Encodes a predicate into bytes for native APIs, or returns null when the
 // predicate is not native-safe.
 Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
@@ -20,10 +31,13 @@ Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
 }
 
 // Converts supported predicate nodes into their wire model. Nested-path filters
-// and unsupported value shapes stay Dart-only.
-WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
+// stay Dart-only for reads. MDBX updates explicitly opt into persisted paths.
+WireFilter? _nativeFilterWire(
+  CindelFilterPredicate predicate, {
+  bool allowPaths = false,
+}) {
   if (predicate is _FieldFilterPredicate) {
-    if (!predicate.isTopLevel) {
+    if (!predicate.isTopLevel && !allowPaths) {
       return null;
     }
     final expected = switch (predicate.operation) {
@@ -38,6 +52,13 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
     if (operation == null) {
       return null;
     }
+    if (allowPaths) {
+      return WireFilter.path(
+        path: predicate.path,
+        operation: operation,
+        value: value,
+      );
+    }
     return WireFilter.field(
       field: predicate.field,
       operation: operation,
@@ -48,7 +69,7 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   if (predicate is _CompositeFilterPredicate) {
     final predicates = <WireFilter>[];
     for (final child in predicate.predicates) {
-      final encoded = _nativeFilterWire(child);
+      final encoded = _nativeFilterWire(child, allowPaths: allowPaths);
       if (encoded == null) {
         return null;
       }
@@ -61,7 +82,10 @@ WireFilter? _nativeFilterWire(CindelFilterPredicate predicate) {
   }
 
   if (predicate is _NotFilterPredicate) {
-    final encoded = _nativeFilterWire(predicate.predicate);
+    final encoded = _nativeFilterWire(
+      predicate.predicate,
+      allowPaths: allowPaths,
+    );
     if (encoded == null) {
       return null;
     }

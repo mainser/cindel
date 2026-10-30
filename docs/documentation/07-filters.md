@@ -111,7 +111,7 @@ Available dynamic field predicates include:
 Examples:
 
 ```dart
-final highPriority = await db.tasks
+final highPriority = await db.todos
     .all()
     .whereMatches(CindelFilter.field('priority').greaterThan(5))
     .findAll();
@@ -184,6 +184,11 @@ final sentToMary = await db.emails
 ```
 
 Use `CindelFilter.path(...)` when a path must be assembled dynamically.
+
+A null parent does not match a predicate on one of its child properties. For
+example, `sender.addressEqualTo(null)` inside a generated sender filter matches
+a sender whose address is null, but not an email whose sender is null. To find
+missing senders, compare the sender itself with null.
 
 ## Boolean Composition
 

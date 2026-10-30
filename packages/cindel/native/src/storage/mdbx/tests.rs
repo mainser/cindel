@@ -6,6 +6,7 @@ use crate::document_format::{read_binary_field, write_compact_document_for_test,
 use crate::storage::{contract_tests, CollectionSchemaManifest, FieldSchemaManifest};
 
 include!("update_order_tests.rs");
+include!("nested_update_tests.rs");
 
 thread_local! {
     pub(super) static UPDATE_CURSOR_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

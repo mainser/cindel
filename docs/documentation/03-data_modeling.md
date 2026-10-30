@@ -145,8 +145,8 @@ await db.tasks.put(task);
 print(task.dbId);
 ```
 
-After `put`, the generated id setter writes the allocated id back to the
-object. This is the usual style for mutable model classes.
+After `put`, `task.dbId` contains the assigned ID. Use this style for mutable
+model classes.
 
 ### Explicit IDs
 
@@ -176,10 +176,10 @@ an email or SKU.
 
 ### IDs In Immutable Models
 
-Automatic assignment requires a writable `dbId`. A final field, including a
-Freezed immutable model's ID, has no generated setter; passing `autoIncrement`
-to `put` or `putAll` therefore fails. Allocate the ID before constructing such
-an object, using the same API on every backend:
+Automatic assignment requires a writable `dbId`. For a final field, including
+a Freezed immutable model's ID, passing `autoIncrement` to `put` or `putAll`
+fails. Allocate the ID before constructing such an object, using the same API
+on every backend:
 
 ```dart
 await db.writeTxn(() async {
@@ -354,8 +354,8 @@ Nested lists and indexes inside embedded objects remain unsupported.
 - `DateTime` stores epoch microseconds and is reconstructed in UTC. The instant
   is preserved, not the original local timezone representation.
 - `Duration` stores microseconds.
-- Native integer fields use signed 64-bit values. MDBX integer filtering and
-  sorting compare integer values without converting them to doubles.
+- Native integer fields support signed 64-bit values, including exact integer
+  comparisons and ordering.
 - For code and data shared with JavaScript-compiled Web, keep integer values
   within `-9007199254740991` through `9007199254740991`. This also constrains
   integer-backed representations such as date/duration microseconds and enum
@@ -367,7 +367,7 @@ Nested lists and indexes inside embedded objects remain unsupported.
 Type parity does not remove the host runtime's numeric limits. Validate these
 limits at the application's input boundary when the same data will be used on
 native and Web. See [projections](08-projections_and_aggregates.md) for result
-semantics and execution costs.
+types and aggregate behavior.
 
 ## Ignored Fields
 
@@ -500,7 +500,7 @@ They are useful for structured data that belongs to its parent and is normally
 read or written with that parent.
 
 ```dart
-@collection
+@Collection(name: 'emails')
 class Email {
   Id dbId = autoIncrement;
 

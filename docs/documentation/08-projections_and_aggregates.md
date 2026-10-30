@@ -5,8 +5,7 @@ needs to display, edit, or write those objects back.
 
 Projection queries return selected fields instead of full objects. Aggregate
 queries calculate summary values such as counts, minimums, maximums, sums, and
-averages. Internal hydration depends on the execution path; a smaller public
-result does not by itself guarantee that no full objects are read.
+averages.
 
 Use projections when a screen only needs a small part of each object. Use
 aggregates when the app needs a summary value rather than the matching records.
@@ -192,7 +191,7 @@ final openEstimate = await db.todos
 Use property aggregates when you need a summary of matching data without
 reading every full object into application code.
 
-## Windows, Nulls, And Execution Cost
+## Windows And Nulls
 
 Property projections preserve generated types, including nullable lists and
 embedded values. `findFirst()` caps the underlying result window at one, keeps
@@ -205,21 +204,22 @@ Aggregates apply to the query's filtered, distinct, offset/limit window. Propert
 values. Use numeric fields for sums and averages; floating-point accumulation
 can round large integer totals.
 
-Current execution paths differ internally while keeping the same typed API:
+For an `Order` model with `createdAt` and `totalCents` fields, this sum covers
+only the ten newest orders selected by the query:
 
-| Path | Current behavior |
-| --- | --- |
-| MDBX planned single-property queries | Use native projection/aggregate operations. |
-| SQLite native generated property queries | The current Dart path hydrates matching typed objects before extracting properties; Dart aggregates can materialize projected values. |
-| SQLite Web planned single-property queries | Use Worker/native projection and aggregate operations. Non-distinct SQLite engine aggregates accumulate progressively; distinct needs additional materialization. |
-| Multi-property queries | Materialize matching data and select fields in Dart. |
+```dart
+final recentTotal = await db.orders
+    .all()
+    .sortByCreatedAt(order: CindelSortOrder.descending)
+    .limit(10)
+    .totalCentsProperty()
+    .sum();
+```
 
-The SQLite engine's non-distinct projection/aggregate operations use one query
-rather than an ID lookup followed by a query for each document. Those engine
-optimizations do not imply that every public SQLite native property query
-currently takes that path. Do not assume constant-memory aggregation across all
-backends. Query planning, distinct, ordering, returned lists, and backend caches
-also contribute to memory use.
+Remove `limit` and `offset` to aggregate the whole matching set. Projections
+and aggregates reduce what your application receives, but large filtered,
+sorted or distinct queries can still take time and memory. Use indexed lookups
+to narrow frequently queried data.
 
 ## Common Use Cases
 

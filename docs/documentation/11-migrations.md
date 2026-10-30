@@ -8,38 +8,7 @@ schemas alone. Typical examples include renamed fields, removed fields, split
 models, merged models, changed field types, or data rewrites that need
 controlled conversion.
 
-## SQLite String Storage Upgrade in 1.1.5
-
-SQLite native and Web now declare string columns with `TEXT` affinity. Earlier
-versions used `str`, which SQLite treats as numeric affinity: a string such as
-`'00123'` could become the integer `123`, and subsequent typed reads could fail.
-MDBX is unaffected by this storage defect.
-
-When an existing Cindel table is registered during opening, the runtime detects
-the legacy declaration and replaces that table transactionally. This is an
-internal storage correction: application models, generated APIs, schema
-versions, and `CindelMigrationPlan` target versions do not need to change.
-IDs, reserved ID counters, relationships, collection revisions, SQL indexes,
-and triggers are preserved. Copying rows does not fire the table's triggers.
-If the conversion fails, the original table and its data are restored.
-
-The first open of a legacy table copies its rows once using SQLite
-`INSERT ... SELECT`. It does not collect documents into a Dart or Rust list.
-That open needs time and disk space proportional to the affected table and its
-transaction journal. Later opens inspect the column declarations without
-rewriting the rows. New tables already use the corrected declaration.
-
-This correction prevents future conversions; it cannot reconstruct text lost
-by an earlier version. An already stored integer `123` becomes the readable
-string `'123'`, not the unknowable original spelling (`'00123'`, `'+123'`, etc.).
-Restoring the original spelling requires an unaffected backup or another source
-containing the original value. Existing intact strings and nulls are preserved.
-
-The automatic conversion recognizes Cindel's generated table layout. If the
-physical SQL table was manually changed to add unsupported constraints, opening
-reports an error rather than silently discarding those constraints.
-
-## Mental Model
+## How Migrations Run
 
 Cindel stores a database-level data migration version inside the database. A
 `CindelMigrationPlan` compares that stored version with the plan's
@@ -57,8 +26,8 @@ final db = await Cindel.open(
 A migration step usually follows this shape:
 
 1. Open existing data with schemas that can read the old stored shape.
-2. Register target schemas in the private workspace.
-3. Stream old objects or documents from the original step snapshot.
+2. Register the schemas for the new model shapes.
+3. Read the old objects or documents using the context export/stream helpers.
 4. Convert each value into the new model shape.
 5. Import the converted stream in batches.
 6. Verify the result.
@@ -66,17 +35,19 @@ A migration step usually follows this shape:
 
 After the plan completes, app code uses the current generated API normally.
 
-## Atomic Steps and Memory
+## Failures And Large Migrations
 
-MDBX and SQLite native/Web execute each step in a private disk-backed workspace.
-The original stays unchanged until `verifyAfter` succeeds. Cindel then publishes
-data, schemas, indexes, links, ID counters, and `toVersion` in one native
-transaction. An error discards that step; earlier committed steps remain. A
-concurrent write to the original rejects publication instead of overwriting it.
-Callbacks' external effects, such as network requests or other files, are not
-part of the transaction.
+Each migration step either completes fully or leaves the database as it was
+before that step. If `migrate` or `verifyAfter` throws, that step is not saved;
+earlier successful steps remain complete and are skipped when you reopen.
+Changes to files, network services or other application state are not rolled
+back. Keep those effects outside migration callbacks where possible.
 
-Use the streaming helpers for large collections:
+Open the database with its migration plan before letting the rest of the app
+write to it. Writes through another connection during a migration can cause
+the step to fail instead of overwriting those changes.
+
+For large collections, convert objects as a stream instead of loading them all:
 
 ```dart
 await context.registerTargetSchemas();
@@ -87,28 +58,21 @@ await context.importObjectStream(
 );
 ```
 
-`streamObjects` and `streamDocuments` always read the original step snapshot,
-including after target schema registration. Reads seek after the last ID,
-retain at most 4,096 records per page, and stop a page once its encoded data
-reaches 1 MiB (one large record may exceed that). Import helpers retain one
-batch. Application buffering and objects retained by callbacks are additional
-memory. Schema metadata and backend caches/dirty pages are outside these buffer
-bounds; this is not a fixed process-RSS guarantee.
+`streamObjects` and `streamDocuments` read the data from the start of the step,
+even after registering target schemas. `context.database` reads the current
+migration result, so use it in `verifyAfter` to check the converted data.
 
-Preparing and publishing each step each copy the database once, record by
-record. Temporary disk space for a full copy and the engines' transaction
-storage is required. Normal success, callback failure, or handle closure
-removes the private workspace; abrupt process termination may leave temporary
-files. No live database files are replaced.
+Choose a positive `batchSize`. Avoid collecting the stream with `toList()` if
+you want to process a large collection incrementally. Allow temporary disk
+space for a database copy and the changes being made; Web uses browser quota.
 
-Saved links survive schema reconstruction when both identities remain. Links
-to removed identities are cleaned before `verifyAfter`. Preserve IDs when
-relationships should continue referring to the same objects.
+Preserve IDs when relationships should keep pointing to the same objects.
+Saved links survive when both linked objects remain; links to removed objects
+are cleaned up before `verifyAfter`.
 
-Compaction runs after publication. If it fails,
-`CindelMigrationMaintenanceError.committedVersion` identifies the already
-committed step; reopening skips it. Low-level schema registration methods used
-outside a migration plan do not acquire these per-step guarantees.
+`compactOnSuccess` defaults to `true` on the plan. If this final maintenance
+fails, `CindelMigrationMaintenanceError.committedVersion` tells you which step
+already completed. Its data is saved; reopening does not rerun that step.
 
 ## Migration Plans
 
@@ -191,20 +155,17 @@ once.
 Choose helpers according to whether the caller already holds a collection in
 memory or can process it incrementally:
 
-| Read original step snapshot | Write private target workspace |
+| Read old data | Import converted data |
 | --- | --- |
 | `streamObjects(schema, batchSize: 100)` | `importObjectStream(schema, stream, batchSize: 100)` |
 | `streamDocuments(schema, batchSize: 100)` | `importDocumentStream(schema, stream, batchSize: 100)` |
 | `exportObjects(schema)` returns a full list | `importObjects(schema, iterable)` consumes batches |
 | `exportDocuments(schema)` returns a full list | `importDocuments(schema, iterable)` consumes batches |
 
-Batch sizes must be positive. Stream reads cap each native page at 4,096
-records; increasing the requested size beyond that does not increase that
-page cap. `context.database` operates on the working database; only the source
-stream/export helpers promise reads from the original step snapshot.
+Batch sizes must be positive. Use the context's stream/export helpers to read
+old data, and `context.database` to inspect the changes made by the step.
 
-Use `exportObjects` when the old generated schema can hydrate useful old typed
-objects:
+Use `exportObjects` when you want to read the old data as typed objects:
 
 ```dart
 final oldUsers = await context.exportObjects(OldUserSchema);
@@ -251,8 +212,7 @@ Call `registerTargetSchemas` before importing rewritten target data.
 await context.registerTargetSchemas();
 ```
 
-This registers the target schemas in migrated mode and prepares the target
-collections for imported data.
+This prepares the collections to accept objects with the target model shapes.
 
 For a streaming conversion, register first and keep reading the original snapshot:
 
@@ -306,13 +266,15 @@ extension UserMigration on User {
 
 ## Verification
 
-Use `verifyBefore` to check assumptions before modifying data.
+Use `verifyBefore` to check assumptions before modifying data. For example,
+if the updated app requires each user to have a non-empty email:
 
 ```dart
 verifyBefore: (context) async {
-  final ids = await context.database.documentIdsPage('users', limit: 1);
-  if (ids.isEmpty) {
-    return;
+  await for (final user in context.streamObjects(OldUserSchema)) {
+    if (user.email.trim().isEmpty) {
+      throw StateError('Cannot migrate a user without an email.');
+    }
   }
 },
 ```
@@ -329,8 +291,7 @@ verifyAfter: (context) async {
 ```
 
 Verification callbacks should throw when the migration should stop. A thrown
-error discards all changes from that step, including batches already written
-to its private workspace.
+error rolls back all changes from that step, including earlier import batches.
 
 Useful checks include:
 
@@ -343,7 +304,8 @@ Useful checks include:
 
 ## Complete Example
 
-This example migrates users from version 1 to version 2.
+This example migrates users from version 1 to version 2. Its validation
+assumes the application requires a non-empty email for every user.
 
 ```dart
 final migrations = CindelMigrationPlan(
@@ -356,7 +318,12 @@ final migrations = CindelMigrationPlan(
       openSchemas: [OldUserSchema],
       targetSchemas: [UserSchema],
       verifyBefore: (context) async {
-        await context.database.documentIdsPage('users', limit: 1);
+        // Validate the app's email requirement before converting records.
+        await for (final user in context.streamObjects(OldUserSchema)) {
+          if (user.email.trim().isEmpty) {
+            throw StateError('Cannot migrate a user without an email.');
+          }
+        }
       },
       migrate: (context) async {
         await context.registerTargetSchemas();
@@ -403,6 +370,21 @@ App code can use the current generated API normally:
 final users = await db.users.all().findAll();
 ```
 
+## SQLite String Storage Upgrade in 1.1.5
+
+SQLite databases created by older versions could change numeric-looking text
+such as `'00123'` into `123`. Opening them with Cindel 1.1.5 or later applies the
+storage correction automatically. You do not need to change your models or
+increase the migration plan's version for this correction.
+
+The first open can take longer and requires additional free storage. If it
+fails, the affected table is left unchanged. Allow the open operation to finish
+before using the database.
+
+The correction preserves intact strings but cannot recover characters already
+lost: an old stored `123` can be read as `'123'`, not the original `'00123'`.
+Recover the original text from an unaffected backup or another data source.
+
 ## Practical Guidance
 
 Keep migration steps small and versioned. A step from version 1 to 2 should
@@ -416,7 +398,6 @@ document exports when persisted field names are easier to work with.
 Always pass the migration plan at app startup until every supported database is
 expected to be at the target version.
 
-Use lower-level migration primitives such as `migrationVersion`,
-`setMigrationVersion`, `registerMigratedSchemas`, and `compact` only for
-controlled tooling. Most app migrations should use `CindelMigrationPlan` and
-`CindelMigrationStep`.
+Use `CindelMigrationPlan` and `CindelMigrationStep` to manage app upgrades. Test
+with a copy of an older database, including a failed step and a second open
+after success. Keep a backup before migrating important data.

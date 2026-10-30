@@ -71,6 +71,8 @@ Current public API policy:
 - `openInMemory` for typed tests: SQLite native uses RAM, MDBX uses a temporary
   directory cleaned up on close, and Web uses a unique SQLite/OPFS database name.
 - Typed-only runtime paths for MDBX, SQLite native, and SQLite Web.
+- Query updates with generated nested filters, with or without distinct, across
+  all three backends; MDBX evaluates paths in the engine (ABI 40).
 
 ### Models And Schemas
 

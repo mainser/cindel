@@ -10,10 +10,8 @@ with raw database rows, stringly typed maps, or backend-specific code paths.
 Cindel handles the local storage layer behind a generated API that can run on
 native Flutter platforms and on Flutter Web.
 
-This page gives you the mental model for using Cindel. It intentionally stays
-at the first-app level. The later guides explain setup, modeling, generated
-collections, queries, transactions, watchers, migrations, sync, Web behavior,
-backup, errors, and testing in more detail.
+Start here for installation and basic reads and writes. The following guides
+cover each feature with examples.
 
 ## When Cindel Fits
 
@@ -199,9 +197,8 @@ await db.users.putAll([ada, grace]);
 final results = await db.users.getAll([ada.dbId, grace.dbId]);
 ```
 
-Use generated collections for normal application persistence. Lower-level
-document helpers exist for generated code and advanced tooling, but they are
-not the everyday app API.
+Use generated collections for application persistence. Each operation accepts
+or returns objects of the model type.
 
 ## Reading Data
 
@@ -246,8 +243,8 @@ final db = await Cindel.open(
 ```
 
 Flutter Web uses the same `Cindel.open` call and generated collection API. In
-the browser, Cindel uses the packaged SQLite Web/OPFS Worker/Wasm runtime from
-`cindel_flutter_libs`.
+the browser, data is stored locally using SQLite. Include
+`cindel_flutter_libs` in the app dependencies for Web as well.
 
 Web is a supported typed Cindel backend path. App code uses the same public
 database API in the browser as on native platforms.
@@ -267,9 +264,8 @@ Prefer these APIs in new application code:
 - typed watchers,
 - open-time migration and sync configuration.
 
-Avoid building app code around raw, untyped collection-level persistence.
-Advanced helpers remain available for tooling, migrations, backup, and
-generated code, but they are not the main application model.
+Use the dedicated migration and backup APIs when changing existing schemas
+or exporting a database.
 
 ## What To Read Next
 

@@ -18,8 +18,8 @@ def verify(library_path: Path) -> None:
         return function
 
     abi = bind("cindel_abi_version", ctypes.c_uint32)()
-    if abi != 39:
-        raise RuntimeError(f"{library_path}: expected ABI 39, received {abi}")
+    if abi != 40:
+        raise RuntimeError(f"{library_path}: expected ABI 40, received {abi}")
 
     open_database = bind(
         "cindel_open_with_backend",
@@ -67,7 +67,7 @@ def verify(library_path: Path) -> None:
                     if handle:
                         close_database(handle)
         print(f"PASS {name}: open, close, reopen, close")
-    print(f"PASS ABI 39: {library_path} ({platform.system()} {platform.machine()})")
+    print(f"PASS ABI 40: {library_path} ({platform.system()} {platform.machine()})")
 
 
 if __name__ == "__main__":

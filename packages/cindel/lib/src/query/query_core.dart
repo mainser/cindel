@@ -526,10 +526,17 @@ final class CindelQuery<T> {
     if (changes.isEmpty) {
       return 0;
     }
-    final nativePlan = _nativePlan(limitOverride: limitOverride);
+    final nativePlan = _nativePlan(
+      limitOverride: limitOverride,
+      forUpdate: true,
+    );
     final selectInDart =
         _database.usesSqliteNativeDocuments &&
-        (!_canUseSqliteNativeSource || _distinctFields.isNotEmpty);
+        (!_canUseSqliteNativeSource ||
+            _distinctFields.isNotEmpty ||
+            (_filter != null &&
+                _nativeFilter == null &&
+                _hasNestedFilterPath(_filter)));
     if (nativePlan == null && !selectInDart) {
       throw UnsupportedError(
         'Native query updates require the MDBX binary query planner.',
@@ -1182,9 +1189,22 @@ final class CindelQuery<T> {
 
   // Builds a native query plan only when the full query shape can be represented
   // by storage. A null result means execution must stay in Dart.
-  CindelNativeQueryPlan? _nativePlan({int? limitOverride}) {
+  CindelNativeQueryPlan? _nativePlan({
+    int? limitOverride,
+    bool forUpdate = false,
+  }) {
+    var nativeFilter = _nativeFilter;
+    if (forUpdate &&
+        _database.backend == CindelStorageBackend.mdbx &&
+        _filter != null &&
+        nativeFilter == null &&
+        _hasNestedFilterPath(_filter)) {
+      final filter = _nativeFilterWire(_filter, allowPaths: true);
+      if (filter != null) {
+        nativeFilter = encodeFilter(filter);
+      }
+    }
     final nativeSource = _nativeSource;
-    final nativeFilter = _nativeFilter;
     if (!_canUseNativePlanner ||
         nativeSource == null ||
         (_database.usesSqliteNativeDocuments &&

@@ -437,10 +437,8 @@ print('Examined ${result.examinedLinks} links');
 print('Removed ${result.removedLinks} orphan links');
 ```
 
-Run this outside an explicit transaction. It checks persisted links in bounded
-pages and removes orphan edges atomically. It does not hydrate the entire
-database or delete surviving documents. Backend transaction/cache memory is
-separate from those page buffers.
+Run this outside an explicit transaction. It removes links to missing objects
+as one atomic operation, without deleting the objects that still exist.
 
 Backups include forward links and restore the corresponding backlinks. See
 [backup requirements](14-backup_and_advanced_helpers.md).

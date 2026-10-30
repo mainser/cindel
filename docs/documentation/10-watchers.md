@@ -257,24 +257,27 @@ Most apps should prefer typed object, collection, and query watchers. Use
 change-set watchers when you need to integrate with a custom cache, diagnostic
 tool, or advanced invalidation layer.
 
-## Shared Polling And Commit Revisions
+## Change Delivery
 
-A database handle schedules polling through a shared coordinator. Subscriptions
-due for the same collection share its revision read for that polling cycle,
-while retaining their requested intervals. This reduces redundant revision
-checks; it does not share all hydrated snapshots between subscribers.
+Watchers react to committed changes. A rolled-back transaction does not emit
+its changes. Multiple writes can be combined into one notification; use the
+stream to refresh state, not as a record of every individual write.
 
-Local commits notify watchers directly. SQLite native/Web stores revisions in
-the same transaction as the writes, so rollback does not publish a revision and
-reopening does not reset it. Separate native connections can detect committed
-changes through polling. This does not extend Web's delivery scope described
-in the [Web guide](13-web.md).
+`pollInterval` controls checks for changes made through another native
+connection. Its default is 50 milliseconds. Local commits notify watchers
+directly. For a screen that can tolerate a slower check:
 
-Watchers report state changes, not a durable event log with one event for every
-write. Changes can be coalesced. A collection snapshot can still load the whole
-collection; prefer a filtered or limited query for large datasets. A lazy
-watcher's void payload does not guarantee that its implementation performs no
-reads to detect a change.
+```dart
+final sub = db.todos.watchCollection(
+  pollInterval: const Duration(milliseconds: 250),
+).listen((todos) {
+  // Refresh the screen.
+});
+```
+
+A collection watcher returns the whole collection. Prefer a filtered, limited
+query for large datasets, or a lazy watcher when your app decides when to reload.
+Web watcher delivery is limited to the current tab; see [Web](13-web.md).
 
 ## Errors And Shutdown
 
@@ -294,13 +297,9 @@ await sub.cancel();
 await db.close();
 ```
 
-Polling failures are delivered to listeners and can be retried on subsequent
-polls. They are not silently converted into an unchanged revision or empty
-snapshot. Closing a database stops polling and completes watcher streams.
-Pending Web snapshot reads that encounter the retired handle do not emit a
-spurious closed-database error during that shutdown; other failures are still
-reported. An explicit operation after close continues to throw
-`CindelDatabaseClosedError`.
+Read or polling failures arrive through the stream's `onError`; they are not
+empty results. A later poll may retry. Closing the database completes watcher
+streams. Explicit database calls after close throw `CindelDatabaseClosedError`.
 
 Cancel subscriptions when disposing their owner. A paused subscription can
 delay delivery of the done event and completion of stream cleanup until it is

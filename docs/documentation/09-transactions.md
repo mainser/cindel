@@ -57,16 +57,14 @@ Use `readTxn` for grouped reads, not for changes.
 
 ### Snapshots And Allocation
 
-Reads issued through an active `readTxn` use that transaction's snapshot,
-including MDBX query and paged-ID reads. A later commit through another native
-handle does not become visible midway through the snapshot. Keep related page
-reads inside one `readTxn` when the scan must be consistent.
+Reads inside one `readTxn` see a consistent database state. Changes committed
+through another connection do not appear midway through that transaction.
+Keep related pages or totals inside the same callback when they must agree.
 
-Allocating IDs changes persisted state and is not allowed inside `readTxn`.
-In a write transaction, ID reservations use the active transactional counter;
-separate native handles do not rely on a stale per-handle counter. The storage
-engine coordinates their writes. This does not permit nesting or overlapping
-explicit transactions on the same Cindel handle.
+`allocateId` and `allocateIds` also change database state, so they cannot run
+inside `readTxn`. Use `writeTxn` when reserving IDs and writing the objects
+must succeed together. Explicit transactions cannot be nested or overlap on
+the same database handle.
 
 ## Write Transactions
 
@@ -137,7 +135,7 @@ When a write transaction rolls back:
 - writes made inside the transaction are not committed,
 - watcher notifications for those rolled-back writes are not emitted,
 - the error from the callback is returned to the caller,
-- transactional ID counters and SQLite change revisions are rolled back.
+- database ID reservations made inside the transaction are rolled back.
 
 Dart object mutations, assigned IDs, and external side effects are not rolled
 back. If a retry needs fresh automatic IDs, reset or recreate those objects
@@ -148,19 +146,20 @@ an error message, or abandon the operation.
 
 ### Closing a Database During a Transaction
 
-Closing a database rolls back the active transaction without waiting for
-its application callback to finish. When a suspended callback resumes and returns,
-the transaction fails with `CindelDatabaseClosedError` instead of committing. If
-the callback throws, its original exception is preserved. Pending writes remain
-uncommitted, and their watcher notifications are not emitted.
+Await the transaction before closing its database:
 
-The callback can still perform other application work, but further database
-operations fail after the database handle is retired. Awaiting `db.close()` inside
-the callback completes the close; it does not commit that transaction.
+```dart
+await db.writeTxn(() async {
+  await db.todos.putAll(todos);
+});
+await db.close();
+```
 
-Web follows the same callback contract through its Worker/Wasm backend. Requests
-already admitted run in order before rollback; a commit dispatched before the
-handle is retired may already have completed and retains its successful result.
+Closing while a transaction is still active rolls it back. The callback may
+resume after an `await`, but it can no longer use the closed database or commit
+its pending changes. If it returns normally, the transaction reports
+`CindelDatabaseClosedError`; if it throws, its original error is preserved.
+Closing does not undo a transaction that already committed.
 
 ## Checkout-Style Example
 
@@ -210,11 +209,9 @@ Use one transaction for the complete local change that must remain consistent.
 
 ### Await Every Operation And Control Handle Ownership
 
-The active transaction belongs to the database handle. It is not an isolated
-Dart zone for the callback: another asynchronous task using the same handle
-while the callback is suspended can join its active transaction. Serialize
-access during an explicit transaction instead of letting unrelated work use
-that handle concurrently.
+Keep unrelated asynchronous work from using the same database handle while a
+transaction is active: its operations can join that transaction. Let one caller
+own the transaction and await it before starting another workflow on that handle.
 
 Await every database future before the callback returns. A fire-and-forget
 write can outlive the transaction and its errors will not reliably control

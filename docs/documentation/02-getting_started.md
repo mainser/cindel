@@ -21,9 +21,8 @@ The current package SDK requirements are:
 
 An app that generates models must satisfy the generator's Dart requirement too.
 Flutter supplies its own Dart SDK; check `flutter --version` before resolving
-dependencies. The repository validates generation with Flutter 3.47.8. The
-Flutter 3.41 minimum for the binaries package does not lower the generator's
-requirement.
+dependencies. Choose a Flutter SDK whose bundled Dart version meets the
+generator requirement, even if the binaries package accepts an older Flutter SDK.
 
 Use compatible versions of `cindel`, `cindel_generator`, and
 `cindel_flutter_libs`. Regenerate all model libraries after updating the
@@ -33,10 +32,9 @@ generator:
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-The generated code includes schema serializers and shared embedded-type helpers.
-Regenerating only one selected output can leave other model libraries stale.
-Do not edit `.g.dart` files manually. The native runtime must match the Dart
-bindings; see [runtime compatibility](19-advanced_reference.md#runtime-compatibility).
+Regenerate all models together after an update, and do not edit `.g.dart` files
+manually. If opening fails with a runtime version mismatch, follow
+[runtime compatibility](19-advanced_reference.md#runtime-compatibility).
 
 The public model and collection API is the same for MDBX, SQLite native, and
 SQLite Web. Backend selection belongs at database opening; the rest of the
@@ -98,8 +96,8 @@ For normal typed application use, supply:
 - `directory`: where this database is stored.
 - `schemas`: the generated collection schemas this database handle can use.
 
-Only `directory` is required by the method signature. `schemas` defaults to an
-empty list for low-level tooling; that does not register your model collections.
+Without the generated schemas in `schemas`, the handle cannot use your model
+collections.
 
 On native platforms, `directory` is a filesystem directory. Use a stable
 application-data directory, not a temporary path, for real user data.
@@ -179,10 +177,9 @@ Intel/Apple Silicon support. The package declares iOS 13 and macOS 10.15 minimum
 deployment targets; the Flutter SDK or other dependencies can require higher
 targets. Building Apple applications still requires macOS and Xcode.
 
-Use the published package's binaries instead of pointing the app at an unpacked
-repository checkout without its release assets. A missing framework is a
-packaging/integration problem; an ABI mismatch means the loaded binary and Dart
-bindings are incompatible. See [runtime compatibility](19-advanced_reference.md#runtime-compatibility).
+If a framework cannot be found, check that `cindel_flutter_libs` is installed
+and rebuild the app. For a runtime version mismatch, see
+[runtime compatibility](19-advanced_reference.md#runtime-compatibility).
 
 ## Choosing A Backend
 
@@ -212,7 +209,7 @@ Generated schemas, collection getters, CRUD operations, and queries keep the
 same shape.
 
 Flutter Web does not use MDBX. Web callers keep the same `Cindel.open` API,
-and Cindel uses the packaged SQLite Web/OPFS Worker/Wasm runtime.
+and Cindel stores the data using SQLite in browser storage.
 
 ## Flutter Web Setup
 

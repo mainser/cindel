@@ -223,27 +223,21 @@ for objects that still use `autoIncrement`.
 
 ### Automatic IDs In Bulk Writes
 
-`putAll` reserves the IDs needed by objects whose ID is `autoIncrement` in one
-batch, then assigns them in input order. Explicit IDs remain unchanged. This
-reduces allocation calls on MDBX, SQLite native, and Web without changing the
-public API. An empty batch or a batch containing only explicit IDs does not
-need an automatic-ID reservation.
+`putAll` assigns IDs to mutable objects whose ID is `autoIncrement`, in input
+order. Objects with explicit IDs keep them.
 
-Allocation uses transactional database state, including when separate native
-handles write to the same database. IDs are unique reservations, not a promise
-of gapless numbering. A reservation outside an explicit write transaction can
-survive a later failed write. Inside `writeTxn`, the counter and stored data
-roll back together; IDs already assigned to Dart objects do not roll back.
-Account for that before retrying those objects.
+IDs are unique identifiers, not gapless sequence numbers. A failed write can
+leave IDs assigned to the Dart objects even when no rows were saved. Inside
+`writeTxn`, the database changes roll back, but changes to Dart objects do not.
+Reset or recreate those objects if a retry should allocate new IDs.
 
-Duplicate IDs in one batch are rejected. Mixing explicit and automatic IDs is
-allowed, but an explicit ID can overlap the reserved range; the allocator does
-not search around IDs supplied in the same input batch.
+Mixing explicit and automatic IDs is allowed, but the explicit IDs must not
+collide with the automatically assigned ones. Duplicate IDs in a batch are
+rejected.
 
-`putAll` processes a materialized input list. Split very large inputs into
-application batches when memory matters. Use `writeTxn` around those batches
-only if they must commit together, allowing for the backend's transaction
-storage. See [transactions](09-transactions.md).
+For very large inputs, call `putAll` with smaller batches. Wrap the calls in
+`writeTxn` when all batches must succeed or fail together; otherwise, earlier
+successful batches remain saved if a later call fails.
 
 ## Natural-Key Writes: `putBy...`
 
@@ -251,7 +245,7 @@ When a model has a unique index with `replace: true`, the generator creates
 helpers that write by that unique value.
 
 ```dart
-@collection
+@Collection(name: 'accounts')
 class Account {
   Id dbId = autoIncrement;
 
@@ -345,75 +339,30 @@ null for pending deletions, with the same ordering and duplicate-ID behavior.
 This also applies to generated models with final IDs. See
 [transactional reads](09-transactions.md#await-every-operation-and-control-handle-ownership).
 
-Web readers calculate schema offsets and the expected static size once per
-reader, while still validating each document's header, bounds and field types.
-SQLite's binary result encoder also shares one immutable layout across the
-batch, including batches split into multiple SQL statements. Dynamic payload
-offsets remain specific to each row; this does not cache application objects
-or change the order, missing entries or duplicate-ID behavior of `getAll`.
+The IDs are captured when `getAll` is called. Changing the input list while
+awaiting the result does not change which IDs are requested. An empty input
+returns an empty list.
 
-For generated Web `getAll` reads, Rust writes the response directly from the
-retrieved rows in the requested ID order. It checks the final message size and
-reserves its buffer once, without cloning document payloads into an intermediate
-ordered list. Sizing uses the rows already read; it does not issue another query.
-Missing IDs still produce `null`, and duplicate IDs still produce independently
-decoded Dart objects. SQL chunking and transaction visibility are unchanged.
-This reduces temporary allocation, but is not a streaming API: retrieved rows
-and the final response coexist during encoding, and memory still grows with the
-requested result size. MDBX and SQLite native retain their existing cursor reads.
+Returned objects are independent values, including when the same ID appears
+more than once. Editing a returned object does not save it automatically: call
+`put` or `putAll` to persist changes.
 
-The Dart collection and database layers share one private snapshot of `getAll`
-IDs. Caller-owned lists and lazy iterables are captured before the operation
-suspends; changing the original list while the read is pending cannot change
-the requested IDs. Direct database reads also capture external inputs, including
-unmodifiable views whose underlying list may still be mutable.
+`getAll` returns a complete list, so request smaller batches if the result could
+be large. For example, to process selected IDs in groups of 100:
 
-ID batches are encoded directly into a buffer sized for the count and all IDs,
-without allocating a fragment per ID or copying the private list again in the
-native codec. The existing count and ID range checks remain in place. Web keeps
-its two-word integer encoding to preserve JavaScript precision. The wire format
-and ABI are unchanged; native FFI and engine ownership still require their own
-buffers. This reduces temporary allocation, not the size of the requested data.
+```dart
+for (var start = 0; start < selectedIds.length; start += 100) {
+  final end = start + 100 < selectedIds.length ? start + 100 : selectedIds.length;
+  final batch = await db.todos.getAll(selectedIds.sublist(start, end));
+  for (final todo in batch.whereType<Todo>()) {
+    // Process this todo without retaining all previous batches.
+  }
+}
+```
 
-The batch reader reserves the result length up front and fills each position;
-the returned list remains growable. It reuses the selected row while reading its
-fields: MDBX retains the selected stored or pending bytes without cloning them,
-and SQLite reads columns from the prepared row without selecting it again inside
-each column accessor. Web validates the static section once per selected row
-only for the database's private response buffers. Readers over externally owned
-bytes continue validating on each access. Field types, indices, dynamic payload
-bounds and read errors are still checked. Row state is private to each reader;
-changing rows cannot reuse another row's values or hide missing documents.
-
-The collection returns the object list already built by the reader. Models
-without relationships need no additional binding pass. Models with relationships
-are bound on that same list after hydration, error checking and reader release,
-in input order and skipping missing objects. Results remain independently
-mutable, including duplicate IDs and empty batches. This removes temporary Dart
-lists without changing the generated API, database snapshots or wire format.
-
-Read preparation is also reused internally. MDBX point reads open only the
-document table and retain the existing transaction's snapshot and pending-write
-visibility. Its generated `getAll` already uses a document cursor. SQLite native
-reuses its ordered field metadata and prepared ID lookup; Web reuses prepared
-`IN` statements when the same batch shape is requested again. These are internal
-optimizations: application code and the generated API are identical on all three
-backends.
-
-Each active SQLite reader exclusively owns its statement. Returning it resets
-the cursor and clears the parameters, so the cache retains neither a read
-snapshot nor application results. Schema registration, migration, restore and
-transaction rollback invalidate preparation; closing releases cached statements.
-An active native statement from an invalidated cache is discarded when returned.
-
-The native cursor and binary batch paths each retain at most eight idle
-statements. A statement is retained only when its SQLite-reported memory plus
-SQL text is at most 64 KiB; larger requests execute normally without retaining
-their statement. Thus these two caches together retain at most 1 MiB of measured
-statement/SQL storage per connection, plus container overhead. Lazily constructed
-field-order and SQL metadata are separate and proportional to the registered
-schemas. This trades a small amount of retained preparation memory for less
-repeated work; it does not change the number of rows returned or cache objects.
+Use `readTxn` around the loop if every batch must see the same database state.
+For scanning an entire collection by ID, see
+[`documentIdsPage`](14-backup_and_advanced_helpers.md#documentidspage).
 
 ## Deleting One Object: `delete`
 
@@ -460,10 +409,9 @@ await db.todos.deleteAll(selectedIds);
 For deleting by a condition, use query deletes from the Queries guide. For
 direct id-based removal, use `delete` or `deleteAll`.
 
-## Advanced Wiring: `typedCollection`
+## Using A Schema: `typedCollection`
 
-Generated getters call `typedCollection` internally. Most apps do not need to
-call it directly.
+Use a generated getter when the collection is known at compile time:
 
 ```dart
 await db.todos.put(todo);

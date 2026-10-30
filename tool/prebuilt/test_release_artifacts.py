@@ -169,7 +169,7 @@ class AndroidAbiTests(unittest.TestCase):
         """ABI 34 and nonconstant/malformed exports must stop the Android build job."""
         with patch("verify_android.subprocess.check_output", return_value=
                    "0 <cindel_abi_version>:\n 0: mov w0, #34\n 4: ret"):
-            with self.assertRaisesRegex(RuntimeError, "expected ABI 39, received 34"):
+            with self.assertRaisesRegex(RuntimeError, "expected ABI 40, received 34"):
                 verify_android(Path("fixture"), Path("objdump"))
         for body in ("", "0: mov w0, #39\n 4: nop", "0: bl helper\n 4: ret"):
             with self.subTest(body=body):

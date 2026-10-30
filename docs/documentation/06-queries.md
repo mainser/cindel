@@ -237,10 +237,8 @@ many candidates before that first result is known.
 `count()` returns the number of matching objects **in the query window**:
 filters, distinct, offset, and limit still apply. It is not the total count
 before pagination. Remove the window modifiers when that is what you need.
-Generated native plans use the backend count operation instead of hydrating
-all returned objects; distinct and less direct execution paths can need
-additional tracking or materialization. Property `count()` instead counts
-non-null projected values.
+Use it instead of loading a list just to read its length. Property `count()`
+instead counts non-null projected values.
 
 ```dart
 final openCount = await db.todos
@@ -385,10 +383,9 @@ final latestByTitle = await db.todos
 
 ### Distinct Equality And Ordering
 
-Distinct compares structured field values and tuples, including list contents.
-Field boundaries and nulls are preserved; delimiter-like strings or a hash
-collision do not make unrelated tuples equal. Case-insensitive modifiers still
-apply where requested.
+Distinct compares field values, including the contents of lists and embedded
+objects. Null and an empty list are different values. When using multiple
+fields, two rows are duplicates only when all selected values are equal.
 
 Sorting happens before distinct, then offset and limit. Add the ID as a final
 sort key when ties need a deterministic representative or stable pagination:
@@ -403,28 +400,15 @@ final latestByTitle = await db.todos
     .findAll();
 ```
 
-### Execution And Memory
+### Working With Large Results
 
-These are internal optimizations; applications keep using generated queries:
+Use `where()` to narrow a large collection by an indexed field before adding
+other filters. Add a limit when the screen only needs a page, and use `count()`
+or a property projection when full objects are not needed.
 
-- MDBX can scan the ID cursor in either direction for limited `all()` queries
-  ordered only by ID, including filters, without distinct. It stops after the
-  requested matching window is complete or the cursor is exhausted.
-- MDBX can stream a limited integer-index range ordered ascending by the
-  indexed field and then ID, without distinct. This is not a general ordered
-  scan for arbitrary indexes or descending composite orders.
-- Eligible limited MDBX sorts that include the ID retain at most
-  `offset + limit` candidates using top-k selection. They can still scan all
-  candidates; a large offset increases retained memory.
-- Unsorted MDBX distinct processes candidates progressively, retains distinct
-  keys rather than discarded documents, and can stop at the limit. The key set
-  still grows with the number of distinct values examined.
-- MDBX ID-only result plans avoid copying full documents. Filters and ordering
-  may still require reading document fields.
-
-The selected path depends on the complete query. A limit bounds returned rows,
-not necessarily scanned rows or total backend memory. Result lists, distinct
-keys, and backend caches have costs beyond any bounded candidate buffer.
+A limit controls the number of returned rows. Filtering, sorting or distinct
+may still examine more data, so a small page is not a promise of constant query
+time or memory. Measure the queries your app runs with realistic data sizes.
 
 ## Dynamic Query Modifiers
 
@@ -572,53 +556,24 @@ updates the selected window. A zero limit updates nothing. These rules are the
 same in MDBX, SQLite native, and Web, including when a changed field is used by
 the filter.
 
-MDBX's direct scan for unsorted, non-distinct updates over the all-documents
-source stops before reading another row once the window is complete, even if
-later rows would not match. This path applies outside an explicit `writeTxn`
-when the changed fields do not participate in indexes. A zero limit performs
-no cursor reads on this path; field and filter validation still runs.
+Filtering happens before sorting and distinct; offset and limit apply to
+that selection. With `distinct`, only the chosen representative of each value
+is updated, not every object with that value. For example:
 
-For native query plans in MDBX and SQLite native/Web, an ordered `updateAll()`
-can omit internal sorting when it has no limit, zero offset, no distinct, and
-none of the changed fields participates in a simple or composite index. Every
-matching row is still updated, even when the changed field also appears in the
-filter or sort. The reusable query keeps its order for subsequent reads.
-`updateFirst()`, selection windows, distinct and indexed-field updates retain
-their existing selection behavior. Queries that select rows in Dart retain
-that selection path.
+```dart
+final changed = await db.todos
+    .filter()
+    .completedEqualTo(false)
+    .sortByCreatedAt()
+    .thenByDbId()
+    .distinctByTitle()
+    .updateAll({'completed': true});
+```
 
-On MDBX's all-documents source outside an explicit `writeTxn`, eligible ordered
-updates reuse the direct cursor scan: they do not retain or sort a batch of
-documents. Sort fields are still validated on each matching row before it is
-changed, and an error rolls back the operation. Collecting changed IDs for
-watchers still requires memory proportional to those IDs; transaction overlays
-and other query sources can still retain document batches. SQLite uses the
-direct filtered `UPDATE` instead of an ID subquery with `ORDER BY`; this avoids
-the intermediate ID set even when SQLite already removes that sort.
-These are internal optimizations; the public API and transaction guarantees
-are the same on all three backends.
-
-For SQLite native and Web, updates with `distinct` can filter candidates in
-SQLite before loading them into Dart. Eligible predicates are top-level scalar
-equalities and comparisons on non-nullable numeric fields, including `AND` and
-`OR` combinations when every branch is eligible. This reduces object loading
-when most rows do not match. It does not change the public query or require
-different application code for each backend.
-
-The existing Dart selection still applies the full filter, ordering, distinct
-keys, offset and limit. For example, filtering happens before choosing a
-distinct representative, and a limit is never pushed ahead of distinct. All
-selected IDs are captured before any write, inside the same `writeTxn`, so
-changing a filter or distinct field cannot change later batches. Failures roll
-back the transaction as before.
-
-Predicates requiring other Dart semantics, such as nested filters, `NOT`,
-nullable numeric comparisons and structured equality, retain their existing
-selection path. Normalized/tokenized sources also retain that path; native
-SQLite index-range sources are not part of this optimization. Other query
-operations and MDBX's native update path are unchanged. Memory still depends
-on the matching candidates and selected IDs; this is not a constant-memory
-update API or a shortcut for queries that match the whole collection.
+This completes the oldest open todo for each title. Changing a field used by
+the filter or distinct clause does not change the selection midway through the
+operation. A failure rolls back the update. Use `writeTxn` when other database
+operations must commit together with it.
 
 The update map uses persisted field names:
 
@@ -638,8 +593,8 @@ String values remain text even when they look numeric: updating a string to
 `'00123'`, `'1e3'`, or `'3.1400'` preserves those exact characters in MDBX,
 SQLite native, and Web. This also applies to `put` and `putAll`, nullable string
 fields, and indexed strings. Equality and sorting use string semantics.
-For SQLite databases created before 1.1.5, see the storage upgrade described
-in the migrations documentation; already lost characters cannot be recovered.
+For SQLite databases created before 1.1.5, see
+[the upgrade note](11-migrations.md#sqlite-string-storage-upgrade-in-115).
 
 For converted fields such as `DateTime`, `Duration`, or enums, prefer typed
 object writes unless you intentionally want to write the stored scalar
@@ -657,6 +612,29 @@ for (final todo in todos) {
 
 await db.todos.putAll(todos);
 ```
+
+### Updates With Embedded Filters
+
+Use the same nested filters as for reads, followed by `updateFirst` or
+`updateAll`. This works on all three backends, with or without `distinct`.
+Using the [Email model](03-data_modeling.md#embedded-objects):
+
+```dart
+final changed = await db.emails
+    .filter()
+    .sender((sender) => sender.metadata((metadata) => metadata.labelEqualTo('lead')))
+    .updateAll({'subject': 'Follow up'});
+```
+
+The filter chooses emails by their sender's metadata; the update changes the
+email's `subject`. Update keys are persisted fields on the root model. To edit
+an embedded object using its Dart fields, load the parent, change that object,
+and save the parent with `put`.
+
+A predicate on a nested property does not match when its parent is null.
+A present object's null property can match `equalTo(null)`. For an embedded
+list, a path predicate matches when at least one element matches. These rules
+also apply when selecting rows for updates.
 
 ## Common Query Examples
 

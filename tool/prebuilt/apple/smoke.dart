@@ -61,7 +61,7 @@ Future<void> main() async {
       'FFI override is forbidden',
     );
     // Construction resolves every binding eagerly, not just the ABI symbol.
-    check(CindelNativeBindings().abiVersion == 39, 'Expected ABI 39');
+    check(CindelNativeBindings().abiVersion == 40, 'Expected ABI 40');
     for (final backend in [
       CindelStorageBackend.mdbx,
       CindelStorageBackend.sqlite,
@@ -114,7 +114,7 @@ Future<void> main() async {
       }
     }
     await writeSmokeOutput(
-      'CINDEL_APPLE_PASS ABI=39 MDBX SQLite CRUD rollback reopen all-FFI',
+      'CINDEL_APPLE_PASS ABI=40 MDBX SQLite CRUD rollback reopen all-FFI',
     );
     exit(0);
   } catch (error, stack) {

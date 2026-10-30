@@ -67,10 +67,9 @@ dev_dependencies:
   cindel_generator: ^x.y.z
 ```
 
-`cindel` provides the Dart API. `cindel_flutter_libs` packages the Web worker,
-JavaScript glue, and Wasm runtime that Cindel needs in the browser. A Web app
-should include both dependencies even when your Dart code imports only
-`package:cindel/cindel.dart`.
+Include both dependencies even when your Dart code imports only
+`package:cindel/cindel.dart`. Flutter bundles the browser runtime from
+`cindel_flutter_libs`; no separate database initialization is needed.
 
 Serve the Flutter Web app from a browser context that supports:
 
@@ -142,9 +141,10 @@ Account for JavaScript's safe-integer range when sharing data; see the
 Backups and migrations use the same public APIs. Backups default to
 uncompressed JSONL on Web; explicitly choose `CindelBackupCompression.none` on
 both platforms for portable archive code. Native gzip archives must be
-decompressed before supplying an uncompressed input stream to Web. Disk-staged
-restoration and migration workspaces consume browser storage quota as well as
-the live database. See [backups](14-backup_and_advanced_helpers.md) and
+decompressed before supplying an uncompressed input stream to Web. Restores
+and migrations need temporary browser storage in addition to the database, so
+allow for that quota when handling large archives. See
+[backups](14-backup_and_advanced_helpers.md) and
 [migrations](11-migrations.md).
 
 ## Current Limitations

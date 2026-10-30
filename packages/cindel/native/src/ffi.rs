@@ -149,7 +149,7 @@ pub unsafe extern "C" fn cindel_native_batch_writer_error(
 
 #[no_mangle]
 pub extern "C" fn cindel_abi_version() -> u32 {
-    39
+    40
 }
 
 #[no_mangle]

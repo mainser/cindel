@@ -272,27 +272,15 @@ void main() {
             ? [2, 4]
             : [2, 5];
         // Act / Assert.
-        // Nested query updates are not supported by the MDBX native planner;
-        // exercise the supported SQLite selection without broadening that API.
-        if (shape == 'nested' &&
-            testStorageBackend == CindelStorageBackend.mdbx) {
-          await expectLater(
-            selected.updateAll({'sessionLength': 42}),
-            throwsUnsupportedError,
-          );
-        } else {
-          expect(
-            await selected.updateAll({'sessionLength': 42}),
-            expected.length,
-          );
-          final rows = await database.users.all().sortByDbId().findAll();
-          expect(
-            rows
-                .where((row) => row.sessionLength != null)
-                .map((row) => row.dbId),
-            expected,
-          );
-        }
+        expect(
+          await selected.updateAll({'sessionLength': 42}),
+          expected.length,
+        );
+        final rows = await database.users.all().sortByDbId().findAll();
+        expect(
+          rows.where((row) => row.sessionLength != null).map((row) => row.dbId),
+          expected,
+        );
       });
     }
 

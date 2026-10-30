@@ -1972,6 +1972,9 @@ fn sqlite_filter_sql(
     filter: WireFilter,
 ) -> Result<(String, Vec<Value>), String> {
     match filter {
+        WireFilter::Path { .. } => {
+            Err("nested filter paths require typed Dart selection in SQLite".into())
+        }
         WireFilter::Field {
             field,
             operation,

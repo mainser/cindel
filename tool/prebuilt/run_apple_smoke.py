@@ -27,7 +27,7 @@ def run(*args, cwd=None, timeout=900, capture=False):
 
 
 def check_success(output):
-    if "CINDEL_APPLE_PASS ABI=39" not in output or "CINDEL_APPLE_FAIL" in output:
+    if "CINDEL_APPLE_PASS ABI=40" not in output or "CINDEL_APPLE_FAIL" in output:
         raise RuntimeError("Consumer did not complete the ABI/database smoke test")
 
 

@@ -45,10 +45,10 @@ void main() {
     // Scenario: Native-asset functions are invoked directly with an
     // unsupported backend.
     // Covers:
-    // - ABI 39 and native error buffer ownership through take/free calls.
+    // - ABI 40 and native error buffer ownership through take/free calls.
     // Expected: The ABI matches, opening returns no handle, error bytes can
     // be consumed/freed and a second take is empty.
-    test('executes ABI 39 error ownership through native assets.', () {
+    test('executes ABI 40 error ownership through native assets.', () {
       // Arrange.
       final functions = reflect(_nativeAssetFunctions());
       // Act.
@@ -56,7 +56,7 @@ void main() {
           functions.getField(const Symbol('abiVersion')).reflectee
               as int Function();
       // Assert.
-      expect(abi(), 39);
+      expect(abi(), 40);
       final directory = ':memory:'.toNativeUtf8();
       final status = calloc<Int32>();
       final length = calloc<Size>();

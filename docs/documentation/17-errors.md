@@ -36,11 +36,11 @@ Cindel can also throw normal Dart errors such as `ArgumentError` when a caller
 passes an invalid value, for example an empty directory, an empty collection
 name, a negative id, or an invalid page limit.
 
-## Preserved Diagnostics
+## Logging Errors
 
-Engine failures carry their original cause through native and Web boundaries.
-`CindelError` has optional `operation`, `backend`, `code`, and `cause` fields in
-addition to its message. Not every validation error supplies all of them.
+When reporting a failure, include its message and the operation being run.
+`CindelError` also has optional `operation`, `backend`, `code`, and `cause`
+fields. Include them when present; not every error supplies all of them.
 
 ```dart
 try {
@@ -68,7 +68,7 @@ stream; use its `onError` handler as shown in [watchers](10-watchers.md).
 `CindelError`. Its `committedVersion` identifies a migration step already
 published before post-step maintenance failed, and `cause` preserves that
 failure. Do not report that step as rolled back or repeat its external side
-effects. See [migrations](11-migrations.md#atomic-steps-and-memory).
+effects. See [migrations](11-migrations.md#failures-and-large-migrations).
 
 ## `CindelOpenError`
 

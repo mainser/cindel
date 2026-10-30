@@ -49,9 +49,9 @@ def verify(directory, objdump):
             text=True, timeout=60,
         )
         abi = abi_from_disassembly(output)
-        if abi != 39:
-            raise RuntimeError(f"{library}: expected ABI 39, received {abi}")
-        print(f"PASS ABI 39: {library}")
+        if abi != 40:
+            raise RuntimeError(f"{library}: expected ABI 40, received {abi}")
+        print(f"PASS ABI 40: {library}")
 
 
 if __name__ == "__main__":

@@ -630,7 +630,10 @@ final class CindelQuery<T> {
     final nativePlan = _nativePlan(limitOverride: limitOverride);
     if (nativePlan == null &&
         _sourceFilter == null &&
-        _distinctFields.isEmpty) {
+        _distinctFields.isEmpty &&
+        !(_filter != null &&
+            _nativeFilter == null &&
+            _hasNestedFilterPath(_filter))) {
       throw UnsupportedError(
         'Cindel Web query updates require a SQLite-native query plan.',
       );
@@ -1301,6 +1304,17 @@ _CindelDocumentFilter _caseInsensitiveStringEqualityFilter(
     return actual is String && actual.toLowerCase() == normalizedExpected;
   };
 }
+
+// Restrict the additional update route to predicates containing embedded paths.
+bool _hasNestedFilterPath(CindelFilterPredicate predicate) =>
+    switch (predicate) {
+      _FieldFilterPredicate() => predicate.path.length > 1,
+      _CompositeFilterPredicate() => predicate.predicates.any(
+        _hasNestedFilterPath,
+      ),
+      _NotFilterPredicate() => _hasNestedFilterPath(predicate.predicate),
+      _ => false,
+    };
 
 Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
   if (predicate == null) {

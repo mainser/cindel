@@ -90,7 +90,8 @@ when sync is enabled.
 
 ## `CindelSyncConfig`
 
-`CindelSyncConfig` controls the adapter and scheduler behavior.
+`CindelSyncConfig` chooses your adapter, retry interval, batch size and status
+callbacks.
 
 ```dart
 final config = CindelSyncConfig(
@@ -109,8 +110,9 @@ Fields:
 - `adapter`: required backend adapter.
 - `clientId`: stable id for this installation or device. If omitted, Cindel
   persists an internal id for this local database.
-- `autoStart`: starts the scheduler automatically after open.
-- `interval`: how often the scheduler retries in the background.
+- `autoStart`: starts syncing automatically after open; defaults to `true`.
+  There is no public start method, so leave it enabled for normal app use.
+- `interval`: how often Cindel retries in the background.
 - `batchSize`: maximum pending mutations sent in one push call.
 - `onStatusChanged`: optional callback for UI and logging.
 - `onError`: optional callback for background sync errors.
@@ -121,16 +123,14 @@ should be treated as a different client.
 
 ## Sync Status
 
-`onStatusChanged` receives a `CindelSyncStatus`:
+`onStatusChanged` receives a `CindelSyncStatus` with these values:
 
-```dart
-final class CindelSyncStatus {
-  final CindelSyncPhase phase;
-  final int pendingCount;
-  final DateTime? lastSyncAt;
-  final Object? lastError;
-}
-```
+| Property | Use |
+| --- | --- |
+| `phase` | Show whether sync is idle, running, offline or in error. |
+| `pendingCount` | Show how many local changes are waiting. |
+| `lastSyncAt` | Last successful sync time, or null before the first success. |
+| `lastError` | Include the last error in app diagnostics. |
 
 Phases:
 
@@ -400,11 +400,7 @@ for (final todo in todos) {
 await db.todos.putAll(todos);
 ```
 
-This gives Cindel complete document snapshots to send to the adapter.
-
-Most application code should use generated typed collections. Low-level raw
-document writes are for generated code and advanced tooling; with sync enabled,
-raw writes need canonical document data so Cindel can build a valid mutation.
+Use these typed writes for changes that should be sent to your adapter.
 
 ## Offline Behavior
 
@@ -435,9 +431,9 @@ A production backend should provide:
 - collection-specific validation,
 - conflict and correction rules.
 
-Realtime is optional. If you add sockets or push notifications, use them only
-as a wake-up signal to pull. The checkpointed `pull` result should remain the
-source of truth.
+Cindel calls the adapter at the configured interval. There is no public method
+to force a pull when a socket or push notification arrives. Keep the adapter
+able to resume from its checkpoint after an offline period.
 
 ## Minimal Server Flow
 

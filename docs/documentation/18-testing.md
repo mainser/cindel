@@ -153,7 +153,7 @@ final count = await db.todos
 expect(count, 1);
 ```
 
-## Cross-Backend Model Regressions
+## Testing The Same App On Each Backend
 
 For native coverage, parameterize setup and reuse the same assertions:
 
@@ -177,10 +177,9 @@ for (final backend in CindelStorageBackend.values) {
 The loop selects both native engines only on native. Web always uses SQLite,
 so running it in a browser twice does not add MDBX coverage.
 
-Run the same typed-model assertions against MDBX, SQLite native, and a real Web
-runtime. Selecting SQLite in a native test does not exercise Dart-to-JavaScript
-serialization or the Worker boundary. Keep backend selection in test setup,
-not in the model or expected public results.
+Run the same model assertions on native and in a real browser. A passing
+native SQLite test does not verify browser storage or Web startup. Keep backend
+selection in test setup; use the same models and expected results.
 
 Useful round-trip coverage includes:
 
@@ -190,7 +189,7 @@ Useful round-trip coverage includes:
 - single-property projections and `findFirst`, including a zero limit;
 - closing and reopening persistent storage;
 - backup export/import with multiple generated schema types and small batches;
-- failed transactions and restored ID/revision state;
+- failed transactions, checking that no partial changes were saved;
 - watcher cancellation and close while a snapshot read is pending.
 
 Use values within the documented portable numeric domain when asserting
@@ -243,21 +242,14 @@ fake adapter can expose deterministic hooks.
 
 ### Runtime Setup
 
-`openInMemory` still needs the native library or Web Worker/Wasm runtime. It
-does not replace storage with a Dart mock. A pure Dart native test can use a
-matching binary through `CINDEL_NATIVE_LIBRARY`; a stale binary fails the ABI
-check before CRUD assertions run. See [native runtime setup](19-advanced_reference.md#native-build-hooks).
+`openInMemory` uses a real database, so the test needs the Cindel runtime just
+like the app. For pure Dart tests, configure a matching native library or the
+optional build hook described in
+[native runtime setup](19-advanced_reference.md#native-build-hooks).
 
-Repository Web lifecycle tests have a dedicated runner that stages the packaged
-assets and starts Chrome with an isolated profile. From the repository root:
-
-```sh
-dart run packages/cindel/tool/run_web_close_tests.dart
-```
-
-That runner tests Web lifecycle scenarios; it is not the complete test suite.
-For application Web tests, serve the packaged Worker/Wasm assets in a browser
-supporting OPFS. A native `dart test` run alone cannot validate that boundary.
+Run Web integration tests in a browser with the packaged runtime assets and
+OPFS support. Test opening, saving, closing and reopening as well as query
+results. A native test run does not cover these browser requirements.
 
 For Flutter apps, keep `cindel_flutter_libs` in dependencies even when tests
 mostly use in-memory databases.

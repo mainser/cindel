@@ -40,8 +40,8 @@ await CindelBackup.exportDatabase(
 
 Restore into an empty database opened with matching schemas.
 
-The restore implementation requires the selected collections to be empty;
-using a separate empty database also isolates restored migration metadata.
+All collections selected for restore must be empty. Prefer a separate empty
+database so restoring its migration version cannot affect unrelated data.
 
 ## Modeling Limitations
 
@@ -72,29 +72,25 @@ integer-backed dates and durations. Enum-list storage uses names; annotated
 ordinal/value enum lists are not supported. See the
 [type matrix](03-data_modeling.md#type-compatibility-across-backends).
 
-Bounded query candidates and maintenance batches do not bound the entire
-process's memory. `findAll`, multi-property results, and `putAll` inputs can
-materialize full lists. Distinct needs keys for seen values, and backend
-transactions/caches use additional memory. Current projection and aggregate
-execution costs are described in
-[projections and aggregates](08-projections_and_aggregates.md#windows-nulls-and-execution-cost).
+`findAll` and `getAll` return complete result lists. For large datasets, request
+pages or smaller ID batches. Use smaller `putAll` batches when the input is too
+large to hold comfortably in memory, and process export streams incrementally.
+A query limit caps returned rows, but filtering, sorting and distinct can still
+require more time and memory. See [queries](06-queries.md#working-with-large-results).
 
 Backups reject records beyond `maxRecordBytes`. Atomic restores and migration
 steps require temporary disk storage, so check native disk capacity or browser
 quota before large maintenance operations.
 
-## Transactional Bulk Reads
+## Transaction Boundaries
 
-Typed `getAll` supports active write transactions on all three backends. MDBX
-combines its committed cursor with the requested pending values, including
-deletions. It retains one copy per unique requested pending document for the
-reader's lifetime; untouched committed documents still use the cursor without
-copying their payloads. Pending data for unrequested IDs is not copied into the
-reader. Returned Dart objects and lists also consume memory.
+Do not nest explicit transactions or use the same handle for unrelated work
+while a transaction is active. Writes, including ID allocation, are not allowed
+inside `readTxn`. Await database calls before the callback returns.
 
-Use a native binary built with the 1.1.3 correction. The former MDBX error about
-an active write transaction is fixed without changing the public API or ABI 39;
-an older binary with the same ABI can still contain the defect.
+`get` and `getAll` can read pending changes inside `writeTxn`. Rollback changes
+the database, not the Dart objects you already hold. See
+[transactions](09-transactions.md).
 
 ## Web Limitations
 

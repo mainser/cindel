@@ -130,8 +130,8 @@ class ApplePackagingTests(unittest.TestCase):
                     verify_bundle(bundle, {("ios", "simulator", frozenset(["arm64", "x86_64"]))})
 
     def test_consumer_gate_requires_completion_not_just_process_success(self):
-        check_success("CINDEL_APPLE_PASS ABI=39")
-        for output in ("", "Launched application", "CINDEL_APPLE_PASS ABI=39\nCINDEL_APPLE_FAIL"):
+        check_success("CINDEL_APPLE_PASS ABI=40")
+        for output in ("", "Launched application", "CINDEL_APPLE_PASS ABI=40\nCINDEL_APPLE_FAIL"):
             with self.assertRaises(RuntimeError):
                 check_success(output)
 
@@ -149,7 +149,7 @@ Future<void> main(List<String> args) async {
     await writeSmokeOutput('CINDEL_APPLE_METRIC transport');
     final marker = failed
         ? 'CINDEL_APPLE_FAIL controlled failure'
-        : 'CINDEL_APPLE_PASS ABI=39';
+        : 'CINDEL_APPLE_PASS ABI=40';
     await writeSmokeOutput('${'x' * (128 * 1024)}\n$marker', failure: failed);
     exit(failed ? 1 : 0);
   }, zoneSpecification: ZoneSpecification(
@@ -164,7 +164,7 @@ Future<void> main(List<String> args) async {
                         [shutil.which("dart"), str(script), "failure" if failed else "success"],
                         capture_output=True, text=True, timeout=60)
                     self.assertEqual(result.returncode, int(failed), result.stdout + result.stderr)
-                    marker = "CINDEL_APPLE_FAIL controlled failure" if failed else "CINDEL_APPLE_PASS ABI=39"
+                    marker = "CINDEL_APPLE_FAIL controlled failure" if failed else "CINDEL_APPLE_PASS ABI=40"
                     output = result.stderr if failed else result.stdout
                     expected = "x" * (128 * 1024) + "\n" + marker + "\n"
                     self.assertEqual(result.stdout if failed else result.stderr,

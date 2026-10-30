@@ -20,6 +20,7 @@ const int wireFilterTagField = 1;
 const int wireFilterTagAll = 2;
 const int wireFilterTagAny = 3;
 const int wireFilterTagNot = 4;
+const int wireFilterTagPath = 5;
 
 /// Field filter operation tags used by native SQLite/MDBX query execution.
 const int wireFilterOpEqual = 1;
@@ -360,6 +361,11 @@ sealed class WireFilter {
     required WireFilterOperation operation,
     required WireValue value,
   }) = WireFieldFilter;
+  const factory WireFilter.path({
+    required List<String> path,
+    required WireFilterOperation operation,
+    required WireValue value,
+  }) = WirePathFilter;
   const factory WireFilter.all(List<WireFilter> predicates) = WireAllFilter;
   const factory WireFilter.any(List<WireFilter> predicates) = WireAnyFilter;
   const factory WireFilter.not(WireFilter predicate) = WireNotFilter;
@@ -403,6 +409,26 @@ final class WireFieldFilter extends WireFilter {
 
   @override
   int get hashCode => Object.hash(field, operation, value);
+}
+
+/// A persisted property path used only by MDBX query updates.
+final class WirePathFilter extends WireFilter {
+  const WirePathFilter({
+    required this.path,
+    required this.operation,
+    required this.value,
+  });
+  final List<String> path;
+  final WireFilterOperation operation;
+  final WireValue value;
+  @override
+  bool operator ==(Object other) =>
+      other is WirePathFilter &&
+      listEquals(other.path, path) &&
+      other.operation == operation &&
+      other.value == value;
+  @override
+  int get hashCode => Object.hash(Object.hashAll(path), operation, value);
 }
 
 final class WireAllFilter extends WireFilter {
@@ -1837,6 +1863,17 @@ final class CindelWireWriter {
         writeString(field);
         writeUint8(_filterOperationTag(operation));
         writeValue(value);
+      case WirePathFilter(:final path, :final operation, :final value):
+        if (path.isEmpty || path.any((part) => part.isEmpty)) {
+          throw const FormatException('Invalid nested filter path');
+        }
+        writeUint8(wireFilterTagPath);
+        writeLength(path.length);
+        for (final part in path) {
+          writeString(part);
+        }
+        writeUint8(_filterOperationTag(operation));
+        writeValue(value);
       case WireAllFilter(:final predicates):
         writeUint8(wireFilterTagAll);
         writeLength(predicates.length);
@@ -2192,6 +2229,7 @@ final class CindelWireReader {
         operation: _readFilterOperation(),
         value: readValue(),
       ),
+      wireFilterTagPath => _readPathFilter(),
       wireFilterTagAll => WireFilter.all([
         for (var i = 0, count = readLength(); i < count; i++) readFilter(),
       ]),
@@ -2201,6 +2239,20 @@ final class CindelWireReader {
       wireFilterTagNot => WireFilter.not(readFilter()),
       final tag => throw FormatException('unknown wire filter tag $tag'),
     };
+  }
+
+  WireFilter _readPathFilter() {
+    final path = [
+      for (var i = 0, count = readLength(); i < count; i++) readString(),
+    ];
+    if (path.isEmpty || path.any((part) => part.isEmpty)) {
+      throw const FormatException('Invalid nested filter path');
+    }
+    return WireFilter.path(
+      path: path,
+      operation: _readFilterOperation(),
+      value: readValue(),
+    );
   }
 
   WireQuerySource readQuerySource() {

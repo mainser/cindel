@@ -1,8 +1,7 @@
 # Backup And Advanced Helpers
 
-Most application code should use generated typed collections. Cindel also
-exposes backup and low-level database helpers for maintenance flows, import and
-export tooling, diagnostics, and generated code.
+Use this guide to export a database, restore an archive, reserve IDs or process
+large collections in pages.
 
 Use these APIs when you need database-wide archives, controlled scans, or
 advanced collection maintenance. For normal reads and writes, prefer generated
@@ -71,49 +70,39 @@ no automatic compression detection.
 
 ### Archive Contents And Compatibility
 
-Version 2 archives contain newline-delimited JSON records after decompression:
+Backups contain the saved objects and their IDs, saved relationships, and the
+data migration version. Unsaved changes to Dart objects or link containers are
+not included. Save them before starting the export.
 
-- a header with archive version, backend, creation time, and migration version,
-- schema manifests,
-- typed document records with their IDs,
-- saved forward-link records,
-- a footer with document/link counts and a checksum.
-
-Import rebuilds indexes and backlinks from the restored data and forward links,
-restores ID allocation state from the imported IDs, and restores the migration
-version. An archive is not a copy of in-memory loaded relationship objects.
-Use compatible generated schemas and values supported by the destination
-runtime, including [Web numeric limits](03-data_modeling.md#value-representation-and-portable-limits).
-The same API does not bypass schema validation.
+Use matching generated schemas when restoring. A backup can be restored on a
+different backend when its values fit that platform's supported range; check
+[Web numeric limits](03-data_modeling.md#value-representation-and-portable-limits)
+when moving native data to a browser. Do not edit the archive by hand.
 
 `CindelBackupReport` exposes `documents`, `uncompressedBytes`, `archiveBytes`,
 `checksum`, and `compression`. Progress callbacks receive `phase`, `collection`
 (which can be null for metadata), and `documents`. Progress counts processed
 documents; it does not mean an import has committed.
 
-The checksum is FNV-1a over non-footer JSONL records. It detects accidental
-corruption; it does not authenticate or encrypt an archive.
+Backup validation detects accidental corruption. Archives are not encrypted
+or authenticated; choose appropriate storage and transport for the data they
+contain.
 
 ### Snapshot And Atomic Restore
 
-Export holds one read snapshot while reading schemas, documents, and links.
-Later writes do not produce a mixed-time archive. The snapshot remains open
-while the caller consumes the stream, so a slow output prolongs its lifetime.
+Export reads a consistent database state, so changes committed later do not
+produce a mixed-time archive. Await the export before closing its database.
 Do not start backup operations inside an application transaction.
 
-Import validates archive structure, schema compatibility, record limits,
-counts, and checksum while staging data on disk. It publishes documents,
-indexes, links, ID counters, and migration metadata atomically after validation.
-Failure before publication leaves the target unchanged; a failed batch is not
-a partially restored live database. The target's emptiness is checked as part
-of restoration. Wait for `importDatabase` to complete before using restored
-contents.
+Import validates the archive before making restored data available. A failed
+import leaves the target unchanged. Wait for `importDatabase` to complete
+before showing restored contents; progress notifications do not mean the
+restore has committed.
 
 The emptiness requirement concerns the selected restore collections. A separate
 empty database is the simplest restore destination: it also avoids changing
 database-wide migration metadata alongside unrelated existing collections.
-Keep every forward-link target in the selected set. Progress notifications
-during staging are not permission to expose partially restored data to the UI.
+Keep every forward-link target in the selected set.
 
 Version 1 archives do not contain relationships. Restoring such an archive
 with linked schemas requires `allowLegacyWithoutLinks: true`; this explicitly
@@ -129,20 +118,17 @@ Both operations accept:
 | `batchSize` | `1000` | Maximum batch/page record count; valid range is 1 through 100000. |
 | `maxRecordBytes` | `16 * 1024 * 1024` | Maximum size of an individual uncompressed JSONL record. Must be positive. |
 
-Export pages through IDs and links and serializes documents progressively.
-Import additionally bounds document/link batches by a 1 MiB encoded-data
-budget; one larger record is handled on its own, up to `maxRecordBytes`.
-It does not retain all imported documents until publication.
+Reduce `batchSize` when processing large objects or running on a device with
+limited memory. `maxRecordBytes` limits one archive record; increasing it does
+not change the model's supported types. An oversized record causes an error.
 
-These are application-buffer bounds, not a fixed process-memory guarantee.
-Schema metadata, decoded objects, one record's encoding, compression buffers,
-engine caches, and transaction pages also consume memory. A caller that
-collects the complete stream into a list defeats streaming's memory benefit.
+Pass streams directly to the backup methods instead of collecting an entire
+archive into a list. Batch size does not limit the total memory used by your
+application, especially if your callbacks keep every processed object.
 
-Restoration requires temporary disk space for staging and engine transaction
-storage; on Web this uses browser storage quota. Staging is cleaned up on
-normal completion, failure, or handle closure. Abrupt process termination may
-leave temporary files. No live database file replacement is required.
+Restoring needs temporary disk space, or browser storage quota on Web. Keep
+the archive until import completes successfully, and allow enough free space
+for the restored data and temporary work.
 
 ## `allocateId` And `allocateIds`
 
@@ -259,8 +245,8 @@ processing incremental rather than accumulating every page in memory.
 
 ## Orphan-Link Maintenance
 
-`cleanupOrphanLinks()` checks persisted relationship edges in bounded pages and
-atomically removes those whose source or target document no longer exists.
+`cleanupOrphanLinks()` removes saved relationships whose source or target
+object no longer exists, as one atomic operation.
 Normal deletion already removes incoming and outgoing links transactionally.
 Use this helper outside explicit transactions for older data or maintenance;
 see [relationships](05-relationships.md#deletion-and-orphan-cleanup).
@@ -292,10 +278,9 @@ Call it outside any explicit transaction:
 await db.compact();
 ```
 
-SQLite executes `VACUUM`. MDBX's current helper completes an empty write
-transaction through its configured storage policy; it does not create a
-separate compacted database copy or promise a smaller file. Do not depend on
-identical physical file-size changes across backends.
+Compaction can reclaim unused storage in SQLite. The current MDBX operation
+does not guarantee a smaller database file. Do not use file-size reduction as
+the success condition for a cross-backend maintenance workflow.
 
 Most apps should let `CindelMigrationPlan` handle compaction through its
 `compactOnSuccess` option. Call `compact` directly only from maintenance code

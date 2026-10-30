@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 
+#[cfg(feature = "mdbx")]
+mod nested_path;
+#[cfg(feature = "mdbx")]
+pub(crate) use nested_path::visit_binary_path;
+
 use std::ops::Range;
 use std::str;
 

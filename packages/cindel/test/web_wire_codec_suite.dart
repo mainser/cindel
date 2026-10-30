@@ -9,6 +9,39 @@ import 'package:test/test.dart';
 
 void main() {
   group('Cindel Web wire codec', () {
+    // Scenario: ABI 40 carries a persisted nested property path.
+    // Covers: Exact path tag, native/Web codec round-trip, empty paths and truncation.
+    // Expected: Paths preserve their segments and malformed payloads fail.
+    test('round-trips nested update paths and rejects malformed paths.', () {
+      // Arrange.
+      const filter = web_wire.WireFilter.path(
+        path: ['profile', 'name'],
+        operation: web_wire.WireFilterOperation.equal,
+        value: web_wire.WireValue.string('yes'),
+      );
+      // Act.
+      final bytes = web_wire.encodeFilter(filter);
+      // Assert.
+      expect(bytes.first, 5);
+      expect(web_wire.decodeFilter(bytes), filter);
+      for (var end = 0; end < bytes.length; end++) {
+        expect(
+          () => web_wire.decodeFilter(Uint8List.sublistView(bytes, 0, end)),
+          throwsA(isA<Exception>()),
+        );
+      }
+      expect(
+        () => web_wire.encodeFilter(
+          const web_wire.WireFilter.path(
+            path: [],
+            operation: web_wire.WireFilterOperation.equal,
+            value: web_wire.WireValue.nullValue(),
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
+
     // Scenario: A direct Web batch encoder writes 256 records containing
     // nullable integer lists.
     // Covers:

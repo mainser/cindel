@@ -11,6 +11,7 @@ const FILTER_TAG_FIELD: u8 = 1;
 const FILTER_TAG_ALL: u8 = 2;
 const FILTER_TAG_ANY: u8 = 3;
 const FILTER_TAG_NOT: u8 = 4;
+const FILTER_TAG_PATH: u8 = 5;
 const FILTER_OP_EQUAL: u8 = 1;
 const FILTER_OP_LESS_THAN: u8 = 2;
 const FILTER_OP_LESS_THAN_OR_EQUAL: u8 = 3;
@@ -80,6 +81,11 @@ pub(crate) enum WireFilterOperation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum WireFilter {
+    Path {
+        path: Vec<String>,
+        operation: WireFilterOperation,
+        value: WireValue,
+    },
     Field {
         field: String,
         operation: WireFilterOperation,
@@ -906,6 +912,22 @@ impl Writer {
                 self.write_u8(filter_operation_tag(*operation));
                 self.write_value(value)?;
             }
+            WireFilter::Path {
+                path,
+                operation,
+                value,
+            } => {
+                if path.is_empty() || path.iter().any(String::is_empty) {
+                    return Err("invalid nested filter path".into());
+                }
+                self.write_u8(FILTER_TAG_PATH);
+                self.write_len(path.len())?;
+                for part in path {
+                    self.write_string(part)?;
+                }
+                self.write_u8(filter_operation_tag(*operation));
+                self.write_value(value)?;
+            }
             WireFilter::All { predicates } => {
                 self.write_u8(FILTER_TAG_ALL);
                 self.write_len(predicates.len())?;
@@ -1115,6 +1137,22 @@ impl<'a> Reader<'a> {
                 operation: self.read_filter_operation()?,
                 value: self.read_value()?,
             }),
+            FILTER_TAG_PATH => {
+                let count = self.read_len()?;
+                self.ensure_item_count(count, 4)?;
+                let mut path = Vec::with_capacity(count);
+                for _ in 0..count {
+                    path.push(self.read_string()?);
+                }
+                if path.is_empty() || path.iter().any(String::is_empty) {
+                    return Err("invalid nested filter path".into());
+                }
+                Ok(WireFilter::Path {
+                    path,
+                    operation: self.read_filter_operation()?,
+                    value: self.read_value()?,
+                })
+            }
             FILTER_TAG_ALL => {
                 let count = self.read_len()?;
                 self.ensure_item_count(count, 1)?;
