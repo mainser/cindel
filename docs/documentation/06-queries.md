@@ -524,7 +524,9 @@ its incoming and outgoing links. Wrap the deletion and any related writes in
 `writeTxn` when they must commit or roll back together.
 
 Nested filters work with both deletion methods, using the same generated
-helpers as reads. For example, to delete users whose recipient has a given name:
+helpers as reads. You can combine them with sorting, `distinct`, offset and
+limit; `deleteFirst()` removes the first object in that selection. For example,
+to delete users whose recipient has a given name:
 
 ```dart
 final removed = await db.users

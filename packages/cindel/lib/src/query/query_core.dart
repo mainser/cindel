@@ -482,7 +482,7 @@ final class CindelQuery<T> {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.isNotEmpty;
     }
-    final documents = await _matchingDocuments();
+    final documents = await _matchingDocuments(reuseValidatedDocuments: true);
     if (documents.isEmpty) {
       return false;
     }
@@ -497,7 +497,7 @@ final class CindelQuery<T> {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.length;
     }
-    final documents = await _matchingDocuments();
+    final documents = await _matchingDocuments(reuseValidatedDocuments: true);
     if (documents.isEmpty) {
       return 0;
     }
@@ -614,6 +614,7 @@ final class CindelQuery<T> {
   // Dart-side sort, distinct, offset, and limit when storage cannot do it.
   Future<List<CindelDocument>> _matchingDocuments({
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) async {
     final mdbxNativeDocuments =
         await _matchingMdbxNativeDocumentsWithDartPlan();
@@ -626,6 +627,7 @@ final class CindelQuery<T> {
     }
     final sqliteNativeDocuments = await _matchingSqliteNativePlanDocuments(
       prefilterDistinctUpdate: prefilterDistinctUpdate,
+      reuseValidatedDocuments: reuseValidatedDocuments,
     );
     if (sqliteNativeDocuments != null) {
       return sqliteNativeDocuments;
@@ -771,9 +773,11 @@ final class CindelQuery<T> {
   // represent the full query.
   Future<List<CindelDocument>>? _matchingSqliteNativePlanDocuments({
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) {
     final dartDocuments = _matchingSqliteNativeDocumentsWithDartPlan(
       prefilterDistinctUpdate: prefilterDistinctUpdate,
+      reuseValidatedDocuments: reuseValidatedDocuments,
     );
     if (dartDocuments != null) {
       return dartDocuments;
@@ -804,6 +808,7 @@ final class CindelQuery<T> {
   // represent the full query. It still reads through generated native readers.
   Future<List<CindelDocument>>? _matchingSqliteNativeDocumentsWithDartPlan({
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
@@ -846,9 +851,11 @@ final class CindelQuery<T> {
       for (final object in objects) {
         final document = _documentFromObject(object);
         if (_matchesSqliteNativeDartPlan(document)) {
-          // Update selection can retain the document it just validated.
+          // Mutation selection can retain the document it just validated.
           documents.add(
-            prefilterDistinctUpdate ? document : _documentFromObject(object),
+            prefilterDistinctUpdate || reuseValidatedDocuments
+                ? document
+                : _documentFromObject(object),
           );
         }
       }

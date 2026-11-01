@@ -2,7 +2,7 @@
 
 ## 1.1.6
 
-- Optimized SQLite native query deletes.
+- Optimized SQLite native/Web query deletes.
 - Optimized MDBX deletes with nested filters.
 - Fixed nested-filter updates across all backends.
 - Fixed indexed range ordering in SQLite and indexed queries and nullable sorting on Web.

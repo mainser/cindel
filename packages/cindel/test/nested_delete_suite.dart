@@ -130,9 +130,12 @@ void main() {
     }
 
     // Scenario: A generated schema observes the work of first/all nested deletes.
-    // Covers: Native MDBX selection without Dart hydration or serialization.
-    // Expected: MDBX reads/converts no objects; all backends delete the same IDs.
-    test('avoids Dart hydration for MDBX nested deletes.', () async {
+    // Covers:
+    // - Native MDBX selection and SQLite native/Web document reuse.
+    // - First/all deletion with and without distinct on an empty list field.
+    // Expected: MDBX reads/converts no objects; SQLite converts each candidate
+    // once, including rejected rows; all backends delete the same IDs.
+    test('avoids redundant conversions in nested deletes.', () async {
       // Arrange.
       var readers = 0;
       var conversions = 0;
@@ -160,33 +163,41 @@ void main() {
         },
         bindLinks: s.bindLinks,
       );
-      for (final first in [false, true]) {
-        await db.distinctRecords.putAll(_rows());
-        final query = db
-            .typedCollection(counted)
-            .all()
-            .filter()
-            .primaryRecipient((p) => p.nameEqualTo('yes'))
-            .sortByDbId();
-        readers = 0;
-        conversions = 0;
-        // Act.
-        if (first) {
-          expect(await query.deleteFirst(), isTrue);
-        } else {
-          expect(await query.deleteAll(), 3);
+      for (final distinct in [false, true]) {
+        for (final first in [false, true]) {
+          await db.distinctRecords.putAll(_rows());
+          var query = db
+              .typedCollection(counted)
+              .all()
+              .filter()
+              .primaryRecipient((p) => p.nameEqualTo('yes'))
+              .sortByDbId();
+          if (distinct) {
+            query = query.distinctByTags();
+          }
+          readers = 0;
+          conversions = 0;
+          // Act.
+          if (first) {
+            expect(await query.deleteFirst(), isTrue);
+          } else {
+            expect(await query.deleteAll(), distinct ? 1 : 3);
+          }
+          // Assert.
+          if (testStorageBackend == CindelStorageBackend.mdbx) {
+            expect(readers, 0);
+            expect(conversions, 0);
+          } else {
+            expect(readers, 8);
+            expect(conversions, readers);
+          }
+          expect(
+            (await db.distinctRecords.all().sortByDbId().findAll()).map(
+              (r) => r.dbId,
+            ),
+            (first || distinct) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 5, 7, 8],
+          );
         }
-        // Assert.
-        if (testStorageBackend == CindelStorageBackend.mdbx) {
-          expect(readers, 0);
-          expect(conversions, 0);
-        }
-        expect(
-          (await db.distinctRecords.all().sortByDbId().findAll()).map(
-            (r) => r.dbId,
-          ),
-          first ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 5, 7, 8],
-        );
       }
     });
 

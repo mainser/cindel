@@ -621,7 +621,7 @@ final class CindelQuery<T> {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.isNotEmpty;
     }
-    final documents = await _matchingDocuments();
+    final documents = await _matchingDocuments(reuseValidatedDocuments: true);
     if (documents.isEmpty) {
       return false;
     }
@@ -636,7 +636,7 @@ final class CindelQuery<T> {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.length;
     }
-    final documents = await _matchingDocuments();
+    final documents = await _matchingDocuments(reuseValidatedDocuments: true);
     final ids = documents.map(_idFromDocument).toList(growable: false);
     await _deleteIds(ids);
     return ids.length;
@@ -728,9 +728,11 @@ final class CindelQuery<T> {
 
   Future<List<CindelDocument>> _matchingDocuments({
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) async {
     final nativeDocuments = await _matchingNativeDocuments(
       prefilterDistinctUpdate: prefilterDistinctUpdate,
+      reuseValidatedDocuments: reuseValidatedDocuments,
     );
     if (nativeDocuments != null) {
       return nativeDocuments;
@@ -827,6 +829,7 @@ final class CindelQuery<T> {
 
   Future<List<CindelDocument>?> _matchingNativeDocuments({
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) {
     final readNativeDocument = _schema.readNativeDocument;
     final fieldTypes = _nativeFieldTypes();
@@ -851,6 +854,7 @@ final class CindelQuery<T> {
       fieldTypes,
       readNativeDocument,
       prefilterDistinctUpdate: prefilterDistinctUpdate,
+      reuseValidatedDocuments: reuseValidatedDocuments,
     );
   }
 
@@ -858,6 +862,7 @@ final class CindelQuery<T> {
     Uint8List fieldTypes,
     CindelReadNativeDocument<T> readNativeDocument, {
     bool prefilterDistinctUpdate = false,
+    bool reuseValidatedDocuments = false,
   }) {
     final prefilter =
         prefilterDistinctUpdate &&
@@ -890,9 +895,11 @@ final class CindelQuery<T> {
       for (final object in objects) {
         final document = _documentFromObject(object);
         if (_matchesBeforeWindow(document)) {
-          // Update selection can retain the document it just validated.
+          // Mutation selection can retain the document it just validated.
           documents.add(
-            prefilterDistinctUpdate ? document : _documentFromObject(object),
+            prefilterDistinctUpdate || reuseValidatedDocuments
+                ? document
+                : _documentFromObject(object),
           );
         }
       }
