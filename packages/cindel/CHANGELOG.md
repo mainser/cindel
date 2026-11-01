@@ -2,6 +2,7 @@
 
 ## 1.1.6
 
+- Optimized SQLite native query deletes.
 - Fixed nested-filter updates across all backends.
 - Fixed indexed range ordering in SQLite and indexed queries and nullable sorting on Web.
 - Optimized SQLite native/Web updates with `distinct` and nested filters.

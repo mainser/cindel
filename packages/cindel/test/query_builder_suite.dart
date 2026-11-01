@@ -6,8 +6,10 @@ import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 
 import 'schema_generation_fixture.dart';
+import 'query_delete_suite.dart' as query_delete;
 
 void main() {
+  query_delete.main();
   group('Cindel query builder', () {
     // Scenario: A generated where helper queries an indexed field by equality.
     // Covers:

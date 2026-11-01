@@ -131,12 +131,18 @@ void main() {
     }
 
     for (final indexed in [false, true]) {
-      for (final operation in ['single', 'batch', 'query']) {
+      for (final operation in [
+        'single',
+        'batch',
+        'query',
+        'distinct query',
+        'distinct first',
+      ]) {
         // Scenario: A linked identity is deleted individually, in a batch or
         // by query, with optional indexes.
         // Covers:
-        // - Incoming/outgoing relation cleanup across deletion paths and
-        // reopen.
+        // - Incoming/outgoing/self relation cleanup across deletion paths and
+        // reopen, including Dart-selected distinct queries in SQLite.
         // Expected: Deleted identities have no remaining incident links after
         // the database is reopened.
         test(
@@ -159,6 +165,23 @@ void main() {
                 expect(
                   await nodes.all().sortBy('dbId').limit(1).deleteAll(),
                   1,
+                );
+              case 'distinct query':
+                expect(
+                  await nodes
+                      .all()
+                      .sortBy('dbId')
+                      .distinctByFields(['payload'])
+                      .limit(1)
+                      .deleteAll(),
+                  1,
+                );
+              case 'distinct first':
+                expect(
+                  await nodes.all().sortBy('dbId').distinctByFields([
+                    'payload',
+                  ]).deleteFirst(),
+                  isTrue,
                 );
             }
             final path = db.directory;
@@ -255,52 +278,78 @@ void main() {
       });
     }
 
-    // Scenario: A watched collection is related to a row deleted in aborted
-    // and committed transactions.
-    // Covers:
-    // - Deferred relation-change publication and rollback suppression.
-    // Expected: No event appears before commit or after rollback; the
-    // committed deletion emits one local collection change.
-    test(
-      'only related watchers are notified after commit, never on rollback.',
-      () async {
-        // Arrange.
-        final db = await open();
-        await seed(db);
-        final events = <CindelChangeSet>[];
-        final subscription = db
-            .watchCollectionChanges(
-              'backup_leaves',
-              fireImmediately: false,
-              pollInterval: const Duration(hours: 1),
-            )
-            .listen(events.add);
-        addTearDown(subscription.cancel);
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-        // Act / Assert.
-        await expectLater(
-          db.writeTxn(() async {
-            await db.typedCollection(backupNodeSchema).delete(1);
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-            expect(events, isEmpty);
-            throw StateError('rollback');
-          }),
-          throwsStateError,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        expect(events, isEmpty);
-        await db.writeTxn(() async {
-          await db.typedCollection(backupNodeSchema).delete(1);
+    for (final operation in ['single', 'distinct query', 'distinct first']) {
+      // Scenario: A watched collection is related to a row deleted in aborted
+      // and committed transactions.
+      // Covers:
+      // - Deferred relation-change publication and rollback suppression.
+      // - Distinct query batches preserve incoming/outgoing/self links on abort.
+      // Expected: No event appears before commit or after rollback; the
+      // committed deletion emits one local collection change.
+      test(
+        'only related watchers are notified after commit, never on rollback: $operation.',
+        () async {
+          // Arrange.
+          final db = await open();
+          await seed(db);
+          Future<void> remove() async {
+            final nodes = db.typedCollection(backupNodeSchema);
+            final query = nodes.all().sortBy('dbId').distinctByFields([
+              'payload',
+            ]);
+            switch (operation) {
+              case 'single':
+                await nodes.delete(1);
+              case 'distinct query':
+                expect(await query.limit(1).deleteAll(), 1);
+              case 'distinct first':
+                expect(await query.deleteFirst(), isTrue);
+            }
+          }
+
+          final events = <CindelChangeSet>[];
+          final subscription = db
+              .watchCollectionChanges(
+                'backup_leaves',
+                fireImmediately: false,
+                pollInterval: const Duration(hours: 1),
+              )
+              .listen(events.add);
+          addTearDown(subscription.cancel);
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          // Act / Assert.
+          await expectLater(
+            db.writeTxn(() async {
+              await remove();
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+              expect(events, isEmpty);
+              throw StateError('rollback');
+            }),
+            throwsStateError,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 20));
           expect(events, isEmpty);
-        });
-        for (var i = 0; i < 100 && events.isEmpty; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        expect(events, hasLength(1));
-        expect(events.single.documentIds, isNull);
-        expect(events.single.isExternal, isFalse);
-      },
-    );
+          final restored = (await db.typedCollection(backupNodeSchema).get(1))!;
+          await restored.children.load();
+          await restored.owners.load();
+          expect(restored.children.map((row) => row.dbId).toSet(), {1, 2});
+          expect(restored.owners.map((row) => row.dbId).toSet(), {1, 2});
+          final leaf = (await db.typedCollection(backupLeafSchema).get(1))!;
+          await leaf.parent.load();
+          expect(leaf.parent.value!.dbId, 1);
+          await db.writeTxn(() async {
+            await remove();
+            expect(events, isEmpty);
+          });
+          for (var i = 0; i < 100 && events.isEmpty; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          expect(events, hasLength(1));
+          expect(events.single.documentIds, isNull);
+          expect(events.single.isExternal, isFalse);
+        },
+      );
+    }
 
     // Scenario: Migration reconstruction restores only some identities from a
     // linked graph.

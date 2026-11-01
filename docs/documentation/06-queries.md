@@ -517,6 +517,12 @@ final deletedCount = await db.todos
 
 `deleteAll()` returns the number of deleted objects.
 
+Both methods respect the query's filters, sorting, `distinct`, offset and
+limit. With `distinct`, only the selected representative of each group is
+deleted; other objects in that group remain. Deleting an object also removes
+its incoming and outgoing links. Wrap the deletion and any related writes in
+`writeTxn` when they must commit or roll back together.
+
 Example cleanup:
 
 ```dart

@@ -486,7 +486,7 @@ final class CindelQuery<T> {
     if (documents.isEmpty) {
       return false;
     }
-    await _database.deleteAll(_schema.name, [_idFromDocument(documents.first)]);
+    await _deleteIds([_idFromDocument(documents.first)]);
     return true;
   }
 
@@ -502,8 +502,15 @@ final class CindelQuery<T> {
       return 0;
     }
     final ids = documents.map(_idFromDocument).toList(growable: false);
-    await _database.deleteAll(_schema.name, ids);
+    await _deleteIds(ids);
     return ids.length;
+  }
+
+  Future<void> _deleteIds(Iterable<int> ids) {
+    if (_database.usesSqliteNativeDocuments) {
+      return _database.deleteAllNativeDocuments(_schema.name, ids);
+    }
+    return _database.deleteAll(_schema.name, ids);
   }
 
   /// Updates the first object matching this query using native property writes.

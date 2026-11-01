@@ -128,6 +128,8 @@ Current public API policy:
 - Native query-plan execution for supported typed queries on MDBX, SQLite, and
   Web SQLite.
 - Typed native-reader materialization when a query needs Dart-side filtering.
+- Batched SQLite native query deletes after Dart-side selection, preserving
+  query windows, relationship cleanup and rollback.
 - Limited `findFirst`, including property projections, and optimized
   non-distinct object counts across all three backends.
 - SQLite engine projection and aggregate operations avoid intermediate
