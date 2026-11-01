@@ -523,6 +523,16 @@ deleted; other objects in that group remain. Deleting an object also removes
 its incoming and outgoing links. Wrap the deletion and any related writes in
 `writeTxn` when they must commit or roll back together.
 
+Nested filters work with both deletion methods, using the same generated
+helpers as reads. For example, to delete users whose recipient has a given name:
+
+```dart
+final removed = await db.users
+    .filter()
+    .primaryRecipient((recipient) => recipient.nameEqualTo('Ana'))
+    .deleteAll();
+```
+
 Example cleanup:
 
 ```dart

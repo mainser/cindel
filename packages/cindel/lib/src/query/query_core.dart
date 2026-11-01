@@ -477,7 +477,7 @@ final class CindelQuery<T> {
 
   /// Deletes the first object matching this query, if one exists.
   Future<bool> deleteFirst() async {
-    final nativePlan = _nativePlan(limitOverride: 1);
+    final nativePlan = _nativePlan(limitOverride: 1, forMutation: true);
     if (nativePlan != null) {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.isNotEmpty;
@@ -492,7 +492,7 @@ final class CindelQuery<T> {
 
   /// Deletes every object matching this query atomically.
   Future<int> deleteAll() async {
-    final nativePlan = _nativePlan();
+    final nativePlan = _nativePlan(forMutation: true);
     if (nativePlan != null) {
       final ids = await _database.deleteNativePlan(_schema.name, nativePlan);
       return ids.length;
@@ -535,7 +535,7 @@ final class CindelQuery<T> {
     }
     final nativePlan = _nativePlan(
       limitOverride: limitOverride,
-      forUpdate: true,
+      forMutation: true,
     );
     final selectInDart =
         _database.usesSqliteNativeDocuments &&
@@ -1203,10 +1203,10 @@ final class CindelQuery<T> {
   // by storage. A null result means execution must stay in Dart.
   CindelNativeQueryPlan? _nativePlan({
     int? limitOverride,
-    bool forUpdate = false,
+    bool forMutation = false,
   }) {
     var nativeFilter = _nativeFilter;
-    if (forUpdate &&
+    if (forMutation &&
         _database.backend == CindelStorageBackend.mdbx &&
         _filter != null &&
         nativeFilter == null &&

@@ -130,6 +130,7 @@ Current public API policy:
 - Typed native-reader materialization when a query needs Dart-side filtering.
 - Batched SQLite native query deletes after Dart-side selection, preserving
   query windows, relationship cleanup and rollback.
+- Native MDBX query deletes with supported nested filters.
 - Limited `findFirst`, including property projections, and optimized
   non-distinct object counts across all three backends.
 - SQLite engine projection and aggregate operations avoid intermediate

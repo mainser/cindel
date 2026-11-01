@@ -411,7 +411,7 @@ final class WireFieldFilter extends WireFilter {
   int get hashCode => Object.hash(field, operation, value);
 }
 
-/// A persisted property path used only by MDBX query updates.
+/// A persisted property path used by MDBX query updates and deletes.
 final class WirePathFilter extends WireFilter {
   const WirePathFilter({
     required this.path,

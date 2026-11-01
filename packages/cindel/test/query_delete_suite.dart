@@ -5,8 +5,10 @@ import 'backend_test_support.dart';
 import 'close_test_support_io.dart'
     if (dart.library.js_interop) 'close_test_support_web.dart';
 import 'schema_generation_fixture.dart';
+import 'nested_delete_suite.dart' as nested_delete;
 
 void main() {
+  nested_delete.main();
   group('Cindel selected query deletes', () {
     late CindelDatabase db;
 

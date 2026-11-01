@@ -6,7 +6,7 @@ part of '../query.dart';
 // Returning null is intentional: it means the predicate cannot be represented
 // losslessly by native storage and must continue through the Dart evaluator.
 
-// Restrict the additional update route to predicates containing embedded paths.
+// Restrict the additional mutation route to predicates containing embedded paths.
 bool _hasNestedFilterPath(CindelFilterPredicate predicate) =>
     switch (predicate) {
       _FieldFilterPredicate() => predicate.path.length > 1,
@@ -31,7 +31,7 @@ Uint8List? _nativeFilterBytes(CindelFilterPredicate? predicate) {
 }
 
 // Converts supported predicate nodes into their wire model. Nested-path filters
-// stay Dart-only for reads. MDBX updates explicitly opt into persisted paths.
+// stay Dart-only for reads. MDBX updates/deletes opt into persisted paths.
 WireFilter? _nativeFilterWire(
   CindelFilterPredicate predicate, {
   bool allowPaths = false,
