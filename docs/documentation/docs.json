@@ -1,0 +1,169 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "luma",
+  "name": "Cindel",
+  "colors": {
+    "primary": "#E05A2B",
+    "light": "#E05A2B",
+    "dark": "#E05A2B"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "01-introduction",
+          "02-getting_started"
+        ]
+      },
+      {
+        "group": "Data Modeling",
+        "pages": [
+          "03-data_modeling",
+          "04-generated_typed_api",
+          "05-relationships"
+        ]
+      },
+      {
+        "group": "Querying Data",
+        "pages": [
+          "06-queries",
+          "07-filters",
+          "08-projections_and_aggregates"
+        ]
+      },
+      {
+        "group": "Core Features",
+        "pages": [
+          "09-transactions",
+          "10-watchers",
+          "11-migrations",
+          "12-sync",
+          "13-web",
+          "14-backup_and_advanced_helpers"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "15-schema_metadata",
+          "16-utilities",
+          "17-errors",
+          "18-testing",
+          "19-advanced_reference",
+          "20-current_limits"
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/mainser/cindel"
+      }
+    ]
+  },
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/01-introduction",
+      "permanent": true
+    },
+    {
+      "source": "/introduction",
+      "destination": "/01-introduction",
+      "permanent": true
+    },
+    {
+      "source": "/quickstart",
+      "destination": "/01-introduction#a-minimal-model",
+      "permanent": true
+    },
+    {
+      "source": "/installation",
+      "destination": "/01-introduction#installation",
+      "permanent": true
+    },
+    {
+      "source": "/modeling/collections",
+      "destination": "/03-data_modeling#collections",
+      "permanent": true
+    },
+    {
+      "source": "/modeling/embedded-objects",
+      "destination": "/03-data_modeling#embedded-objects",
+      "permanent": true
+    },
+    {
+      "source": "/modeling/relationships",
+      "destination": "/05-relationships",
+      "permanent": true
+    },
+    {
+      "source": "/modeling/freezed",
+      "destination": "/03-data_modeling#freezed-models",
+      "permanent": true
+    },
+    {
+      "source": "/querying/queries",
+      "destination": "/06-queries",
+      "permanent": true
+    },
+    {
+      "source": "/querying/filters",
+      "destination": "/07-filters",
+      "permanent": true
+    },
+    {
+      "source": "/querying/projections-aggregates",
+      "destination": "/08-projections_and_aggregates",
+      "permanent": true
+    },
+    {
+      "source": "/features/transactions",
+      "destination": "/09-transactions",
+      "permanent": true
+    },
+    {
+      "source": "/features/watchers",
+      "destination": "/10-watchers",
+      "permanent": true
+    },
+    {
+      "source": "/features/migrations",
+      "destination": "/11-migrations",
+      "permanent": true
+    },
+    {
+      "source": "/features/backup",
+      "destination": "/14-backup_and_advanced_helpers",
+      "permanent": true
+    },
+    {
+      "source": "/platforms/web",
+      "destination": "/13-web",
+      "permanent": true
+    },
+    {
+      "source": "/platforms/sync",
+      "destination": "/12-sync",
+      "permanent": true
+    },
+    {
+      "source": "/reference/errors",
+      "destination": "/17-errors",
+      "permanent": true
+    },
+    {
+      "source": "/reference/testing",
+      "destination": "/18-testing",
+      "permanent": true
+    },
+    {
+      "source": "/reference/limits",
+      "destination": "/20-current_limits",
+      "permanent": true
+    }
+  ]
+}

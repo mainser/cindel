@@ -370,6 +370,8 @@ App code can use the current generated API normally:
 final users = await db.users.all().findAll();
 ```
 
+<a id="sqlite-string-storage-upgrade-in-115"></a>
+
 ## SQLite String Storage Upgrade in 1.1.5
 
 SQLite databases created by older versions could change numeric-looking text
