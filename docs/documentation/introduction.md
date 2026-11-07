@@ -2,7 +2,7 @@
 title: "Introduction"
 ---
 
-<a id="introduction"></a>
+<span id="introduction"></span>
 
 Cindel is a local database for Dart and Flutter applications. It lets you model
 your app data with Dart classes, generate a typed database API from those
@@ -118,7 +118,7 @@ For this example, application code registers `UserSchema` and uses `db.users`.
 Flutter apps normally depend on `cindel` and `cindel_flutter_libs`, and use
 `cindel_generator` with `build_runner` for generated schemas and typed APIs.
 
-Check the [SDK requirements and Apple setup](02-getting_started.md) before
+Check the [SDK requirements and Apple setup](getting-started.md) before
 installing. The generator requires a newer Dart SDK than the runtime package;
 all three backends still use the same generated public API.
 

@@ -2,7 +2,7 @@
 title: "Transactions"
 ---
 
-<a id="transactions"></a>
+<span id="transactions"></span>
 
 Transactions group database work into one consistent operation. Use them when
 several reads or writes belong together and should see a consistent state or

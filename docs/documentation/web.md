@@ -2,7 +2,7 @@
 title: "Web"
 ---
 
-<a id="web"></a>
+<span id="web"></span>
 
 Flutter Web uses the same Cindel typed API as native Flutter apps. Application
 code still opens a database, registers generated schemas, and works through
@@ -140,7 +140,7 @@ await CindelBackup.exportDatabase(
 Use the same generated models and query helpers as on native. Nullable lists,
 nullable elements, enums, and embedded values follow the same declared types.
 Account for JavaScript's safe-integer range when sharing data; see the
-[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+[type matrix](data-modeling.md#type-compatibility-across-backends).
 
 Backups and migrations use the same public APIs. Backups default to
 uncompressed JSONL on Web; explicitly choose `CindelBackupCompression.none` on
@@ -148,8 +148,8 @@ both platforms for portable archive code. Native gzip archives must be
 decompressed before supplying an uncompressed input stream to Web. Restores
 and migrations need temporary browser storage in addition to the database, so
 allow for that quota when handling large archives. See
-[backups](14-backup_and_advanced_helpers.md) and
-[migrations](11-migrations.md).
+[backups](backup-and-advanced-helpers.md) and
+[migrations](migrations.md).
 
 ## Current Limitations
 

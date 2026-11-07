@@ -3,55 +3,55 @@
   "theme": "luma",
   "name": "Cindel",
   "colors": {
-    "primary": "#E05A2B",
-    "light": "#E05A2B",
-    "dark": "#E05A2B"
+    "primary": "#2563EB",
+    "light": "#67ABFD",
+    "dark": "#2563EB"
   },
   "navigation": {
     "groups": [
       {
         "group": "Get Started",
         "pages": [
-          "01-introduction",
-          "02-getting_started"
+          "introduction",
+          "getting-started"
         ]
       },
       {
         "group": "Data Modeling",
         "pages": [
-          "03-data_modeling",
-          "04-generated_typed_api",
-          "05-relationships"
+          "data-modeling",
+          "generated-typed-api",
+          "relationships"
         ]
       },
       {
         "group": "Querying Data",
         "pages": [
-          "06-queries",
-          "07-filters",
-          "08-projections_and_aggregates"
+          "queries",
+          "filters",
+          "projections-and-aggregates"
         ]
       },
       {
         "group": "Core Features",
         "pages": [
-          "09-transactions",
-          "10-watchers",
-          "11-migrations",
-          "12-sync",
-          "13-web",
-          "14-backup_and_advanced_helpers"
+          "transactions",
+          "watchers",
+          "migrations",
+          "sync",
+          "web",
+          "backup-and-advanced-helpers"
         ]
       },
       {
         "group": "Reference",
         "pages": [
-          "15-schema_metadata",
-          "16-utilities",
-          "17-errors",
-          "18-testing",
-          "19-advanced_reference",
-          "20-current_limits"
+          "schema-metadata",
+          "utilities",
+          "errors",
+          "testing",
+          "advanced-reference",
+          "current-limits"
         ]
       }
     ]
@@ -62,108 +62,234 @@
         "label": "GitHub",
         "href": "https://github.com/mainser/cindel"
       }
-    ]
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/getting-started"
+    }
   },
   "redirects": [
     {
       "source": "/",
-      "destination": "/01-introduction",
-      "permanent": true
-    },
-    {
-      "source": "/introduction",
-      "destination": "/01-introduction",
+      "destination": "/introduction",
       "permanent": true
     },
     {
       "source": "/quickstart",
-      "destination": "/01-introduction#a-minimal-model",
+      "destination": "/introduction#a-minimal-model",
       "permanent": true
     },
     {
       "source": "/installation",
-      "destination": "/01-introduction#installation",
+      "destination": "/introduction#installation",
       "permanent": true
     },
     {
       "source": "/modeling/collections",
-      "destination": "/03-data_modeling#collections",
+      "destination": "/data-modeling#collections",
       "permanent": true
     },
     {
       "source": "/modeling/embedded-objects",
-      "destination": "/03-data_modeling#embedded-objects",
+      "destination": "/data-modeling#embedded-objects",
       "permanent": true
     },
     {
       "source": "/modeling/relationships",
-      "destination": "/05-relationships",
+      "destination": "/relationships",
       "permanent": true
     },
     {
       "source": "/modeling/freezed",
-      "destination": "/03-data_modeling#freezed-models",
+      "destination": "/data-modeling#freezed-models",
       "permanent": true
     },
     {
       "source": "/querying/queries",
-      "destination": "/06-queries",
+      "destination": "/queries",
       "permanent": true
     },
     {
       "source": "/querying/filters",
-      "destination": "/07-filters",
+      "destination": "/filters",
       "permanent": true
     },
     {
       "source": "/querying/projections-aggregates",
-      "destination": "/08-projections_and_aggregates",
+      "destination": "/projections-and-aggregates",
       "permanent": true
     },
     {
       "source": "/features/transactions",
-      "destination": "/09-transactions",
+      "destination": "/transactions",
       "permanent": true
     },
     {
       "source": "/features/watchers",
-      "destination": "/10-watchers",
+      "destination": "/watchers",
       "permanent": true
     },
     {
       "source": "/features/migrations",
-      "destination": "/11-migrations",
+      "destination": "/migrations",
       "permanent": true
     },
     {
       "source": "/features/backup",
-      "destination": "/14-backup_and_advanced_helpers",
+      "destination": "/backup-and-advanced-helpers",
       "permanent": true
     },
     {
       "source": "/platforms/web",
-      "destination": "/13-web",
+      "destination": "/web",
       "permanent": true
     },
     {
       "source": "/platforms/sync",
-      "destination": "/12-sync",
+      "destination": "/sync",
       "permanent": true
     },
     {
       "source": "/reference/errors",
-      "destination": "/17-errors",
+      "destination": "/errors",
       "permanent": true
     },
     {
       "source": "/reference/testing",
-      "destination": "/18-testing",
+      "destination": "/testing",
       "permanent": true
     },
     {
       "source": "/reference/limits",
-      "destination": "/20-current_limits",
+      "destination": "/current-limits",
+      "permanent": true
+    },
+    {
+      "source": "/01-introduction",
+      "destination": "/introduction",
+      "permanent": true
+    },
+    {
+      "source": "/02-getting_started",
+      "destination": "/getting-started",
+      "permanent": true
+    },
+    {
+      "source": "/03-data_modeling",
+      "destination": "/data-modeling",
+      "permanent": true
+    },
+    {
+      "source": "/04-generated_typed_api",
+      "destination": "/generated-typed-api",
+      "permanent": true
+    },
+    {
+      "source": "/05-relationships",
+      "destination": "/relationships",
+      "permanent": true
+    },
+    {
+      "source": "/06-queries",
+      "destination": "/queries",
+      "permanent": true
+    },
+    {
+      "source": "/07-filters",
+      "destination": "/filters",
+      "permanent": true
+    },
+    {
+      "source": "/08-projections_and_aggregates",
+      "destination": "/projections-and-aggregates",
+      "permanent": true
+    },
+    {
+      "source": "/09-transactions",
+      "destination": "/transactions",
+      "permanent": true
+    },
+    {
+      "source": "/10-watchers",
+      "destination": "/watchers",
+      "permanent": true
+    },
+    {
+      "source": "/11-migrations",
+      "destination": "/migrations",
+      "permanent": true
+    },
+    {
+      "source": "/12-sync",
+      "destination": "/sync",
+      "permanent": true
+    },
+    {
+      "source": "/13-web",
+      "destination": "/web",
+      "permanent": true
+    },
+    {
+      "source": "/14-backup_and_advanced_helpers",
+      "destination": "/backup-and-advanced-helpers",
+      "permanent": true
+    },
+    {
+      "source": "/15-schema_metadata",
+      "destination": "/schema-metadata",
+      "permanent": true
+    },
+    {
+      "source": "/16-utilities",
+      "destination": "/utilities",
+      "permanent": true
+    },
+    {
+      "source": "/17-errors",
+      "destination": "/errors",
+      "permanent": true
+    },
+    {
+      "source": "/18-testing",
+      "destination": "/testing",
+      "permanent": true
+    },
+    {
+      "source": "/19-advanced_reference",
+      "destination": "/advanced-reference",
+      "permanent": true
+    },
+    {
+      "source": "/20-current_limits",
+      "destination": "/current-limits",
       "permanent": true
     }
-  ]
+  ],
+  "fonts": {
+    "family": "Inter"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "background": {
+    "color": {
+      "light": "#FAFBFD",
+      "dark": "#0B1018"
+    }
+  },
+  "logo": {
+    "light": "/images/cindel-light.svg",
+    "dark": "/images/cindel-dark.svg",
+    "href": "/introduction"
+  },
+  "favicon": "/images/favicon.svg",
+  "styling": {
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "github-dark"
+      }
+    }
+  }
 }

@@ -2,7 +2,7 @@
 title: "Errors"
 ---
 
-<a id="errors"></a>
+<span id="errors"></span>
 
 Errors in the `CindelError` family extend `StateError`. Catch specific errors when
 the application can recover or show a targeted message. Let unexpected errors
@@ -64,7 +64,7 @@ replacing it with a generic message.
 Errors from an explicit transaction callback are preserved even when rollback
 or concurrent closure also needs handling. Do not swallow them inside the
 callback if rollback is required. Asynchronous watcher failures arrive on the
-stream; use its `onError` handler as shown in [watchers](10-watchers.md).
+stream; use its `onError` handler as shown in [watchers](watchers.md).
 
 ### A Migration Committed But Maintenance Failed
 
@@ -72,7 +72,7 @@ stream; use its `onError` handler as shown in [watchers](10-watchers.md).
 `CindelError`. Its `committedVersion` identifies a migration step already
 published before post-step maintenance failed, and `cause` preserves that
 failure. Do not report that step as rolled back or repeat its external side
-effects. See [migrations](11-migrations.md#failures-and-large-migrations).
+effects. See [migrations](migrations.md#failures-and-large-migrations).
 
 ## `CindelOpenError`
 

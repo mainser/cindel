@@ -2,7 +2,7 @@
 title: "Getting Started"
 ---
 
-<a id="getting-started"></a>
+<span id="getting-started"></span>
 
 This guide shows the first operational steps for using Cindel in an app:
 opening a database, registering generated schemas, choosing the right backend
@@ -38,7 +38,7 @@ dart run build_runner build --delete-conflicting-outputs
 
 Regenerate all models together after an update, and do not edit `.g.dart` files
 manually. If opening fails with a runtime version mismatch, follow
-[runtime compatibility](19-advanced_reference.md#runtime-compatibility).
+[runtime compatibility](advanced-reference.md#runtime-compatibility).
 
 The public model and collection API is the same for MDBX, SQLite native, and
 SQLite Web. Backend selection belongs at database opening; the rest of the
@@ -183,7 +183,7 @@ targets. Building Apple applications still requires macOS and Xcode.
 
 If a framework cannot be found, check that `cindel_flutter_libs` is installed
 and rebuild the app. For a runtime version mismatch, see
-[runtime compatibility](19-advanced_reference.md#runtime-compatibility).
+[runtime compatibility](advanced-reference.md#runtime-compatibility).
 
 ## Choosing A Backend
 

@@ -9,7 +9,7 @@
       if (link.hasAttribute('download')) continue;
       const url = new URL(link.href, window.location.href);
       if (url.origin !== window.location.origin) continue;
-      if (!/^\/(?:0[1-9]|1[0-9]|20)-[a-z_]+\.md$/.test(url.pathname)) {
+      if (!/^\/[a-z]+(?:-[a-z]+)*\.md$/.test(url.pathname)) {
         continue;
       }
       url.pathname = url.pathname.slice(0, -3);

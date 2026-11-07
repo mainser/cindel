@@ -2,7 +2,7 @@
 title: "Generated Typed API"
 ---
 
-<a id="generated-typed-api"></a>
+<span id="generated-typed-api"></span>
 
 Cindel apps normally use generated Dart APIs instead of raw database documents.
 You define annotated models, run code generation, register the generated
@@ -117,7 +117,7 @@ and run code generation.
 
 Query deletion is a different API: query `deleteFirst()` returns `bool` and
 query `deleteAll()` returns the number of deleted matches. For immutable
-objects, [reserve IDs before construction](03-data_modeling.md#ids-in-immutable-models).
+objects, [reserve IDs before construction](data-modeling.md#ids-in-immutable-models).
 
 ## Query Entry Point: `all`
 
@@ -341,7 +341,7 @@ selection list.
 Inside `writeTxn`, `getAll` includes the handle's pending writes and returns
 null for pending deletions, with the same ordering and duplicate-ID behavior.
 This also applies to generated models with final IDs. See
-[transactional reads](09-transactions.md#await-every-operation-and-control-handle-ownership).
+[transactional reads](transactions.md#await-every-operation-and-control-handle-ownership).
 
 The IDs are captured when `getAll` is called. Changing the input list while
 awaiting the result does not change which IDs are requested. An empty input
@@ -366,7 +366,7 @@ for (var start = 0; start < selectedIds.length; start += 100) {
 
 Use `readTxn` around the loop if every batch must see the same database state.
 For scanning an entire collection by ID, see
-[`documentIdsPage`](14-backup_and_advanced_helpers.md#documentidspage).
+[`documentIdsPage`](backup-and-advanced-helpers.md#documentidspage).
 
 ## Deleting One Object: `delete`
 

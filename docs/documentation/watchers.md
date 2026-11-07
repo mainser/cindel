@@ -2,7 +2,7 @@
 title: "Watchers"
 ---
 
-<a id="watchers"></a>
+<span id="watchers"></span>
 
 Cindel watchers are streams that emit after committed database changes. They
 are useful when app state or UI should react to local database writes without
@@ -281,7 +281,7 @@ final sub = db.todos.watchCollection(
 
 A collection watcher returns the whole collection. Prefer a filtered, limited
 query for large datasets, or a lazy watcher when your app decides when to reload.
-Web watcher delivery is limited to the current tab; see [Web](13-web.md).
+Web watcher delivery is limited to the current tab; see [Web](web.md).
 
 ## Errors And Shutdown
 

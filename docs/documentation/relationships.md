@@ -2,7 +2,7 @@
 title: "Relationships"
 ---
 
-<a id="relationships"></a>
+<span id="relationships"></span>
 
 Cindel relationships connect objects from root collections. They are useful
 when one stored object should point to another stored object by id, while each
@@ -445,7 +445,7 @@ Run this outside an explicit transaction. It removes links to missing objects
 as one atomic operation, without deleting the objects that still exist.
 
 Backups include forward links and restore the corresponding backlinks. See
-[backup requirements](14-backup_and_advanced_helpers.md).
+[backup requirements](backup-and-advanced-helpers.md).
 
 ## Backend Behavior
 

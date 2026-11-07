@@ -2,7 +2,7 @@
 title: "Migrations"
 ---
 
-<a id="migrations"></a>
+<span id="migrations"></span>
 
 Migrations let an app open existing stored data with old schemas, convert that
 data to the current shape, and then continue with the current generated API.
@@ -374,7 +374,7 @@ App code can use the current generated API normally:
 final users = await db.users.all().findAll();
 ```
 
-<a id="sqlite-string-storage-upgrade-in-115"></a>
+<span id="sqlite-string-storage-upgrade-in-115"></span>
 
 ## SQLite String Storage Upgrade in 1.1.5
 

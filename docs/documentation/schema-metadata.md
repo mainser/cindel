@@ -2,7 +2,7 @@
 title: "Schema Metadata"
 ---
 
-<a id="schema-metadata"></a>
+<span id="schema-metadata"></span>
 
 Cindel generated schemas contain public metadata about collections, fields, and
 composite indexes. Most applications only pass generated schemas to
@@ -102,7 +102,7 @@ separately and are not included by converting the owner object. Use
 `CindelBackup` to archive documents together with saved relationships.
 
 For immutable models, assign IDs when constructing the objects as described
-in [data modeling](03-data_modeling.md#ids-in-immutable-models).
+in [data modeling](data-modeling.md#ids-in-immutable-models).
 
 ## `CindelFieldSchema`
 

@@ -2,7 +2,7 @@
 title: "Backup And Advanced Helpers"
 ---
 
-<a id="backup-and-advanced-helpers"></a>
+<span id="backup-and-advanced-helpers"></span>
 
 Use this guide to export a database, restore an archive, reserve IDs or process
 large collections in pages.
@@ -80,7 +80,7 @@ not included. Save them before starting the export.
 
 Use matching generated schemas when restoring. A backup can be restored on a
 different backend when its values fit that platform's supported range; check
-[Web numeric limits](03-data_modeling.md#value-representation-and-portable-limits)
+[Web numeric limits](data-modeling.md#value-representation-and-portable-limits)
 when moving native data to a browser. Do not edit the archive by hand.
 
 `CindelBackupReport` exposes `documents`, `uncompressedBytes`, `archiveBytes`,
@@ -163,11 +163,11 @@ final ids = await db.allocateIds('todos', 100);
 `allocateIds` returns the reserved IDs as a list. A zero count returns an empty
 list; a negative count is invalid. Allocation changes database state and is
 not allowed inside `readTxn`. Reservations are not gapless numbering: see
-[bulk ID allocation](04-generated_typed_api.md#automatic-ids-in-bulk-writes).
+[bulk ID allocation](generated-typed-api.md#automatic-ids-in-bulk-writes).
 
 Mutable models normally use automatic assignment. These helpers are also
 useful for immutable models that need their final ID at construction time;
-see [immutable IDs](03-data_modeling.md#ids-in-immutable-models). Use them for
+see [immutable IDs](data-modeling.md#ids-in-immutable-models). Use them for
 advanced tooling that needs to reserve IDs before constructing documents.
 
 When calling `allocateId`, pass the persisted collection name:
@@ -253,7 +253,7 @@ processing incremental rather than accumulating every page in memory.
 object no longer exists, as one atomic operation.
 Normal deletion already removes incoming and outgoing links transactionally.
 Use this helper outside explicit transactions for older data or maintenance;
-see [relationships](05-relationships.md#deletion-and-orphan-cleanup).
+see [relationships](relationships.md#deletion-and-orphan-cleanup).
 
 ## Maintenance Metadata
 

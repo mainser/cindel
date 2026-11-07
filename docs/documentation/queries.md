@@ -2,7 +2,7 @@
 title: "Queries"
 ---
 
-<a id="queries"></a>
+<span id="queries"></span>
 
 Cindel queries let an app read, count, update, or delete groups of typed
 objects. A query starts from a generated collection, adds conditions or result
@@ -358,7 +358,7 @@ Count before adding the page window when you want the total number of matches;
 `base.offset(20).limit(10).count()` counts only that window. A stable sort does
 not freeze data between separate calls: inserts or deletes can shift later
 offset pages. For a consistent maintenance scan, keep the loop inside a
-`readTxn` and use [ID cursor pages](14-backup_and_advanced_helpers.md#documentidspage).
+`readTxn` and use [ID cursor pages](backup-and-advanced-helpers.md#documentidspage).
 
 ## Distinct
 
@@ -630,7 +630,7 @@ String values remain text even when they look numeric: updating a string to
 SQLite native, and Web. This also applies to `put` and `putAll`, nullable string
 fields, and indexed strings. Equality and sorting use string semantics.
 For SQLite databases created before 1.1.5, see
-[the upgrade note](11-migrations.md#sqlite-string-storage-upgrade-in-115).
+[the upgrade note](migrations.md#sqlite-string-storage-upgrade-in-115).
 
 For converted fields such as `DateTime`, `Duration`, or enums, prefer typed
 object writes unless you intentionally want to write the stored scalar
@@ -653,7 +653,7 @@ await db.todos.putAll(todos);
 
 Use the same nested filters as for reads, followed by `updateFirst` or
 `updateAll`. This works on all three backends, with or without `distinct`.
-Using the [Email model](03-data_modeling.md#embedded-objects):
+Using the [Email model](data-modeling.md#embedded-objects):
 
 ```dart
 final changed = await db.emails

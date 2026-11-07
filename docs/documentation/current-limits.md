@@ -2,7 +2,7 @@
 title: "Current Limits"
 ---
 
-<a id="current-limits"></a>
+<span id="current-limits"></span>
 
 Some capabilities are intentionally not part of Cindel's current public API.
 This page summarizes the limits users should account for when designing an
@@ -68,19 +68,19 @@ collection model or persist an explicit field such as `type` instead.
 `openInMemory` has the same public entrypoint across backends but does not
 promise RAM-only storage: MDBX uses temporary files, SQLite native uses RAM,
 and Web uses a unique persisted OPFS name. Web close does not delete that
-database. See [temporary databases](02-getting_started.md#temporary-databases).
+database. See [temporary databases](getting-started.md#temporary-databases).
 
 Supported model shapes are shared across all backends, but portable values must
 fit the destination runtime. JavaScript Web requires safe integers, including
 integer-backed dates and durations. Enum-list storage uses names; annotated
 ordinal/value enum lists are not supported. See the
-[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+[type matrix](data-modeling.md#type-compatibility-across-backends).
 
 `findAll` and `getAll` return complete result lists. For large datasets, request
 pages or smaller ID batches. Use smaller `putAll` batches when the input is too
 large to hold comfortably in memory, and process export streams incrementally.
 A query limit caps returned rows, but filtering, sorting and distinct can still
-require more time and memory. See [queries](06-queries.md#working-with-large-results).
+require more time and memory. See [queries](queries.md#working-with-large-results).
 
 Backups reject records beyond `maxRecordBytes`. Atomic restores and migration
 steps require temporary disk storage, so check native disk capacity or browser
@@ -94,7 +94,7 @@ inside `readTxn`. Await database calls before the callback returns.
 
 `get` and `getAll` can read pending changes inside `writeTxn`. Rollback changes
 the database, not the Dart objects you already hold. See
-[transactions](09-transactions.md).
+[transactions](transactions.md).
 
 ## Web Limitations
 

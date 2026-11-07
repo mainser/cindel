@@ -2,7 +2,7 @@
 title: "Testing"
 ---
 
-<a id="testing"></a>
+<span id="testing"></span>
 
 Use `Cindel.openInMemory` for package tests, widget tests, and small examples.
 It gives each test a temporary database while keeping the same generated typed
@@ -199,7 +199,7 @@ Useful round-trip coverage includes:
 Use values within the documented portable numeric domain when asserting
 cross-platform equality. Test platform numeric limits separately, rather than
 changing expected types for each backend. Consult the
-[type matrix](03-data_modeling.md#type-compatibility-across-backends).
+[type matrix](data-modeling.md#type-compatibility-across-backends).
 
 ## Sync Tests
 
@@ -249,7 +249,7 @@ fake adapter can expose deterministic hooks.
 `openInMemory` uses a real database, so the test needs the Cindel runtime just
 like the app. For pure Dart tests, configure a matching native library or the
 optional build hook described in
-[native runtime setup](19-advanced_reference.md#native-build-hooks).
+[native runtime setup](advanced-reference.md#native-build-hooks).
 
 Run Web integration tests in a browser with the packaged runtime assets and
 OPFS support. Test opening, saving, closing and reopening as well as query

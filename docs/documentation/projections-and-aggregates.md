@@ -2,7 +2,7 @@
 title: "Projections And Aggregates"
 ---
 
-<a id="projections-and-aggregates"></a>
+<span id="projections-and-aggregates"></span>
 
 Most queries return full typed objects. That is the right choice when the app
 needs to display, edit, or write those objects back.

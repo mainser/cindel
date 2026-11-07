@@ -2,7 +2,7 @@
 title: "Data Modeling"
 ---
 
-<a id="data-modeling"></a>
+<span id="data-modeling"></span>
 
 Cindel models are Dart classes that describe the data your app wants to store.
 A root model becomes a collection, its fields become stored values, and code
@@ -243,9 +243,9 @@ that every filter or sort uses an index-only execution path.
 For a composite key, declare `indexes: [CompositeIndex(['tenantId', 'sku'],
 unique: true)]` on `@Collection`, with matching root scalar fields on the model.
 Field order defines the composite key. See generated helpers in
-[queries](06-queries.md) and metadata in [schema metadata](15-schema_metadata.md).
+[queries](queries.md) and metadata in [schema metadata](schema-metadata.md).
 Changing an index is a schema change; handle existing stored schemas through
-the [migration plan](11-migrations.md).
+the [migration plan](migrations.md).
 
 ## Persisted Fields
 
@@ -370,7 +370,7 @@ Nested lists and indexes inside embedded objects remain unsupported.
 
 Type parity does not remove the host runtime's numeric limits. Validate these
 limits at the application's input boundary when the same data will be used on
-native and Web. See [projections](08-projections_and_aggregates.md) for result
+native and Web. See [projections](projections-and-aggregates.md) for result
 types and aggregate behavior.
 
 ## Ignored Fields
