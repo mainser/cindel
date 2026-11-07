@@ -1,4 +1,8 @@
-# Testing
+---
+title: "Testing"
+---
+
+<a id="testing"></a>
 
 Use `Cindel.openInMemory` for package tests, widget tests, and small examples.
 It gives each test a temporary database while keeping the same generated typed

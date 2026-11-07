@@ -1,4 +1,8 @@
-# Generated Typed API
+---
+title: "Generated Typed API"
+---
+
+<a id="generated-typed-api"></a>
 
 Cindel apps normally use generated Dart APIs instead of raw database documents.
 You define annotated models, run code generation, register the generated

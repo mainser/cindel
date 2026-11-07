@@ -1,4 +1,8 @@
-# Schema Metadata
+---
+title: "Schema Metadata"
+---
+
+<a id="schema-metadata"></a>
 
 Cindel generated schemas contain public metadata about collections, fields, and
 composite indexes. Most applications only pass generated schemas to

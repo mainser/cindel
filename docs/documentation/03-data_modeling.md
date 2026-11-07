@@ -1,4 +1,8 @@
-# Data Modeling
+---
+title: "Data Modeling"
+---
+
+<a id="data-modeling"></a>
 
 Cindel models are Dart classes that describe the data your app wants to store.
 A root model becomes a collection, its fields become stored values, and code

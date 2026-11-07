@@ -1,4 +1,8 @@
-# Utilities
+---
+title: "Utilities"
+---
+
+<a id="utilities"></a>
 
 Cindel exposes a small set of public utility helpers. Most application code
 will use generated collections and queries, but utilities are useful when an

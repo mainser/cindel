@@ -1,4 +1,8 @@
-# Web
+---
+title: "Web"
+---
+
+<a id="web"></a>
 
 Flutter Web uses the same Cindel typed API as native Flutter apps. Application
 code still opens a database, registers generated schemas, and works through

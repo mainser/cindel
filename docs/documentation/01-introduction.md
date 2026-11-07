@@ -1,4 +1,8 @@
-# Introduction
+---
+title: "Introduction"
+---
+
+<a id="introduction"></a>
 
 Cindel is a local database for Dart and Flutter applications. It lets you model
 your app data with Dart classes, generate a typed database API from those

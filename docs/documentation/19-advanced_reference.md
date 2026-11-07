@@ -1,4 +1,8 @@
-# Advanced Reference
+---
+title: "Advanced Reference"
+---
+
+<a id="advanced-reference"></a>
 
 This guide covers runtime setup for Dart tools, troubleshooting incompatible
 libraries, and choosing public APIs for reusable application code.

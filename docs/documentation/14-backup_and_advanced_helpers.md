@@ -1,4 +1,8 @@
-# Backup And Advanced Helpers
+---
+title: "Backup And Advanced Helpers"
+---
+
+<a id="backup-and-advanced-helpers"></a>
 
 Use this guide to export a database, restore an archive, reserve IDs or process
 large collections in pages.

@@ -1,4 +1,8 @@
-# Relationships
+---
+title: "Relationships"
+---
+
+<a id="relationships"></a>
 
 Cindel relationships connect objects from root collections. They are useful
 when one stored object should point to another stored object by id, while each

@@ -1,4 +1,8 @@
-# Projections And Aggregates
+---
+title: "Projections And Aggregates"
+---
+
+<a id="projections-and-aggregates"></a>
 
 Most queries return full typed objects. That is the right choice when the app
 needs to display, edit, or write those objects back.

@@ -1,4 +1,8 @@
-# Errors
+---
+title: "Errors"
+---
+
+<a id="errors"></a>
 
 Errors in the `CindelError` family extend `StateError`. Catch specific errors when
 the application can recover or show a targeted message. Let unexpected errors

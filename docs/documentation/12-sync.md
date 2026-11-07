@@ -1,4 +1,8 @@
-# Sync
+---
+title: "Sync"
+---
+
+<a id="sync"></a>
 
 Cindel Sync is an experimental local-first replication layer. It lets an app
 keep using normal typed collections while Cindel records supported local

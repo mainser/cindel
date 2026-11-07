@@ -1,4 +1,8 @@
-# Getting Started
+---
+title: "Getting Started"
+---
+
+<a id="getting-started"></a>
 
 This guide shows the first operational steps for using Cindel in an app:
 opening a database, registering generated schemas, choosing the right backend

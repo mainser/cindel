@@ -1,4 +1,8 @@
-# Current Limits
+---
+title: "Current Limits"
+---
+
+<a id="current-limits"></a>
 
 Some capabilities are intentionally not part of Cindel's current public API.
 This page summarizes the limits users should account for when designing an

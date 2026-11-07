@@ -1,4 +1,8 @@
-# Queries
+---
+title: "Queries"
+---
+
+<a id="queries"></a>
 
 Cindel queries let an app read, count, update, or delete groups of typed
 objects. A query starts from a generated collection, adds conditions or result

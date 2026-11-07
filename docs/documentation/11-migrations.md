@@ -1,4 +1,8 @@
-# Migrations
+---
+title: "Migrations"
+---
+
+<a id="migrations"></a>
 
 Migrations let an app open existing stored data with old schemas, convert that
 data to the current shape, and then continue with the current generated API.

@@ -1,4 +1,8 @@
-# Filters
+---
+title: "Filters"
+---
+
+<a id="filters"></a>
 
 Filters describe conditions that stored objects must satisfy. In normal app
 code, the easiest and safest option is to use generated `filter()` helpers

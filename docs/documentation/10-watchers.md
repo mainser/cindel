@@ -1,4 +1,8 @@
-# Watchers
+---
+title: "Watchers"
+---
+
+<a id="watchers"></a>
 
 Cindel watchers are streams that emit after committed database changes. They
 are useful when app state or UI should react to local database writes without
