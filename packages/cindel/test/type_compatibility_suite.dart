@@ -2765,9 +2765,14 @@ void _register<T>(
   Future<List<Object?>> Function(CindelTypedCollection<T>) projection,
   Object? Function(Object?) projectedValue,
 ) {
-  for (final mode in ['put', 'putAll']) {
+  final structured = schema.fields.any(
+    (f) => f.binaryType == 'list' || f.binaryType == 'object',
+  );
+  for (final mode in ['put', 'putAll', if (structured) 'putThenUpdate']) {
     // Scenario: Real generated models traverse each supported storage/read route.
-    // Covers: Populated, empty and null values independently at root/embedded depth.
+    // Covers:
+    // - Populated, empty and null values at root and embedded depth.
+    // - Updates after puts, all readers, projections and reopening.
     // Expected: Every route preserves the logical values; record all failures before asserting.
     test('$id $context $type $mode', () async {
       // Arrange.
@@ -2806,6 +2811,19 @@ void _register<T>(
             }
           } else {
             await collection.putAll(objects);
+            if (mode == 'putThenUpdate') {
+              for (var i = 0; i < objects.length; i++) {
+                final query = collection.all().whereMatches(
+                  CindelFilter.field(schema.idField).equalTo(i + 1),
+                );
+                final update = schema.toDocument(objects[i]);
+                if (i.isEven) {
+                  expect(await query.updateFirst(update), isTrue);
+                } else {
+                  expect(await query.updateAll(update), 1);
+                }
+              }
+            }
           }
           return null;
         }, null);

@@ -217,17 +217,24 @@ final class _CindelNativeDocumentReader
     return _decodeNativeStringList(bytes);
   }
 
-  /// Reads an embedded object stored as binary object bytes.
+  /// Reads an embedded object from the backend payload.
   @override
   Map<String, Object?>? readObject(int documentIndex, int fieldIndex) {
     if (!_readBytes(documentIndex, fieldIndex)) {
       return null;
     }
     final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
+    if (bytes.isNotEmpty && bytes.first == 0x7b) {
+      try {
+        return (jsonDecode(utf8.decode(bytes)) as Map).cast<String, Object?>();
+      } on FormatException {
+        // A valid binary field count can share the JSON opening byte.
+      }
+    }
     return cindelDecodeBinaryObject(Uint8List.fromList(bytes));
   }
 
-  /// Reads a list of embedded objects stored as a binary list payload.
+  /// Reads a list of embedded objects from the backend payload.
   @override
   List<Map<String, Object?>?>? readObjectList(
     int documentIndex,
@@ -237,7 +244,16 @@ final class _CindelNativeDocumentReader
       return null;
     }
     final bytes = _bytesPointer.value.asTypedList(_bytesLength.value);
-    final values = cindelDecodeBinaryList(Uint8List.fromList(bytes));
+    List<Object?>? jsonValues;
+    if (bytes.isNotEmpty && bytes.first == 0x5b) {
+      try {
+        jsonValues = jsonDecode(utf8.decode(bytes)) as List<Object?>;
+      } on FormatException {
+        // A valid binary element count can share the JSON opening byte.
+      }
+    }
+    final values =
+        jsonValues ?? cindelDecodeBinaryList(Uint8List.fromList(bytes));
     return values
         .map(
           (value) =>

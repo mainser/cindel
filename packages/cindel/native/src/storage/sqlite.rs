@@ -5,6 +5,8 @@ use std::cell::OnceCell;
 use std::sync::{Arc, Mutex};
 #[path = "sqlite_backup.rs"]
 mod backup;
+#[path = "sqlite_json.rs"]
+mod json_storage;
 #[path = "sqlite_migration.rs"]
 mod migration;
 #[path = "sqlite_relations.rs"]
@@ -30,9 +32,8 @@ use rusqlite::{
     ffi, params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior,
 };
 
-use crate::document_format::{
-    binary_to_wire_value, decode_list, decode_object, encode_wire_object, BinaryValue,
-};
+use crate::document_format::sqlite_json::push_json_string;
+use crate::document_format::{binary_to_wire_value, decode_list, decode_object, BinaryValue};
 use crate::wire::{
     decode_filter, encode_index_value, encode_projection_rows, encode_scalar, WireFilter,
     WireFilterOperation, WireIndexValue, WireProjectionRows, WireQueryPlan, WireQuerySource,
@@ -1886,8 +1887,7 @@ fn sqlite_update_value(field: &FieldSchemaManifest, value: &WireValue) -> Result
             Err("SQLite update double values must be finite".into())
         }
         ("string", WireValue::String(value)) => Ok(Value::Text(value.clone())),
-        ("object", WireValue::Object(fields)) => encode_wire_object(fields).map(Value::Blob),
-        ("list", WireValue::List(_)) => {
+        ("object", WireValue::Object(_)) | ("list", WireValue::List(_)) => {
             let mut json = String::new();
             push_wire_json_value(&mut json, value)?;
             Ok(Value::Text(json))
@@ -1904,7 +1904,9 @@ fn push_wire_json_value(json: &mut String, value: &WireValue) -> Result<(), Stri
         WireValue::Null => json.push_str("null"),
         WireValue::Bool(value) => json.push_str(if *value { "true" } else { "false" }),
         WireValue::Int(value) => json.push_str(&value.to_string()),
-        WireValue::Double(value) if value.is_finite() => json.push_str(&value.to_string()),
+        WireValue::Double(value) if value.is_finite() => {
+            json.push_str(&serde_json::to_string(value).map_err(sqlite_diagnostic)?);
+        }
         WireValue::Double(_) => return Err("SQLite JSON double values must be finite".into()),
         WireValue::String(value) => push_json_string(json, value)?,
         WireValue::List(values) => {
@@ -2032,7 +2034,7 @@ fn sqlite_field_filter_sql(
         && sqlite_binary_type(&schema_field.binary_type) == "list"
         && operation == WireFilterOperation::Contains
     {
-        return sqlite_list_contains_sql(&column, value);
+        return sqlite_list_contains_sql(&format!("{}.{}", schema.name, column), value);
     }
     if !schema_field.is_id
         && sqlite_binary_type(&schema_field.binary_type) == "list"
@@ -2990,14 +2992,14 @@ fn bind_native_sql_value(
             if value.first() == Some(&b'[') && !has_binary_list_payload(value) {
                 let text = std::str::from_utf8(value).map_err(sqlite_diagnostic)?;
                 statement.raw_bind_parameter(parameter_index, text)
-            } else if let Ok(text) = native_string_list_json(value) {
-                statement.raw_bind_parameter(parameter_index, text.as_str())
             } else {
-                statement.raw_bind_parameter(parameter_index, value.as_slice())
+                let text = crate::document_format::sqlite_json::binary_json(value, true)?;
+                statement.raw_bind_parameter(parameter_index, text.as_str())
             }
         }
         ("object", NativeDocumentValue::Bytes(value)) => {
-            statement.raw_bind_parameter(parameter_index, value.as_slice())
+            let text = crate::document_format::sqlite_json::binary_json(value, false)?;
+            statement.raw_bind_parameter(parameter_index, text.as_str())
         }
         _ => {
             return Err(format!(
@@ -3020,45 +3022,6 @@ fn has_binary_list_payload(bytes: &[u8]) -> bool {
     let possible_generic = count <= bytes.len().saturating_sub(4) / 8;
     let possible_compact = static_size % 3 == 0 && static_size <= bytes.len().saturating_sub(3);
     (possible_generic || possible_compact) && decode_list(bytes).is_ok()
-}
-
-fn native_string_list_json(bytes: &[u8]) -> Result<String, String> {
-    let values = decode_list(bytes)?;
-    let mut json = String::new();
-    json.push('[');
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            json.push(',');
-        }
-        match value {
-            Some(BinaryValue::String(value)) => push_json_string(&mut json, value)?,
-            None => json.push_str("null"),
-            _ => return Err("SQLite native string list contains a non-string value".into()),
-        }
-    }
-    json.push(']');
-    Ok(json)
-}
-
-fn push_json_string(json: &mut String, value: &str) -> Result<(), String> {
-    json.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => json.push_str("\\\""),
-            '\\' => json.push_str("\\\\"),
-            '\n' => json.push_str("\\n"),
-            '\r' => json.push_str("\\r"),
-            '\t' => json.push_str("\\t"),
-            '\u{08}' => json.push_str("\\b"),
-            '\u{0c}' => json.push_str("\\f"),
-            character if character <= '\u{1f}' => {
-                write!(json, "\\u{:04x}", character as u32).map_err(sqlite_diagnostic)?;
-            }
-            character => json.push(character),
-        }
-    }
-    json.push('"');
-    Ok(())
 }
 
 fn get_many_generic_documents(
@@ -3272,7 +3235,21 @@ fn write_native_row_value(
             bytes[offset..offset + 8].copy_from_slice(&0x7ff8_0000_0000_0001u64.to_le_bytes());
         }
         ("string", ValueRef::Text(value)) => write_native_dynamic(bytes, layout, offset, value)?,
-        ("list", ValueRef::Text(value)) => write_native_dynamic(bytes, layout, offset, value)?,
+        ("list", ValueRef::Text(value))
+            if matches!(
+                field.dart_type.as_str(),
+                "List<String>" | "List<String?>" | "List<String>?" | "List<String?>?"
+            ) =>
+        {
+            write_native_dynamic(bytes, layout, offset, value)?
+        }
+        ("list" | "object", ValueRef::Text(value)) => {
+            let payload = crate::document_format::sqlite_json::json_binary(
+                value,
+                field.binary_type == "list",
+            )?;
+            write_native_dynamic(bytes, layout, offset, &payload)?;
+        }
         ("list" | "object", ValueRef::Blob(value)) => {
             write_native_dynamic(bytes, layout, offset, value)?
         }
@@ -4397,6 +4374,7 @@ fn create_collection_table(
     sql.push(')');
     connection.execute(&sql, []).map_err(sqlite_diagnostic)?;
     text::upgrade_legacy_columns(connection, &collection.name)?;
+    json_storage::normalize(connection, collection)?;
     // Bootstrap databases written before typed IDs had persisted counters.
     // Reopening or registering schemas must never lower an existing counter.
     let max_id = connection
@@ -4748,6 +4726,7 @@ fn hex_encode(bytes: Vec<u8>) -> String {
 mod tests {
     include!("sqlite_update_order_tests.rs");
     include!("sqlite_text_tests.rs");
+    include!("sqlite_json_tests.rs");
     include!("sqlite_read_tests.rs");
     include!("sqlite_batch_response_tests.rs");
     include!("sqlite_revision_tests.rs");

@@ -12,6 +12,14 @@ schemas alone. Typical examples include renamed fields, removed fields, split
 models, merged models, changed field types, or data rewrites that need
 controlled conversion.
 
+## Opening Existing SQLite Databases
+
+On SQLite native and Web, Cindel automatically normalizes lists and embedded
+objects written by earlier versions when their collection is opened. Your model,
+generated API, and migration version do not need to change for this correction.
+The first open can take longer on a large collection; subsequent opens skip the
+completed conversion. Conversion runs in batches and rolls back if it fails.
+
 ## How Migrations Run
 
 Cindel stores a database-level data migration version inside the database. A

@@ -340,8 +340,9 @@ the supported shapes below.
 For each supported list element type `T`, the generator supports `List<T>`,
 `List<T>?`, `List<T?>`, and `List<T?>?`. A null list, an empty list, and a list
 containing null elements remain different values. This applies to root fields
-and embedded fields, individual and bulk writes, reads, and generated property
-projections. Multiple collections in one model library can share embedded types.
+and embedded fields, individual and bulk writes, query updates, reads, and
+generated property projections. Multiple collections in one model library can
+share embedded types.
 
 ```dart
 // Fields inside an annotated model:

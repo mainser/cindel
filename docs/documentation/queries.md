@@ -632,6 +632,11 @@ fields, and indexed strings. Equality and sorting use string semantics.
 For SQLite databases created before 1.1.5, see
 [the upgrade note](migrations.md#sqlite-string-storage-upgrade-in-115).
 
+List updates replace the complete list; they do not append elements. Use `[]`
+to clear a list and `null` only when the model declares that list nullable.
+Lists and embedded objects remain readable through `get`, `getAll`, queries,
+and projections after updates, using the same application code on every backend.
+
 For converted fields such as `DateTime`, `Duration`, or enums, prefer typed
 object writes unless you intentionally want to write the stored scalar
 representation:

@@ -2,6 +2,7 @@
 
 ## 1.1.6
 
+- Fixed SQLite native/Web list and embedded-object storage and list filters.
 - Updated the runtime to ABI 40 for nested-filter query updates.
 - Fixed indexed range ordering in SQLite runtimes.
 

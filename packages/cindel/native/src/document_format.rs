@@ -5,6 +5,8 @@ mod nested_path;
 #[cfg(feature = "mdbx")]
 pub(crate) use nested_path::visit_binary_path;
 
+pub(crate) mod sqlite_json;
+
 use std::ops::Range;
 use std::str;
 

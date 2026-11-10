@@ -97,6 +97,8 @@ Current public API policy:
 - Nullable lists and nullable elements, preserving null, empty, and populated
   lists through single/bulk writes, reads, and projections on all three backends.
 - Shared embedded types and nested list/object hydration through generated code.
+- Consistent SQLite list/object storage across writes and query updates, with
+  automatic, transactional normalization of earlier binary fields.
 - Exact numeric-looking strings in SQLite native/Web, with a transactional,
   one-time upgrade of legacy string columns; already lost spelling is unrecoverable.
 - Schema metadata persistence.

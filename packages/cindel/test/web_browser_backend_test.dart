@@ -23,6 +23,7 @@ import 'count_suite.dart' as count;
 import 'dart_distinct_suite.dart' as dart_distinct;
 import 'find_first_suite.dart' as find_first;
 import 'get_all_transaction_suite.dart' as get_all_transactions;
+import 'structured_storage_suite.dart' as structured_storage;
 import 'string_storage_suite.dart' as string_storage;
 import 'query_public_contract_suite.dart' as query_public_contract;
 import 'query_builder_suite.dart' as query_builder;
@@ -60,6 +61,7 @@ void main() {
   query_public_contract.main();
   query_builder.main();
   string_storage.main();
+  structured_storage.main();
   query_projection_contract.main();
   web_close.main();
   worker_close.main();

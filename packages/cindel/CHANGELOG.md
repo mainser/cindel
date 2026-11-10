@@ -2,6 +2,7 @@
 
 ## 1.1.6
 
+- Fixed SQLite native/Web list and embedded-object storage and list filters.
 - Optimized SQLite native/Web query deletes.
 - Optimized MDBX deletes with nested filters.
 - Fixed nested-filter updates across all backends.

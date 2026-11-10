@@ -4617,15 +4617,11 @@ fn parse_native_raw_list(bytes: &[u8]) -> Result<NativeRawList, String> {
         });
     }
 
-    // Only JSON-shaped payloads take this path; compact and generic lists keep
-    // their existing readers. SQLite stores nullable string lists as JSON.
+    // A binary count may also start with '['. Only a complete JSON value
+    // takes this path; otherwise retain the validated binary readers.
     if bytes.first() == Some(&b'[') {
-        if let Ok(values) = serde_json::from_slice::<Vec<Option<String>>>(bytes) {
-            let values = values
-                .into_iter()
-                .map(|value| value.map(BinaryValue::String))
-                .collect::<Vec<_>>();
-            return parse_native_raw_list(&crate::document_format::write_list(&values)?);
+        if let Ok(binary) = crate::document_format::sqlite_json::json_binary(bytes, true) {
+            return parse_native_raw_list(&binary);
         }
     }
 
@@ -4673,6 +4669,11 @@ fn parse_native_raw_object(
     bytes: &[u8],
     field_names: Vec<String>,
 ) -> Result<NativeRawObject, String> {
+    if bytes.first() == Some(&b'{') {
+        if let Ok(binary) = crate::document_format::sqlite_json::json_binary(bytes, false) {
+            return parse_native_raw_object(&binary, field_names);
+        }
+    }
     let count = read_u32_le(bytes, 0)? as usize;
     if count > bytes.len().saturating_sub(4) / 12 {
         return Err("native object count exceeds payload".into());
